@@ -5,12 +5,15 @@ pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::{fs, process};
-use std::ffi::{OsStr, OsString};
-use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
-use util::fs::remove_matching;
-use util::github::latest_github_release;
-use util::http::HttpClient;
-use util::ResultExt;
+use std::{
+    any::Any,
+    ffi::{OsStr, OsString},
+    ops::Range,
+    path::PathBuf,
+    str,
+    sync::Arc,
+};
+use util::{fs::remove_matching, github::latest_github_release, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -31,9 +34,9 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("golang/tools", false, http).await?;
+        let release = latest_github_release("golang/tools", false, delegate.http_client()).await?;
         let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
@@ -47,8 +50,8 @@ impl super::LspAdapter for GoLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
@@ -68,7 +71,10 @@ impl super::LspAdapter for GoLspAdapter {
                     });
                 }
             }
-        } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
+        } else if let Some(path) = this
+            .cached_server_binary(container_dir.clone(), delegate)
+            .await
+        {
             return Ok(path);
         }
 
@@ -105,7 +111,11 @@ impl super::LspAdapter for GoLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;

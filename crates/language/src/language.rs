@@ -17,7 +17,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
-use gpui::{executor::Background, AppContext, Task};
+use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::CodeActionKind;
@@ -125,27 +125,30 @@ impl CachedLspAdapter {
 
     pub async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        self.adapter.fetch_latest_server_version(http).await
+        self.adapter.fetch_latest_server_version(delegate).await
     }
 
     pub async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         self.adapter
-            .fetch_server_binary(version, http, container_dir)
+            .fetch_server_binary(version, container_dir, delegate)
             .await
     }
 
     pub async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        self.adapter.cached_server_binary(container_dir).await
+        self.adapter
+            .cached_server_binary(container_dir, delegate)
+            .await
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -187,23 +190,32 @@ impl CachedLspAdapter {
     }
 }
 
+pub trait LspAdapterDelegate: Send + Sync {
+    fn show_notification(&self, message: &str, cx: &mut AppContext);
+    fn http_client(&self) -> Arc<dyn HttpClient>;
+}
+
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary>;
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary>;
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
@@ -513,10 +525,7 @@ pub struct LanguageRegistry {
     login_shell_env_loaded: Shared<Task<()>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
-        HashMap<
-            LanguageServerName,
-            Shared<BoxFuture<'static, Result<LanguageServerBinary, Arc<anyhow::Error>>>>,
-        >,
+        HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
     >,
     executor: Option<Arc<Background>>,
 }
@@ -812,7 +821,7 @@ impl LanguageRegistry {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
-        http_client: Arc<dyn HttpClient>,
+        delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -860,7 +869,6 @@ impl LanguageRegistry {
             .log_err()?;
         let this = self.clone();
         let language = language.clone();
-        let http_client = http_client.clone();
         let download_dir = download_dir.clone();
         let root_path = root_path.clone();
         let adapter = adapter.clone();
@@ -870,23 +878,25 @@ impl LanguageRegistry {
         let task = cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
 
-            let mut lock = this.lsp_binary_paths.lock();
-            let entry = lock
+            let entry = this
+                .lsp_binary_paths
+                .lock()
                 .entry(adapter.name.clone())
                 .or_insert_with(|| {
-                    get_binary(
-                        adapter.clone(),
-                        language.clone(),
-                        http_client,
-                        download_dir,
-                        lsp_binary_statuses,
-                    )
-                    .map_err(Arc::new)
-                    .boxed()
+                    cx.spawn(|cx| {
+                        get_binary(
+                            adapter.clone(),
+                            language.clone(),
+                            delegate,
+                            download_dir,
+                            lsp_binary_statuses,
+                            cx,
+                        )
+                        .map_err(Arc::new)
+                    })
                     .shared()
                 })
                 .clone();
-            drop(lock);
             let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
 
             let server = lsp::LanguageServer::new(
@@ -958,9 +968,10 @@ impl Default for LanguageRegistry {
 async fn get_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
-    http_client: Arc<dyn HttpClient>,
+    delegate: Arc<dyn LspAdapterDelegate>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+    _cx: AsyncAppContext,
 ) -> Result<LanguageServerBinary> {
     let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
@@ -972,14 +983,17 @@ async fn get_binary(
     let binary = fetch_latest_binary(
         adapter.clone(),
         language.clone(),
-        http_client,
+        delegate.as_ref(),
         &container_dir,
         statuses.clone(),
     )
     .await;
 
     if let Err(error) = binary.as_ref() {
-        if let Some(cached) = adapter.cached_server_binary(container_dir).await {
+        if let Some(cached) = adapter
+            .cached_server_binary(container_dir, delegate.as_ref())
+            .await
+        {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
@@ -1001,7 +1015,7 @@ async fn get_binary(
 async fn fetch_latest_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
-    http_client: Arc<dyn HttpClient>,
+    delegate: &dyn LspAdapterDelegate,
     container_dir: &Path,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<LanguageServerBinary> {
@@ -1012,14 +1026,12 @@ async fn fetch_latest_binary(
             LanguageServerBinaryStatus::CheckingForUpdate,
         ))
         .await?;
-    let version_info = adapter
-        .fetch_latest_server_version(http_client.clone())
-        .await?;
+    let version_info = adapter.fetch_latest_server_version(delegate).await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
     let binary = adapter
-        .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
+        .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate)
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
@@ -1543,7 +1555,7 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }
@@ -1551,13 +1563,17 @@ impl LspAdapter for Arc<FakeLspAdapter> {
     async fn fetch_server_binary(
         &self,
         _: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         _: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         unreachable!();
     }
 
-    async fn cached_server_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
 
