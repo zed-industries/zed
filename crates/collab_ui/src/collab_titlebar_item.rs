@@ -17,7 +17,7 @@ use gpui::{
     AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::Project;
+use project::{Project, RepositoryEntry};
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
@@ -193,37 +193,16 @@ impl CollabTitlebarItem {
         theme: Arc<Theme>,
         cx: &ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let names_and_branches = project.visible_worktrees(cx).map(|worktree| {
+        let mut names_and_branches = project.visible_worktrees(cx).map(|worktree| {
             let worktree = worktree.read(cx);
             (worktree.root_name(), worktree.root_git_entry())
         });
 
-        fn push_str(buffer: &mut String, index: &mut usize, str: &str) {
-            buffer.push_str(str);
-            *index += str.chars().count();
-        }
-
-        let mut indices = Vec::new();
-        let mut index = 0;
-        let mut title = String::new();
-        let mut names_and_branches = names_and_branches.peekable();
-        while let Some((name, entry)) = names_and_branches.next() {
-            let pre_index = index;
-            push_str(&mut title, &mut index, name);
-            indices.extend((pre_index..index).into_iter());
-            if let Some(branch) = entry.and_then(|entry| entry.branch()) {
-                push_str(&mut title, &mut index, "/");
-                push_str(&mut title, &mut index, &branch);
-            }
-            if names_and_branches.peek().is_some() {
-                push_str(&mut title, &mut index, ", ");
-                if index >= MAX_TITLE_LENGTH {
-                    title.push_str(" …");
-                    break;
-                }
-            }
-        }
-
+        let (name, entry) = names_and_branches.next().unwrap_or(("", None));
+        let branch_prepended = entry
+            .as_ref()
+            .and_then(RepositoryEntry::branch)
+            .map(|branch| format!("/{branch}"));
         let text_style = theme.workspace.titlebar.title.clone();
         let item_spacing = theme.workspace.titlebar.item_spacing;
 
@@ -234,14 +213,25 @@ impl CollabTitlebarItem {
             text: text_style,
             highlight_text: Some(highlight),
         };
-
-        Label::new(title, style)
-            .with_highlights(indices)
-            .contained()
-            .with_margin_right(item_spacing)
-            .aligned()
-            .left()
-            .into_any_named("title-with-git-information")
+        let mut ret = Flex::row().with_child(
+            Label::new(name.to_owned(), style.clone())
+                .with_highlights((0..name.len()).into_iter().collect())
+                .contained()
+                .aligned()
+                .left()
+                .into_any_named("title-project-name"),
+        );
+        if let Some(git_branch) = branch_prepended {
+            ret = ret.with_child(
+                Label::new(git_branch, style)
+                    .contained()
+                    .with_margin_right(item_spacing)
+                    .aligned()
+                    .left()
+                    .into_any_named("title-project-branch"),
+            )
+        }
+        ret.into_any()
     }
 
     fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
