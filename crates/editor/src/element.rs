@@ -1921,7 +1921,7 @@ impl Element<Editor> for EditorElement {
         let em_advance = style.text.em_advance(cx.font_cache());
         let overscroll = vec2f(em_width, 0.);
         let snapshot = {
-            editor.set_visible_line_count(size.y() / line_height, cx);
+            editor.set_visible_line_count(size.y() / line_height);
 
             let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
             let wrap_width = match editor.soft_wrap_mode(cx) {

@@ -1385,6 +1385,7 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
+        this.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
         this
     }
 
@@ -2597,19 +2598,13 @@ impl Editor {
     }
 
     fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
-        if self.mode != EditorMode::Full {
-            return;
-        }
-
-        if !settings::get::<EditorSettings>(cx).inlay_hints.enabled {
-            let to_remove = self.inlay_hint_cache.clear();
-            self.splice_inlay_hints(to_remove, Vec::new(), cx);
+        if self.mode != EditorMode::Full || !settings::get::<EditorSettings>(cx).inlay_hints.enabled
+        {
             return;
         }
 
         let multi_buffer_handle = self.buffer().clone();
         let multi_buffer_snapshot = multi_buffer_handle.read(cx).snapshot(cx);
-        let currently_visible_ranges = self.excerpt_visible_offsets(&multi_buffer_handle, cx);
         let currently_shown_inlay_hints = self.display_map.read(cx).current_inlays().fold(
             HashMap::<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>::default(),
             |mut current_hints, inlay| {
@@ -2636,61 +2631,25 @@ impl Editor {
                     to_remove,
                     to_insert,
                 }) = self.inlay_hint_cache.apply_settings(
+                    &multi_buffer_handle,
                     new_settings,
-                    currently_visible_ranges,
                     currently_shown_inlay_hints,
                     cx,
                 ) {
                     self.splice_inlay_hints(to_remove, to_insert, cx);
                 }
             }
-            InlayRefreshReason::Scroll(scrolled_to) => {
-                if let Some(updated_range_query) = currently_visible_ranges.iter().find_map(
-                    |(buffer, excerpt_visible_offset_range, excerpt_id)| {
-                        let buffer_id = scrolled_to.anchor.buffer_id?;
-                        if buffer_id == buffer.read(cx).remote_id()
-                            && &scrolled_to.anchor.excerpt_id == excerpt_id
-                        {
-                            Some(inlay_hint_query(
-                                buffer,
-                                *excerpt_id,
-                                excerpt_visible_offset_range,
-                                cx,
-                            ))
-                        } else {
-                            None
-                        }
-                    },
-                ) {
-                    cx.spawn(|editor, mut cx| async move {
-                        let InlaySplice {
-                            to_remove,
-                            to_insert,
-                        } = editor
-                            .update(&mut cx, |editor, cx| {
-                                editor.inlay_hint_cache.update_hints(
-                                    multi_buffer_handle,
-                                    vec![updated_range_query],
-                                    currently_shown_inlay_hints,
-                                    false,
-                                    cx,
-                                )
-                            })?
-                            .await
-                            .context("inlay cache hint fetch")?;
-
-                        editor.update(&mut cx, |editor, cx| {
-                            editor.splice_inlay_hints(to_remove, to_insert, cx)
-                        })
-                    })
-                    .detach_and_log_err(cx);
-                }
-            }
             InlayRefreshReason::VisibleExcerptsChange => {
-                let replacement_queries = currently_visible_ranges
-                    .iter()
-                    .map(|(buffer, excerpt_visible_offset_range, excerpt_id)| {
-                        inlay_hint_query(buffer, *excerpt_id, excerpt_visible_offset_range, cx)
+                let replacement_queries = self
+                    .excerpt_visible_offsets(&multi_buffer_handle, cx)
+                    .into_iter()
+                    .map(|(buffer, _, excerpt_id)| {
+                        let buffer = buffer.read(cx);
+                        InlayHintQuery {
+                            buffer_id: buffer.remote_id(),
+                            buffer_version: buffer.version.clone(),
+                            excerpt_id,
+                        }
                     })
                     .collect::<Vec<_>>();
                 cx.spawn(|editor, mut cx| async move {
@@ -2703,7 +2662,6 @@ impl Editor {
                                 multi_buffer_handle,
                                 replacement_queries,
                                 currently_shown_inlay_hints,
-                                true,
                                 cx,
                             )
                         })?
@@ -7686,32 +7644,6 @@ impl Editor {
 
     pub fn next_inlay_id(&mut self) -> InlayId {
         InlayId(post_inc(&mut self.next_inlay_id))
-    }
-}
-
-fn inlay_hint_query(
-    buffer: &ModelHandle<Buffer>,
-    excerpt_id: ExcerptId,
-    excerpt_visible_offset_range: &Range<usize>,
-    cx: &mut ViewContext<'_, '_, Editor>,
-) -> InlayHintQuery {
-    let buffer = buffer.read(cx);
-    let max_buffer_len = buffer.len();
-    let visible_offset_range_len = excerpt_visible_offset_range.len();
-
-    let query_range_start = excerpt_visible_offset_range
-        .start
-        .saturating_sub(visible_offset_range_len);
-    let query_range_end = max_buffer_len.min(
-        excerpt_visible_offset_range
-            .end
-            .saturating_add(visible_offset_range_len),
-    );
-    InlayHintQuery {
-        buffer_id: buffer.remote_id(),
-        buffer_version: buffer.version().clone(),
-        excerpt_id,
-        excerpt_offset_query_range: query_range_start..query_range_end,
     }
 }
 
