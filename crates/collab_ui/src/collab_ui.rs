@@ -59,9 +59,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
 
 pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        let toggle_deafan = room.update(cx, |room, cx| {
-            room.toggle_deafen(cx)
-        });
+        let toggle_deafan = room.update(cx, |room, cx| room.toggle_deafen(cx));
         toggle_deafan.detach_and_log_err(cx);
     }
 }
