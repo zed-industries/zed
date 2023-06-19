@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
 // Data types for chat completion requests
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAIRequest {
     model: String,
     messages: Vec<RequestMessage>,

@@ -473,7 +473,7 @@ impl Assistant {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let model = "gpt-3.5-turbo";
+        let model = "gpt-3.5-turbo-0613";
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
@@ -602,11 +602,13 @@ impl Assistant {
                 } else {
                     continue;
                 };
-            let Some(user_message) = self.insert_message_after(selected_message_id, Role::User, cx) else {
-                continue;
-            };
-            user_messages.push(user_message);
-            if selected_message_role == Role::User {
+
+            if selected_message_role == Role::Assistant {
+                let Some(user_message) = self.insert_message_after(selected_message_id, Role::User, cx) else {
+                    continue;
+                };
+                user_messages.push(user_message);
+            } else {
                 let request = OpenAIRequest {
                     model: self.model.clone(),
                     messages: self
@@ -1050,13 +1052,15 @@ impl AssistantEditor {
                 cursor..cursor
             })
             .collect::<Vec<_>>();
-        self.editor.update(cx, |editor, cx| {
-            editor.change_selections(
-                Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
-                cx,
-                |selections| selections.select_ranges(new_selections),
-            );
-        });
+        if !new_selections.is_empty() {
+            self.editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
+                    cx,
+                    |selections| selections.select_ranges(new_selections),
+                );
+            });
+        }
     }
 
     fn cancel_last_assist(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
@@ -1383,8 +1387,8 @@ impl AssistantEditor {
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
         self.assistant.update(cx, |assistant, cx| {
             let new_model = match assistant.model.as_str() {
-                "gpt-4" => "gpt-3.5-turbo",
-                _ => "gpt-4",
+                "gpt-4-0613" => "gpt-3.5-turbo-0613",
+                _ => "gpt-4-0613",
             };
             assistant.set_model(new_model.into(), cx);
         });
