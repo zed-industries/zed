@@ -21,7 +21,7 @@ util = { path = "../util" }
 
 anyhow.workspace = true
 futures.workspace = true
-json_comments = "0.2"
+serde_json_lenient = {version = "0.1", features = ["preserve_order", "raw_value"]}
 lazy_static.workspace = true
 postage.workspace = true
 rust-embed.workspace = true
@@ -37,6 +37,6 @@ tree-sitter-json = "*"
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
-
+indoc.workspace = true
 pretty_assertions = "1.3.0"
 unindent.workspace = true
