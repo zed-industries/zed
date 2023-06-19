@@ -24,7 +24,7 @@ pub mod test;
 
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::ReplicaId;
@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::{InlayHintCache, InlayHintQuery, InlayRefreshReason, InlaySplice};
+use inlay_hint_cache::{InlayHintCache, InlayHintQuery};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -1193,6 +1193,12 @@ enum GotoDefinitionKind {
     Type,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum InlayRefreshReason {
+    SettingsChange(editor_settings::InlayHints),
+    VisibleExcerptsChange,
+}
+
 impl Editor {
     pub fn single_line(
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
@@ -1360,7 +1366,10 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
+            inlay_hint_cache: InlayHintCache::new(
+                settings::get::<EditorSettings>(cx).inlay_hints,
+                cx,
+            ),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2605,40 +2614,16 @@ impl Editor {
 
         let multi_buffer_handle = self.buffer().clone();
         let multi_buffer_snapshot = multi_buffer_handle.read(cx).snapshot(cx);
-        let currently_shown_inlay_hints = self.display_map.read(cx).current_inlays().fold(
-            HashMap::<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>::default(),
-            |mut current_hints, inlay| {
-                if let Some(buffer_id) = inlay.position.buffer_id {
-                    let excerpt_hints = current_hints
-                        .entry(buffer_id)
-                        .or_default()
-                        .entry(inlay.position.excerpt_id)
-                        .or_default();
-                    match excerpt_hints.binary_search_by(|probe| {
-                        inlay.position.cmp(&probe.0, &multi_buffer_snapshot)
-                    }) {
-                        Ok(ix) | Err(ix) => {
-                            excerpt_hints.insert(ix, (inlay.position, inlay.id));
-                        }
-                    }
-                }
-                current_hints
-            },
-        );
+        let current_inlays = self
+            .display_map
+            .read(cx)
+            .current_inlays()
+            .cloned()
+            .collect();
         match reason {
-            InlayRefreshReason::SettingsChange(new_settings) => {
-                if let Some(InlaySplice {
-                    to_remove,
-                    to_insert,
-                }) = self.inlay_hint_cache.apply_settings(
-                    &multi_buffer_handle,
-                    new_settings,
-                    currently_shown_inlay_hints,
-                    cx,
-                ) {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
-                }
-            }
+            InlayRefreshReason::SettingsChange(new_settings) => self
+                .inlay_hint_cache
+                .spawn_settings_update(multi_buffer_handle, new_settings, current_inlays),
             InlayRefreshReason::VisibleExcerptsChange => {
                 let replacement_queries = self
                     .excerpt_visible_offsets(&multi_buffer_handle, cx)
@@ -2652,28 +2637,12 @@ impl Editor {
                         }
                     })
                     .collect::<Vec<_>>();
-                cx.spawn(|editor, mut cx| async move {
-                    let InlaySplice {
-                        to_remove,
-                        to_insert,
-                    } = editor
-                        .update(&mut cx, |editor, cx| {
-                            editor.inlay_hint_cache.update_hints(
-                                multi_buffer_handle,
-                                replacement_queries,
-                                currently_shown_inlay_hints,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .context("inlay cache hint fetch")?;
-
-                    editor.update(&mut cx, |editor, cx| {
-                        editor.splice_inlay_hints(to_remove, to_insert, cx)
-                    })
-                })
-                // TODO kb needs cancellation for many excerpts cases like `project search "test"`
-                .detach_and_log_err(cx);
+                self.inlay_hint_cache.spawn_hints_update(
+                    multi_buffer_handle,
+                    replacement_queries,
+                    current_inlays,
+                    cx,
+                )
             }
         };
     }
