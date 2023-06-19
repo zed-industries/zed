@@ -1010,7 +1010,7 @@ impl MultiBuffer {
 
         let suffix = cursor.suffix(&());
         let changed_trailing_excerpt = suffix.is_empty();
-        new_excerpts.push_tree(suffix, &());
+        new_excerpts.append(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
         snapshot.excerpt_ids = new_excerpt_ids;
@@ -1193,7 +1193,7 @@ impl MultiBuffer {
         while let Some(excerpt_id) = excerpt_ids.next() {
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
-            new_excerpts.push_tree(cursor.slice(&Some(locator), Bias::Left, &()), &());
+            new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
 
             if let Some(mut excerpt) = cursor.item() {
                 if excerpt.id != excerpt_id {
@@ -1245,7 +1245,7 @@ impl MultiBuffer {
         }
         let suffix = cursor.suffix(&());
         let changed_trailing_excerpt = suffix.is_empty();
-        new_excerpts.push_tree(suffix, &());
+        new_excerpts.append(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
@@ -1509,7 +1509,7 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
 
         for (locator, buffer, buffer_edited) in excerpts_to_edit {
-            new_excerpts.push_tree(cursor.slice(&Some(locator), Bias::Left, &()), &());
+            new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer.read(cx);
             let buffer_id = buffer.remote_id();
@@ -1549,7 +1549,7 @@ impl MultiBuffer {
             new_excerpts.push(new_excerpt, &());
             cursor.next(&());
         }
-        new_excerpts.push_tree(cursor.suffix(&()), &());
+        new_excerpts.append(cursor.suffix(&()), &());
 
         drop(cursor);
         snapshot.excerpts = new_excerpts;

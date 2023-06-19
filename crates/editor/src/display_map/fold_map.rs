@@ -115,10 +115,10 @@ impl<'a> FoldMapWriter<'a> {
             let mut new_tree = SumTree::new();
             let mut cursor = self.0.folds.cursor::<Fold>();
             for fold in folds {
-                new_tree.push_tree(cursor.slice(&fold, Bias::Right, &buffer), &buffer);
+                new_tree.append(cursor.slice(&fold, Bias::Right, &buffer), &buffer);
                 new_tree.push(fold, &buffer);
             }
-            new_tree.push_tree(cursor.suffix(&buffer), &buffer);
+            new_tree.append(cursor.suffix(&buffer), &buffer);
             new_tree
         };
 
@@ -165,10 +165,10 @@ impl<'a> FoldMapWriter<'a> {
             let mut cursor = self.0.folds.cursor::<usize>();
             let mut folds = SumTree::new();
             for fold_ix in fold_ixs_to_delete {
-                folds.push_tree(cursor.slice(&fold_ix, Bias::Right, &buffer), &buffer);
+                folds.append(cursor.slice(&fold_ix, Bias::Right, &buffer), &buffer);
                 cursor.next(&buffer);
             }
-            folds.push_tree(cursor.suffix(&buffer), &buffer);
+            folds.append(cursor.suffix(&buffer), &buffer);
             folds
         };
 
@@ -302,7 +302,7 @@ impl FoldMap {
             cursor.seek(&0, Bias::Right, &());
 
             while let Some(mut edit) = buffer_edits_iter.next() {
-                new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+                new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
                 edit.new.start -= edit.old.start - cursor.start();
                 edit.old.start = *cursor.start();
 
@@ -412,7 +412,7 @@ impl FoldMap {
                 }
             }
 
-            new_transforms.push_tree(cursor.suffix(&()), &());
+            new_transforms.append(cursor.suffix(&()), &());
             if new_transforms.is_empty() {
                 let text_summary = new_buffer.text_summary();
                 new_transforms.push(
