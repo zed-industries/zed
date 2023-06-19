@@ -84,15 +84,9 @@ pub struct LocalWorktree {
     visible: bool,
 }
 
-enum ScanRequest {
-    RescanPaths {
-        relative_paths: Vec<Arc<Path>>,
-        done: barrier::Sender,
-    },
-    ExpandPath {
-        path: Arc<Path>,
-        done: barrier::Sender,
-    },
+struct ScanRequest {
+    relative_paths: Vec<Arc<Path>>,
+    done: barrier::Sender,
 }
 
 pub struct RemoteWorktree {
@@ -226,6 +220,7 @@ pub struct LocalSnapshot {
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
     expanded_dirs: HashSet<ProjectEntryId>,
+    expanded_paths: HashSet<Arc<Path>>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
@@ -882,14 +877,11 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let expand = path
-            .parent()
-            .map(|path| self.expand_entry_for_path(path, cx));
+        let entry = self.refresh_entry(path.clone(), None, cx);
 
-        cx.spawn(|this, mut cx| async move {
-            if let Some(mut expand) = expand {
-                expand.recv().await;
-            }
+        cx.spawn(|this, cx| async move {
+            let text = fs.load(&abs_path).await?;
+            let entry = entry.await?;
 
             let mut index_task = None;
             let snapshot = this.read_with(&cx, |this, _| this.as_local().unwrap().snapshot());
@@ -904,20 +896,11 @@ impl LocalWorktree {
                 }
             }
 
-            let text = fs.load(&abs_path).await?;
-
             let diff_base = if let Some(index_task) = index_task {
                 index_task.await
             } else {
                 None
             };
-
-            // Eagerly populate the snapshot with an updated entry for the loaded file
-            let entry = this
-                .update(&mut cx, |this, cx| {
-                    this.as_local().unwrap().refresh_entry(path, None, cx)
-                })
-                .await?;
 
             Ok((
                 File {
@@ -1082,7 +1065,7 @@ impl LocalWorktree {
                 this.as_local_mut()
                     .unwrap()
                     .scan_requests_tx
-                    .try_send(ScanRequest::RescanPaths {
+                    .try_send(ScanRequest {
                         relative_paths: vec![path],
                         done: tx,
                     })
@@ -1159,8 +1142,8 @@ impl LocalWorktree {
         let (tx, rx) = barrier::channel();
         if let Some(entry) = self.entry_for_id(entry_id) {
             self.scan_requests_tx
-                .try_send(ScanRequest::ExpandPath {
-                    path: entry.path.clone(),
+                .try_send(ScanRequest {
+                    relative_paths: vec![entry.path.clone()],
                     done: tx,
                 })
                 .ok();
@@ -1168,15 +1151,11 @@ impl LocalWorktree {
         rx
     }
 
-    pub fn expand_entry_for_path(
-        &self,
-        path: impl Into<Arc<Path>>,
-        _cx: &mut ModelContext<Worktree>,
-    ) -> barrier::Receiver {
+    pub fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.scan_requests_tx
-            .try_send(ScanRequest::ExpandPath {
-                path: path.into(),
+            .try_send(ScanRequest {
+                relative_paths: paths,
                 done: tx,
             })
             .ok();
@@ -1189,20 +1168,14 @@ impl LocalWorktree {
         old_path: Option<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
-        let path_changes_tx = self.scan_requests_tx.clone();
+        let paths = if let Some(old_path) = old_path.as_ref() {
+            vec![old_path.clone(), path.clone()]
+        } else {
+            vec![path.clone()]
+        };
+        let mut refresh = self.refresh_entries_for_paths(paths);
         cx.spawn_weak(move |this, mut cx| async move {
-            let relative_paths = if let Some(old_path) = old_path.as_ref() {
-                vec![old_path.clone(), path.clone()]
-            } else {
-                vec![path.clone()]
-            };
-
-            let (tx, mut rx) = barrier::channel();
-            path_changes_tx.try_send(ScanRequest::RescanPaths {
-                relative_paths,
-                done: tx,
-            })?;
-            rx.recv().await;
+            refresh.recv().await;
             this.upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was dropped"))?
                 .update(&mut cx, |this, _| {
@@ -2138,9 +2111,14 @@ impl LocalSnapshot {
 
         ignore_stack
     }
-}
 
-impl LocalSnapshot {
+    #[cfg(test)]
+    pub(crate) fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
+        self.entries_by_path
+            .cursor::<()>()
+            .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
+    }
+
     #[cfg(test)]
     pub fn check_invariants(&self) {
         assert_eq!(
@@ -2217,6 +2195,14 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
+    fn is_path_expanded(&self, path: &Path) -> bool {
+        self.expanded_paths.iter().any(|p| p.starts_with(path))
+            || self
+                .snapshot
+                .entry_for_path(&path)
+                .map_or(true, |entry| self.expanded_dirs.contains(&entry.id))
+    }
+
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
             entry.id = removed_entry_id;
@@ -2271,6 +2257,7 @@ impl BackgroundScannerState {
                 .insert(abs_parent_path, (ignore, false));
         }
 
+        self.expanded_dirs.insert(parent_entry.id);
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
         let mut dotgit_path = None;
@@ -2883,6 +2870,7 @@ impl BackgroundScanner {
                 expanded_dirs: Default::default(),
                 removed_entry_ids: Default::default(),
                 changed_paths: Default::default(),
+                expanded_paths: Default::default(),
             }),
             phase: BackgroundScannerPhase::InitialScan,
         }
@@ -2986,7 +2974,7 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, request: ScanRequest) -> bool {
-        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_path = self.expand_paths(&request.relative_paths).await;
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -2995,57 +2983,20 @@ impl BackgroundScanner {
             }
         };
 
-        match request {
-            ScanRequest::RescanPaths {
-                relative_paths,
-                done,
-            } => {
-                let abs_paths = relative_paths
-                    .into_iter()
-                    .map(|path| {
-                        if path.file_name().is_some() {
-                            root_canonical_path.join(path)
-                        } else {
-                            root_canonical_path.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                self.reload_entries_for_paths(
-                    root_path,
-                    root_canonical_path,
-                    abs_paths,
-                    false,
-                    None,
-                )
-                .await;
-                self.send_status_update(false, Some(done))
-            }
-            ScanRequest::ExpandPath { path, done } => {
-                let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
-                let mut abs_path = root_canonical_path.clone();
-                for component in path.iter() {
-                    abs_path.push(component);
-                    self.reload_entries_for_paths(
-                        root_path.clone(),
-                        root_canonical_path.clone(),
-                        vec![abs_path.clone()],
-                        true,
-                        Some(scan_job_tx.clone()),
-                    )
-                    .await;
+        let abs_paths = request
+            .relative_paths
+            .into_iter()
+            .map(|path| {
+                if path.file_name().is_some() {
+                    root_canonical_path.join(path)
+                } else {
+                    root_canonical_path.clone()
                 }
-                drop(scan_job_tx);
-
-                // Scan the expanded directories serially. This is ok, because only
-                // the direct ancestors of the expanded path need to be scanned.
-                while let Some(job) = scan_job_rx.next().await {
-                    self.scan_dir(&job).await.log_err();
-                }
-
-                self.send_status_update(false, Some(done));
-                true
-            }
-        }
+            })
+            .collect::<Vec<_>>();
+        self.reload_entries_for_paths(root_path, root_canonical_path, abs_paths, None)
+            .await;
+        self.send_status_update(false, Some(request.done))
     }
 
     async fn process_events(&mut self, abs_paths: Vec<PathBuf>) {
@@ -3060,15 +3011,8 @@ impl BackgroundScanner {
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         let paths = self
-            .reload_entries_for_paths(
-                root_path,
-                root_canonical_path,
-                abs_paths,
-                false,
-                Some(scan_job_tx.clone()),
-            )
+            .reload_entries_for_paths(root_path, root_canonical_path, abs_paths, Some(scan_job_tx))
             .await;
-        drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
 
         self.update_ignore_statuses().await;
@@ -3106,6 +3050,46 @@ impl BackgroundScanner {
         }
 
         self.send_status_update(false, None);
+    }
+
+    async fn expand_paths(&self, paths: &[Arc<Path>]) -> Arc<Path> {
+        let root_path;
+        let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
+        {
+            let mut state = self.state.lock();
+            root_path = state.snapshot.abs_path.clone();
+            for path in paths {
+                for ancestor in path.ancestors() {
+                    if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
+                        if entry.kind == EntryKind::PendingDir {
+                            let abs_path = root_path.join(ancestor);
+                            let ignore_stack =
+                                state.snapshot.ignore_stack_for_abs_path(&abs_path, true);
+                            let ancestor_inodes =
+                                state.snapshot.ancestor_inodes_for_path(&ancestor);
+                            scan_job_tx
+                                .try_send(ScanJob {
+                                    abs_path: abs_path.into(),
+                                    path: ancestor.into(),
+                                    ignore_stack,
+                                    scan_queue: scan_job_tx.clone(),
+                                    ancestor_inodes,
+                                    is_external: entry.is_external,
+                                })
+                                .unwrap();
+                            state.expanded_paths.insert(path.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            drop(scan_job_tx);
+        }
+        while let Some(job) = scan_job_rx.next().await {
+            self.scan_dir(&job).await.log_err();
+        }
+        self.state.lock().expanded_paths.clear();
+        root_path
     }
 
     async fn scan_dirs(
@@ -3376,10 +3360,7 @@ impl BackgroundScanner {
                 // If a subdirectory is ignored, or is external to the worktree, don't scan
                 // it unless it is marked as expanded.
                 if (new_job.is_external || new_job.ignore_stack.is_all())
-                    && !state
-                        .snapshot
-                        .entry_for_path(&new_job.path)
-                        .map_or(true, |entry| state.expanded_dirs.contains(&entry.id))
+                    && !state.is_path_expanded(&new_job.path)
                 {
                     log::debug!("defer scanning directory {:?}", new_job.path);
                     continue;
@@ -3399,12 +3380,40 @@ impl BackgroundScanner {
         root_abs_path: Arc<Path>,
         root_canonical_path: PathBuf,
         mut abs_paths: Vec<PathBuf>,
-        expand: bool,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) -> Option<Vec<Arc<Path>>> {
-        let doing_recursive_update = scan_queue_tx.is_some();
+        let mut event_paths = Vec::<Arc<Path>>::with_capacity(abs_paths.len());
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(&b));
+        {
+            let state = self.state.lock();
+            abs_paths.retain(|abs_path| {
+                let path = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
+                    path
+                } else {
+                    log::error!(
+                        "unexpected event {:?} for root path {:?}",
+                        abs_path,
+                        root_canonical_path
+                    );
+                    return false;
+                };
+
+                if let Some(parent) = path.parent() {
+                    if state
+                        .snapshot
+                        .entry_for_path(parent)
+                        .map_or(true, |entry| entry.kind != EntryKind::Dir)
+                    {
+                        log::info!("ignoring event within unloaded directory {:?}", parent);
+                        return false;
+                    }
+                }
+
+                event_paths.push(path.into());
+                return true;
+            });
+        }
 
         let metadata = futures::future::join_all(
             abs_paths
@@ -3424,6 +3433,7 @@ impl BackgroundScanner {
 
         let mut state = self.state.lock();
         let snapshot = &mut state.snapshot;
+        let doing_recursive_update = scan_queue_tx.is_some();
         let is_idle = snapshot.completed_scan_id == snapshot.scan_id;
         snapshot.scan_id += 1;
         if is_idle && !doing_recursive_update {
@@ -3433,25 +3443,13 @@ impl BackgroundScanner {
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
-        let mut event_paths = Vec::<Arc<Path>>::with_capacity(abs_paths.len());
-        let mut event_metadata = Vec::<_>::with_capacity(abs_paths.len());
-        for (abs_path, metadata) in abs_paths.iter().zip(metadata.iter()) {
-            if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
-                if matches!(metadata, Ok(None)) || doing_recursive_update {
-                    state.remove_path(path);
-                }
-                event_paths.push(path.into());
-                event_metadata.push(metadata);
-            } else {
-                log::error!(
-                    "unexpected event {:?} for root path {:?}",
-                    abs_path,
-                    root_canonical_path
-                );
+        for (path, metadata) in event_paths.iter().zip(metadata.iter()) {
+            if matches!(metadata, Ok(None)) || doing_recursive_update {
+                state.remove_path(path);
             }
         }
 
-        for (path, metadata) in event_paths.iter().cloned().zip(event_metadata.into_iter()) {
+        for (path, metadata) in event_paths.iter().cloned().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
 
             match metadata {
@@ -3487,9 +3485,6 @@ impl BackgroundScanner {
                     }
 
                     let fs_entry = state.insert_entry(fs_entry, self.fs.as_ref());
-                    if expand {
-                        state.expanded_dirs.insert(fs_entry.id);
-                    }
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
                         let mut ancestor_inodes = state.snapshot.ancestor_inodes_for_path(&path);

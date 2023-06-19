@@ -388,6 +388,7 @@ struct FakeFsState {
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
     events_paused: bool,
     buffered_events: Vec<fsevent::Event>,
+    read_dir_call_count: usize,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -536,6 +537,7 @@ impl FakeFs {
                 event_txs: Default::default(),
                 buffered_events: Vec::new(),
                 events_paused: false,
+                read_dir_call_count: 0,
             }),
         })
     }
@@ -770,6 +772,10 @@ impl FakeFs {
             }
         }
         result
+    }
+
+    pub fn read_dir_call_count(&self) -> usize {
+        self.state.lock().read_dir_call_count
     }
 
     async fn simulate_random_delay(&self) {
@@ -1146,7 +1152,8 @@ impl Fs for FakeFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let state = self.state.lock();
+        let mut state = self.state.lock();
+        state.read_dir_call_count += 1;
         let entry = state.read_path(&path)?;
         let mut entry = entry.lock();
         let children = entry.dir_entries(&path)?;

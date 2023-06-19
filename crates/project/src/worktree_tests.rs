@@ -1,6 +1,6 @@
 use crate::{
     worktree::{Event, Snapshot, WorktreeHandle},
-    EntryKind, PathChange, Worktree,
+    Entry, EntryKind, PathChange, Worktree,
 };
 use anyhow::Result;
 use client::Client;
@@ -158,9 +158,10 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
     });
 
     // Expand gitignored directory.
-    tree.update(cx, |tree, cx| {
-        let tree = tree.as_local_mut().unwrap();
-        tree.expand_entry_for_path("i/j".as_ref(), cx)
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("i/j").into()])
     })
     .recv()
     .await;
@@ -336,12 +337,18 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 (Path::new("src/b.rs"), false),
             ]
         );
+
+        assert_eq!(
+            tree.entry_for_path("deps/dep-dir2").unwrap().kind,
+            EntryKind::PendingDir
+        );
     });
 
     // Expand one of the symlinked directories.
-    tree.update(cx, |tree, cx| {
-        let tree = tree.as_local_mut().unwrap();
-        tree.expand_entry_for_path("deps/dep-dir3".as_ref(), cx)
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("deps/dep-dir3").into()])
     })
     .recv()
     .await;
@@ -368,9 +375,10 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     });
 
     // Expand a subdirectory of one of the symlinked directories.
-    tree.update(cx, |tree, cx| {
-        let tree = tree.as_local_mut().unwrap();
-        tree.expand_entry_for_path("deps/dep-dir3/src".as_ref(), cx)
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("deps/dep-dir3/src").into()])
     })
     .recv()
     .await;
@@ -405,17 +413,19 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         "/root",
         json!({
             ".gitignore": "node_modules\n",
-            "node_modules": {
-                "a": {
-                    "a1.js": "a1",
-                    "a2.js": "a2",
-                },
-                "b": {
-                    "b1.js": "b1",
-                    "b2.js": "b2",
+            "one": {
+                "node_modules": {
+                    "a": {
+                        "a1.js": "a1",
+                        "a2.js": "a2",
+                    },
+                    "b": {
+                        "b1.js": "b1",
+                        "b2.js": "b2",
+                    },
                 },
             },
-            "src": {
+            "two": {
                 "x.js": "",
                 "y.js": "",
             },
@@ -446,19 +456,23 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             vec![
                 (Path::new(""), false),
                 (Path::new(".gitignore"), false),
-                (Path::new("node_modules"), true),
-                (Path::new("src"), false),
-                (Path::new("src/x.js"), false),
-                (Path::new("src/y.js"), false),
+                (Path::new("one"), false),
+                (Path::new("one/node_modules"), true),
+                (Path::new("two"), false),
+                (Path::new("two/x.js"), false),
+                (Path::new("two/y.js"), false),
             ]
         );
     });
 
+    // Open a file that is nested inside of a gitignored directory that
+    // has not yet been expanded.
+    let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .load_buffer(0, "node_modules/b/b1.js".as_ref(), cx)
+                .load_buffer(0, "one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -471,22 +485,68 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             vec![
                 (Path::new(""), false),
                 (Path::new(".gitignore"), false),
-                (Path::new("node_modules"), true),
-                (Path::new("node_modules/a"), true),
-                (Path::new("node_modules/b"), true),
-                (Path::new("node_modules/b/b1.js"), true),
-                (Path::new("node_modules/b/b2.js"), true),
-                (Path::new("src"), false),
-                (Path::new("src/x.js"), false),
-                (Path::new("src/y.js"), false),
+                (Path::new("one"), false),
+                (Path::new("one/node_modules"), true),
+                (Path::new("one/node_modules/a"), true),
+                (Path::new("one/node_modules/b"), true),
+                (Path::new("one/node_modules/b/b1.js"), true),
+                (Path::new("one/node_modules/b/b2.js"), true),
+                (Path::new("two"), false),
+                (Path::new("two/x.js"), false),
+                (Path::new("two/y.js"), false),
             ]
         );
 
-        let buffer = buffer.read(cx);
         assert_eq!(
-            buffer.file().unwrap().path().as_ref(),
-            Path::new("node_modules/b/b1.js")
+            buffer.read(cx).file().unwrap().path().as_ref(),
+            Path::new("one/node_modules/b/b1.js")
         );
+
+        // Only the newly-expanded directories are scanned.
+        assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 2);
+    });
+
+    // Open another file in a different subdirectory of the same
+    // gitignored directory.
+    let prev_read_dir_count = fs.read_dir_call_count();
+    let buffer = tree
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer(0, "one/node_modules/a/a2.js".as_ref(), cx)
+        })
+        .await
+        .unwrap();
+
+    tree.read_with(cx, |tree, cx| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("one"), false),
+                (Path::new("one/node_modules"), true),
+                (Path::new("one/node_modules/a"), true),
+                (Path::new("one/node_modules/a/a1.js"), true),
+                (Path::new("one/node_modules/a/a2.js"), true),
+                (Path::new("one/node_modules/b"), true),
+                (Path::new("one/node_modules/b/b1.js"), true),
+                (Path::new("one/node_modules/b/b2.js"), true),
+                (Path::new("two"), false),
+                (Path::new("two/x.js"), false),
+                (Path::new("two/y.js"), false),
+            ]
+        );
+
+        assert_eq!(
+            buffer.read(cx).file().unwrap().path().as_ref(),
+            Path::new("one/node_modules/a/a2.js")
+        );
+
+        // Only the newly-expanded directory is scanned.
+        assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);
     });
 }
 
@@ -525,9 +585,10 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    tree.update(cx, |tree, cx| {
-        let tree = tree.as_local_mut().unwrap();
-        tree.expand_entry_for_path("ignored-dir".as_ref(), cx)
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("ignored-dir").into()])
     })
     .recv()
     .await;
@@ -868,8 +929,13 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     log::info!("quiescing");
     fs.as_fake().flush_events(usize::MAX);
     cx.foreground().run_until_parked();
+
     let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
     snapshot.check_invariants();
+    let expanded_paths = snapshot
+        .expanded_entries()
+        .map(|e| e.path.clone())
+        .collect::<Vec<_>>();
 
     {
         let new_worktree = Worktree::local(
@@ -884,6 +950,14 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         .unwrap();
         new_worktree
             .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+            .await;
+        new_worktree
+            .update(cx, |tree, _| {
+                tree.as_local_mut()
+                    .unwrap()
+                    .refresh_entries_for_paths(expanded_paths)
+            })
+            .recv()
             .await;
         let new_snapshot =
             new_worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
@@ -901,10 +975,24 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         }
 
         assert_eq!(
-            prev_snapshot.entries(true).collect::<Vec<_>>(),
-            snapshot.entries(true).collect::<Vec<_>>(),
+            prev_snapshot
+                .entries(true)
+                .map(ignore_pending_dir)
+                .collect::<Vec<_>>(),
+            snapshot
+                .entries(true)
+                .map(ignore_pending_dir)
+                .collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {updates:#?}",
         );
+    }
+
+    fn ignore_pending_dir(entry: &Entry) -> Entry {
+        let mut entry = entry.clone();
+        if entry.kind == EntryKind::PendingDir {
+            entry.kind = EntryKind::Dir
+        }
+        entry
     }
 }
 
