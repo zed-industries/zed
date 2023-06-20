@@ -7,12 +7,13 @@ use std::{
     fmt::{self, Display},
     marker::PhantomData,
     mem,
+    panic::Location,
     pin::Pin,
     rc::Rc,
     sync::Arc,
     task::{Context, Poll},
     thread,
-    time::Duration, panic::Location,
+    time::Duration,
 };
 
 use crate::{

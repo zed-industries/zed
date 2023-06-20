@@ -423,9 +423,7 @@ impl Room {
             .unwrap()
             .into_iter()
             .filter(|track| track.publisher_id() == publisher_id)
-            .map(|_track| {
-                Arc::new(RemoteTrackPublication {})
-            })
+            .map(|_track| Arc::new(RemoteTrackPublication {}))
             .collect()
     }
 
@@ -495,7 +493,7 @@ impl Drop for Room {
 pub struct LocalTrackPublication;
 
 impl LocalTrackPublication {
-    pub fn set_mute(&self, _mute: bool)  -> impl Future<Output = Result<()>> {
+    pub fn set_mute(&self, _mute: bool) -> impl Future<Output = Result<()>> {
         async { Ok(()) }
     }
 }

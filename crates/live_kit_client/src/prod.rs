@@ -326,7 +326,10 @@ impl Room {
         }
     }
 
-    pub fn remote_audio_track_publications(&self, participant_id: &str) -> Vec<Arc<RemoteTrackPublication>> {
+    pub fn remote_audio_track_publications(
+        &self,
+        participant_id: &str,
+    ) -> Vec<Arc<RemoteTrackPublication>> {
         unsafe {
             let tracks = LKRoomAudioTrackPublicationsForRemoteParticipant(
                 self.native_room,
@@ -347,7 +350,6 @@ impl Room {
             }
         }
     }
-
 
     pub fn remote_audio_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteAudioTrackUpdate> {
         let (tx, rx) = mpsc::unbounded();
@@ -629,7 +631,6 @@ impl Drop for RemoteTrackPublication {
     }
 }
 
-
 #[derive(Debug)]
 pub struct RemoteAudioTrack {
     _native_track: *const c_void,
@@ -658,15 +659,11 @@ impl RemoteAudioTrack {
     }
 
     pub fn enable(&self) -> impl Future<Output = Result<()>> {
-        async {
-            Ok(())
-        }
+        async { Ok(()) }
     }
 
     pub fn disable(&self) -> impl Future<Output = Result<()>> {
-        async {
-            Ok(())
-        }
+        async { Ok(()) }
     }
 }
 
