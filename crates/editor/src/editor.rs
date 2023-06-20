@@ -2635,6 +2635,7 @@ impl Editor {
                             Some(InlayHintQuery {
                                 buffer_id,
                                 buffer_version: buffer.read(cx).version(),
+                                cache_version: self.inlay_hint_cache.version(),
                                 excerpt_id,
                             })
                         } else {
@@ -2660,6 +2661,7 @@ impl Editor {
                         InlayHintQuery {
                             buffer_id: buffer.remote_id(),
                             buffer_version: buffer.version(),
+                            cache_version: self.inlay_hint_cache.version(),
                             excerpt_id,
                         }
                     })

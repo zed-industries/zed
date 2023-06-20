@@ -355,8 +355,7 @@ impl InlayMap {
             let mut cursor = snapshot.transforms.cursor::<(usize, InlayOffset)>();
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
-                new_transforms
-                    .push_tree(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
+                new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     if cursor.end(&()).0 == buffer_edit.old.start {
                         new_transforms.push(Transform::Isomorphic(transform.clone()), &());
@@ -437,7 +436,7 @@ impl InlayMap {
                 }
             }
 
-            new_transforms.push_tree(cursor.suffix(&()), &());
+            new_transforms.append(cursor.suffix(&()), &());
             if new_transforms.first().is_none() {
                 new_transforms.push(Transform::Isomorphic(Default::default()), &());
             }

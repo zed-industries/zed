@@ -10,7 +10,7 @@ use gpui::{Task, ViewContext};
 use log::error;
 use project::{InlayHint, InlayHintKind};
 
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use util::post_inc;
 
 #[derive(Debug)]
@@ -37,6 +37,7 @@ struct BufferHints<H> {
 pub struct InlayHintQuery {
     pub buffer_id: u64,
     pub buffer_version: Global,
+    pub cache_version: usize,
     pub excerpt_id: ExcerptId,
 }
 
@@ -107,7 +108,6 @@ impl InlayHintCache {
                             }
                         {
                             let inlay_hint_cache = &mut editor.inlay_hint_cache.snapshot;
-                            dbg!(inlay_hint_cache.version,);
                             inlay_hint_cache.version += 1;
                             for (new_buffer_id, new_buffer_inlays) in add_to_cache {
                                 let cached_buffer_hints = inlay_hint_cache
@@ -179,7 +179,6 @@ impl InlayHintCache {
                                 to_insert,
                             } = splice;
                             if !to_remove.is_empty() || !to_insert.is_empty() {
-                                dbg!("+++", to_remove.len(), to_insert.len());
                                 editor.splice_inlay_hints(to_remove, to_insert, cx)
                             }
                         }
@@ -253,7 +252,7 @@ impl InlayHintCache {
         let conflicts_with_cache = conflicts_invalidate_cache
             && queries.iter().any(|update_query| {
                 let Some(cached_buffer_hints) = self.snapshot.hints_in_buffers.get(&update_query.buffer_id)
-                else { return false };
+                    else { return false };
                 if cached_buffer_hints
                     .buffer_version
                     .changed_since(&update_query.buffer_version)
@@ -276,12 +275,6 @@ impl InlayHintCache {
             .filter_map(|query| {
                 let Some(cached_buffer_hints) = self.snapshot.hints_in_buffers.get(&query.buffer_id)
                     else { return Some(query) };
-                if cached_buffer_hints
-                    .buffer_version
-                    .changed_since(&query.buffer_version)
-                {
-                    return None;
-                }
                 if conflicts_with_cache
                     || !cached_buffer_hints
                         .hints_per_excerpt
@@ -295,44 +288,51 @@ impl InlayHintCache {
             .fold(
                 HashMap::<
                     u64,
-                    (
-                        Global,
-                        HashMap<
-                            ExcerptId,
+                    HashMap<
+                        ExcerptId,
+                        (
+                            usize,
                             Task<anyhow::Result<(InlayHintQuery, Option<Vec<InlayHint>>)>>,
-                        >,
-                    ),
+                        ),
+                    >,
                 >::default(),
                 |mut queries_per_buffer, new_query| {
-                    let (current_verison, excerpt_queries) =
-                        queries_per_buffer.entry(new_query.buffer_id).or_default();
-
-                    if new_query.buffer_version.changed_since(current_verison) {
-                        *current_verison = new_query.buffer_version.clone();
-                        *excerpt_queries = HashMap::from_iter([(
-                            new_query.excerpt_id,
-                            hints_fetch_task(new_query, cx),
-                        )]);
-                    } else if !current_verison.changed_since(&new_query.buffer_version) {
-                        excerpt_queries
-                            .insert(new_query.excerpt_id, hints_fetch_task(new_query, cx));
-                    }
+                    match queries_per_buffer
+                        .entry(new_query.buffer_id)
+                        .or_default()
+                        .entry(new_query.excerpt_id)
+                    {
+                        hash_map::Entry::Occupied(mut o) => {
+                            let (old_cache_verison, _) = o.get_mut();
+                            if *old_cache_verison <= new_query.cache_version {
+                                let _old_task = o.insert((
+                                    new_query.cache_version,
+                                    hints_fetch_task(new_query, cx),
+                                ));
+                            }
+                        }
+                        hash_map::Entry::Vacant(v) => {
+                            v.insert((new_query.cache_version, hints_fetch_task(new_query, cx)));
+                        }
+                    };
 
                     queries_per_buffer
                 },
             );
 
-        for (queried_buffer, (buffer_version, excerpt_queries)) in queries_per_buffer {
+        for (queried_buffer, excerpt_queries) in queries_per_buffer {
             self.hint_updates_tx
                 .send_blocking(HintsUpdate {
                     multi_buffer_snapshot: multi_buffer_snapshot.clone(),
                     visible_inlays: current_inlays.clone(),
                     cache: self.snapshot(),
                     kind: HintsUpdateKind::BufferUpdate {
-                        invalidate_cache: conflicts_with_cache,
+                        conflicts_with_cache,
                         buffer_id: queried_buffer,
-                        buffer_version,
-                        excerpt_queries,
+                        excerpt_queries: excerpt_queries
+                            .into_iter()
+                            .map(|(excerpt_id, (_, tasks))| (excerpt_id, tasks))
+                            .collect(),
                     },
                 })
                 .ok();
@@ -343,6 +343,10 @@ impl InlayHintCache {
     // Instead, use `Box`/`Arc`/`Rc`?
     fn snapshot(&self) -> CacheSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn version(&self) -> usize {
+        self.snapshot.version
     }
 }
 
@@ -367,11 +371,20 @@ enum HintsUpdateKind {
     },
     BufferUpdate {
         buffer_id: u64,
-        buffer_version: Global,
         excerpt_queries:
             HashMap<ExcerptId, Task<anyhow::Result<(InlayHintQuery, Option<Vec<InlayHint>>)>>>,
-        invalidate_cache: bool,
+        conflicts_with_cache: bool,
     },
+}
+
+impl HintsUpdateKind {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Clean => "Clean",
+            Self::AllowedHintKindsChanged { .. } => "AllowedHintKindsChanged",
+            Self::BufferUpdate { .. } => "BufferUpdate",
+        }
+    }
 }
 
 enum UpdateResult {
@@ -389,52 +402,45 @@ enum UpdateResult {
 }
 
 impl HintsUpdate {
-    fn merge(&mut self, mut other: Self) -> Result<(), Self> {
-        match (&mut self.kind, &mut other.kind) {
+    fn merge(&mut self, mut new: Self) -> Result<(), Self> {
+        match (&mut self.kind, &mut new.kind) {
             (HintsUpdateKind::Clean, HintsUpdateKind::Clean) => return Ok(()),
             (
                 HintsUpdateKind::AllowedHintKindsChanged { .. },
                 HintsUpdateKind::AllowedHintKindsChanged { .. },
             ) => {
-                *self = other;
+                *self = new;
                 return Ok(());
             }
             (
                 HintsUpdateKind::BufferUpdate {
                     buffer_id: old_buffer_id,
-                    buffer_version: old_buffer_version,
                     excerpt_queries: old_excerpt_queries,
                     ..
                 },
                 HintsUpdateKind::BufferUpdate {
                     buffer_id: new_buffer_id,
-                    buffer_version: new_buffer_version,
                     excerpt_queries: new_excerpt_queries,
-                    invalidate_cache: new_invalidate_cache,
+                    conflicts_with_cache: new_conflicts_with_cache,
+                    ..
                 },
             ) => {
                 if old_buffer_id == new_buffer_id {
-                    if new_buffer_version.changed_since(old_buffer_version) {
-                        *self = other;
-                        return Ok(());
-                    } else if old_buffer_version.changed_since(new_buffer_version) {
-                        return Ok(());
-                    } else if *new_invalidate_cache {
-                        *self = other;
-                        return Ok(());
-                    } else {
-                        let old_inlays = self
-                            .visible_inlays
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect::<Vec<_>>();
-                        let new_inlays = other
-                            .visible_inlays
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect::<Vec<_>>();
-                        if old_inlays == new_inlays {
-                            old_excerpt_queries.extend(new_excerpt_queries.drain());
+                    match self.cache.version.cmp(&new.cache.version) {
+                        cmp::Ordering::Less => {
+                            *self = new;
+                            return Ok(());
+                        }
+                        cmp::Ordering::Equal => {
+                            if *new_conflicts_with_cache {
+                                *self = new;
+                                return Ok(());
+                            } else {
+                                old_excerpt_queries.extend(new_excerpt_queries.drain());
+                                return Ok(());
+                            }
+                        }
+                        cmp::Ordering::Greater => {
                             return Ok(());
                         }
                     }
@@ -443,7 +449,7 @@ impl HintsUpdate {
             _ => {}
         }
 
-        Err(other)
+        Err(new)
     }
 
     async fn run(self, result_sender: smol::channel::Sender<UpdateResult>) {
@@ -487,8 +493,7 @@ impl HintsUpdate {
             HintsUpdateKind::BufferUpdate {
                 buffer_id,
                 excerpt_queries,
-                invalidate_cache,
-                ..
+                conflicts_with_cache,
             } => {
                 let mut task_query = excerpt_queries
                     .into_iter()
@@ -507,7 +512,7 @@ impl HintsUpdate {
                                     &self.cache,
                                     query,
                                     new_hints,
-                                    invalidate_cache,
+                                    conflicts_with_cache,
                                 ) {
                                     result_sender
                                         .send(hint_update_result)
@@ -527,13 +532,15 @@ impl HintsUpdate {
 
 fn spawn_hints_update_loop(
     hint_updates_rx: smol::channel::Receiver<HintsUpdate>,
-    update_results_tx: smol::channel::Sender<UpdateResult>,
+    update_results_tx: smol::channel::Sender<(usize, UpdateResult)>,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
     cx.background()
         .spawn(async move {
             let mut update = None::<HintsUpdate>;
             let mut next_update = None::<HintsUpdate>;
+            let mut latest_cache_versions_queried = HashMap::<&'static str, usize>::default();
+            let mut latest_cache_versions_queried_for_excerpts = HashMap::<u64, HashMap<ExcerptId, usize>>::default();
             loop {
                 if update.is_none() {
                     match hint_updates_rx.recv().await {
@@ -567,31 +574,73 @@ fn spawn_hints_update_loop(
                     }
                 }
 
-                if let Some(update) = update.take() {
-                    let (run_tx, run_rx) = smol::channel::unbounded();
-                    let run_version = update.cache.version;
-                    dbg!(zz, run_version);
-                    let mut update_handle = std::pin::pin!(update.run(run_tx).fuse());
-                    loop {
-                        futures::select_biased! {
-                            update_result = run_rx.recv().fuse() => {
-                                match update_result {
-                                    Ok(update_result) => {
-                                        if let Err(_) = update_results_tx.send((run_version, update_result)).await {
+                if let Some(mut update) = update.take() {
+                    let new_cache_version = update.cache.version;
+                    let should_update = if let HintsUpdateKind::BufferUpdate { buffer_id, excerpt_queries, conflicts_with_cache } = &mut update.kind {
+                        let buffer_cache_versions = latest_cache_versions_queried_for_excerpts.entry(*buffer_id).or_default();
+                        *excerpt_queries = excerpt_queries.drain().filter(|(excerpt_id, _)| {
+                            match buffer_cache_versions.entry(*excerpt_id) {
+                                hash_map::Entry::Occupied(mut o) => {
+                                    let old_version = *o.get();
+                                    match old_version.cmp(&new_cache_version) {
+                                        cmp::Ordering::Less => {
+                                            o.insert(new_cache_version);
+                                            true
+                                        },
+                                        cmp::Ordering::Equal => *conflicts_with_cache || update.visible_inlays.is_empty(),
+                                        cmp::Ordering::Greater => false,
+                                    }
+
+                                },
+                                hash_map::Entry::Vacant(v) => {
+                                    v.insert(new_cache_version);
+                                    true
+                                },
+                            }
+                        }).collect();
+
+                        !excerpt_queries.is_empty()
+                    } else {
+                        match latest_cache_versions_queried.entry(update.kind.name()) {
+                            hash_map::Entry::Occupied(mut o) => {
+                                let old_version = *o.get();
+                                if old_version < new_cache_version {
+                                    o.insert(new_cache_version);
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                            hash_map::Entry::Vacant(v) => {
+                                v.insert(new_cache_version);
+                                true
+                            },
+                        }
+                    };
+                    if should_update {
+                        let (run_tx, run_rx) = smol::channel::unbounded();
+                        let mut update_handle = std::pin::pin!(update.run(run_tx).fuse());
+                        loop {
+                            futures::select_biased! {
+                                update_result = run_rx.recv().fuse() => {
+                                    match update_result {
+                                        Ok(update_result) => {
+                                            if let Err(_) = update_results_tx.send((new_cache_version, update_result)).await {
+                                                return
+                                            }
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                _ = &mut update_handle => {
+                                    while let Ok(update_result) = run_rx.try_recv() {
+                                        if let Err(_) = update_results_tx.send((new_cache_version, update_result)).await {
                                             return
                                         }
                                     }
-                                    Err(_) => break,
-                                }
+                                    break
+                                },
                             }
-                            _ = &mut update_handle => {
-                                while let Ok(update_result) = run_rx.try_recv() {
-                                    if let Err(_) = update_results_tx.send((run_version, update_result)).await {
-                                        return
-                                    }
-                                }
-                                break
-                            },
                         }
                     }
                 }

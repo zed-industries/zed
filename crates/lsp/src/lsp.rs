@@ -432,7 +432,6 @@ impl LanguageServer {
                         content_format: Some(vec![MarkupKind::Markdown]),
                         ..Default::default()
                     }),
-                    // TODO kb add the resolution at least
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: None,
                         dynamic_registration: Some(false),

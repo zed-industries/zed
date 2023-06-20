@@ -1798,7 +1798,6 @@ impl LspCommand for InlayHints {
             lsp::OneOf::Left(enabled) => *enabled,
             lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
                 lsp::InlayHintServerCapabilities::Options(_) => true,
-                // TODO kb there could be dynamic registrations, resolve options
                 lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
             },
         }
