@@ -1,10 +1,18 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, SymbolKind};
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -17,6 +25,37 @@ pub struct ElixirLspAdapter;
 impl LspAdapter for ElixirLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("elixir-ls".into())
+    }
+
+    fn will_start_server(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str = "Could not run the elixir language server, `elixir-ls`, because `elixir` was not found.";
+
+        let delegate = delegate.clone();
+        Some(cx.spawn(|mut cx| async move {
+            let elixir_output = smol::process::Command::new("elixir")
+                .args(["--version"])
+                .output()
+                .await;
+            if elixir_output.is_err() {
+                if DID_SHOW_NOTIFICATION
+                    .compare_exchange(false, true, SeqCst, SeqCst)
+                    .is_ok()
+                {
+                    cx.update(|cx| {
+                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                    })
+                }
+                return Err(anyhow!("cannot run elixir-ls"));
+            }
+
+            Ok(())
+        }))
     }
 
     async fn fetch_latest_server_version(

@@ -12,7 +12,10 @@ use std::{
     ops::Range,
     path::PathBuf,
     str,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
 use util::{fs::remove_matching, github::latest_github_release, ResultExt};
 
@@ -48,19 +51,29 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
-    fn will_fetch_server_binary(
+    fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Option<Task<Result<()>>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str =
+            "Could not install the Go language server `gopls`, because `go` was not found.";
+
         let delegate = delegate.clone();
         Some(cx.spawn(|mut cx| async move {
             let install_output = process::Command::new("go").args(["version"]).output().await;
             if install_output.is_err() {
-                cx.update(|cx| {
-                    delegate
-                        .show_notification("go is not installed. gopls will not be available.", cx);
-                })
+                if DID_SHOW_NOTIFICATION
+                    .compare_exchange(false, true, SeqCst, SeqCst)
+                    .is_ok()
+                {
+                    cx.update(|cx| {
+                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                    })
+                }
+                return Err(anyhow!("cannot install gopls"));
             }
             Ok(())
         }))

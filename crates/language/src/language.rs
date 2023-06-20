@@ -130,12 +130,20 @@ impl CachedLspAdapter {
         self.adapter.fetch_latest_server_version(delegate).await
     }
 
-    pub fn will_fetch_server_binary(
+    pub fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Option<Task<Result<()>>> {
-        self.adapter.will_fetch_server_binary(delegate, cx)
+        self.adapter.will_fetch_server(delegate, cx)
+    }
+
+    pub fn will_start_server(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        self.adapter.will_start_server(delegate, cx)
     }
 
     pub async fn fetch_server_binary(
@@ -212,7 +220,15 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
-    fn will_fetch_server_binary(
+    fn will_fetch_server(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        None
+    }
+
+    fn will_start_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: &mut AsyncAppContext,
@@ -891,7 +907,7 @@ impl LanguageRegistry {
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
 
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(|mut cx| async move {
             login_shell_env_loaded.await;
 
             let entry = this
@@ -903,7 +919,7 @@ impl LanguageRegistry {
                         get_binary(
                             adapter.clone(),
                             language.clone(),
-                            delegate,
+                            delegate.clone(),
                             download_dir,
                             lsp_binary_statuses,
                             cx,
@@ -914,6 +930,10 @@ impl LanguageRegistry {
                 })
                 .clone();
             let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
+
+            if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
+                task.await?;
+            }
 
             let server = lsp::LanguageServer::new(
                 server_id,
@@ -996,7 +1016,7 @@ async fn get_binary(
             .context("failed to create container directory")?;
     }
 
-    if let Some(task) = adapter.will_fetch_server_binary(&delegate, &mut cx) {
+    if let Some(task) = adapter.will_fetch_server(&delegate, &mut cx) {
         task.await?;
     }
 
