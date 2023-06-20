@@ -238,7 +238,7 @@ impl Room {
                     }
 
                     Ok(room)
-                },
+                }
                 Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
             }
         })
@@ -266,6 +266,14 @@ impl Room {
             room.update(&mut cx, |room, cx| {
                 room.leave_when_empty = true;
                 room.apply_room_update(room_proto, cx)?;
+
+                if option_env!("START_MIC").is_some()
+                    || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
+                {
+                    let share_mic = room.share_mic(cx);
+                    cx.background().spawn(share_mic).detach_and_log_err(cx);
+                }
+
                 anyhow::Ok(())
             })?;
             Ok(room)
@@ -1001,19 +1009,17 @@ impl Room {
     }
 
     pub fn is_muted(&self) -> Option<bool> {
-        self.live_kit.as_ref().and_then(|live_kit| {
-            match &live_kit.microphone_track {
+        self.live_kit
+            .as_ref()
+            .and_then(|live_kit| match &live_kit.microphone_track {
                 LocalTrack::None => None,
                 LocalTrack::Pending { muted, .. } => Some(*muted),
                 LocalTrack::Published { muted, .. } => Some(*muted),
-            }
-        })
+            })
     }
 
     pub fn is_deafened(&self) -> Option<bool> {
-        self.live_kit.as_ref().map(|live_kit| {
-            live_kit.deafened
-        })
+        self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
     pub fn share_mic(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
