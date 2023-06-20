@@ -822,9 +822,9 @@ impl<T> Toggleable<T> {
     }
     pub fn in_state(&self, active: bool) -> &T {
         if active {
-            &self.inactive
-        } else {
             &self.active
+        } else {
+            &self.inactive
         }
     }
     pub fn active_state(&self) -> &T {
