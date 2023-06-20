@@ -458,12 +458,6 @@ enum AssistantEvent {
     StreamedCompletion,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct SavedConversationPath {
-    path: PathBuf,
-    had_summary: bool,
-}
-
 #[derive(Default)]
 struct Summary {
     text: String,
@@ -485,7 +479,7 @@ struct Assistant {
     pending_token_count: Task<Option<()>>,
     api_key: Rc<RefCell<Option<String>>>,
     pending_save: Task<Result<()>>,
-    path: Option<SavedConversationPath>,
+    path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1062,15 +1056,6 @@ impl Assistant {
             if let Some(debounce) = debounce {
                 cx.background().timer(debounce).await;
             }
-            let conversation = SavedConversation {
-                zed: "conversation".into(),
-                version: "0.1".into(),
-                messages: this.read_with(&cx, |this, cx| {
-                    this.messages(cx)
-                        .map(|message| message.to_open_ai_message(this.buffer.read(cx)))
-                        .collect()
-                }),
-            };
 
             let (old_path, summary) = this.read_with(&cx, |this, _| {
                 let path = this.path.clone();
@@ -1085,53 +1070,42 @@ impl Assistant {
                 };
                 (path, summary)
             });
-            let mut new_path = None;
-            if let Some(old_path) = old_path.as_ref() {
-                if old_path.had_summary || summary.is_none() {
-                    new_path = Some(old_path.clone());
-                }
-            }
 
-            let new_path = if let Some(new_path) = new_path {
-                new_path
-            } else {
-                let mut path =
-                    CONVERSATIONS_DIR.join(summary.as_deref().unwrap_or("conversation-1"));
+            if let Some(summary) = summary {
+                let conversation = SavedConversation {
+                    zed: "conversation".into(),
+                    version: "0.1".into(),
+                    messages: this.read_with(&cx, |this, cx| {
+                        this.messages(cx)
+                            .map(|message| message.to_open_ai_message(this.buffer.read(cx)))
+                            .collect()
+                    }),
+                };
 
-                while fs.is_file(&path).await {
-                    let file_name = path.file_name().ok_or_else(|| anyhow!("no filename"))?;
-                    let file_name = file_name.to_string_lossy();
+                let path = if let Some(old_path) = old_path {
+                    old_path
+                } else {
+                    let mut discriminant = 1;
+                    let mut new_path;
+                    loop {
+                        new_path = CONVERSATIONS_DIR.join(&format!(
+                            "{} - {}.zed.json",
+                            summary.trim(),
+                            discriminant
+                        ));
+                        if fs.is_file(&new_path).await {
+                            discriminant += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    new_path
+                };
 
-                    if let Some((prefix, suffix)) = file_name.rsplit_once('-') {
-                        let new_version = suffix.parse::<u32>().ok().unwrap_or(1) + 1;
-                        path.set_file_name(format!("{}-{}", prefix, new_version));
-                    };
-                }
-
-                SavedConversationPath {
-                    path,
-                    had_summary: summary.is_some(),
-                }
-            };
-
-            fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
-            fs.atomic_write(
-                new_path.path.clone(),
-                serde_json::to_string(&conversation).unwrap(),
-            )
-            .await?;
-            this.update(&mut cx, |this, _| this.path = Some(new_path.clone()));
-            if let Some(old_path) = old_path {
-                if new_path.path != old_path.path {
-                    fs.remove_file(
-                        &old_path.path,
-                        fs::RemoveOptions {
-                            recursive: false,
-                            ignore_if_not_exists: true,
-                        },
-                    )
+                fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
+                fs.atomic_write(path.clone(), serde_json::to_string(&conversation).unwrap())
                     .await?;
-                }
+                this.update(&mut cx, |this, _| this.path = Some(path));
             }
 
             Ok(())
