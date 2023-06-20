@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
-use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{
+    LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter, LspAdapterDelegate,
+};
 use node_runtime::NodeRuntime;
 use serde_json::json;
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
@@ -16,7 +18,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::{paths, ResultExt};
 
 const SERVER_PATH: &'static str =
@@ -45,7 +46,7 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
@@ -57,8 +58,8 @@ impl LspAdapter for JsonLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -78,7 +79,11 @@ impl LspAdapter for JsonLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

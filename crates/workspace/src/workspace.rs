@@ -553,6 +553,10 @@ impl Workspace {
                     }
                 }
 
+                project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
+                    cx.add_view(|_| MessageNotification::new(message.clone()))
+                }),
+
                 _ => {}
             }
             cx.notify()

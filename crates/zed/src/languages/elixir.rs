@@ -1,16 +1,23 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, SymbolKind};
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
-use util::fs::remove_matching;
-use util::github::latest_github_release;
-use util::http::HttpClient;
-use util::ResultExt;
-
-use util::github::GitHubLspBinaryVersion;
+use std::{
+    any::Any,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+};
+use util::{
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 pub struct ElixirLspAdapter;
 
@@ -20,11 +27,43 @@ impl LspAdapter for ElixirLspAdapter {
         LanguageServerName("elixir-ls".into())
     }
 
+    fn will_start_server(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str = "Could not run the elixir language server, `elixir-ls`, because `elixir` was not found.";
+
+        let delegate = delegate.clone();
+        Some(cx.spawn(|mut cx| async move {
+            let elixir_output = smol::process::Command::new("elixir")
+                .args(["--version"])
+                .output()
+                .await;
+            if elixir_output.is_err() {
+                if DID_SHOW_NOTIFICATION
+                    .compare_exchange(false, true, SeqCst, SeqCst)
+                    .is_ok()
+                {
+                    cx.update(|cx| {
+                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                    })
+                }
+                return Err(anyhow!("cannot run elixir-ls"));
+            }
+
+            Ok(())
+        }))
+    }
+
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
+        let release =
+            latest_github_release("elixir-lsp/elixir-ls", false, delegate.http_client()).await?;
         let asset_name = "elixir-ls.zip";
         let asset = release
             .assets
@@ -41,8 +80,8 @@ impl LspAdapter for ElixirLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("elixir-ls_{}.zip", version.name));
@@ -50,7 +89,8 @@ impl LspAdapter for ElixirLspAdapter {
         let binary_path = version_dir.join("language_server.sh");
 
         if fs::metadata(&binary_path).await.is_err() {
-            let mut response = http
+            let mut response = delegate
+                .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .context("error downloading release")?;
@@ -88,7 +128,11 @@ impl LspAdapter for ElixirLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
