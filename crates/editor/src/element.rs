@@ -1527,7 +1527,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         MouseEventHandler::<JumpIcon, _>::new((*id).into(), cx, |state, _| {
-                            let style = style.jump_icon.style_for(state, false);
+                            let style = style.jump_icon.style_for(state);
                             Svg::new("icons/arrow_up_right_8.svg")
                                 .with_color(style.color)
                                 .constrained()
