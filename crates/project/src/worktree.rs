@@ -1470,7 +1470,7 @@ impl Snapshot {
                     break;
                 }
             }
-            new_entries_by_path.push_tree(cursor.suffix(&()), &());
+            new_entries_by_path.append(cursor.suffix(&()), &());
             new_entries_by_path
         };
 
@@ -2259,7 +2259,7 @@ impl BackgroundScannerState {
             let mut cursor = self.snapshot.entries_by_path.cursor::<TraversalProgress>();
             new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
             removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
-            new_entries.push_tree(cursor.suffix(&()), &());
+            new_entries.append(cursor.suffix(&()), &());
         }
         self.snapshot.entries_by_path = new_entries;
 

@@ -67,7 +67,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
             removed = Some(cursor.item().unwrap().value.clone());
             cursor.next(&());
         }
-        new_tree.push_tree(cursor.suffix(&()), &());
+        new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.0 = new_tree;
         removed
@@ -79,7 +79,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let mut new_tree = cursor.slice(&start, Bias::Left, &());
         cursor.seek(&end, Bias::Left, &());
-        new_tree.push_tree(cursor.suffix(&()), &());
+        new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.0 = new_tree;
     }
@@ -117,7 +117,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
             new_tree.push(updated, &());
             cursor.next(&());
         }
-        new_tree.push_tree(cursor.suffix(&()), &());
+        new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.0 = new_tree;
         result
