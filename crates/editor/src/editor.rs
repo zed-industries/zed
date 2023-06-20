@@ -2613,23 +2613,21 @@ impl Editor {
             return;
         }
 
-        let multi_buffer_handle = self.buffer().clone();
-        let multi_buffer_snapshot = multi_buffer_handle.read(cx).snapshot(cx);
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let current_inlays = self
             .display_map
             .read(cx)
             .current_inlays()
             .cloned()
+            .filter(|inlay| Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id))
             .collect();
         match reason {
             InlayRefreshReason::SettingsChange(new_settings) => self
                 .inlay_hint_cache
-                .spawn_settings_update(multi_buffer_handle, new_settings, current_inlays),
+                .spawn_settings_update(multi_buffer_snapshot, new_settings, current_inlays),
             InlayRefreshReason::Scroll(scrolled_to) => {
-                if let Some(new_query) = self
-                    .excerpt_visible_offsets(&multi_buffer_handle, cx)
-                    .into_iter()
-                    .find_map(|(buffer, _, excerpt_id)| {
+                if let Some(new_query) = self.excerpt_visible_offsets(cx).into_iter().find_map(
+                    |(buffer, _, excerpt_id)| {
                         let buffer_id = scrolled_to.anchor.buffer_id?;
                         if buffer_id == buffer.read(cx).remote_id()
                             && scrolled_to.anchor.excerpt_id == excerpt_id
@@ -2642,20 +2640,19 @@ impl Editor {
                         } else {
                             None
                         }
-                    })
-                {
+                    },
+                ) {
                     self.inlay_hint_cache.spawn_hints_update(
-                        multi_buffer_handle,
+                        multi_buffer_snapshot,
                         vec![new_query],
                         current_inlays,
                         false,
-                        cx,
                     )
                 }
             }
             InlayRefreshReason::VisibleExcerptsChange => {
                 let replacement_queries = self
-                    .excerpt_visible_offsets(&multi_buffer_handle, cx)
+                    .excerpt_visible_offsets(cx)
                     .into_iter()
                     .map(|(buffer, _, excerpt_id)| {
                         let buffer = buffer.read(cx);
@@ -2667,11 +2664,10 @@ impl Editor {
                     })
                     .collect::<Vec<_>>();
                 self.inlay_hint_cache.spawn_hints_update(
-                    multi_buffer_handle,
+                    multi_buffer_snapshot,
                     replacement_queries,
                     current_inlays,
                     true,
-                    cx,
                 )
             }
         };
@@ -2679,10 +2675,9 @@ impl Editor {
 
     fn excerpt_visible_offsets(
         &self,
-        multi_buffer: &ModelHandle<MultiBuffer>,
         cx: &mut ViewContext<'_, '_, Editor>,
     ) -> Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)> {
-        let multi_buffer = multi_buffer.read(cx);
+        let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
             .scroll_manager
