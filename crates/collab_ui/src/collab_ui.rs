@@ -9,9 +9,10 @@ mod notifications;
 mod project_shared_notification;
 mod sharing_status_indicator;
 
-use call::ActiveCall;
+use call::{ActiveCall, Room};
 pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
 use gpui::{actions, AppContext, Task};
+use util::ResultExt;
 use std::sync::Arc;
 use workspace::AppState;
 
@@ -46,20 +47,12 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
 
 pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        let toggle_mut = room.update(cx, |room, cx| {
-            if room.is_sharing_mic() {
-                room.toggle_mute(cx)
-            } else {
-                room.share_mic(cx)
-            }
-        });
-        toggle_mut.detach_and_log_err(cx);
+        room.update(cx, Room::toggle_mute).map(Task::detach).log_err();
     }
 }
 
 pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        let toggle_deafan = room.update(cx, |room, cx| room.toggle_deafen(cx));
-        toggle_deafan.detach_and_log_err(cx);
+        room.update(cx, Room::toggle_deafen).detach_and_log_err(cx);
     }
 }

@@ -84,12 +84,6 @@ extern "C" {
     ) -> *const c_void;
 
     fn LKRemoteAudioTrackGetSid(track: *const c_void) -> CFStringRef;
-    // fn LKRemoteAudioTrackStart(
-    //     track: *const c_void,
-    //     callback: extern "C" fn(*mut c_void, bool),
-    //     callback_data: *mut c_void
-    // );
-
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
     fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
@@ -103,6 +97,17 @@ extern "C" {
     );
     fn LKCreateScreenShareTrackForDisplay(display: *const c_void) -> *const c_void;
     fn LKLocalAudioTrackCreateTrack() -> *const c_void;
+
+    fn LKLocalTrackPublicationMute(
+        publication: *const c_void,
+        on_complete: extern "C" fn(callback_data: *mut c_void, error: CFStringRef),
+        callback_data: *mut c_void,
+    );
+    fn LKLocalTrackPublicationUnmute(
+        publication: *const c_void,
+        on_complete: extern "C" fn(callback_data: *mut c_void, error: CFStringRef),
+        callback_data: *mut c_void,
+    );
 }
 
 pub type Sid = String;
@@ -524,6 +529,56 @@ impl Drop for LocalVideoTrack {
 }
 
 pub struct LocalTrackPublication(*const c_void);
+
+impl LocalTrackPublication {
+    pub fn mute(&self) -> impl Future<Output = Result<()>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+
+        extern "C" fn complete_callback(callback_data: *mut c_void, error: CFStringRef) {
+            let tx = unsafe { Box::from_raw(callback_data as *mut oneshot::Sender<Result<()>>) };
+            if error.is_null() {
+                tx.send(Ok(())).ok();
+            } else {
+                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
+                tx.send(Err(anyhow!(error))).ok();
+            }
+        }
+
+        unsafe {
+            LKLocalTrackPublicationMute(
+                self.0,
+                complete_callback,
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+            )
+        }
+
+        async move { rx.await.unwrap() }
+    }
+
+    pub fn unmute(&self) -> impl Future<Output = Result<()>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+
+        extern "C" fn complete_callback(callback_data: *mut c_void, error: CFStringRef) {
+            let tx = unsafe { Box::from_raw(callback_data as *mut oneshot::Sender<Result<()>>) };
+            if error.is_null() {
+                tx.send(Ok(())).ok();
+            } else {
+                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
+                tx.send(Err(anyhow!(error))).ok();
+            }
+        }
+
+        unsafe {
+            LKLocalTrackPublicationUnmute(
+                self.0,
+                complete_callback,
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+            )
+        }
+
+        async move { rx.await.unwrap() }
+    }
+}
 
 impl Drop for LocalTrackPublication {
     fn drop(&mut self) {

@@ -475,6 +475,20 @@ impl Drop for Room {
 
 pub struct LocalTrackPublication;
 
+impl LocalTrackPublication {
+    pub fn mute(&self) -> impl Future<Output = Result<()>> {
+        async {
+            Ok(())
+        }
+    }
+
+    pub fn unmute(&self) -> impl Future<Output = Result<()>> {
+        async {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalVideoTrack {
     frames_rx: async_broadcast::Receiver<Frame>,

@@ -154,8 +154,8 @@ impl Room {
 
             Some(LiveKitRoom {
                 room,
-                screen_track: Track::None,
-                microphone_track: Track::None,
+                screen_track: LocalTrack::None,
+                microphone_track: LocalTrack::None,
                 next_publish_id: 0,
                 _maintain_room,
                 _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
@@ -985,13 +985,13 @@ impl Room {
 
     pub fn is_screen_sharing(&self) -> bool {
         self.live_kit.as_ref().map_or(false, |live_kit| {
-            !matches!(live_kit.screen_track, Track::None)
+            !matches!(live_kit.screen_track, LocalTrack::None)
         })
     }
 
     pub fn is_sharing_mic(&self) -> bool {
         self.live_kit.as_ref().map_or(false, |live_kit| {
-            !matches!(live_kit.microphone_track, Track::None)
+            !matches!(live_kit.microphone_track, LocalTrack::None)
         })
     }
 
@@ -1004,7 +1004,10 @@ impl Room {
 
         let publish_id = if let Some(live_kit) = self.live_kit.as_mut() {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
-            live_kit.microphone_track = Track::Pending { publish_id };
+            live_kit.microphone_track = LocalTrack::Pending {
+                publish_id,
+                muted: false,
+            };
             cx.notify();
             publish_id
         } else {
@@ -1034,13 +1037,14 @@ impl Room {
                         .as_mut()
                         .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
 
-                    let canceled = if let Track::Pending {
+                    let (canceled, muted) = if let LocalTrack::Pending {
                         publish_id: cur_publish_id,
+                        muted
                     } = &live_kit.microphone_track
                     {
-                        *cur_publish_id != publish_id
+                        (*cur_publish_id != publish_id, *muted)
                     } else {
-                        true
+                        (true, false)
                     };
 
                     match publication {
@@ -1048,7 +1052,13 @@ impl Room {
                             if canceled {
                                 live_kit.room.unpublish_track(publication);
                             } else {
-                                live_kit.microphone_track = Track::Published(publication);
+                                if muted {
+                                    cx.background().spawn(publication.mute()).detach();
+                                }
+                                live_kit.microphone_track = LocalTrack::Published {
+                                    track_publication: publication,
+                                    muted
+                                };
                                 cx.notify();
                             }
                             Ok(())
@@ -1057,7 +1067,7 @@ impl Room {
                             if canceled {
                                 Ok(())
                             } else {
-                                live_kit.microphone_track = Track::None;
+                                live_kit.microphone_track = LocalTrack::None;
                                 cx.notify();
                                 Err(error)
                             }
@@ -1076,7 +1086,10 @@ impl Room {
 
         let (displays, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
-            live_kit.screen_track = Track::Pending { publish_id };
+            live_kit.screen_track = LocalTrack::Pending {
+                publish_id,
+                muted: false,
+            };
             cx.notify();
             (live_kit.room.display_sources(), publish_id)
         } else {
@@ -1110,13 +1123,14 @@ impl Room {
                         .as_mut()
                         .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
 
-                    let canceled = if let Track::Pending {
+                    let (canceled, muted) = if let LocalTrack::Pending {
                         publish_id: cur_publish_id,
+                        muted,
                     } = &live_kit.screen_track
                     {
-                        *cur_publish_id != publish_id
+                        (*cur_publish_id != publish_id, *muted)
                     } else {
-                        true
+                        (true, false)
                     };
 
                     match publication {
@@ -1124,7 +1138,13 @@ impl Room {
                             if canceled {
                                 live_kit.room.unpublish_track(publication);
                             } else {
-                                live_kit.screen_track = Track::Published(publication);
+                                if muted {
+                                    cx.background().spawn(publication.mute()).detach();
+                                }
+                                live_kit.screen_track = LocalTrack::Published {
+                                    track_publication: publication,
+                                    muted,
+                                };
                                 cx.notify();
                             }
                             Ok(())
@@ -1133,7 +1153,7 @@ impl Room {
                             if canceled {
                                 Ok(())
                             } else {
-                                live_kit.screen_track = Track::None;
+                                live_kit.screen_track = LocalTrack::None;
                                 cx.notify();
                                 Err(error)
                             }
@@ -1143,13 +1163,33 @@ impl Room {
         })
     }
 
-    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        // https://docs.livekit.io/client/publish/
-        // Should be acessible from local participant / publication
-        todo!();
+    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+        if let Some(live_kit) = self.live_kit.as_mut() {
+            match &mut live_kit.microphone_track {
+                LocalTrack::None => Err(anyhow!("microphone was not shared")),
+                LocalTrack::Pending { muted, .. } => {
+                    *muted = !*muted;
+                    Ok(Task::Ready(Some(Ok(()))))
+                }
+                LocalTrack::Published {
+                    track_publication,
+                    muted,
+                } => {
+                    *muted = !*muted;
+
+                    if *muted {
+                        Ok(cx.background().spawn(track_publication.mute()))
+                    } else {
+                        Ok(cx.background().spawn(track_publication.unmute()))
+                    }
+                }
+            }
+        } else {
+            Err(anyhow!("LiveKit not started"))
+        }
     }
 
-    pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn toggle_deafen(&mut self, _cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         // iterate through publications and mute (?????)
         todo!();
     }
@@ -1164,13 +1204,15 @@ impl Room {
             .as_mut()
             .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
         match mem::take(&mut live_kit.screen_track) {
-            Track::None => Err(anyhow!("screen was not shared")),
-            Track::Pending { .. } => {
+            LocalTrack::None => Err(anyhow!("screen was not shared")),
+            LocalTrack::Pending { .. } => {
                 cx.notify();
                 Ok(())
             }
-            Track::Published(track) => {
-                live_kit.room.unpublish_track(track);
+            LocalTrack::Published {
+                track_publication, ..
+            } => {
+                live_kit.room.unpublish_track(track_publication);
                 cx.notify();
                 Ok(())
             }
@@ -1189,20 +1231,26 @@ impl Room {
 
 struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
-    screen_track: Track,
-    microphone_track: Track,
+    screen_track: LocalTrack,
+    microphone_track: LocalTrack,
     next_publish_id: usize,
     _maintain_room: Task<()>,
     _maintain_tracks: [Task<()>; 2],
 }
 
-enum Track {
+enum LocalTrack {
     None,
-    Pending { publish_id: usize },
-    Published(LocalTrackPublication),
+    Pending {
+        publish_id: usize,
+        muted: bool,
+    },
+    Published {
+        track_publication: LocalTrackPublication,
+        muted: bool,
+    },
 }
 
-impl Default for Track {
+impl Default for LocalTrack {
     fn default() -> Self {
         Self::None
     }

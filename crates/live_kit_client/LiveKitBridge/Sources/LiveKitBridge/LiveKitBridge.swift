@@ -201,19 +201,6 @@ public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer)
     return Unmanaged.passRetained(track).toOpaque()
 }
 
-@_cdecl("LKRemoteAudioTrackStart")
-public func LKRemoteAudioTrackStart(track: UnsafeRawPointer, onStart: @escaping @convention(c) (UnsafeRawPointer, Bool) -> Void, callbackData: UnsafeRawPointer) {
-    let track = Unmanaged<Track>.fromOpaque(track).takeUnretainedValue() as! RemoteAudioTrack
-
-    track.start().then { success in
-        onStart(callbackData, success)
-    }
-    .catch { _ in
-        onStart(callbackData, false)
-    }
-}
-
-
 @_cdecl("LKVideoRendererCreate")
 public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(LKVideoRenderer(data: data, onFrame: onFrame, onDrop: onDrop)).toOpaque()
@@ -245,5 +232,36 @@ public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @conven
         callback(data, displaySources as CFArray, nil)
     }.catch { error in
         callback(data, nil, error.localizedDescription as CFString)
+    }
+}
+
+@_cdecl("LKLocalTrackPublicationMute")
+public func LKLocalTrackPublicationMute(
+    publication: UnsafeRawPointer,
+    on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
+    callback_data: UnsafeRawPointer
+) {
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    
+    publication.mute().then {
+        on_complete(callback_data, nil)
+    }.catch { error in
+        on_complete(callback_data, error.localizedDescription as CFString)
+    }
+
+}
+
+@_cdecl("LKLocalTrackPublicationUnmute")
+public func LKLocalTrackPublicationUnmute(
+    publication: UnsafeRawPointer,
+    on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
+    callback_data: UnsafeRawPointer
+) {
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    
+    publication.unmute().then {
+        on_complete(callback_data, nil)
+    }.catch { error in
+        on_complete(callback_data, error.localizedDescription as CFString)
     }
 }
