@@ -2647,6 +2647,7 @@ impl Editor {
                         vec![new_query],
                         current_inlays,
                         false,
+                        cx,
                     )
                 }
             }
@@ -2668,6 +2669,7 @@ impl Editor {
                     replacement_queries,
                     current_inlays,
                     true,
+                    cx,
                 )
             }
         };
