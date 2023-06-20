@@ -474,6 +474,12 @@ impl InlayMap {
                 position: properties.position,
                 text: properties.text.into(),
             };
+
+            // Avoid inserting empty inlays.
+            if inlay.text.is_empty() {
+                continue;
+            }
+
             self.inlays_by_id.insert(inlay.id, inlay.clone());
             match self
                 .inlays
@@ -521,7 +527,11 @@ impl InlayMap {
             if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                let len = rng.gen_range(1..=5);
+                let len = if rng.gen_bool(0.01) {
+                    0
+                } else {
+                    rng.gen_range(1..=5)
+                };
                 let text = util::RandomCharIter::new(&mut *rng)
                     .filter(|ch| *ch != '\r')
                     .take(len)
