@@ -114,6 +114,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "tiktoken-rs",
  "util",
