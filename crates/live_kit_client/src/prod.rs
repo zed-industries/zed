@@ -259,7 +259,7 @@ impl Room {
                 Box::into_raw(Box::new(tx)) as *mut c_void,
             );
         }
-        async { rx.await.unwrap().context("error publishing video track") }
+        async { rx.await.unwrap().context("error publishing audio track") }
     }
 
     pub fn unpublish_track(&self, publication: LocalTrackPublication) {

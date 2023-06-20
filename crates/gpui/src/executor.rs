@@ -968,9 +968,9 @@ impl<T> Task<T> {
 impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
     #[track_caller]
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
+        let caller = Location::caller();
         cx.spawn(|_| async move {
             if let Err(err) = self.await {
-                let caller = Location::caller();
                 log::error!("{}:{}: {:#}", caller.file(), caller.line(), err);
             }
         })

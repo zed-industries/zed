@@ -220,15 +220,6 @@ impl Room {
                 None
             };
 
-            if option_env!("START_MIC").is_some()
-                || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
-            {
-                let share_mic = room.update(&mut cx, |room, cx| room.share_mic(cx));
-                cx.update(|cx| {
-                    cx.background().spawn(share_mic).detach_and_log_err(cx);
-                });
-            }
-
             match room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
@@ -236,7 +227,18 @@ impl Room {
                 })
                 .await
             {
-                Ok(()) => Ok(room),
+                Ok(()) => {
+                    if option_env!("START_MIC").is_some()
+                        || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
+                    {
+                        let share_mic = room.update(&mut cx, |room, cx| room.share_mic(cx));
+                        cx.update(|cx| {
+                            cx.background().spawn(share_mic).detach_and_log_err(cx);
+                        });
+                    }
+
+                    Ok(room)
+                },
                 Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
             }
         })
@@ -1201,7 +1203,7 @@ impl Room {
                     .room
                     .remote_audio_track_publications(&participant.user.id.to_string())
                 {
-                    tasks.push(cx.background().spawn(track.set_enabled(live_kit.deafened)));
+                    tasks.push(cx.background().spawn(track.set_enabled(!live_kit.deafened)));
                 }
             }
 
