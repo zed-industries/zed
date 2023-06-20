@@ -464,12 +464,18 @@ struct SavedConversationPath {
     had_summary: bool,
 }
 
+#[derive(Default)]
+struct Summary {
+    text: String,
+    done: bool,
+}
+
 struct Assistant {
     buffer: ModelHandle<Buffer>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
-    summary: Option<String>,
+    summary: Option<Summary>,
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -954,11 +960,21 @@ impl Assistant {
                             if let Some(choice) = message.choices.pop() {
                                 let text = choice.delta.content.unwrap_or_default();
                                 this.update(&mut cx, |this, cx| {
-                                    this.summary.get_or_insert(String::new()).push_str(&text);
+                                    this.summary
+                                        .get_or_insert(Default::default())
+                                        .text
+                                        .push_str(&text);
                                     cx.emit(AssistantEvent::SummaryChanged);
                                 });
                             }
                         }
+
+                        this.update(&mut cx, |this, cx| {
+                            if let Some(summary) = this.summary.as_mut() {
+                                summary.done = true;
+                                cx.emit(AssistantEvent::SummaryChanged);
+                            }
+                        });
 
                         anyhow::Ok(())
                     }
@@ -1056,8 +1072,19 @@ impl Assistant {
                 }),
             };
 
-            let (old_path, summary) =
-                this.read_with(&cx, |this, _| (this.path.clone(), this.summary.clone()));
+            let (old_path, summary) = this.read_with(&cx, |this, _| {
+                let path = this.path.clone();
+                let summary = if let Some(summary) = this.summary.as_ref() {
+                    if summary.done {
+                        Some(summary.text.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                (path, summary)
+            });
             let mut new_path = None;
             if let Some(old_path) = old_path.as_ref() {
                 if old_path.had_summary || summary.is_none() {
@@ -1555,7 +1582,8 @@ impl AssistantEditor {
         self.assistant
             .read(cx)
             .summary
-            .clone()
+            .as_ref()
+            .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Context".into())
     }
 }
