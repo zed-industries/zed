@@ -26,7 +26,7 @@ use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset a
 use serde::Deserialize;
 use settings::SettingsStore;
 use std::{
-    borrow::Cow, cell::RefCell, cmp, fmt::Write, io, iter, ops::Range, path::PathBuf, rc::Rc,
+    borrow::Cow, cell::RefCell, cmp, env, fmt::Write, io, iter, ops::Range, path::PathBuf, rc::Rc,
     sync::Arc, time::Duration,
 };
 use util::{
@@ -393,7 +393,9 @@ impl Panel for AssistantPanel {
         if active {
             if self.api_key.borrow().is_none() && !self.has_read_credentials {
                 self.has_read_credentials = true;
-                let api_key = if let Some((_, api_key)) = cx
+                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+                    Some(api_key)
+                } else if let Some((_, api_key)) = cx
                     .platform()
                     .read_credentials(OPENAI_API_URL)
                     .log_err()
