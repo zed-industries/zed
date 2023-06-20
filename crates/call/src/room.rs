@@ -1000,6 +1000,22 @@ impl Room {
         })
     }
 
+    pub fn is_muted(&self) -> Option<bool> {
+        self.live_kit.as_ref().and_then(|live_kit| {
+            match &live_kit.microphone_track {
+                LocalTrack::None => None,
+                LocalTrack::Pending { muted, .. } => Some(*muted),
+                LocalTrack::Published { muted, .. } => Some(*muted),
+            }
+        })
+    }
+
+    pub fn is_deafened(&self) -> Option<bool> {
+        self.live_kit.as_ref().map(|live_kit| {
+            live_kit.deafened
+        })
+    }
+
     pub fn share_mic(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
