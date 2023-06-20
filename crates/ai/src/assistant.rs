@@ -1,6 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role, SavedConversation,
+    SavedConversationMetadata,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -105,6 +106,8 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
+    saved_conversations: Vec<SavedConversationMetadata>,
+    _watch_saved_conversations: Task<Result<()>>,
 }
 
 impl AssistantPanel {
@@ -113,6 +116,12 @@ impl AssistantPanel {
         cx: AsyncAppContext,
     ) -> Task<Result<ViewHandle<Self>>> {
         cx.spawn(|mut cx| async move {
+            let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
+            let saved_conversations = SavedConversationMetadata::list(fs.clone())
+                .await
+                .log_err()
+                .unwrap_or_default();
+
             // TODO: deserialize state.
             workspace.update(&mut cx, |workspace, cx| {
                 cx.add_view::<Self, _>(|cx| {
@@ -171,6 +180,25 @@ impl AssistantPanel {
                         pane
                     });
 
+                    const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
+                    let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
+                        let mut events = fs
+                            .watch(&CONVERSATIONS_DIR, CONVERSATION_WATCH_DURATION)
+                            .await;
+                        while events.next().await.is_some() {
+                            let saved_conversations = SavedConversationMetadata::list(fs.clone())
+                                .await
+                                .log_err()
+                                .unwrap_or_default();
+                            this.update(&mut cx, |this, _| {
+                                this.saved_conversations = saved_conversations
+                            })
+                            .ok();
+                        }
+
+                        anyhow::Ok(())
+                    });
+
                     let mut this = Self {
                         pane,
                         api_key: Rc::new(RefCell::new(None)),
@@ -181,6 +209,8 @@ impl AssistantPanel {
                         width: None,
                         height: None,
                         subscriptions: Default::default(),
+                        saved_conversations,
+                        _watch_saved_conversations,
                     };
 
                     let mut old_dock_position = this.position(cx);

@@ -3,7 +3,6 @@ mod assistant_settings;
 
 use anyhow::Result;
 pub use assistant::AssistantPanel;
-use chrono::{DateTime, Local};
 use fs::Fs;
 use futures::StreamExt;
 use gpui::AppContext;
@@ -32,10 +31,17 @@ struct SavedConversation {
     messages: Vec<RequestMessage>,
 }
 
-impl SavedConversation {
-    pub async fn list(fs: Arc<dyn Fs>) -> Result<Vec<SavedConversationMetadata>> {
-        let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
+struct SavedConversationMetadata {
+    title: String,
+    path: PathBuf,
+    mtime: SystemTime,
+}
 
+impl SavedConversationMetadata {
+    pub async fn list(fs: Arc<dyn Fs>) -> Result<Vec<Self>> {
+        fs.create_dir(&CONVERSATIONS_DIR).await?;
+
+        let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
         let mut conversations = Vec::<SavedConversationMetadata>::new();
         while let Some(path) = paths.next().await {
             let path = path?;
@@ -50,7 +56,7 @@ impl SavedConversation {
                 .zip(metadata)
             {
                 let title = re.replace(file_name, "");
-                conversations.push(SavedConversationMetadata {
+                conversations.push(Self {
                     title: title.into_owned(),
                     path,
                     mtime: metadata.mtime,
@@ -60,12 +66,6 @@ impl SavedConversation {
 
         Ok(conversations)
     }
-}
-
-struct SavedConversationMetadata {
-    title: String,
-    path: PathBuf,
-    mtime: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
