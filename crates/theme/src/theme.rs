@@ -816,37 +816,22 @@ pub struct Toggleable<T> {
     inactive: T,
 }
 
-#[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub enum ToggleState {
-    #[default]
-    Inactive,
-    Active,
-}
-
-impl<T: std::borrow::Borrow<bool>> From<T> for ToggleState {
-    fn from(item: T) -> Self {
-        match *item.borrow() {
-            true => Self::Active,
-            false => Self::Inactive,
-        }
-    }
-}
-
 impl<T> Toggleable<T> {
     pub fn new(active: T, inactive: T) -> Self {
         Self { active, inactive }
     }
-    pub fn in_state(&self, state: impl Into<ToggleState>) -> &T {
-        match state.into() {
-            ToggleState::Inactive => &self.inactive,
-            ToggleState::Active => &self.active,
+    pub fn in_state(&self, active: bool) -> &T {
+        if active {
+            &self.inactive
+        } else {
+            &self.active
         }
     }
     pub fn active_state(&self) -> &T {
-        self.in_state(ToggleState::Active)
+        self.in_state(true)
     }
     pub fn inactive_state(&self) -> &T {
-        self.in_state(ToggleState::Inactive)
+        self.in_state(false)
     }
 }
 

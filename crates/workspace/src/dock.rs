@@ -6,7 +6,7 @@ use gpui::{
 };
 use serde::Deserialize;
 use std::rc::Rc;
-use theme::{ThemeSettings, ToggleState};
+use theme::ThemeSettings;
 
 pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
@@ -498,12 +498,7 @@ impl View for PanelButtons {
                     Stack::new()
                         .with_child(
                             MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
-                                let toggle_state = if is_active {
-                                    ToggleState::Active
-                                } else {
-                                    ToggleState::Inactive
-                                };
-                                let style = button_style.in_state(toggle_state);
+                                let style = button_style.in_state(is_active);
 
                                 let style = style.style_for(state);
                                 Flex::row()

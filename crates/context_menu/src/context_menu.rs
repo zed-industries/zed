@@ -9,7 +9,6 @@ use gpui::{
 };
 use menu::*;
 use std::{any::TypeId, borrow::Cow, sync::Arc, time::Duration};
-use theme::ToggleState;
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::select_first);
@@ -329,12 +328,7 @@ impl ContextMenu {
                 Flex::column().with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, .. } => {
-                            let toggle_state = if Some(ix) == self.selected_index {
-                                ToggleState::Active
-                            } else {
-                                ToggleState::Inactive
-                            };
-                            let style = style.item.in_state(toggle_state);
+                            let style = style.item.in_state(self.selected_index == Some(ix));
                             let style = style.style_for(&mut Default::default());
 
                             match label {
@@ -367,12 +361,7 @@ impl ContextMenu {
                     .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                         match item {
                             ContextMenuItem::Item { action, .. } => {
-                                let toggle_state = if Some(ix) == self.selected_index {
-                                    ToggleState::Active
-                                } else {
-                                    ToggleState::Inactive
-                                };
-                                let style = style.item.in_state(toggle_state);
+                                let style = style.item.in_state(self.selected_index == Some(ix));
                                 let style = style.style_for(&mut Default::default());
 
                                 match action {
@@ -419,12 +408,7 @@ impl ContextMenu {
                             let action = action.clone();
                             let view_id = self.parent_view_id;
                             MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
-                                let toggle_state = if Some(ix) == self.selected_index {
-                                    ToggleState::Active
-                                } else {
-                                    ToggleState::Inactive
-                                };
-                                let style = style.item.in_state(toggle_state);
+                                let style = style.item.in_state(self.selected_index == Some(ix));
                                 let style = style.style_for(state);
                                 let keystroke = match &action {
                                     ContextMenuItemAction::Action(action) => Some(
