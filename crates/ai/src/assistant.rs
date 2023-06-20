@@ -26,8 +26,8 @@ use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset a
 use serde::Deserialize;
 use settings::SettingsStore;
 use std::{
-    borrow::Cow, cell::RefCell, cmp, fmt::Write, io, iter, ops::Range, rc::Rc, sync::Arc,
-    time::Duration,
+    borrow::Cow, cell::RefCell, cmp, fmt::Write, io, iter, ops::Range, path::PathBuf, rc::Rc,
+    sync::Arc, time::Duration,
 };
 use util::{
     channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, truncate_and_trailoff, ResultExt,
@@ -456,6 +456,12 @@ enum AssistantEvent {
     StreamedCompletion,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct SavedConversationPath {
+    path: PathBuf,
+    had_summary: bool,
+}
+
 struct Assistant {
     buffer: ModelHandle<Buffer>,
     message_anchors: Vec<MessageAnchor>,
@@ -470,6 +476,8 @@ struct Assistant {
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
     api_key: Rc<RefCell<Option<String>>>,
+    pending_save: Task<Result<()>>,
+    path: Option<SavedConversationPath>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -515,6 +523,8 @@ impl Assistant {
             pending_token_count: Task::ready(None),
             model: model.into(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
+            pending_save: Task::ready(Ok(())),
+            path: None,
             api_key,
             buffer,
         };
@@ -1024,31 +1034,79 @@ impl Assistant {
         })
     }
 
-    fn save(&self, fs: Arc<dyn Fs>, cx: &mut ModelContext<Assistant>) -> Task<Result<()>> {
-        let conversation = SavedConversation {
-            zed: "conversation".into(),
-            version: "0.1".into(),
-            messages: self.open_ai_request_messages(cx),
-        };
+    fn save(
+        &mut self,
+        debounce: Option<Duration>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Assistant>,
+    ) {
+        self.pending_save = cx.spawn(|this, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background().timer(debounce).await;
+            }
+            let conversation = SavedConversation {
+                zed: "conversation".into(),
+                version: "0.1".into(),
+                messages: this.read_with(&cx, |this, cx| {
+                    this.messages(cx)
+                        .map(|message| message.to_open_ai_message(this.buffer.read(cx)))
+                        .collect()
+                }),
+            };
 
-        let mut path = CONVERSATIONS_DIR.join(self.summary.as_deref().unwrap_or("conversation-1"));
-
-        cx.background().spawn(async move {
-            while fs.is_file(&path).await {
-                let file_name = path.file_name().ok_or_else(|| anyhow!("no filename"))?;
-                let file_name = file_name.to_string_lossy();
-
-                if let Some((prefix, suffix)) = file_name.rsplit_once('-') {
-                    let new_version = suffix.parse::<u32>().ok().unwrap_or(1) + 1;
-                    path.set_file_name(format!("{}-{}", prefix, new_version));
-                };
+            let (old_path, summary) =
+                this.read_with(&cx, |this, _| (this.path.clone(), this.summary.clone()));
+            let mut new_path = None;
+            if let Some(old_path) = old_path.as_ref() {
+                if old_path.had_summary || summary.is_none() {
+                    new_path = Some(old_path.clone());
+                }
             }
 
+            let new_path = if let Some(new_path) = new_path {
+                new_path
+            } else {
+                let mut path =
+                    CONVERSATIONS_DIR.join(summary.as_deref().unwrap_or("conversation-1"));
+
+                while fs.is_file(&path).await {
+                    let file_name = path.file_name().ok_or_else(|| anyhow!("no filename"))?;
+                    let file_name = file_name.to_string_lossy();
+
+                    if let Some((prefix, suffix)) = file_name.rsplit_once('-') {
+                        let new_version = suffix.parse::<u32>().ok().unwrap_or(1) + 1;
+                        path.set_file_name(format!("{}-{}", prefix, new_version));
+                    };
+                }
+
+                SavedConversationPath {
+                    path,
+                    had_summary: summary.is_some(),
+                }
+            };
+
             fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
-            fs.atomic_write(path, serde_json::to_string(&conversation).unwrap())
-                .await?;
+            fs.atomic_write(
+                new_path.path.clone(),
+                serde_json::to_string(&conversation).unwrap(),
+            )
+            .await?;
+            this.update(&mut cx, |this, _| this.path = Some(new_path.clone()));
+            if let Some(old_path) = old_path {
+                if new_path.path != old_path.path {
+                    fs.remove_file(
+                        &old_path.path,
+                        fs::RemoveOptions {
+                            recursive: false,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await?;
+                }
+            }
+
             Ok(())
-        })
+        });
     }
 }
 
@@ -1176,9 +1234,17 @@ impl AssistantEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            AssistantEvent::MessagesEdited => self.update_message_headers(cx),
+            AssistantEvent::MessagesEdited => {
+                self.update_message_headers(cx);
+                self.assistant.update(cx, |assistant, cx| {
+                    assistant.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
+                });
+            }
             AssistantEvent::SummaryChanged => {
                 cx.emit(AssistantEditorEvent::TabContentChanged);
+                self.assistant.update(cx, |assistant, cx| {
+                    assistant.save(None, self.fs.clone(), cx);
+                });
             }
             AssistantEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
@@ -1469,7 +1535,7 @@ impl AssistantEditor {
 
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.assistant.update(cx, |assistant, cx| {
-            assistant.save(self.fs.clone(), cx).detach_and_log_err(cx);
+            assistant.save(None, self.fs.clone(), cx)
         });
     }
 
