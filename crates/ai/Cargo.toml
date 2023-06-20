@@ -25,6 +25,7 @@ anyhow.workspace = true
 chrono = "0.4"
 futures.workspace = true
 isahc.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

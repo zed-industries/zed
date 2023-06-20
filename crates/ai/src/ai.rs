@@ -1,10 +1,21 @@
 pub mod assistant;
 mod assistant_settings;
 
+use anyhow::Result;
 pub use assistant::AssistantPanel;
+use chrono::{DateTime, Local};
+use fs::Fs;
+use futures::StreamExt;
 use gpui::AppContext;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    path::PathBuf,
+    sync::Arc,
+    time::SystemTime,
+};
+use util::paths::CONVERSATIONS_DIR;
 
 // Data types for chat completion requests
 #[derive(Debug, Serialize)]
@@ -19,6 +30,42 @@ struct SavedConversation {
     zed: String,
     version: String,
     messages: Vec<RequestMessage>,
+}
+
+impl SavedConversation {
+    pub async fn list(fs: Arc<dyn Fs>) -> Result<Vec<SavedConversationMetadata>> {
+        let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
+
+        let mut conversations = Vec::<SavedConversationMetadata>::new();
+        while let Some(path) = paths.next().await {
+            let path = path?;
+
+            let pattern = r" - \d+.zed.json$";
+            let re = Regex::new(pattern).unwrap();
+
+            let metadata = fs.metadata(&path).await?;
+            if let Some((file_name, metadata)) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .zip(metadata)
+            {
+                let title = re.replace(file_name, "");
+                conversations.push(SavedConversationMetadata {
+                    title: title.into_owned(),
+                    path,
+                    mtime: metadata.mtime,
+                });
+            }
+        }
+
+        Ok(conversations)
+    }
+}
+
+struct SavedConversationMetadata {
+    title: String,
+    path: PathBuf,
+    mtime: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
