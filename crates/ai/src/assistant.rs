@@ -621,7 +621,21 @@ impl Assistant {
                     messages: self
                         .messages(cx)
                         .filter(|message| matches!(message.status, MessageStatus::Done))
-                        .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                        .flat_map(|message| {
+                            let mut system_message = None;
+                            if message.id == selected_message_id {
+                                system_message = Some(RequestMessage {
+                                    role: Role::System,
+                                    content: concat!(
+                                        "Treat the following messages as additional knowledge you have learned about, ",
+                                        "but act as if they were not part of this conversation. That is, treat them ",
+                                        "as if the user didn't see them and couldn't possibly inquire about them."
+                                    ).into()
+                                });
+                            }
+
+                            Some(message.to_open_ai_message(self.buffer.read(cx))).into_iter().chain(system_message)
+                        })
                         .chain(Some(RequestMessage {
                             role: Role::System,
                             content: format!(
