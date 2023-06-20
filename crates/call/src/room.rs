@@ -157,6 +157,7 @@ impl Room {
                 screen_track: LocalTrack::None,
                 microphone_track: LocalTrack::None,
                 next_publish_id: 0,
+                deafened: false,
                 _maintain_room,
                 _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
             })
@@ -223,7 +224,9 @@ impl Room {
                 || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
             {
                 let share_mic = room.update(&mut cx, |room, cx| room.share_mic(cx));
-                cx.background().spawn(share_mic).detach();
+                cx.update(|cx| {
+                    cx.background().spawn(share_mic).detach_and_log_err(cx);
+                });
             }
 
             match room
@@ -1039,7 +1042,7 @@ impl Room {
 
                     let (canceled, muted) = if let LocalTrack::Pending {
                         publish_id: cur_publish_id,
-                        muted
+                        muted,
                     } = &live_kit.microphone_track
                     {
                         (*cur_publish_id != publish_id, *muted)
@@ -1053,11 +1056,11 @@ impl Room {
                                 live_kit.room.unpublish_track(publication);
                             } else {
                                 if muted {
-                                    cx.background().spawn(publication.mute()).detach();
+                                    cx.background().spawn(publication.set_mute(muted)).detach();
                                 }
                                 live_kit.microphone_track = LocalTrack::Published {
                                     track_publication: publication,
-                                    muted
+                                    muted,
                                 };
                                 cx.notify();
                             }
@@ -1139,7 +1142,7 @@ impl Room {
                                 live_kit.room.unpublish_track(publication);
                             } else {
                                 if muted {
-                                    cx.background().spawn(publication.mute()).detach();
+                                    cx.background().spawn(publication.set_mute(muted)).detach();
                                 }
                                 live_kit.screen_track = LocalTrack::Published {
                                     track_publication: publication,
@@ -1177,11 +1180,7 @@ impl Room {
                 } => {
                     *muted = !*muted;
 
-                    if *muted {
-                        Ok(cx.background().spawn(track_publication.mute()))
-                    } else {
-                        Ok(cx.background().spawn(track_publication.unmute()))
-                    }
+                    Ok(cx.background().spawn(track_publication.set_mute(*muted)))
                 }
             }
         } else {
@@ -1189,9 +1188,32 @@ impl Room {
         }
     }
 
-    pub fn toggle_deafen(&mut self, _cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        // iterate through publications and mute (?????)
-        todo!();
+    pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+        if let Some(live_kit) = &mut self.live_kit {
+            (*live_kit).deafened = !live_kit.deafened
+        }
+
+        if let Some(live_kit) = &self.live_kit {
+            let mut tasks = Vec::with_capacity(self.remote_participants.len());
+
+            for participant in self.remote_participants.values() {
+                for track in live_kit
+                    .room
+                    .remote_audio_track_publications(&participant.user.id.to_string())
+                {
+                    tasks.push(cx.background().spawn(track.set_enabled(live_kit.deafened)));
+                }
+            }
+
+            Ok(cx.background().spawn(async move {
+                for task in tasks {
+                    task.await?;
+                }
+                Ok(())
+            }))
+        } else {
+            Err(anyhow!("LiveKit not started"))
+        }
     }
 
     pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -1233,6 +1255,7 @@ struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
+    deafened: bool,
     next_publish_id: usize,
     _maintain_room: Task<()>,
     _maintain_tracks: [Task<()>; 2],

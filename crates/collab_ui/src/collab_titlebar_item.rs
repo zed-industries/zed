@@ -23,7 +23,7 @@ use theme::{AvatarStyle, Theme};
 use util::ResultExt;
 use workspace::{FollowNextCollaborator, Workspace};
 
-const MAX_TITLE_LENGTH: usize = 75;
+// const MAX_TITLE_LENGTH: usize = 75;
 
 actions!(
     collab,

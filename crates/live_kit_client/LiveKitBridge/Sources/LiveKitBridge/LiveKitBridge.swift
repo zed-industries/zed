@@ -169,6 +169,18 @@ public func LKRoomAudioTracksForRemoteParticipant(room: UnsafeRawPointer, partic
     return nil;
 }
 
+@_cdecl("LKRoomAudioTrackPublicationsForRemoteParticipant")
+public func LKRoomAudioTrackPublicationsForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
+    
+    for (_, participant) in room.remoteParticipants {
+        if participant.identity == participantId as String {
+            return participant.audioTracks.compactMap { $0 as? RemoteTrackPublication } as CFArray?
+        }
+    }
+    
+    return nil;
+}
 
 @_cdecl("LKRoomVideoTracksForRemoteParticipant")
 public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
@@ -235,33 +247,45 @@ public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @conven
     }
 }
 
-@_cdecl("LKLocalTrackPublicationMute")
-public func LKLocalTrackPublicationMute(
+@_cdecl("LKLocalTrackPublicationSetMute")
+public func LKLocalTrackPublicationSetMute(
     publication: UnsafeRawPointer,
+    muted: Bool,
     on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
     callback_data: UnsafeRawPointer
 ) {
     let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
     
-    publication.mute().then {
-        on_complete(callback_data, nil)
-    }.catch { error in
-        on_complete(callback_data, error.localizedDescription as CFString)
+    if muted {
+        publication.mute().then {
+            on_complete(callback_data, nil)
+        }.catch { error in
+            on_complete(callback_data, error.localizedDescription as CFString)
+        }
+    } else {
+        publication.unmute().then {
+            on_complete(callback_data, nil)
+        }.catch { error in
+            on_complete(callback_data, error.localizedDescription as CFString)
+        }
     }
-
 }
 
-@_cdecl("LKLocalTrackPublicationUnmute")
-public func LKLocalTrackPublicationUnmute(
+@_cdecl("LKRemoteTrackPublicationSetEnabled")
+public func LKRemoteTrackPublicationSetEnabled(
     publication: UnsafeRawPointer,
+    enabled: Bool,
     on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
     callback_data: UnsafeRawPointer
 ) {
-    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
     
-    publication.unmute().then {
+    publication.set(enabled: enabled).then {
         on_complete(callback_data, nil)
     }.catch { error in
         on_complete(callback_data, error.localizedDescription as CFString)
     }
 }
+
+
+

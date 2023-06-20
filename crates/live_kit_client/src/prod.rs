@@ -72,6 +72,11 @@ extern "C" {
         participant_id: CFStringRef,
     ) -> CFArrayRef;
 
+    fn LKRoomAudioTrackPublicationsForRemoteParticipant(
+        room: *const c_void,
+        participant_id: CFStringRef,
+    ) -> CFArrayRef;
+
     fn LKRoomVideoTracksForRemoteParticipant(
         room: *const c_void,
         participant_id: CFStringRef,
@@ -98,13 +103,16 @@ extern "C" {
     fn LKCreateScreenShareTrackForDisplay(display: *const c_void) -> *const c_void;
     fn LKLocalAudioTrackCreateTrack() -> *const c_void;
 
-    fn LKLocalTrackPublicationMute(
+    fn LKLocalTrackPublicationSetMute(
         publication: *const c_void,
+        muted: bool,
         on_complete: extern "C" fn(callback_data: *mut c_void, error: CFStringRef),
         callback_data: *mut c_void,
     );
-    fn LKLocalTrackPublicationUnmute(
+
+    fn LKRemoteTrackPublicationSetEnabled(
         publication: *const c_void,
+        enabled: bool,
         on_complete: extern "C" fn(callback_data: *mut c_void, error: CFStringRef),
         callback_data: *mut c_void,
     );
@@ -317,6 +325,29 @@ impl Room {
             }
         }
     }
+
+    pub fn remote_audio_track_publications(&self, participant_id: &str) -> Vec<Arc<RemoteTrackPublication>> {
+        unsafe {
+            let tracks = LKRoomAudioTrackPublicationsForRemoteParticipant(
+                self.native_room,
+                CFString::new(participant_id).as_concrete_TypeRef(),
+            );
+
+            if tracks.is_null() {
+                Vec::new()
+            } else {
+                let tracks = CFArray::wrap_under_get_rule(tracks);
+                tracks
+                    .into_iter()
+                    .map(|native_track_publication| {
+                        let native_track_publication = *native_track_publication;
+                        Arc::new(RemoteTrackPublication(native_track_publication))
+                    })
+                    .collect()
+            }
+        }
+    }
+
 
     pub fn remote_audio_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteAudioTrackUpdate> {
         let (tx, rx) = mpsc::unbounded();
@@ -531,7 +562,7 @@ impl Drop for LocalVideoTrack {
 pub struct LocalTrackPublication(*const c_void);
 
 impl LocalTrackPublication {
-    pub fn mute(&self) -> impl Future<Output = Result<()>> {
+    pub fn set_mute(&self, muted: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         extern "C" fn complete_callback(callback_data: *mut c_void, error: CFStringRef) {
@@ -545,32 +576,9 @@ impl LocalTrackPublication {
         }
 
         unsafe {
-            LKLocalTrackPublicationMute(
+            LKLocalTrackPublicationSetMute(
                 self.0,
-                complete_callback,
-                Box::into_raw(Box::new(tx)) as *mut c_void,
-            )
-        }
-
-        async move { rx.await.unwrap() }
-    }
-
-    pub fn unmute(&self) -> impl Future<Output = Result<()>> {
-        let (tx, rx) = futures::channel::oneshot::channel();
-
-        extern "C" fn complete_callback(callback_data: *mut c_void, error: CFStringRef) {
-            let tx = unsafe { Box::from_raw(callback_data as *mut oneshot::Sender<Result<()>>) };
-            if error.is_null() {
-                tx.send(Ok(())).ok();
-            } else {
-                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
-                tx.send(Err(anyhow!(error))).ok();
-            }
-        }
-
-        unsafe {
-            LKLocalTrackPublicationUnmute(
-                self.0,
+                muted,
                 complete_callback,
                 Box::into_raw(Box::new(tx)) as *mut c_void,
             )
@@ -585,6 +593,42 @@ impl Drop for LocalTrackPublication {
         unsafe { CFRelease(self.0) }
     }
 }
+
+pub struct RemoteTrackPublication(*const c_void);
+
+impl RemoteTrackPublication {
+    pub fn set_enabled(&self, enabled: bool) -> impl Future<Output = Result<()>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+
+        extern "C" fn complete_callback(callback_data: *mut c_void, error: CFStringRef) {
+            let tx = unsafe { Box::from_raw(callback_data as *mut oneshot::Sender<Result<()>>) };
+            if error.is_null() {
+                tx.send(Ok(())).ok();
+            } else {
+                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
+                tx.send(Err(anyhow!(error))).ok();
+            }
+        }
+
+        unsafe {
+            LKRemoteTrackPublicationSetEnabled(
+                self.0,
+                enabled,
+                complete_callback,
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+            )
+        }
+
+        async move { rx.await.unwrap() }
+    }
+}
+
+impl Drop for RemoteTrackPublication {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0) }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct RemoteAudioTrack {
@@ -611,6 +655,18 @@ impl RemoteAudioTrack {
 
     pub fn publisher_id(&self) -> &str {
         &self.publisher_id
+    }
+
+    pub fn enable(&self) -> impl Future<Output = Result<()>> {
+        async {
+            Ok(())
+        }
+    }
+
+    pub fn disable(&self) -> impl Future<Output = Result<()>> {
+        async {
+            Ok(())
+        }
     }
 }
 

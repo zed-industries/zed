@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
     thread,
-    time::Duration,
+    time::Duration, panic::Location,
 };
 
 use crate::{
@@ -965,10 +965,12 @@ impl<T> Task<T> {
 }
 
 impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
+    #[track_caller]
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
         cx.spawn(|_| async move {
             if let Err(err) = self.await {
-                log::error!("{:#}", err);
+                let caller = Location::caller();
+                log::error!("{}:{}: {:#}", caller.file(), caller.line(), err);
             }
         })
         .detach();

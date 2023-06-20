@@ -47,12 +47,12 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
 
 pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, Room::toggle_mute).map(Task::detach).log_err();
+        room.update(cx, Room::toggle_mute).map(|task| task.detach_and_log_err(cx)).log_err();
     }
 }
 
 pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, Room::toggle_deafen).detach_and_log_err(cx);
+        room.update(cx, Room::toggle_deafen).map(|task| task.detach_and_log_err(cx)).log_err();
     }
 }

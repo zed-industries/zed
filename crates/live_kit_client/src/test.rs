@@ -410,6 +410,25 @@ impl Room {
             .collect()
     }
 
+    pub fn remote_audio_track_publications(
+        &self,
+        publisher_id: &str,
+    ) -> Vec<Arc<RemoteTrackPublication>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .audio_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .map(|_track| {
+                Arc::new(RemoteTrackPublication {})
+            })
+            .collect()
+    }
+
     pub fn remote_video_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
         if !self.is_connected() {
             return Vec::new();
@@ -476,16 +495,16 @@ impl Drop for Room {
 pub struct LocalTrackPublication;
 
 impl LocalTrackPublication {
-    pub fn mute(&self) -> impl Future<Output = Result<()>> {
-        async {
-            Ok(())
-        }
+    pub fn set_mute(&self, _mute: bool)  -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
     }
+}
 
-    pub fn unmute(&self) -> impl Future<Output = Result<()>> {
-        async {
-            Ok(())
-        }
+pub struct RemoteTrackPublication;
+
+impl RemoteTrackPublication {
+    pub fn set_enabled(&self, _enabled: bool) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
     }
 }
 
@@ -544,6 +563,14 @@ impl RemoteAudioTrack {
 
     pub fn publisher_id(&self) -> &str {
         &self.publisher_id
+    }
+
+    pub fn enable(&self) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+
+    pub fn disable(&self) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
     }
 }
 
