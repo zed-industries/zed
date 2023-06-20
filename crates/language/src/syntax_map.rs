@@ -288,7 +288,7 @@ impl SyntaxSnapshot {
                 };
                 if target.cmp(&cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
-                    layers.push_tree(slice, text);
+                    layers.append(slice, text);
                 }
             }
             // If this layer follows all of the edits, then preserve it and any
@@ -303,7 +303,7 @@ impl SyntaxSnapshot {
                     Bias::Left,
                     text,
                 );
-                layers.push_tree(slice, text);
+                layers.append(slice, text);
                 continue;
             };
 
@@ -369,7 +369,7 @@ impl SyntaxSnapshot {
             cursor.next(text);
         }
 
-        layers.push_tree(cursor.suffix(&text), &text);
+        layers.append(cursor.suffix(&text), &text);
         drop(cursor);
         self.layers = layers;
     }
@@ -478,7 +478,7 @@ impl SyntaxSnapshot {
                 if bounded_position.cmp(&cursor.start(), &text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
-                        layers.push_tree(slice, &text);
+                        layers.append(slice, &text);
                         if changed_regions.prune(cursor.end(text), text) {
                             done = false;
                         }

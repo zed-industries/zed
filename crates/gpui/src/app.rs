@@ -445,7 +445,7 @@ type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut WindowContext
 type KeystrokeCallback =
     Box<dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut WindowContext) -> bool>;
 type ActiveLabeledTasksCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
-type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
+type DeserializeActionCallback = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
 
 pub struct AppContext {
@@ -624,14 +624,14 @@ impl AppContext {
     pub fn deserialize_action(
         &self,
         name: &str,
-        argument: Option<&str>,
+        argument: Option<serde_json::Value>,
     ) -> Result<Box<dyn Action>> {
         let callback = self
             .action_deserializers
             .get(name)
             .ok_or_else(|| anyhow!("unknown action {}", name))?
             .1;
-        callback(argument.unwrap_or("{}"))
+        callback(argument.unwrap_or_else(|| serde_json::Value::Object(Default::default())))
             .with_context(|| format!("invalid data for action {}", name))
     }
 
@@ -5573,7 +5573,7 @@ mod tests {
         let action1 = cx
             .deserialize_action(
                 "test::something::ComplexAction",
-                Some(r#"{"arg": "a", "count": 5}"#),
+                Some(serde_json::from_str(r#"{"arg": "a", "count": 5}"#).unwrap()),
             )
             .unwrap();
         let action2 = cx

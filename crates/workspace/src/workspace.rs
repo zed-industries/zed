@@ -553,6 +553,10 @@ impl Workspace {
                     }
                 }
 
+                project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
+                    cx.add_view(|_| MessageNotification::new(message.clone()))
+                }),
+
                 _ => {}
             }
             cx.notify()
@@ -919,6 +923,7 @@ impl Workspace {
                         this.zoomed = None;
                         this.zoomed_position = None;
                     }
+                    this.update_active_view_for_followers(cx);
                     cx.notify();
                 }
             }
@@ -1598,9 +1603,7 @@ impl Workspace {
                         focus_center = true;
                     }
                 } else {
-                    if active_panel.is_zoomed(cx) {
-                        cx.focus(active_panel.as_any());
-                    }
+                    cx.focus(active_panel.as_any());
                     reveal_dock = true;
                 }
             }
@@ -1946,18 +1949,7 @@ impl Workspace {
             self.zoomed = None;
         }
         self.zoomed_position = None;
-
-        self.update_followers(
-            proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
-                id: self.active_item(cx).and_then(|item| {
-                    item.to_followable_item_handle(cx)?
-                        .remote_id(&self.app_state.client, cx)
-                        .map(|id| id.to_proto())
-                }),
-                leader_id: self.leader_for_pane(&pane),
-            }),
-            cx,
-        );
+        self.update_active_view_for_followers(cx);
 
         cx.notify();
     }
@@ -2646,6 +2638,30 @@ impl Workspace {
         Ok(())
     }
 
+    fn update_active_view_for_followers(&self, cx: &AppContext) {
+        if self.active_pane.read(cx).has_focus() {
+            self.update_followers(
+                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                    id: self.active_item(cx).and_then(|item| {
+                        item.to_followable_item_handle(cx)?
+                            .remote_id(&self.app_state.client, cx)
+                            .map(|id| id.to_proto())
+                    }),
+                    leader_id: self.leader_for_pane(&self.active_pane),
+                }),
+                cx,
+            );
+        } else {
+            self.update_followers(
+                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                    id: None,
+                    leader_id: None,
+                }),
+                cx,
+            );
+        }
+    }
+
     fn update_followers(
         &self,
         update: proto::update_followers::Variant,
@@ -2693,12 +2709,10 @@ impl Workspace {
                             .and_then(|id| state.items_by_leader_view_id.get(&id))
                         {
                             items_to_activate.push((pane.clone(), item.boxed_clone()));
-                        } else {
-                            if let Some(shared_screen) =
-                                self.shared_screen_for_peer(leader_id, pane, cx)
-                            {
-                                items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-                            }
+                        } else if let Some(shared_screen) =
+                            self.shared_screen_for_peer(leader_id, pane, cx)
+                        {
+                            items_to_activate.push((pane.clone(), Box::new(shared_screen)));
                         }
                     }
                 }
@@ -2838,7 +2852,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn serialize_workspace(&self, cx: &AppContext) {
+    fn serialize_workspace(&self, cx: &ViewContext<Self>) {
         fn serialize_pane_handle(
             pane_handle: &ViewHandle<Pane>,
             cx: &AppContext,
@@ -2881,7 +2895,7 @@ impl Workspace {
             }
         }
 
-        fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
+        fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
@@ -2890,6 +2904,10 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let left_dock_zoom = left_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
@@ -2899,6 +2917,10 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let right_dock_zoom = right_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
@@ -2908,19 +2930,26 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let bottom_dock_zoom = bottom_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
             DockStructure {
                 left: DockData {
                     visible: left_visible,
                     active_panel: left_active_panel,
+                    zoom: left_dock_zoom,
                 },
                 right: DockData {
                     visible: right_visible,
                     active_panel: right_active_panel,
+                    zoom: right_dock_zoom,
                 },
                 bottom: DockData {
                     visible: bottom_visible,
                     active_panel: bottom_active_panel,
+                    zoom: bottom_dock_zoom,
                 },
             }
         }
@@ -3033,14 +3062,31 @@ impl Workspace {
                                 dock.activate_panel(ix, cx);
                             }
                         }
+                                dock.active_panel()
+                                    .map(|panel| {
+                                        panel.set_zoomed(docks.left.zoom, cx)
+                                    });
+                                if docks.left.visible && docks.left.zoom {
+                                    cx.focus_self()
+                                }
                     });
+                    // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
                     workspace.right_dock.update(cx, |dock, cx| {
                         dock.set_open(docks.right.visible, cx);
                         if let Some(active_panel) = docks.right.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+
                             }
                         }
+                                dock.active_panel()
+                                    .map(|panel| {
+                                        panel.set_zoomed(docks.right.zoom, cx)
+                                    });
+
+                                if docks.right.visible && docks.right.zoom {
+                                    cx.focus_self()
+                                }
                     });
                     workspace.bottom_dock.update(cx, |dock, cx| {
                         dock.set_open(docks.bottom.visible, cx);
@@ -3049,7 +3095,17 @@ impl Workspace {
                                 dock.activate_panel(ix, cx);
                             }
                         }
+
+                        dock.active_panel()
+                            .map(|panel| {
+                                panel.set_zoomed(docks.bottom.zoom, cx)
+                            });
+
+                        if docks.bottom.visible && docks.bottom.zoom {
+                            cx.focus_self()
+                        }
                     });
+
 
                     cx.notify();
                 })?;
@@ -4413,7 +4469,7 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
-            assert!(!panel.has_focus(cx));
+            assert!(panel.has_focus(cx));
         });
 
         // Focus and zoom panel
@@ -4488,7 +4544,7 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let pane = pane.read(cx);
             assert!(!pane.is_zoomed());
-            assert!(pane.has_focus());
+            assert!(!pane.has_focus());
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
         });

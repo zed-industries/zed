@@ -669,7 +669,7 @@ impl<'a, T: Item> SeekAggregate<'a, T> for () {
 impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.tree.push_tree(
+        self.tree.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: mem::take(&mut self.leaf_summary),
                 items: mem::take(&mut self.leaf_items),
@@ -689,7 +689,7 @@ impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
         _: &T::Summary,
         cx: &<T::Summary as Summary>::Context,
     ) {
-        self.tree.push_tree(tree.clone(), cx);
+        self.tree.append(tree.clone(), cx);
     }
 }
 
