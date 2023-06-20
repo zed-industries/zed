@@ -5,12 +5,11 @@ pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
-use util::fs::remove_matching;
-use util::github::latest_github_release;
-use util::http::HttpClient;
-use util::ResultExt;
-
-use util::github::GitHubLspBinaryVersion;
+use util::{
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 pub struct CLspAdapter;
 
@@ -22,9 +21,9 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("clangd/clangd", false, http).await?;
+        let release = latest_github_release("clangd/clangd", false, delegate.http_client()).await?;
         let asset_name = format!("clangd-mac-{}.zip", release.name);
         let asset = release
             .assets
@@ -41,8 +40,8 @@ impl super::LspAdapter for CLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
@@ -50,7 +49,8 @@ impl super::LspAdapter for CLspAdapter {
         let binary_path = version_dir.join("bin/clangd");
 
         if fs::metadata(&binary_path).await.is_err() {
-            let mut response = http
+            let mut response = delegate
+                .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .context("error downloading release")?;
@@ -82,39 +82,19 @@ impl super::LspAdapter for CLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last_clangd_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_clangd_dir = Some(entry.path());
-                }
-            }
-            let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let clangd_bin = clangd_dir.join("bin/clangd");
-            if clangd_bin.exists() {
-                Ok(LanguageServerBinary {
-                    path: clangd_bin,
-                    arguments: vec![],
-                })
-            } else {
-                Err(anyhow!(
-                    "missing clangd binary in directory {:?}",
-                    clangd_dir
-                ))
-            }
-        })()
-        .await
-        .log_err()
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        self.cached_server_binary(container_dir)
+        get_cached_server_binary(container_dir)
             .await
             .map(|mut binary| {
                 binary.arguments = vec!["--help".into()];
@@ -257,6 +237,34 @@ impl super::LspAdapter for CLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last_clangd_dir = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_dir() {
+                last_clangd_dir = Some(entry.path());
+            }
+        }
+        let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let clangd_bin = clangd_dir.join("bin/clangd");
+        if clangd_bin.exists() {
+            Ok(LanguageServerBinary {
+                path: clangd_bin,
+                arguments: vec![],
+            })
+        } else {
+            Err(anyhow!(
+                "missing clangd binary in directory {:?}",
+                clangd_dir
+            ))
+        }
+    })()
+    .await
+    .log_err()
 }
 
 #[cfg(test)]

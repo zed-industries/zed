@@ -53,7 +53,7 @@ impl Rope {
             }
         }
 
-        self.chunks.push_tree(chunks.suffix(&()), &());
+        self.chunks.append(chunks.suffix(&()), &());
         self.check_invariants();
     }
 

@@ -38,9 +38,9 @@ use language::{
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt, Operation, Patch,
-    PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, OffsetRangeExt,
+    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -76,8 +76,8 @@ use std::{
 };
 use terminals::Terminals;
 use util::{
-    debug_panic, defer, merge_json_value_into, paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc,
-    ResultExt, TryFutureExt as _,
+    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -254,6 +254,7 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, String),
+    Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
@@ -442,6 +443,11 @@ impl ProjectEntryId {
 pub enum FormatTrigger {
     Save,
     Manual,
+}
+
+struct ProjectLspAdapterDelegate {
+    project: ModelHandle<Project>,
+    http_client: Arc<dyn HttpClient>,
 }
 
 impl FormatTrigger {
@@ -2427,7 +2433,7 @@ impl Project {
             language.clone(),
             adapter.clone(),
             worktree_path,
-            self.client.http_client(),
+            ProjectLspAdapterDelegate::new(self, cx),
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -7478,6 +7484,26 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
             worktree_id,
             path: path.as_ref().into(),
         }
+    }
+}
+
+impl ProjectLspAdapterDelegate {
+    fn new(project: &Project, cx: &ModelContext<Project>) -> Arc<Self> {
+        Arc::new(Self {
+            project: cx.handle(),
+            http_client: project.client.http_client(),
+        })
+    }
+}
+
+impl LspAdapterDelegate for ProjectLspAdapterDelegate {
+    fn show_notification(&self, message: &str, cx: &mut AppContext) {
+        self.project
+            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())));
+    }
+
+    fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
     }
 }
 

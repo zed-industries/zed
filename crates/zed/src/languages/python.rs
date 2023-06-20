@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use smol::fs;
@@ -11,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::ResultExt;
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -38,7 +37,7 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(self.node.npm_package_latest_version("pyright").await?) as Box<_>)
     }
@@ -46,8 +45,8 @@ impl LspAdapter for PythonLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
@@ -64,7 +63,11 @@ impl LspAdapter for PythonLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

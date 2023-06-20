@@ -268,7 +268,7 @@ impl<T: Item> SumTree<T> {
 
         for item in iter {
             if leaf.is_some() && leaf.as_ref().unwrap().items().len() == 2 * TREE_BASE {
-                self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), cx);
+                self.append(SumTree(Arc::new(leaf.take().unwrap())), cx);
             }
 
             if leaf.is_none() {
@@ -295,13 +295,13 @@ impl<T: Item> SumTree<T> {
         }
 
         if leaf.is_some() {
-            self.push_tree(SumTree(Arc::new(leaf.take().unwrap())), cx);
+            self.append(SumTree(Arc::new(leaf.take().unwrap())), cx);
         }
     }
 
     pub fn push(&mut self, item: T, cx: &<T::Summary as Summary>::Context) {
         let summary = item.summary();
-        self.push_tree(
+        self.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: summary.clone(),
                 items: ArrayVec::from_iter(Some(item)),
@@ -311,11 +311,11 @@ impl<T: Item> SumTree<T> {
         );
     }
 
-    pub fn push_tree(&mut self, other: Self, cx: &<T::Summary as Summary>::Context) {
+    pub fn append(&mut self, other: Self, cx: &<T::Summary as Summary>::Context) {
         if !other.0.is_leaf() || !other.0.items().is_empty() {
             if self.0.height() < other.0.height() {
                 for tree in other.0.child_trees() {
-                    self.push_tree(tree.clone(), cx);
+                    self.append(tree.clone(), cx);
                 }
             } else if let Some(split_tree) = self.push_tree_recursive(other, cx) {
                 *self = Self::from_child_trees(self.clone(), split_tree, cx);
@@ -512,7 +512,7 @@ impl<T: KeyedItem> SumTree<T> {
                 }
             }
             new_tree.push(item, cx);
-            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(cx), cx);
             new_tree
         };
         replaced
@@ -529,7 +529,7 @@ impl<T: KeyedItem> SumTree<T> {
                     cursor.next(cx);
                 }
             }
-            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(cx), cx);
             new_tree
         };
         removed
@@ -563,7 +563,7 @@ impl<T: KeyedItem> SumTree<T> {
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
                     let slice = cursor.slice(&new_key, Bias::Left, cx);
-                    new_tree.push_tree(slice, cx);
+                    new_tree.append(slice, cx);
                     old_item = cursor.item();
                 }
 
@@ -583,7 +583,7 @@ impl<T: KeyedItem> SumTree<T> {
             }
 
             new_tree.extend(buffered_items, cx);
-            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(cx), cx);
             new_tree
         };
 
@@ -719,7 +719,7 @@ mod tests {
         let mut tree2 = SumTree::new();
         tree2.extend(50..100, &());
 
-        tree1.push_tree(tree2, &());
+        tree1.append(tree2, &());
         assert_eq!(
             tree1.items(&()),
             (0..20).chain(50..100).collect::<Vec<u8>>()
@@ -766,7 +766,7 @@ mod tests {
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
                     new_tree.extend(new_items, &());
                     cursor.seek(&Count(splice_end), Bias::Right, &());
-                    new_tree.push_tree(cursor.slice(&tree_end, Bias::Right, &()), &());
+                    new_tree.append(cursor.slice(&tree_end, Bias::Right, &()), &());
                     new_tree
                 };
 

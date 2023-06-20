@@ -8,10 +8,11 @@ use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
-use util::fs::remove_matching;
-use util::github::{latest_github_release, GitHubLspBinaryVersion};
-use util::http::HttpClient;
-use util::ResultExt;
+use util::{
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 pub struct RustLspAdapter;
 
@@ -23,9 +24,11 @@ impl LspAdapter for RustLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("rust-analyzer/rust-analyzer", false, http).await?;
+        let release =
+            latest_github_release("rust-analyzer/rust-analyzer", false, delegate.http_client())
+                .await?;
         let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
         let asset = release
             .assets
@@ -41,14 +44,15 @@ impl LspAdapter for RustLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
         if fs::metadata(&destination_path).await.is_err() {
-            let mut response = http
+            let mut response = delegate
+                .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
@@ -70,7 +74,11 @@ impl LspAdapter for RustLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;

@@ -4,7 +4,7 @@ pub mod prod;
 pub use prod::*;
 
 #[cfg(any(test, feature = "test-support"))]
-mod test;
+pub mod test;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
