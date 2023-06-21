@@ -1,7 +1,5 @@
-use std::{borrow::Cow, ops::Range};
-
-use serde_json::json;
-
+use super::constrain_size_preserving_aspect_ratio;
+use crate::json::ToJson;
 use crate::{
     color::Color,
     geometry::{
@@ -10,6 +8,9 @@ use crate::{
     },
     scene, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
+use serde_derive::Deserialize;
+use serde_json::json;
+use std::{borrow::Cow, ops::Range};
 
 pub struct Svg {
     path: Cow<'static, str>,
@@ -22,6 +23,15 @@ impl Svg {
             path: path.into(),
             color: Color::black(),
         }
+    }
+
+    pub fn for_style<V: View>(style: SvgStyle) -> impl Element<V> {
+        Self::new(style.asset)
+            .with_color(style.color)
+            .constrained()
+            .constrained()
+            .with_width(style.dimensions.width)
+            .with_height(style.dimensions.height)
     }
 
     pub fn with_color(mut self, color: Color) -> Self {
@@ -105,9 +115,24 @@ impl<V: View> Element<V> for Svg {
     }
 }
 
-use crate::json::ToJson;
+#[derive(Clone, Deserialize, Default)]
+pub struct SvgStyle {
+    pub color: Color,
+    pub asset: String,
+    pub dimensions: Dimensions,
+}
 
-use super::constrain_size_preserving_aspect_ratio;
+#[derive(Clone, Deserialize, Default)]
+pub struct Dimensions {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Dimensions {
+    pub fn to_vec(&self) -> Vector2F {
+        vec2f(self.width, self.height)
+    }
+}
 
 fn from_usvg_rect(rect: usvg::Rect) -> RectF {
     RectF::new(

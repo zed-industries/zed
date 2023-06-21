@@ -1,13 +1,12 @@
 use std::borrow::Cow;
 
 use gpui::{
-    color::Color,
     elements::{
-        ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
-        MouseEventHandler, ParentElement, Stack, Svg,
+        ConstrainedBox, Container, ContainerStyle, Dimensions, Empty, Flex, KeystrokeLabel, Label,
+        MouseEventHandler, ParentElement, Stack, Svg, SvgStyle,
     },
     fonts::TextStyle,
-    geometry::vector::{vec2f, Vector2F},
+    geometry::vector::Vector2F,
     platform,
     platform::MouseButton,
     scene::MouseClick,
@@ -93,25 +92,6 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-#[derive(Clone, Deserialize, Default)]
-pub struct SvgStyle {
-    pub color: Color,
-    pub asset: String,
-    pub dimensions: Dimensions,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct Dimensions {
-    pub width: f32,
-    pub height: f32,
-}
-
-impl Dimensions {
-    pub fn to_vec(&self) -> Vector2F {
-        vec2f(self.width, self.height)
-    }
-}
-
 pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
     Svg::new(style.asset.clone())
         .with_color(style.color)
@@ -122,8 +102,8 @@ pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct IconStyle {
-    icon: SvgStyle,
-    container: ContainerStyle,
+    pub icon: SvgStyle,
+    pub container: ContainerStyle,
 }
 
 pub fn icon<V: View>(style: &IconStyle) -> Container<V> {

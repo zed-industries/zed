@@ -30,6 +30,7 @@ use std::{
     borrow::Cow, cell::RefCell, cmp, env, fmt::Write, io, iter, ops::Range, path::PathBuf, rc::Rc,
     sync::Arc, time::Duration,
 };
+use theme::{ui::IconStyle, IconButton, Theme};
 use util::{
     channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, truncate_and_trailoff, ResultExt,
     TryFutureExt,
@@ -259,6 +260,16 @@ impl AssistantPanel {
         self.conversation_editors
             .get(self.active_conversation_index)
     }
+
+    fn render_hamburger_button(
+        &self,
+        style: &IconStyle,
+        cx: &ViewContext<Self>,
+    ) -> impl Element<Self> {
+        Svg::for_style(style.icon.clone())
+            .contained()
+            .with_style(style.container)
+    }
 }
 
 fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> ViewHandle<Editor> {
@@ -282,7 +293,8 @@ impl View for AssistantPanel {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let style = &theme::current(cx).assistant;
+        let theme = &theme::current(cx);
+        let style = &theme.assistant;
         if let Some(api_key_editor) = self.api_key_editor.as_ref() {
             Flex::column()
                 .with_child(
@@ -303,7 +315,17 @@ impl View for AssistantPanel {
                 .aligned()
                 .into_any()
         } else if let Some(editor) = self.active_conversation_editor() {
-            ChildView::new(editor, cx).into_any()
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(self.render_hamburger_button(&style.hamburger_button, cx))
+                        .contained()
+                        .with_style(theme.workspace.tab_bar.container)
+                        .constrained()
+                        .with_height(theme.workspace.tab_bar.height),
+                )
+                .with_child(ChildView::new(editor, cx).flex(1., true))
+                .into_any()
         } else {
             Empty::new().into_any()
         }
@@ -1401,7 +1423,7 @@ impl ConversationEditor {
                                 .aligned()
                                 .left()
                                 .contained()
-                                .with_style(style.header)
+                                .with_style(style.message_header)
                                 .into_any()
                         }
                     }),

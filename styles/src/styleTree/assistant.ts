@@ -9,10 +9,21 @@ export default function assistant(colorScheme: ColorScheme) {
             background: editor(colorScheme).background,
             padding: { left: 12 },
         },
-        header: {
+        messageHeader: {
             border: border(layer, "default", { bottom: true, top: true }),
             margin: { bottom: 6, top: 6 },
             background: editor(colorScheme).background,
+        },
+        hamburgerButton: {
+          icon: {
+            color: text(layer, "sans", "default", { size: "sm" }).color,
+            asset: "icons/hamburger.svg",
+            dimensions: {
+              width: 15,
+              height: 15,
+            },
+          },
+          container: {}
         },
         userSender: {
             ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
