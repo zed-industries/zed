@@ -56,18 +56,24 @@ export default function editor(colorScheme: ColorScheme) {
                             color: foreground(layer, "variant"),
                         },
                         state: {
-                            clicked: {
-                                color: foreground(layer, "base"),
-                            },
                             hovered: {
-                                color: foreground(layer, "on"),
+                                color: foreground(layer, "variant", "hovered"),
+                            },
+                            clicked: {
+                                color: foreground(layer, "variant", "pressed"),
                             },
                         },
                     }),
                 state: {
                     active: {
                         default: {
-                            color: foreground(layer, "on"),
+                            color: foreground(layer, "accent"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "accent", "hovered"),
+                        },
+                        clicked: {
+                            color: foreground(layer, "accent", "pressed"),
                         },
                     }
                 }
@@ -87,18 +93,21 @@ export default function editor(colorScheme: ColorScheme) {
                             color: foreground(layer, "variant"),
                         },
                         state: {
-                            clicked: {
-                                color: foreground(layer, "base"),
-                            },
                             hovered: {
                                 color: foreground(layer, "on"),
+                            },
+                            clicked: {
+                                color: foreground(layer, "base"),
                             },
                         },
                     }),
                 state: {
                     active: {
                         default: {
-                            color: foreground(layer, "on"),
+                            color: foreground(layer, "default"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "variant"),
                         },
                     }
                 }

@@ -28,33 +28,44 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
     }
 
+    const default_entry = interactive({
+        base: {
+            ...baseEntry,
+            text: text(layer, "mono", "variant", { size: "sm" }),
+            status,
+        },
+        state: {
+            default: {
+                background: background(layer),
+            },
+            hovered: {
+                background: background(layer, "variant", "hovered"),
+            },
+            clicked: {
+                background: background(layer, "variant", "pressed"),
+            }
+        },
+    })
+
     let entry = toggleable({
-        base:
-            interactive({
+        base: default_entry,
+        state: {
+            active: interactive({
                 base: {
-                    ...baseEntry,
-                    text: text(layer, "mono", "variant", { size: "sm" }),
-                    status,
+                    ...default_entry
                 },
                 state: {
+                    default: {
+                        background: background(colorScheme.lowest),
+                    },
                     hovered: {
-                        background: background(layer, "variant", "hovered"),
+                        background: background(colorScheme.lowest, "hovered"),
+                    },
+                    clicked: {
+                        background: background(colorScheme.lowest, "pressed"),
                     },
                 },
             }),
-        state: {
-            active: {
-                default: {
-                    /*background: colorScheme.isLight
-                      ? withOpacity(background(layer, "active"), 0.5)
-                      : background(layer, "active") ,*/ // todo posiewic
-                    text: text(layer, "mono", "active", { size: "sm" }),
-                },
-                hovered: {
-                    //background: background(layer, "active"),
-                    text: text(layer, "mono", "active", { size: "sm" }),
-                },
-            }
         }
     }
     )
@@ -84,6 +95,11 @@ export default function projectPanel(colorScheme: ColorScheme) {
                     background: background(layer, "hovered"),
                     border: border(layer, "active"),
                 },
+                clicked: {
+                    ...text(layer, "sans", "default", { size: "sm" }),
+                    background: background(layer, "pressed"),
+                    border: border(layer, "active"),
+                }
             },
         }),
         background: background(layer),

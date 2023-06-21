@@ -67,6 +67,12 @@ export default function picker(colorScheme: ColorScheme): any {
                                 0.5
                             ),
                         },
+                        clicked: {
+                            background: withOpacity(
+                                background(layer, "pressed"),
+                                0.5
+                            ),
+                        },
                     },
                 }),
             state: {
@@ -76,7 +82,18 @@ export default function picker(colorScheme: ColorScheme): any {
                             background(layer, "base", "active"),
                             0.5
                         ),
-                        //text: text(layer, "sans", "base", "active"),
+                    },
+                    hovered: {
+                        background: withOpacity(
+                            background(layer, "hovered"),
+                            0.5
+                        ),
+                    },
+                    clicked: {
+                        background: withOpacity(
+                            background(layer, "pressed"),
+                            0.5
+                        ),
                     },
                 }
             }

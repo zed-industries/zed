@@ -100,6 +100,9 @@ export default function tabBar(colorScheme: ColorScheme) {
                         hovered: {
                             color: foreground(layer, "hovered"),
                         },
+                        clicked: {
+                            color: foreground(layer, "pressed"),
+                        },
                     },
                 }),
             state:
@@ -107,6 +110,12 @@ export default function tabBar(colorScheme: ColorScheme) {
                 active: {
                     default: {
                         color: foreground(layer, "accent"),
+                    },
+                    hovered: {
+                        color: foreground(layer, "hovered"),
+                    },
+                    clicked: {
+                        color: foreground(layer, "pressed"),
                     },
                 }
             }

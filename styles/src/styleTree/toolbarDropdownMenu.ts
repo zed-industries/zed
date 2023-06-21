@@ -19,13 +19,14 @@ export default function dropdownMenu(colorScheme: ColorScheme) {
                 secondaryTextSpacing: 10,
                 padding: { left: 8, right: 8, top: 2, bottom: 2 },
                 cornerRadius: 6,
-                background: background(layer, "on"),
-                border: border(layer, "on", { overlay: true }),
+                background: background(layer, "on")
             },
             state: {
                 hovered: {
                     background: background(layer, "hovered"),
-                    ...text(layer, "sans", "hovered", { size: "sm" }),
+                },
+                clicked: {
+                    background: background(layer, "pressed"),
                 },
             },
         }),
@@ -55,7 +56,7 @@ export default function dropdownMenu(colorScheme: ColorScheme) {
                         background: background(layer, "active"),
                     },
                     hovered: {
-                        background: background(layer, "active"),
+                        background: background(layer, "hovered"),
                     },
                 }
             }

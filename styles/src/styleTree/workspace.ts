@@ -287,20 +287,23 @@ export default function workspace(colorScheme: ColorScheme) {
                         state: {
                             clicked: {
                                 background: background(layer, "variant", "pressed"),
-                                color: foreground(layer, "variant", "pressed"),
                             },
                             hovered: {
                                 background: background(layer, "variant", "hovered"),
-                                color: foreground(layer, "variant", "hovered"),
                             },
                         },
                     }), state:
                 {
                     active: {
                         default: {
-                            background: background(layer, "variant", "active"),
-                            color: foreground(layer, "variant", "active"),
+                            background: background(layer, "on", "default"),
                         },
+                        hovered: {
+                            background: background(layer, "on", "hovered"),
+                        },
+                        clicked: {
+                            background: background(layer, "on", "pressed"),
+                        }
                     }
                 }
             }

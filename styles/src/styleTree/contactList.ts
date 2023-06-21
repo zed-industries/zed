@@ -83,7 +83,12 @@ export default function contactsPanel(colorScheme: ColorScheme) {
                     background: background(layer, "default"), // posiewic: breaking change
                 },
                 state: {
-                    hovered: { background: background(layer, "default") },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    }
                 }, // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
             }),
             state: {
@@ -92,6 +97,12 @@ export default function contactsPanel(colorScheme: ColorScheme) {
                         ...text(layer, "mono", "active", { size: "sm" }),
                         background: background(layer, "active"),
                     },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    }
                 }
             }
         }),

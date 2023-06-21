@@ -40,6 +40,9 @@ export default function contextMenu(colorScheme: ColorScheme) {
                                 padding: { left: 3, right: 3 },
                             },
                         },
+                        clicked: {
+                            background: background(layer, "pressed"),
+                        },
                     },
                 }),
             state: {
@@ -48,7 +51,10 @@ export default function contextMenu(colorScheme: ColorScheme) {
                         background: background(layer, "active"),
                     },
                     hovered: {
-                        background: background(layer, "active"),
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
                     },
                 }
             }

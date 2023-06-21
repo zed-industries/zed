@@ -55,24 +55,28 @@ export default function search(colorScheme: ColorScheme) {
                         },
                     },
                     state: {
-                        clicked: {
-                            ...text(layer, "mono", "on", "pressed"),
-                            background: background(layer, "on", "pressed"),
-                            border: border(layer, "on", "pressed"),
-                        },
                         hovered: {
                             ...text(layer, "mono", "on", "hovered"),
                             background: background(layer, "on", "hovered"),
                             border: border(layer, "on", "hovered"),
+                        },
+                        clicked: {
+                            ...text(layer, "mono", "on", "pressed"),
+                            background: background(layer, "on", "pressed"),
+                            border: border(layer, "on", "pressed"),
                         },
                     },
                 }),
             state: {
                 active: {
                     default: {
-                        ...text(layer, "mono", "on", "inverted"),
-                        background: background(layer, "on", "inverted"),
-                        border: border(layer, "on", "inverted"),
+                        ...text(layer, "mono", "accent"),
+                    },
+                    hovered: {
+                        ...text(layer, "mono", "accent", "hovered"),
+                    },
+                    clicked: {
+                        ...text(layer, "mono", "accent", "pressed"),
                     },
                 }
             }
@@ -123,6 +127,9 @@ export default function search(colorScheme: ColorScheme) {
             state: {
                 hovered: {
                     color: foreground(layer, "hovered"),
+                },
+                clicked: {
+                    color: foreground(layer, "pressed"),
                 },
             },
         }),
