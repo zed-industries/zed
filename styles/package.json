@@ -6,7 +6,8 @@
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
         "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts"
+        "build-tokens": "ts-node ./src/buildTokens.ts",
+        "build-types": "cd ../crates/theme && cargo test && cd ../../styles && ts-node ./src/buildTypes.ts"
     },
     "author": "",
     "license": "ISC",
@@ -19,6 +20,7 @@
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
         "deepmerge": "^4.3.0",
+        "json-schema-to-typescript": "^13.0.2",
         "toml": "^3.0.0",
         "ts-node": "^10.9.1"
     },
