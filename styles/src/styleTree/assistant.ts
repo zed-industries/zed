@@ -37,8 +37,12 @@ export default function assistant(colorScheme: ColorScheme) {
             },
           },
           container: {
-            margin: { left: 8 },
+            margin: { right: 8 },
           }
+        },
+        title: {
+          margin: { left: 8 },
+          ...text(layer, "sans", "default", { size: "sm" })
         },
         savedConversation: {
           background: background(layer, "on"),

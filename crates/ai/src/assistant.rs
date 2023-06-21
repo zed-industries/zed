@@ -418,13 +418,25 @@ impl View for AssistantPanel {
                 .aligned()
                 .into_any()
         } else {
+            let title = self.active_conversation_editor().map(|editor| {
+                Label::new(editor.read(cx).title(cx), style.title.text.clone())
+                    .contained()
+                    .with_style(style.title.container)
+                    .aligned()
+            });
+
             Flex::column()
                 .with_child(
                     Flex::row()
                         .with_child(
                             Self::render_hamburger_button(&style.hamburger_button).aligned(),
                         )
-                        .with_child(Self::render_plus_button(&style.plus_button).aligned())
+                        .with_children(title)
+                        .with_child(
+                            Self::render_plus_button(&style.plus_button)
+                                .aligned()
+                                .flex_float(),
+                        )
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .expanded()
