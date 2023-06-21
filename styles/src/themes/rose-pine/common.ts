@@ -1,3 +1,5 @@
+import { ThemeSyntax } from "../../common";
+
 export const color = {
     default: {
         base: '#191724',
@@ -52,20 +54,20 @@ export const color = {
     }
 };
 
-export const syntax = (c: typeof color.default) => {
+export const syntax = (c: typeof color.default): Partial<ThemeSyntax> => {
     return {
         comment: { color: c.muted },
-        operator: { color: c.subtle },
+        operator: { color: c.pine },
         punctuation: { color: c.subtle },
         variable: { color: c.text },
         string: { color: c.gold },
-        "type.builtin": { color: c.rose },
+        type: { color: c.foam },
+        "type.builtin": { color: c.foam },
         boolean: { color: c.rose },
         function: { color: c.rose },
         keyword: { color: c.pine },
         tag: { color: c.foam },
-        type: { color: c.foam },
-        "function.method": { color: c.iris },
+        "function.method": { color: c.rose },
         title: { color: c.gold },
         linkText: { color: c.foam, italic: false },
         linkUri: { color: c.rose },
