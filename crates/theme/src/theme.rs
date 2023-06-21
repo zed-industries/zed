@@ -1007,6 +1007,15 @@ pub struct AssistantStyle {
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
+    pub saved_conversation: SavedConversation,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct SavedConversation {
+    #[serde(flatten)]
+    pub container: Interactive<ContainerStyle>,
+    pub saved_at: ContainedText,
+    pub title: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

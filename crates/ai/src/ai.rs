@@ -34,7 +34,7 @@ struct SavedConversation {
 struct SavedConversationMetadata {
     title: String,
     path: PathBuf,
-    mtime: SystemTime,
+    mtime: chrono::DateTime<chrono::Local>,
 }
 
 impl SavedConversationMetadata {
@@ -59,7 +59,7 @@ impl SavedConversationMetadata {
                 conversations.push(Self {
                     title: title.into_owned(),
                     path,
-                    mtime: metadata.mtime,
+                    mtime: metadata.mtime.into(),
                 });
             }
         }

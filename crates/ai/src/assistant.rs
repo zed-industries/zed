@@ -104,9 +104,10 @@ pub enum AssistantPanelEvent {
 pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
-    active_conversation_index: usize,
+    active_conversation_index: Option<usize>,
     conversation_editors: Vec<ViewHandle<ConversationEditor>>,
     saved_conversations: Vec<SavedConversationMetadata>,
+    saved_conversations_list_state: UniformListState,
     zoomed: bool,
     has_focus: bool,
     api_key: Rc<RefCell<Option<String>>>,
@@ -153,9 +154,10 @@ impl AssistantPanel {
                     });
 
                     let mut this = Self {
-                        active_conversation_index: 0,
+                        active_conversation_index: Default::default(),
                         conversation_editors: Default::default(),
                         saved_conversations,
+                        saved_conversations_list_state: Default::default(),
                         zoomed: false,
                         has_focus: false,
                         api_key: Rc::new(RefCell::new(None)),
@@ -202,7 +204,7 @@ impl AssistantPanel {
         self.subscriptions
             .push(cx.subscribe(&editor, Self::handle_conversation_editor_event));
 
-        self.active_conversation_index = self.conversation_editors.len();
+        self.active_conversation_index = Some(self.conversation_editors.len());
         self.conversation_editors.push(editor.clone());
 
         cx.notify();
@@ -258,17 +260,42 @@ impl AssistantPanel {
 
     fn active_conversation_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
         self.conversation_editors
-            .get(self.active_conversation_index)
+            .get(self.active_conversation_index?)
     }
 
-    fn render_hamburger_button(
-        &self,
-        style: &IconStyle,
-        cx: &ViewContext<Self>,
-    ) -> impl Element<Self> {
+    fn render_hamburger_button(style: &IconStyle) -> impl Element<Self> {
         Svg::for_style(style.icon.clone())
             .contained()
             .with_style(style.container)
+    }
+
+    fn render_saved_conversation(
+        &mut self,
+        index: usize,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element<Self> {
+        MouseEventHandler::<SavedConversationMetadata, _>::new(index, cx, move |state, cx| {
+            let style = &theme::current(cx).assistant.saved_conversation;
+            let conversation = &self.saved_conversations[index];
+            Flex::row()
+                .with_child(
+                    Label::new(
+                        conversation.mtime.format("%c").to_string(),
+                        style.saved_at.text.clone(),
+                    )
+                    .contained()
+                    .with_style(style.saved_at.container),
+                )
+                .with_child(
+                    Label::new(conversation.title.clone(), style.title.text.clone())
+                        .contained()
+                        .with_style(style.title.container),
+                )
+                .contained()
+                .with_style(*style.container.style_for(state, false))
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this, cx| {})
     }
 }
 
@@ -318,7 +345,7 @@ impl View for AssistantPanel {
             Flex::column()
                 .with_child(
                     Flex::row()
-                        .with_child(self.render_hamburger_button(&style.hamburger_button, cx))
+                        .with_child(Self::render_hamburger_button(&style.hamburger_button))
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .constrained()
@@ -327,7 +354,17 @@ impl View for AssistantPanel {
                 .with_child(ChildView::new(editor, cx).flex(1., true))
                 .into_any()
         } else {
-            Empty::new().into_any()
+            UniformList::new(
+                self.saved_conversations_list_state.clone(),
+                self.saved_conversations.len(),
+                cx,
+                |this, range, items, cx| {
+                    for ix in range {
+                        items.push(this.render_saved_conversation(ix, cx).into_any());
+                    }
+                },
+            )
+            .into_any()
         }
     }
 
