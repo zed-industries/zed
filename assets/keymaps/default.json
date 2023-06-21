@@ -198,7 +198,7 @@
     }
   },
   {
-    "context": "AssistantEditor > Editor",
+    "context": "ConversationEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",

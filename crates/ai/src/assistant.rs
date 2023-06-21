@@ -212,11 +212,11 @@ impl AssistantPanel {
     fn handle_conversation_editor_event(
         &mut self,
         _: ViewHandle<ConversationEditor>,
-        event: &AssistantEditorEvent,
+        event: &ConversationEditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            AssistantEditorEvent::TabContentChanged => cx.notify(),
+            ConversationEditorEvent::TabContentChanged => cx.notify(),
         }
     }
 
@@ -465,7 +465,7 @@ impl Panel for AssistantPanel {
     }
 }
 
-enum AssistantEvent {
+enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
@@ -497,7 +497,7 @@ struct Conversation {
 }
 
 impl Entity for Conversation {
-    type Event = AssistantEvent;
+    type Event = ConversationEvent;
 }
 
 impl Conversation {
@@ -570,7 +570,7 @@ impl Conversation {
         match event {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
-                cx.emit(AssistantEvent::MessagesEdited);
+                cx.emit(ConversationEvent::MessagesEdited);
             }
             _ => {}
         }
@@ -602,7 +602,7 @@ impl Conversation {
                     .await?;
 
                 this.upgrade(&cx)
-                    .ok_or_else(|| anyhow!("assistant was dropped"))?
+                    .ok_or_else(|| anyhow!("conversation was dropped"))?
                     .update(&mut cx, |this, cx| {
                         this.max_token_count = tiktoken_rs::model::get_context_size(&this.model);
                         this.token_count = Some(token_count);
@@ -703,7 +703,7 @@ impl Conversation {
                                 let mut message = message?;
                                 if let Some(choice) = message.choices.pop() {
                                     this.upgrade(&cx)
-                                        .ok_or_else(|| anyhow!("assistant was dropped"))?
+                                        .ok_or_else(|| anyhow!("conversation was dropped"))?
                                         .update(&mut cx, |this, cx| {
                                             let text: Arc<str> = choice.delta.content?.into();
                                             let message_ix = this.message_anchors.iter().position(
@@ -721,7 +721,7 @@ impl Conversation {
                                                     });
                                                 buffer.edit([(offset..offset, text)], None, cx);
                                             });
-                                            cx.emit(AssistantEvent::StreamedCompletion);
+                                            cx.emit(ConversationEvent::StreamedCompletion);
 
                                             Some(())
                                         });
@@ -730,7 +730,7 @@ impl Conversation {
                             }
 
                             this.upgrade(&cx)
-                                .ok_or_else(|| anyhow!("assistant was dropped"))?
+                                .ok_or_else(|| anyhow!("conversation was dropped"))?
                                 .update(&mut cx, |this, cx| {
                                     this.pending_completions.retain(|completion| {
                                         completion.id != this.completion_count
@@ -784,7 +784,7 @@ impl Conversation {
         for id in ids {
             if let Some(metadata) = self.messages_metadata.get_mut(&id) {
                 metadata.role.cycle();
-                cx.emit(AssistantEvent::MessagesEdited);
+                cx.emit(ConversationEvent::MessagesEdited);
                 cx.notify();
             }
         }
@@ -824,7 +824,7 @@ impl Conversation {
                     status,
                 },
             );
-            cx.emit(AssistantEvent::MessagesEdited);
+            cx.emit(ConversationEvent::MessagesEdited);
             Some(message)
         } else {
             None
@@ -899,7 +899,7 @@ impl Conversation {
                 }
 
                 let selection = if let Some(prefix_end) = prefix_end {
-                    cx.emit(AssistantEvent::MessagesEdited);
+                    cx.emit(ConversationEvent::MessagesEdited);
                     MessageAnchor {
                         id: MessageId(post_inc(&mut self.next_message_id.0)),
                         start: self.buffer.read(cx).anchor_before(prefix_end),
@@ -929,7 +929,7 @@ impl Conversation {
             };
 
             if !edited_buffer {
-                cx.emit(AssistantEvent::MessagesEdited);
+                cx.emit(ConversationEvent::MessagesEdited);
             }
             new_messages
         } else {
@@ -971,7 +971,7 @@ impl Conversation {
                                         .get_or_insert(Default::default())
                                         .text
                                         .push_str(&text);
-                                    cx.emit(AssistantEvent::SummaryChanged);
+                                    cx.emit(ConversationEvent::SummaryChanged);
                                 });
                             }
                         }
@@ -979,7 +979,7 @@ impl Conversation {
                         this.update(&mut cx, |this, cx| {
                             if let Some(summary) = this.summary.as_mut() {
                                 summary.done = true;
-                                cx.emit(AssistantEvent::SummaryChanged);
+                                cx.emit(ConversationEvent::SummaryChanged);
                             }
                         });
 
@@ -1131,7 +1131,7 @@ struct PendingCompletion {
     _tasks: Vec<Task<()>>,
 }
 
-enum AssistantEditorEvent {
+enum ConversationEditorEvent {
     TabContentChanged,
 }
 
@@ -1142,7 +1142,7 @@ struct ScrollPosition {
 }
 
 struct ConversationEditor {
-    assistant: ModelHandle<Conversation>,
+    conversation: ModelHandle<Conversation>,
     fs: Arc<dyn Fs>,
     editor: ViewHandle<Editor>,
     blocks: HashSet<BlockId>,
@@ -1157,22 +1157,22 @@ impl ConversationEditor {
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let assistant = cx.add_model(|cx| Conversation::new(api_key, language_registry, cx));
+        let conversation = cx.add_model(|cx| Conversation::new(api_key, language_registry, cx));
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(assistant.read(cx).buffer.clone(), None, cx);
+            let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor
         });
 
         let _subscriptions = vec![
-            cx.observe(&assistant, |_, _, cx| cx.notify()),
-            cx.subscribe(&assistant, Self::handle_assistant_event),
+            cx.observe(&conversation, |_, _, cx| cx.notify()),
+            cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
         ];
 
         let mut this = Self {
-            assistant,
+            conversation,
             editor,
             blocks: Default::default(),
             scroll_position: None,
@@ -1186,20 +1186,20 @@ impl ConversationEditor {
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
         let cursors = self.cursors(cx);
 
-        let user_messages = self.assistant.update(cx, |assistant, cx| {
-            let selected_messages = assistant
+        let user_messages = self.conversation.update(cx, |conversation, cx| {
+            let selected_messages = conversation
                 .messages_for_offsets(cursors, cx)
                 .into_iter()
                 .map(|message| message.id)
                 .collect();
-            assistant.assist(selected_messages, cx)
+            conversation.assist(selected_messages, cx)
         });
         let new_selections = user_messages
             .iter()
             .map(|message| {
                 let cursor = message
                     .start
-                    .to_offset(self.assistant.read(cx).buffer.read(cx));
+                    .to_offset(self.conversation.read(cx).buffer.read(cx));
                 cursor..cursor
             })
             .collect::<Vec<_>>();
@@ -1216,8 +1216,8 @@ impl ConversationEditor {
 
     fn cancel_last_assist(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
         if !self
-            .assistant
-            .update(cx, |assistant, _| assistant.cancel_last_assist())
+            .conversation
+            .update(cx, |conversation, _| conversation.cancel_last_assist())
         {
             cx.propagate_action();
         }
@@ -1225,13 +1225,13 @@ impl ConversationEditor {
 
     fn cycle_message_role(&mut self, _: &CycleMessageRole, cx: &mut ViewContext<Self>) {
         let cursors = self.cursors(cx);
-        self.assistant.update(cx, |assistant, cx| {
-            let messages = assistant
+        self.conversation.update(cx, |conversation, cx| {
+            let messages = conversation
                 .messages_for_offsets(cursors, cx)
                 .into_iter()
                 .map(|message| message.id)
                 .collect();
-            assistant.cycle_message_roles(messages, cx)
+            conversation.cycle_message_roles(messages, cx)
         });
     }
 
@@ -1243,26 +1243,26 @@ impl ConversationEditor {
             .collect()
     }
 
-    fn handle_assistant_event(
+    fn handle_conversation_event(
         &mut self,
         _: ModelHandle<Conversation>,
-        event: &AssistantEvent,
+        event: &ConversationEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            AssistantEvent::MessagesEdited => {
+            ConversationEvent::MessagesEdited => {
                 self.update_message_headers(cx);
-                self.assistant.update(cx, |assistant, cx| {
-                    assistant.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
+                self.conversation.update(cx, |conversation, cx| {
+                    conversation.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            AssistantEvent::SummaryChanged => {
-                cx.emit(AssistantEditorEvent::TabContentChanged);
-                self.assistant.update(cx, |assistant, cx| {
-                    assistant.save(None, self.fs.clone(), cx);
+            ConversationEvent::SummaryChanged => {
+                cx.emit(ConversationEditorEvent::TabContentChanged);
+                self.conversation.update(cx, |conversation, cx| {
+                    conversation.save(None, self.fs.clone(), cx);
                 });
             }
-            AssistantEvent::StreamedCompletion => {
+            ConversationEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
                     if let Some(scroll_position) = self.scroll_position {
                         let snapshot = editor.snapshot(cx);
@@ -1332,7 +1332,7 @@ impl ConversationEditor {
             let excerpt_id = *buffer.as_singleton().unwrap().0;
             let old_blocks = std::mem::take(&mut self.blocks);
             let new_blocks = self
-                .assistant
+                .conversation
                 .read(cx)
                 .messages(cx)
                 .map(|message| BlockProperties {
@@ -1340,7 +1340,7 @@ impl ConversationEditor {
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Arc::new({
-                        let assistant = self.assistant.clone();
+                        let conversation = self.conversation.clone();
                         // let metadata = message.metadata.clone();
                         // let message = message.clone();
                         move |cx| {
@@ -1376,10 +1376,10 @@ impl ConversationEditor {
                             )
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_down(MouseButton::Left, {
-                                let assistant = assistant.clone();
+                                let conversation = conversation.clone();
                                 move |_, _, cx| {
-                                    assistant.update(cx, |assistant, cx| {
-                                        assistant.cycle_message_roles(
+                                    conversation.update(cx, |conversation, cx| {
+                                        conversation.cycle_message_roles(
                                             HashSet::from_iter(Some(message_id)),
                                             cx,
                                         )
@@ -1484,12 +1484,12 @@ impl ConversationEditor {
 
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
-                let editor = panel
+                let conversation = panel
                     .active_conversation_editor()
                     .cloned()
                     .unwrap_or_else(|| panel.add_conversation(cx));
-                editor.update(cx, |assistant, cx| {
-                    assistant
+                conversation.update(cx, |conversation, cx| {
+                    conversation
                         .editor
                         .update(cx, |editor, cx| editor.insert(&text, cx))
                 });
@@ -1499,12 +1499,12 @@ impl ConversationEditor {
 
     fn copy(&mut self, _: &editor::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
-        let assistant = self.assistant.read(cx);
+        let conversation = self.conversation.read(cx);
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             let mut copied_text = String::new();
             let mut spanned_messages = 0;
-            for message in assistant.messages(cx) {
+            for message in conversation.messages(cx) {
                 if message.range.start >= selection.range().end {
                     break;
                 } else if message.range.end >= selection.range().start {
@@ -1513,7 +1513,7 @@ impl ConversationEditor {
                     if !range.is_empty() {
                         spanned_messages += 1;
                         write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
-                        for chunk in assistant.buffer.read(cx).text_for_range(range) {
+                        for chunk in conversation.buffer.read(cx).text_for_range(range) {
                             copied_text.push_str(&chunk);
                         }
                         copied_text.push('\n');
@@ -1532,36 +1532,36 @@ impl ConversationEditor {
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
-        self.assistant.update(cx, |assistant, cx| {
+        self.conversation.update(cx, |conversation, cx| {
             let selections = self.editor.read(cx).selections.disjoint_anchors();
             for selection in selections.into_iter() {
                 let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 let range = selection
                     .map(|endpoint| endpoint.to_offset(&buffer))
                     .range();
-                assistant.split_message(range, cx);
+                conversation.split_message(range, cx);
             }
         });
     }
 
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
-        self.assistant.update(cx, |assistant, cx| {
-            assistant.save(None, self.fs.clone(), cx)
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.save(None, self.fs.clone(), cx)
         });
     }
 
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
-        self.assistant.update(cx, |assistant, cx| {
-            let new_model = match assistant.model.as_str() {
+        self.conversation.update(cx, |conversation, cx| {
+            let new_model = match conversation.model.as_str() {
                 "gpt-4-0613" => "gpt-3.5-turbo-0613",
                 _ => "gpt-4-0613",
             };
-            assistant.set_model(new_model.into(), cx);
+            conversation.set_model(new_model.into(), cx);
         });
     }
 
     fn title(&self, cx: &AppContext) -> String {
-        self.assistant
+        self.conversation
             .read(cx)
             .summary
             .as_ref()
@@ -1571,20 +1571,20 @@ impl ConversationEditor {
 }
 
 impl Entity for ConversationEditor {
-    type Event = AssistantEditorEvent;
+    type Event = ConversationEditorEvent;
 }
 
 impl View for ConversationEditor {
     fn ui_name() -> &'static str {
-        "AssistantEditor"
+        "ConversationEditor"
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum Model {}
         let theme = &theme::current(cx).assistant;
-        let assistant = &self.assistant.read(cx);
-        let model = assistant.model.clone();
-        let remaining_tokens = assistant.remaining_tokens().map(|remaining_tokens| {
+        let conversation = self.conversation.read(cx);
+        let model = conversation.model.clone();
+        let remaining_tokens = conversation.remaining_tokens().map(|remaining_tokens| {
             let remaining_tokens_style = if remaining_tokens <= 0 {
                 &theme.no_remaining_tokens
             } else {
@@ -1838,22 +1838,22 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
-        let buffer = assistant.read(cx).buffer.clone();
+        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+        let buffer = conversation.read(cx).buffer.clone();
 
-        let message_1 = assistant.read(cx).message_anchors[0].clone();
+        let message_1 = conversation.read(cx).message_anchors[0].clone();
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![(message_1.id, Role::User, 0..0)]
         );
 
-        let message_2 = assistant.update(cx, |assistant, cx| {
-            assistant
+        let message_2 = conversation.update(cx, |conversation, cx| {
+            conversation
                 .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
                 .unwrap()
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..1),
                 (message_2.id, Role::Assistant, 1..1)
@@ -1864,20 +1864,20 @@ mod tests {
             buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..2),
                 (message_2.id, Role::Assistant, 2..3)
             ]
         );
 
-        let message_3 = assistant.update(cx, |assistant, cx| {
-            assistant
+        let message_3 = conversation.update(cx, |conversation, cx| {
+            conversation
                 .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
                 .unwrap()
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..2),
                 (message_2.id, Role::Assistant, 2..4),
@@ -1885,13 +1885,13 @@ mod tests {
             ]
         );
 
-        let message_4 = assistant.update(cx, |assistant, cx| {
-            assistant
+        let message_4 = conversation.update(cx, |conversation, cx| {
+            conversation
                 .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
                 .unwrap()
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..2),
                 (message_2.id, Role::Assistant, 2..4),
@@ -1904,7 +1904,7 @@ mod tests {
             buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..2),
                 (message_2.id, Role::Assistant, 2..4),
@@ -1916,7 +1916,7 @@ mod tests {
         // Deleting across message boundaries merges the messages.
         buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..3),
                 (message_3.id, Role::User, 3..4),
@@ -1926,7 +1926,7 @@ mod tests {
         // Undoing the deletion should also undo the merge.
         buffer.update(cx, |buffer, cx| buffer.undo(cx));
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..2),
                 (message_2.id, Role::Assistant, 2..4),
@@ -1938,7 +1938,7 @@ mod tests {
         // Redoing the deletion should also redo the merge.
         buffer.update(cx, |buffer, cx| buffer.redo(cx));
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..3),
                 (message_3.id, Role::User, 3..4),
@@ -1946,13 +1946,13 @@ mod tests {
         );
 
         // Ensure we can still insert after a merged message.
-        let message_5 = assistant.update(cx, |assistant, cx| {
-            assistant
+        let message_5 = conversation.update(cx, |conversation, cx| {
+            conversation
                 .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
                 .unwrap()
         });
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..3),
                 (message_5.id, Role::System, 3..4),
@@ -1964,12 +1964,12 @@ mod tests {
     #[gpui::test]
     fn test_message_splitting(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
-        let buffer = assistant.read(cx).buffer.clone();
+        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+        let buffer = conversation.read(cx).buffer.clone();
 
-        let message_1 = assistant.read(cx).message_anchors[0].clone();
+        let message_1 = conversation.read(cx).message_anchors[0].clone();
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![(message_1.id, Role::User, 0..0)]
         );
 
@@ -1978,13 +1978,13 @@ mod tests {
         });
 
         let (_, message_2) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(3..3, cx));
+            conversation.update(cx, |conversation, cx| conversation.split_message(3..3, cx));
         let message_2 = message_2.unwrap();
 
         // We recycle newlines in the middle of a split message
         assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_2.id, Role::User, 4..16),
@@ -1992,13 +1992,13 @@ mod tests {
         );
 
         let (_, message_3) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(3..3, cx));
+            conversation.update(cx, |conversation, cx| conversation.split_message(3..3, cx));
         let message_3 = message_3.unwrap();
 
         // We don't recycle newlines at the end of a split message
         assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_3.id, Role::User, 4..5),
@@ -2007,11 +2007,11 @@ mod tests {
         );
 
         let (_, message_4) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(9..9, cx));
+            conversation.update(cx, |conversation, cx| conversation.split_message(9..9, cx));
         let message_4 = message_4.unwrap();
         assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_3.id, Role::User, 4..5),
@@ -2021,11 +2021,11 @@ mod tests {
         );
 
         let (_, message_5) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(9..9, cx));
+            conversation.update(cx, |conversation, cx| conversation.split_message(9..9, cx));
         let message_5 = message_5.unwrap();
         assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\nddd\n");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_3.id, Role::User, 4..5),
@@ -2035,13 +2035,14 @@ mod tests {
             ]
         );
 
-        let (message_6, message_7) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(14..16, cx));
+        let (message_6, message_7) = conversation.update(cx, |conversation, cx| {
+            conversation.split_message(14..16, cx)
+        });
         let message_6 = message_6.unwrap();
         let message_7 = message_7.unwrap();
         assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\ndd\nd\n");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_3.id, Role::User, 4..5),
@@ -2057,33 +2058,33 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
-        let buffer = assistant.read(cx).buffer.clone();
+        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+        let buffer = conversation.read(cx).buffer.clone();
 
-        let message_1 = assistant.read(cx).message_anchors[0].clone();
+        let message_1 = conversation.read(cx).message_anchors[0].clone();
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![(message_1.id, Role::User, 0..0)]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
-        let message_2 = assistant
-            .update(cx, |assistant, cx| {
-                assistant.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
+        let message_2 = conversation
+            .update(cx, |conversation, cx| {
+                conversation.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
             })
             .unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbb")], None, cx));
 
-        let message_3 = assistant
-            .update(cx, |assistant, cx| {
-                assistant.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
+        let message_3 = conversation
+            .update(cx, |conversation, cx| {
+                conversation.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
             })
             .unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "ccc")], None, cx));
 
         assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc");
         assert_eq!(
-            messages(&assistant, cx),
+            messages(&conversation, cx),
             vec![
                 (message_1.id, Role::User, 0..4),
                 (message_2.id, Role::User, 4..8),
@@ -2092,20 +2093,20 @@ mod tests {
         );
 
         assert_eq!(
-            message_ids_for_offsets(&assistant, &[0, 4, 9], cx),
+            message_ids_for_offsets(&conversation, &[0, 4, 9], cx),
             [message_1.id, message_2.id, message_3.id]
         );
         assert_eq!(
-            message_ids_for_offsets(&assistant, &[0, 1, 11], cx),
+            message_ids_for_offsets(&conversation, &[0, 1, 11], cx),
             [message_1.id, message_3.id]
         );
 
         fn message_ids_for_offsets(
-            assistant: &ModelHandle<Conversation>,
+            conversation: &ModelHandle<Conversation>,
             offsets: &[usize],
             cx: &AppContext,
         ) -> Vec<MessageId> {
-            assistant
+            conversation
                 .read(cx)
                 .messages_for_offsets(offsets.iter().copied(), cx)
                 .into_iter()
@@ -2115,10 +2116,10 @@ mod tests {
     }
 
     fn messages(
-        assistant: &ModelHandle<Conversation>,
+        conversation: &ModelHandle<Conversation>,
         cx: &AppContext,
     ) -> Vec<(MessageId, Role, Range<usize>)> {
-        assistant
+        conversation
             .read(cx)
             .messages(cx)
             .map(|message| (message.id, message.role, message.range))
