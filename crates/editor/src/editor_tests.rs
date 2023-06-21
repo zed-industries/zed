@@ -2332,8 +2332,8 @@ fn test_delete_line(cx: &mut TestAppContext) {
 fn test_join_lines(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let (_, editor) = cx.add_window(|cx| {
-        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
         let mut editor = build_editor(buffer.clone(), cx);
         let buffer = buffer.read(cx).as_singleton().unwrap();
 
@@ -2343,13 +2343,38 @@ fn test_join_lines(cx: &mut TestAppContext) {
         );
 
         editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 3)..Point::new(0, 3)]
+        );
 
-        // assert_eq!(
-        //     editor.selections.ranges::<Point>(cx),
-        //     &[Point::new(0, 0), Point::new(0, 0)]
-        // );
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 11)..Point::new(0, 11)]
+        );
 
-        assert_eq!(buffer.read(cx).text(), "abc def\nghi\n");
+        editor.undo(&Undo, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
 
         editor
     });

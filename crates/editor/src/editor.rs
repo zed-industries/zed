@@ -3955,13 +3955,36 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
-        let cursor_position = self.selections.newest::<Point>(cx).head();
+        let selection = self.selections.newest::<Point>(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let end_of_line = Point::new(cursor_position.row, snapshot.line_len(cursor_position.row));
-        let start_of_next_line = end_of_line + Point::new(1, 0);
 
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.edit([(end_of_line..start_of_next_line, " ")], None, cx)
+        let row_range = if selection.start.row == selection.end.row {
+            selection.start.row..selection.start.row + 1
+        } else {
+            selection.start.row..selection.end.row
+        };
+
+        self.transact(cx, |this, cx| {
+            for (ix, row) in row_range.rev().enumerate() {
+                let end_of_line = Point::new(row, snapshot.line_len(row));
+                let start_of_next_line = end_of_line + Point::new(1, 0);
+
+                let replace = if snapshot.line_len(row + 1) > 0 {
+                    " "
+                } else {
+                    ""
+                };
+
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+                });
+
+                if ix == 0 {
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_ranges([end_of_line..end_of_line])
+                    })
+                }
+            }
         });
     }
 
