@@ -1,7 +1,10 @@
 use super::*;
-use crate::test::{
-    assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-    editor_test_context::EditorTestContext, select_ranges,
+use crate::{
+    test::{
+        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
+        editor_test_context::EditorTestContext, select_ranges,
+    },
+    JoinLines,
 };
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
@@ -2322,6 +2325,33 @@ fn test_delete_line(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
         );
+    });
+}
+
+#[gpui::test]
+fn test_join_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (_, editor) = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 0)..Point::new(0, 0)]
+        );
+
+        editor.join_lines(&JoinLines, cx);
+
+        // assert_eq!(
+        //     editor.selections.ranges::<Point>(cx),
+        //     &[Point::new(0, 0), Point::new(0, 0)]
+        // );
+
+        assert_eq!(buffer.read(cx).text(), "abc def\nghi\n");
+
+        editor
     });
 }
 

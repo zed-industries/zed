@@ -206,6 +206,7 @@ actions!(
         DuplicateLine,
         MoveLineUp,
         MoveLineDown,
+        JoinLines,
         Transpose,
         Cut,
         Copy,
@@ -321,6 +322,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
+    cx.add_action(Editor::join_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -3949,6 +3951,17 @@ impl Editor {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             });
+        });
+    }
+
+    pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        let cursor_position = self.selections.newest::<Point>(cx).head();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let end_of_line = Point::new(cursor_position.row, snapshot.line_len(cursor_position.row));
+        let start_of_next_line = end_of_line + Point::new(1, 0);
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit([(end_of_line..start_of_next_line, " ")], None, cx)
         });
     }
 
