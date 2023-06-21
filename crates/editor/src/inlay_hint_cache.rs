@@ -12,7 +12,7 @@ use collections::{hash_map, HashMap, HashSet};
 use util::post_inc;
 
 pub struct InlayHintCache {
-    snapshot: CacheSnapshot,
+    snapshot: Box<CacheSnapshot>,
     update_tasks: HashMap<ExcerptId, InlayHintUpdateTask>,
 }
 
@@ -38,7 +38,7 @@ struct ExcerptCachedHints {
 pub struct HintsUpdateState {
     multi_buffer_snapshot: MultiBufferSnapshot,
     visible_inlays: Vec<Inlay>,
-    cache: CacheSnapshot,
+    cache: Box<CacheSnapshot>,
 }
 
 #[derive(Debug, Default)]
@@ -59,11 +59,11 @@ struct ExcerptHintsUpdate {
 impl InlayHintCache {
     pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
         Self {
-            snapshot: CacheSnapshot {
+            snapshot: Box::new(CacheSnapshot {
                 allowed_hint_kinds: allowed_hint_types(inlay_hint_settings),
                 hints: HashMap::default(),
                 version: 0,
-            },
+            }),
             update_tasks: HashMap::default(),
         }
     }
@@ -157,7 +157,7 @@ impl InlayHintCache {
         .detach();
     }
 
-    fn snapshot(&self) -> CacheSnapshot {
+    fn snapshot(&self) -> Box<CacheSnapshot> {
         self.snapshot.clone()
     }
 
