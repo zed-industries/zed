@@ -219,7 +219,7 @@ impl Room {
             let tx =
                 unsafe { Box::from_raw(tx as *mut oneshot::Sender<Result<LocalTrackPublication>>) };
             if error.is_null() {
-                let _ = tx.send(Ok(LocalTrackPublication(publication)));
+                let _ = tx.send(Ok(LocalTrackPublication::new(publication)));
             } else {
                 let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
                 let _ = tx.send(Err(anyhow!(error)));
@@ -245,7 +245,7 @@ impl Room {
             let tx =
                 unsafe { Box::from_raw(tx as *mut oneshot::Sender<Result<LocalTrackPublication>>) };
             if error.is_null() {
-                let _ = tx.send(Ok(LocalTrackPublication(publication)));
+                let _ = tx.send(Ok(LocalTrackPublication::new(publication)));
             } else {
                 let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
                 let _ = tx.send(Err(anyhow!(error)));
@@ -344,7 +344,7 @@ impl Room {
                     .into_iter()
                     .map(|native_track_publication| {
                         let native_track_publication = *native_track_publication;
-                        Arc::new(RemoteTrackPublication(native_track_publication))
+                        Arc::new(RemoteTrackPublication::new(native_track_publication))
                     })
                     .collect()
             }
@@ -564,6 +564,13 @@ impl Drop for LocalVideoTrack {
 pub struct LocalTrackPublication(*const c_void);
 
 impl LocalTrackPublication {
+    pub fn new(native_track_publication: *const c_void) -> Self {
+        unsafe {
+            CFRetain(native_track_publication);
+        }
+        Self(native_track_publication)
+    }
+
     pub fn set_mute(&self, muted: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -599,6 +606,13 @@ impl Drop for LocalTrackPublication {
 pub struct RemoteTrackPublication(*const c_void);
 
 impl RemoteTrackPublication {
+    pub fn new(native_track_publication: *const c_void) -> Self {
+        unsafe {
+            CFRetain(native_track_publication);
+        }
+        Self(native_track_publication)
+    }
+
     pub fn set_enabled(&self, enabled: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
