@@ -53,7 +53,7 @@ struct ExcerptHintsUpdate {
     cache_version: usize,
     remove_from_visible: Vec<InlayId>,
     remove_from_cache: HashSet<InlayId>,
-    add_to_cache: Vec<(Option<InlayId>, Anchor, InlayHint)>,
+    add_to_cache: Vec<(Anchor, InlayHint)>,
 }
 
 impl InlayHintCache {
@@ -221,29 +221,20 @@ fn new_update_task(
                                     to_insert: Vec::new(),
                                 };
 
-                                for (shown_id, new_hint_position, new_hint) in
-                                    new_update.add_to_cache
-                                {
-                                    let new_inlay_id = match shown_id {
-                                        Some(id) => id,
-                                        None => {
-                                            let new_inlay_id =
-                                                InlayId(post_inc(&mut editor.next_inlay_id));
-                                            if editor
-                                                .inlay_hint_cache
-                                                .snapshot
-                                                .allowed_hint_kinds
-                                                .contains(&new_hint.kind)
-                                            {
-                                                splice.to_insert.push((
-                                                    new_hint_position,
-                                                    new_inlay_id,
-                                                    new_hint.clone(),
-                                                ));
-                                            }
-                                            new_inlay_id
-                                        }
-                                    };
+                                for (new_hint_position, new_hint) in new_update.add_to_cache {
+                                    let new_inlay_id = InlayId(post_inc(&mut editor.next_inlay_id));
+                                    if editor
+                                        .inlay_hint_cache
+                                        .snapshot
+                                        .allowed_hint_kinds
+                                        .contains(&new_hint.kind)
+                                    {
+                                        splice.to_insert.push((
+                                            new_hint_position,
+                                            new_inlay_id,
+                                            new_hint.clone(),
+                                        ));
+                                    }
 
                                     match cached_excerpt_hints.hints.binary_search_by(|probe| {
                                         probe.0.cmp(&new_hint_position, &task_multi_buffer_snapshot)
@@ -378,7 +369,7 @@ fn new_excerpt_hints_update_result(
     new_excerpt_hints: Vec<InlayHint>,
     invalidate_cache: bool,
 ) -> Option<ExcerptHintsUpdate> {
-    let mut add_to_cache: Vec<(Option<InlayId>, Anchor, InlayHint)> = Vec::new();
+    let mut add_to_cache: Vec<(Anchor, InlayHint)> = Vec::new();
     let shown_excerpt_hints = state
         .visible_inlays
         .iter()
@@ -394,12 +385,13 @@ fn new_excerpt_hints_update_result(
 
     let mut excerpt_hints_to_persist = HashSet::default();
     for new_hint in new_excerpt_hints {
+        // TODO kb this somehow spoils anchors and make them equal for different text anchors.
         let new_hint_anchor = state
             .multi_buffer_snapshot
             .anchor_in_excerpt(excerpt_id, new_hint.position);
         // TODO kb use merge sort or something else better
         let should_add_to_cache = match cached_excerpt_hints
-            .binary_search_by(|probe| new_hint_anchor.cmp(&probe.0, &state.multi_buffer_snapshot))
+            .binary_search_by(|probe| probe.0.cmp(&new_hint_anchor, &state.multi_buffer_snapshot))
         {
             Ok(ix) => {
                 let (_, cached_inlay_id, cached_hint) = &cached_excerpt_hints[ix];
@@ -441,14 +433,9 @@ fn new_excerpt_hints_update_result(
         };
 
         if should_add_to_cache {
-            let id_to_add = match shown_inlay_id {
-                Some(&shown_inlay_id) => {
-                    excerpt_hints_to_persist.insert(shown_inlay_id);
-                    Some(shown_inlay_id)
-                }
-                None => None,
-            };
-            add_to_cache.push((id_to_add, new_hint_anchor, new_hint.clone()));
+            if shown_inlay_id.is_none() {
+                add_to_cache.push((new_hint_anchor, new_hint.clone()));
+            }
         }
     }
 
