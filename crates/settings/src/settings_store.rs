@@ -147,25 +147,28 @@ impl SettingsStore {
             local_values: Vec::new(),
         }));
 
-        if let Some(default_settings) = setting_value
+        let default_settings = setting_value
             .deserialize_setting(&self.raw_default_settings)
+            .expect("can't deserialize default settings");
+
+        let mut user_values_stack = Vec::new();
+        if let Some(user_settings) = setting_value
+            .deserialize_setting(&self.raw_user_settings)
             .log_err()
         {
-            let mut user_values_stack = Vec::new();
+            user_values_stack = vec![user_settings];
+        }
 
-            if let Some(user_settings) = setting_value
-                .deserialize_setting(&self.raw_user_settings)
-                .log_err()
-            {
-                user_values_stack = vec![user_settings];
-            }
+        #[cfg(debug_assertions)]
+        setting_value
+            .load_setting(&default_settings, &[], cx)
+            .expect("can't deserialize settings from defaults");
 
-            if let Some(setting) = setting_value
-                .load_setting(&default_settings, &user_values_stack, cx)
-                .log_err()
-            {
-                setting_value.set_global_value(setting);
-            }
+        if let Some(setting) = setting_value
+            .load_setting(&default_settings, &user_values_stack, cx)
+            .log_err()
+        {
+            setting_value.set_global_value(setting);
         }
     }
 
