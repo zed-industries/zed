@@ -94,6 +94,8 @@
           }
         }
       ],
+      "ctrl-o": "pane::GoBack",
+      "ctrl-]": "editor::GoToDefinition",
       "escape": "editor::Cancel",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
@@ -188,7 +190,6 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "ctrl-o": "pane::GoBack",
       "/": [
         "buffer_search::Deploy",
         {
