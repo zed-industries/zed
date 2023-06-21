@@ -17,7 +17,7 @@ export default function assistant(colorScheme: ColorScheme) {
         hamburgerButton: {
           icon: {
             color: text(layer, "sans", "default", { size: "sm" }).color,
-            asset: "icons/hamburger.svg",
+            asset: "icons/hamburger_15.svg",
             dimensions: {
               width: 15,
               height: 15,
