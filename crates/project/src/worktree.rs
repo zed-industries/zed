@@ -1001,10 +1001,25 @@ impl LocalWorktree {
 
         cx.spawn(|this, mut cx| async move {
             write.await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut().unwrap().refresh_entry(path, None, cx)
-            })
-            .await
+            let (result, refreshes) = this.update(&mut cx, |this, cx| {
+                let mut refreshes = Vec::new();
+                for path in path.ancestors().skip(1) {
+                    refreshes.push(this.as_local_mut().unwrap().refresh_entry(
+                        path.into(),
+                        None,
+                        cx,
+                    ));
+                }
+                (
+                    this.as_local_mut().unwrap().refresh_entry(path, None, cx),
+                    refreshes,
+                )
+            });
+            for refresh in refreshes {
+                refresh.await.log_err();
+            }
+
+            result.await
         })
     }
 

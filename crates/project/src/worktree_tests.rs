@@ -936,6 +936,83 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
+    let client_fake = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+
+    let fs_fake = FakeFs::new(cx.background());
+    fs_fake.insert_tree(
+        "/root",
+        json!({
+            "a": {},
+        }),
+    )
+    .await;
+
+    let tree_fake = Worktree::local(
+        client_fake,
+        "/root".as_ref(),
+        true,
+        fs_fake,
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let entry = tree_fake
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entry.is_file());
+
+    cx.foreground().run_until_parked();
+    tree_fake.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
+        assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
+        assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
+    });
+
+    let client_real = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+
+    let fs_real = Arc::new(RealFs);
+    let temp_root = temp_tree(json!({
+        "a": {}
+    }));
+
+    let tree_real = Worktree::local(
+        client_real,
+        temp_root.path(),
+        true,
+        fs_real,
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let entry = tree_real
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entry.is_file());
+
+    cx.foreground().run_until_parked();
+    tree_real.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
+        assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
+        assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
+    });
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_random_worktree_operations_during_initial_scan(
     cx: &mut TestAppContext,

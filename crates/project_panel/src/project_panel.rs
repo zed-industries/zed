@@ -64,7 +64,7 @@ pub struct ProjectPanel {
     pending_serialization: Task<Option<()>>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct Selection {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
@@ -588,6 +588,7 @@ impl ProjectPanel {
                     if selection.entry_id == edited_entry_id {
                         selection.worktree_id = worktree_id;
                         selection.entry_id = new_entry.id;
+                        this.expand_to_selection(cx);
                     }
                 }
                 this.update_visible_entries(None, cx);
@@ -965,6 +966,25 @@ impl ProjectPanel {
         Some((worktree, entry))
     }
 
+    fn expand_to_selection(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let (worktree, entry) = self.selected_entry(cx)?;
+        let expanded_dir_ids = self.expanded_dir_ids.entry(worktree.id()).or_default();
+
+        for path in entry.path.ancestors() {
+            let Some(entry) = worktree.entry_for_path(path) else {
+                continue;
+            };
+            if entry.is_dir() {
+                if let Err(idx) = expanded_dir_ids.binary_search(&entry.id) {
+                    expanded_dir_ids.insert(idx, entry.id);
+                }
+            }
+        }
+
+
+        Some(())
+    }
+
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -1138,6 +1158,7 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
+
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1592,6 +1613,7 @@ impl ClipboardEntry {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, ViewHandle};
+    use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1998,6 +2020,134 @@ mod tests {
                 "          a-different-filename",
                 "    > C",
                 "      .dockerignore",
+            ]
+        );
+    }
+
+    #[gpui::test(iterations = 30)]
+    async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [EDITOR: '']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("bdir1/dir2/the-new-filename", cx)
+            });
+            panel.confirm(&Confirm, cx).unwrap()
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [PROCESSING: 'bdir1/dir2/the-new-filename']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    v bdir1",
+                "        v dir2",
+                "              the-new-filename  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
             ]
         );
     }

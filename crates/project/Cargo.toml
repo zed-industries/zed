@@ -64,7 +64,7 @@ itertools = "0.10"
 [dev-dependencies]
 ctor.workspace = true
 env_logger.workspace = true
-pretty_assertions = "1.3.0"
+pretty_assertions = "*"
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 db = { path = "../db", features = ["test-support"] }

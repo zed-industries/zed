@@ -27,6 +27,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 schemars.workspace = true
+pretty_assertions.workspace = true
 unicase = "2.6"
 
 [dev-dependencies]
