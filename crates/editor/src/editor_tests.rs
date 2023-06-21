@@ -2376,6 +2376,20 @@ fn test_join_lines(cx: &mut TestAppContext) {
             [Point::new(2, 3)..Point::new(2, 3)]
         );
 
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
         editor
     });
 }
