@@ -2329,7 +2329,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_join_lines(cx: &mut TestAppContext) {
+fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     cx.add_window(|cx| {
@@ -2342,6 +2342,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             &[Point::new(0, 0)..Point::new(0, 0)]
         );
 
+        // When on single line, replace newline at end by space
         editor.join_lines(&JoinLines, cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
         assert_eq!(
@@ -2349,6 +2350,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             &[Point::new(0, 3)..Point::new(0, 3)]
         );
 
+        // When multiple lines are selected, remove newlines that are spanned by the selection
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
         });
@@ -2359,6 +2361,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             &[Point::new(0, 11)..Point::new(0, 11)]
         );
 
+        // Undo should be transactional
         editor.undo(&Undo, cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
         assert_eq!(
@@ -2366,6 +2369,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             &[Point::new(0, 5)..Point::new(2, 2)]
         );
 
+        // When joining an empty line don't insert a space
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
         });
@@ -2376,6 +2380,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             [Point::new(2, 3)..Point::new(2, 3)]
         );
 
+        // We can remove trailing newlines
         editor.join_lines(&JoinLines, cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
         assert_eq!(
@@ -2383,6 +2388,7 @@ fn test_join_lines(cx: &mut TestAppContext) {
             [Point::new(2, 3)..Point::new(2, 3)]
         );
 
+        // We don't blow up on the last line
         editor.join_lines(&JoinLines, cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
         assert_eq!(
@@ -2390,6 +2396,37 @@ fn test_join_lines(cx: &mut TestAppContext) {
             [Point::new(2, 3)..Point::new(2, 3)]
         );
 
+        editor
+    });
+}
+
+#[gpui::test]
+fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 2)..Point::new(1, 1),
+                Point::new(1, 2)..Point::new(1, 2),
+                Point::new(3, 1)..Point::new(3, 2),
+            ])
+        });
+
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [
+                Point::new(0, 7)..Point::new(0, 7),
+                Point::new(1, 3)..Point::new(1, 3)
+            ]
+        );
         editor
     });
 }

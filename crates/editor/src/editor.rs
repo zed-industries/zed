@@ -3955,36 +3955,55 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
-        let selection = self.selections.newest::<Point>(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut row_ranges = Vec::<Range<u32>>::new();
+        for selection in self.selections.ranges::<Point>(cx) {
+            let start = selection.start.row;
+            let end = if selection.start.row == selection.end.row {
+                selection.start.row + 1
+            } else {
+                selection.end.row
+            };
 
-        let row_range = if selection.start.row == selection.end.row {
-            selection.start.row..selection.start.row + 1
-        } else {
-            selection.start.row..selection.end.row
-        };
-
-        self.transact(cx, |this, cx| {
-            for (ix, row) in row_range.rev().enumerate() {
-                let end_of_line = Point::new(row, snapshot.line_len(row));
-                let start_of_next_line = end_of_line + Point::new(1, 0);
-
-                let replace = if snapshot.line_len(row + 1) > 0 {
-                    " "
-                } else {
-                    ""
-                };
-
-                this.buffer.update(cx, |buffer, cx| {
-                    buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
-                });
-
-                if ix == 0 {
-                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_ranges([end_of_line..end_of_line])
-                    })
+            if let Some(last_row_range) = row_ranges.last_mut() {
+                if start <= last_row_range.end {
+                    last_row_range.end = end;
+                    continue;
                 }
             }
+            row_ranges.push(start..end);
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut cursor_positions = Vec::new();
+        for row_range in &row_ranges {
+            let anchor = snapshot.anchor_before(Point::new(
+                row_range.end - 1,
+                snapshot.line_len(row_range.end - 1),
+            ));
+            cursor_positions.push(anchor.clone()..anchor);
+        }
+
+        self.transact(cx, |this, cx| {
+            for row_range in row_ranges.into_iter().rev() {
+                for row in row_range.rev() {
+                    let end_of_line = Point::new(row, snapshot.line_len(row));
+                    let start_of_next_line = end_of_line + Point::new(1, 0);
+
+                    let replace = if snapshot.line_len(row + 1) > 0 {
+                        " "
+                    } else {
+                        ""
+                    };
+
+                    this.buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+                    });
+                }
+            }
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_anchor_ranges(cursor_positions)
+            });
         });
     }
 
