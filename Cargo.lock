@@ -109,6 +109,7 @@ dependencies = [
  "isahc",
  "language",
  "menu",
+ "project",
  "regex",
  "schemars",
  "search",

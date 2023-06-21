@@ -37,7 +37,7 @@ use util::{
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
-    pane, Pane, Save, Workspace,
+    Save, Workspace,
 };
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
@@ -66,21 +66,24 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(
         |workspace: &mut Workspace, _: &NewContext, cx: &mut ViewContext<Workspace>| {
             if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-                this.update(cx, |this, cx| this.add_context(cx))
+                this.update(cx, |this, cx| {
+                    this.add_conversation(cx);
+                })
             }
 
             workspace.focus_panel::<AssistantPanel>(cx);
         },
     );
-    cx.add_action(AssistantEditor::assist);
-    cx.capture_action(AssistantEditor::cancel_last_assist);
-    cx.capture_action(AssistantEditor::save);
-    cx.add_action(AssistantEditor::quote_selection);
-    cx.capture_action(AssistantEditor::copy);
-    cx.capture_action(AssistantEditor::split);
-    cx.capture_action(AssistantEditor::cycle_message_role);
+    cx.add_action(ConversationEditor::assist);
+    cx.capture_action(ConversationEditor::cancel_last_assist);
+    cx.capture_action(ConversationEditor::save);
+    cx.add_action(ConversationEditor::quote_selection);
+    cx.capture_action(ConversationEditor::copy);
+    cx.capture_action(ConversationEditor::split);
+    cx.capture_action(ConversationEditor::cycle_message_role);
     cx.add_action(AssistantPanel::save_api_key);
     cx.add_action(AssistantPanel::reset_api_key);
+    cx.add_action(AssistantPanel::toggle_zoom);
     cx.add_action(
         |workspace: &mut Workspace, _: &ToggleFocus, cx: &mut ViewContext<Workspace>| {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -88,6 +91,7 @@ pub fn init(cx: &mut AppContext) {
     );
 }
 
+#[derive(Debug)]
 pub enum AssistantPanelEvent {
     ZoomIn,
     ZoomOut,
@@ -99,14 +103,17 @@ pub enum AssistantPanelEvent {
 pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
-    pane: ViewHandle<Pane>,
+    active_conversation_index: usize,
+    conversation_editors: Vec<ViewHandle<ConversationEditor>>,
+    saved_conversations: Vec<SavedConversationMetadata>,
+    zoomed: bool,
+    has_focus: bool,
     api_key: Rc<RefCell<Option<String>>>,
     api_key_editor: Option<ViewHandle<Editor>>,
     has_read_credentials: bool,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    saved_conversations: Vec<SavedConversationMetadata>,
     _watch_saved_conversations: Task<Result<()>>,
 }
 
@@ -125,61 +132,6 @@ impl AssistantPanel {
             // TODO: deserialize state.
             workspace.update(&mut cx, |workspace, cx| {
                 cx.add_view::<Self, _>(|cx| {
-                    let weak_self = cx.weak_handle();
-                    let pane = cx.add_view(|cx| {
-                        let mut pane = Pane::new(
-                            workspace.weak_handle(),
-                            workspace.project().clone(),
-                            workspace.app_state().background_actions,
-                            Default::default(),
-                            cx,
-                        );
-                        pane.set_can_split(false, cx);
-                        pane.set_can_navigate(false, cx);
-                        pane.on_can_drop(move |_, _| false);
-                        pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                            let weak_self = weak_self.clone();
-                            Flex::row()
-                                .with_child(Pane::render_tab_bar_button(
-                                    0,
-                                    "icons/plus_12.svg",
-                                    false,
-                                    Some(("New Context".into(), Some(Box::new(NewContext)))),
-                                    cx,
-                                    move |_, cx| {
-                                        let weak_self = weak_self.clone();
-                                        cx.window_context().defer(move |cx| {
-                                            if let Some(this) = weak_self.upgrade(cx) {
-                                                this.update(cx, |this, cx| this.add_context(cx));
-                                            }
-                                        })
-                                    },
-                                    None,
-                                ))
-                                .with_child(Pane::render_tab_bar_button(
-                                    1,
-                                    if pane.is_zoomed() {
-                                        "icons/minimize_8.svg"
-                                    } else {
-                                        "icons/maximize_8.svg"
-                                    },
-                                    pane.is_zoomed(),
-                                    Some((
-                                        "Toggle Zoom".into(),
-                                        Some(Box::new(workspace::ToggleZoom)),
-                                    )),
-                                    cx,
-                                    move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-                                    None,
-                                ))
-                                .into_any()
-                        });
-                        let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
-                        pane.toolbar()
-                            .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
-                        pane
-                    });
-
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -200,7 +152,11 @@ impl AssistantPanel {
                     });
 
                     let mut this = Self {
-                        pane,
+                        active_conversation_index: 0,
+                        conversation_editors: Default::default(),
+                        saved_conversations,
+                        zoomed: false,
+                        has_focus: false,
                         api_key: Rc::new(RefCell::new(None)),
                         api_key_editor: None,
                         has_read_credentials: false,
@@ -209,22 +165,18 @@ impl AssistantPanel {
                         width: None,
                         height: None,
                         subscriptions: Default::default(),
-                        saved_conversations,
                         _watch_saved_conversations,
                     };
 
                     let mut old_dock_position = this.position(cx);
-                    this.subscriptions = vec![
-                        cx.observe(&this.pane, |_, _, cx| cx.notify()),
-                        cx.subscribe(&this.pane, Self::handle_pane_event),
-                        cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                    this.subscriptions =
+                        vec![cx.observe_global::<SettingsStore, _>(move |this, cx| {
                             let new_dock_position = this.position(cx);
                             if new_dock_position != old_dock_position {
                                 old_dock_position = new_dock_position;
                                 cx.emit(AssistantPanelEvent::DockPositionChanged);
                             }
-                        }),
-                    ];
+                        })];
 
                     this
                 })
@@ -232,25 +184,14 @@ impl AssistantPanel {
         })
     }
 
-    fn handle_pane_event(
-        &mut self,
-        _pane: ViewHandle<Pane>,
-        event: &pane::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            pane::Event::ZoomIn => cx.emit(AssistantPanelEvent::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(AssistantPanelEvent::ZoomOut),
-            pane::Event::Focus => cx.emit(AssistantPanelEvent::Focus),
-            pane::Event::Remove => cx.emit(AssistantPanelEvent::Close),
-            _ => {}
-        }
-    }
-
-    fn add_context(&mut self, cx: &mut ViewContext<Self>) {
+    fn add_conversation(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<ConversationEditor> {
         let focus = self.has_focus(cx);
         let editor = cx.add_view(|cx| {
-            AssistantEditor::new(
+            if focus {
+                cx.focus_self();
+            }
+
+            ConversationEditor::new(
                 self.api_key.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
@@ -258,20 +199,23 @@ impl AssistantPanel {
             )
         });
         self.subscriptions
-            .push(cx.subscribe(&editor, Self::handle_assistant_editor_event));
-        self.pane.update(cx, |pane, cx| {
-            pane.add_item(Box::new(editor), true, focus, None, cx)
-        });
+            .push(cx.subscribe(&editor, Self::handle_conversation_editor_event));
+
+        self.active_conversation_index = self.conversation_editors.len();
+        self.conversation_editors.push(editor.clone());
+
+        cx.notify();
+        editor
     }
 
-    fn handle_assistant_editor_event(
+    fn handle_conversation_editor_event(
         &mut self,
-        _: ViewHandle<AssistantEditor>,
+        _: ViewHandle<ConversationEditor>,
         event: &AssistantEditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            AssistantEditorEvent::TabContentChanged => self.pane.update(cx, |_, cx| cx.notify()),
+            AssistantEditorEvent::TabContentChanged => cx.notify(),
         }
     }
 
@@ -301,6 +245,19 @@ impl AssistantPanel {
         self.api_key_editor = Some(build_api_key_editor(cx));
         cx.focus_self();
         cx.notify();
+    }
+
+    fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
+        if self.zoomed {
+            cx.emit(AssistantPanelEvent::ZoomOut)
+        } else {
+            cx.emit(AssistantPanelEvent::ZoomIn)
+        }
+    }
+
+    fn active_conversation_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
+        self.conversation_editors
+            .get(self.active_conversation_index)
     }
 }
 
@@ -345,19 +302,26 @@ impl View for AssistantPanel {
                 .with_style(style.api_key_prompt.container)
                 .aligned()
                 .into_any()
+        } else if let Some(editor) = self.active_conversation_editor() {
+            ChildView::new(editor, cx).into_any()
         } else {
-            ChildView::new(&self.pane, cx).into_any()
+            Empty::new().into_any()
         }
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         if cx.is_self_focused() {
-            if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+            if let Some(editor) = self.active_conversation_editor() {
+                cx.focus(editor);
+            } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
                 cx.focus(api_key_editor);
-            } else {
-                cx.focus(&self.pane);
             }
         }
+    }
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
     }
 }
 
@@ -411,12 +375,13 @@ impl Panel for AssistantPanel {
         matches!(event, AssistantPanelEvent::ZoomOut)
     }
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).is_zoomed()
+    fn is_zoomed(&self, _: &WindowContext) -> bool {
+        self.zoomed
     }
 
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
+        self.zoomed = zoomed;
+        cx.notify();
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -443,8 +408,8 @@ impl Panel for AssistantPanel {
                 }
             }
 
-            if self.pane.read(cx).items_len() == 0 {
-                self.add_context(cx);
+            if self.conversation_editors.is_empty() {
+                self.add_conversation(cx);
             }
         }
     }
@@ -469,12 +434,8 @@ impl Panel for AssistantPanel {
         matches!(event, AssistantPanelEvent::Close)
     }
 
-    fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus()
-            || self
-                .api_key_editor
-                .as_ref()
-                .map_or(false, |editor| editor.is_focused(cx))
+    fn has_focus(&self, _: &WindowContext) -> bool {
+        self.has_focus
     }
 
     fn is_focus_event(event: &Self::Event) -> bool {
@@ -494,7 +455,7 @@ struct Summary {
     done: bool,
 }
 
-struct Assistant {
+struct Conversation {
     buffer: ModelHandle<Buffer>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -513,11 +474,11 @@ struct Assistant {
     _subscriptions: Vec<Subscription>,
 }
 
-impl Entity for Assistant {
+impl Entity for Conversation {
     type Event = AssistantEvent;
 }
 
-impl Assistant {
+impl Conversation {
     fn new(
         api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
@@ -1080,7 +1041,7 @@ impl Assistant {
         &mut self,
         debounce: Option<Duration>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Assistant>,
+        cx: &mut ModelContext<Conversation>,
     ) {
         self.pending_save = cx.spawn(|this, mut cx| async move {
             if let Some(debounce) = debounce {
@@ -1158,8 +1119,8 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct AssistantEditor {
-    assistant: ModelHandle<Assistant>,
+struct ConversationEditor {
+    assistant: ModelHandle<Conversation>,
     fs: Arc<dyn Fs>,
     editor: ViewHandle<Editor>,
     blocks: HashSet<BlockId>,
@@ -1167,14 +1128,14 @@ struct AssistantEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-impl AssistantEditor {
+impl ConversationEditor {
     fn new(
         api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let assistant = cx.add_model(|cx| Assistant::new(api_key, language_registry, cx));
+        let assistant = cx.add_model(|cx| Conversation::new(api_key, language_registry, cx));
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(assistant.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -1262,7 +1223,7 @@ impl AssistantEditor {
 
     fn handle_assistant_event(
         &mut self,
-        _: ModelHandle<Assistant>,
+        _: ModelHandle<Conversation>,
         event: &AssistantEvent,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1501,20 +1462,15 @@ impl AssistantEditor {
 
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
-                if let Some(assistant) = panel
-                    .pane
-                    .read(cx)
-                    .active_item()
-                    .and_then(|item| item.downcast::<AssistantEditor>())
-                    .ok_or_else(|| anyhow!("no active context"))
-                    .log_err()
-                {
-                    assistant.update(cx, |assistant, cx| {
-                        assistant
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&text, cx))
-                    });
-                }
+                let editor = panel
+                    .active_conversation_editor()
+                    .cloned()
+                    .unwrap_or_else(|| panel.add_conversation(cx));
+                editor.update(cx, |assistant, cx| {
+                    assistant
+                        .editor
+                        .update(cx, |editor, cx| editor.insert(&text, cx))
+                });
             });
         }
     }
@@ -1592,11 +1548,11 @@ impl AssistantEditor {
     }
 }
 
-impl Entity for AssistantEditor {
+impl Entity for ConversationEditor {
     type Event = AssistantEditorEvent;
 }
 
-impl View for AssistantEditor {
+impl View for ConversationEditor {
     fn ui_name() -> &'static str {
         "AssistantEditor"
     }
@@ -1655,7 +1611,7 @@ impl View for AssistantEditor {
     }
 }
 
-impl Item for AssistantEditor {
+impl Item for ConversationEditor {
     fn tab_content<V: View>(
         &self,
         _: Option<usize>,
@@ -1812,12 +1768,55 @@ async fn stream_completion(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::AppContext;
+    use fs::FakeFs;
+    use gpui::{AppContext, TestAppContext};
+    use project::Project;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            language::init(cx);
+            editor::init_settings(cx);
+            crate::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let weak_workspace = workspace.downgrade();
+
+        let panel = cx
+            .spawn(|cx| async move { AssistantPanel::load(weak_workspace, cx).await })
+            .await
+            .unwrap();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_panel(panel.clone(), cx);
+            workspace.toggle_dock(DockPosition::Right, cx);
+            assert!(workspace.right_dock().read(cx).is_open());
+            cx.focus(&panel);
+        });
+
+        cx.dispatch_action(window_id, workspace::ToggleZoom);
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed_view(cx).unwrap(), panel);
+        })
+    }
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Assistant::new(Default::default(), registry, cx));
+        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = assistant.read(cx).buffer.clone();
 
         let message_1 = assistant.read(cx).message_anchors[0].clone();
@@ -1943,7 +1942,7 @@ mod tests {
     #[gpui::test]
     fn test_message_splitting(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Assistant::new(Default::default(), registry, cx));
+        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = assistant.read(cx).buffer.clone();
 
         let message_1 = assistant.read(cx).message_anchors[0].clone();
@@ -2036,7 +2035,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let registry = Arc::new(LanguageRegistry::test());
-        let assistant = cx.add_model(|cx| Assistant::new(Default::default(), registry, cx));
+        let assistant = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = assistant.read(cx).buffer.clone();
 
         let message_1 = assistant.read(cx).message_anchors[0].clone();
@@ -2080,7 +2079,7 @@ mod tests {
         );
 
         fn message_ids_for_offsets(
-            assistant: &ModelHandle<Assistant>,
+            assistant: &ModelHandle<Conversation>,
             offsets: &[usize],
             cx: &AppContext,
         ) -> Vec<MessageId> {
@@ -2094,7 +2093,7 @@ mod tests {
     }
 
     fn messages(
-        assistant: &ModelHandle<Assistant>,
+        assistant: &ModelHandle<Conversation>,
         cx: &AppContext,
     ) -> Vec<(MessageId, Role, Range<usize>)> {
         assistant

@@ -859,7 +859,10 @@ impl Workspace {
         &self.right_dock
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    where
+        T::Event: std::fmt::Debug,
+    {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -1698,6 +1701,11 @@ impl Workspace {
         self.zoomed_position = None;
 
         cx.notify();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.zoomed.and_then(|view| view.upgrade(cx))
     }
 
     fn dismiss_zoomed_items_to_reveal(

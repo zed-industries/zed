@@ -153,6 +153,7 @@ pub fn init(cx: &mut AppContext) {
     );
 }
 
+#[derive(Debug)]
 pub enum Event {
     OpenedEntry {
         entry_id: ProjectEntryId,
