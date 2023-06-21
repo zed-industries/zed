@@ -132,6 +132,15 @@ export default function statusBar(colorScheme: ColorScheme) {
                             iconColor: foreground(layer, "active"),
                             background: background(layer, "active"),
                         },
+                        hovered: {
+                            iconColor: foreground(layer, "hovered"),
+                            background: background(layer, "hovered"),
+                        },
+                        clicked: {
+                            iconColor: foreground(layer, "pressed"),
+                            background: background(layer, "pressed"),
+                        },
+
                     }
                 }
             }
