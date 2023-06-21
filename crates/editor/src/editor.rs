@@ -3987,9 +3987,10 @@ impl Editor {
             for row_range in row_ranges.into_iter().rev() {
                 for row in row_range.rev() {
                     let end_of_line = Point::new(row, snapshot.line_len(row));
-                    let start_of_next_line = end_of_line + Point::new(1, 0);
+                    let indent = snapshot.indent_size_for_line(row + 1);
+                    let start_of_next_line = Point::new(row + 1, indent.len);
 
-                    let replace = if snapshot.line_len(row + 1) > 0 {
+                    let replace = if snapshot.line_len(row + 1) > indent.len {
                         " "
                     } else {
                         ""

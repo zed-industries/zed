@@ -2396,6 +2396,34 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
             [Point::new(2, 3)..Point::new(2, 3)]
         );
 
+        // reset to test indentation
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(1, 0)..Point::new(1, 2), "  "),
+                    (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
+                ],
+                None,
+                cx,
+            )
+        });
+
+        // We remove any leading spaces
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
+
+        // We don't insert a space for a line containing only spaces
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
+
+        // We ignore any leading tabs
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
+
         editor
     });
 }
