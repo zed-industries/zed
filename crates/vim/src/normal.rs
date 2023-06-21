@@ -481,17 +481,17 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
 pub fn substitute(vim: &mut Vim, count: usize, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
-            let selection = editor.selections.newest::<Point>(cx);
-
-            let end = if selection.start == selection.end {
-                selection.start + Point::new(0, 1)
-            } else {
-                selection.end
-            };
-
-            editor.buffer().update(cx, |buffer, cx| {
-                buffer.edit([(selection.start..end, "")], None, cx)
-            })
+            let selections = editor.selections.all::<Point>(cx);
+            for selection in selections.into_iter().rev() {
+                let end = if selection.start == selection.end {
+                    selection.start + Point::new(0, 1)
+                } else {
+                    selection.end
+                };
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit([(selection.start..end, "")], None, cx)
+                })
+            }
         })
     });
     vim.switch_mode(Mode::Insert, true, cx)

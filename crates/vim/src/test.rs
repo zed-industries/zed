@@ -99,12 +99,22 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     })
 }
 
-
 #[gpui::test]
 async fn test_substitute(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
+    // supports a single cursor
     cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
     cx.simulate_keystrokes(["s", "x"]);
     cx.assert_editor_state("xˇbc\n");
+
+    // supports a selection
+    cx.set_state(indoc! {"a«bcˇ»\n"}, Mode::Visual { line: false });
+    cx.simulate_keystrokes(["s", "x"]);
+    cx.assert_editor_state("axˇ\n");
+
+    // supports multiple cursors
+    cx.set_state(indoc! {"a«bcˇ»deˇfg\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["s", "x"]);
+    cx.assert_editor_state("axˇdexˇg\n");
 }

@@ -302,6 +302,7 @@
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
+      "s": "vim::Substitute",
       "r": [
         "vim::PushOperator",
         "Replace"
