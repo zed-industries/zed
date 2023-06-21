@@ -140,9 +140,11 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
+#[derive(Deserialize)]
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
+    #[serde(skip)]
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
@@ -183,9 +185,9 @@ impl Clone for Toast {
     }
 }
 
-pub type WorkspaceId = i64;
+impl_actions!(workspace, [ActivatePane, Toast]);
 
-impl_actions!(workspace, [ActivatePane]);
+pub type WorkspaceId = i64;
 
 pub fn init_settings(cx: &mut AppContext) {
     settings::register::<WorkspaceSettings>(cx);
