@@ -995,6 +995,7 @@ pub struct TerminalStyle {
 pub struct AssistantStyle {
     pub container: ContainerStyle,
     pub hamburger_button: IconStyle,
+    pub plus_button: IconStyle,
     pub message_header: ContainerStyle,
     pub sent_at: ContainedText,
     pub user_sender: Interactive<ContainedText>,

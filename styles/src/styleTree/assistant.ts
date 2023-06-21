@@ -23,7 +23,36 @@ export default function assistant(colorScheme: ColorScheme) {
               height: 15,
             },
           },
-          container: {}
+          container: {
+            margin: { left: 8 },
+          }
+        },
+        plusButton: {
+          icon: {
+            color: text(layer, "sans", "default", { size: "sm" }).color,
+            asset: "icons/plus_12.svg",
+            dimensions: {
+              width: 12,
+              height: 12,
+            },
+          },
+          container: {
+            margin: { left: 8 },
+          }
+        },
+        savedConversation: {
+          background: background(layer, "on"),
+          hover: {
+            background: background(layer, "on", "hovered"),
+          },
+          savedAt: {
+            margin: { left: 8 },
+            ...text(layer, "sans", "default", { size: "xs" }),
+          },
+          title: {
+            margin: { left: 8 },
+            ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
+          }
         },
         userSender: {
             ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),

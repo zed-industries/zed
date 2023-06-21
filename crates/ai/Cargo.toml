@@ -22,7 +22,7 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 
 anyhow.workspace = true
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 futures.workspace = true
 isahc.workspace = true
 regex.workspace = true

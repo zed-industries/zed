@@ -3,6 +3,8 @@ mod assistant_settings;
 
 use anyhow::Result;
 pub use assistant::AssistantPanel;
+use chrono::{DateTime, Local};
+use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::AppContext;
@@ -12,7 +14,6 @@ use std::{
     fmt::{self, Display},
     path::PathBuf,
     sync::Arc,
-    time::SystemTime,
 };
 use util::paths::CONVERSATIONS_DIR;
 
@@ -24,11 +25,44 @@ struct OpenAIRequest {
     stream: bool,
 }
 
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+struct MessageId(usize);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MessageMetadata {
+    role: Role,
+    sent_at: DateTime<Local>,
+    status: MessageStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum MessageStatus {
+    Pending,
+    Done,
+    Error(Arc<str>),
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedMessage {
+    id: MessageId,
+    start: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 struct SavedConversation {
     zed: String,
     version: String,
-    messages: Vec<RequestMessage>,
+    text: String,
+    messages: Vec<SavedMessage>,
+    message_metadata: HashMap<MessageId, MessageMetadata>,
+    summary: String,
+    model: String,
+}
+
+impl SavedConversation {
+    const VERSION: &'static str = "0.1.0";
 }
 
 struct SavedConversationMetadata {
