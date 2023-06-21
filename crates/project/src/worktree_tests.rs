@@ -644,6 +644,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
                 (Path::new("a/a.js"), false),
                 (Path::new("b"), false),
                 (Path::new("b/b.js"), false),
+                // This directory is no longer ignored
                 (Path::new("node_modules"), false),
                 (Path::new("node_modules/c"), false),
                 (Path::new("node_modules/c/c.js"), false),
@@ -660,7 +661,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Each of the newly-loaded directories is scanned only once.
     let read_dir_count_3 = fs.read_dir_call_count();
-    assert_eq!(read_dir_count_3 - read_dir_count_2, 4);
+    assert_eq!(read_dir_count_3 - read_dir_count_2, 2);
 }
 
 #[gpui::test]

@@ -3066,11 +3066,16 @@ impl BackgroundScanner {
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         let paths = self
-            .reload_entries_for_paths(root_path, root_canonical_path, abs_paths, Some(scan_job_tx))
+            .reload_entries_for_paths(
+                root_path,
+                root_canonical_path,
+                abs_paths,
+                Some(scan_job_tx.clone()),
+            )
             .await;
-        self.scan_dirs(false, scan_job_rx).await;
 
-        self.update_ignore_statuses().await;
+        self.update_ignore_statuses(scan_job_tx).await;
+        self.scan_dirs(false, scan_job_rx).await;
 
         {
             let mut state = self.state.lock();
@@ -3571,7 +3576,7 @@ impl BackgroundScanner {
         Some(())
     }
 
-    async fn update_ignore_statuses(&self) {
+    async fn update_ignore_statuses(&self, scan_job_tx: Sender<ScanJob>) {
         use futures::FutureExt as _;
 
         let mut snapshot = self.state.lock().snapshot.clone();
@@ -3619,6 +3624,7 @@ impl BackgroundScanner {
                 abs_path: parent_abs_path,
                 ignore_stack,
                 ignore_queue: ignore_queue_tx.clone(),
+                scan_queue: scan_job_tx.clone(),
             }))
             .unwrap();
         }
@@ -3663,7 +3669,7 @@ impl BackgroundScanner {
         let path = job.abs_path.strip_prefix(&snapshot.abs_path).unwrap();
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
-            let abs_path = snapshot.abs_path().join(&entry.path);
+            let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
@@ -3671,11 +3677,36 @@ impl BackgroundScanner {
                 } else {
                     ignore_stack.clone()
                 };
+
+                // Scan any directories that were previously ignored and weren't
+                // previously scanned.
+                if was_ignored
+                    && !entry.is_ignored
+                    && !entry.is_external
+                    && entry.kind == EntryKind::PendingDir
+                {
+                    job.scan_queue
+                        .try_send(ScanJob {
+                            abs_path: abs_path.clone(),
+                            path: entry.path.clone(),
+                            ignore_stack: child_ignore_stack.clone(),
+                            scan_queue: job.scan_queue.clone(),
+                            ancestor_inodes: self
+                                .state
+                                .lock()
+                                .snapshot
+                                .ancestor_inodes_for_path(&entry.path),
+                            is_external: false,
+                        })
+                        .unwrap();
+                }
+
                 job.ignore_queue
                     .send(UpdateIgnoreStatusJob {
-                        abs_path: abs_path.into(),
+                        abs_path: abs_path.clone(),
                         ignore_stack: child_ignore_stack,
                         ignore_queue: job.ignore_queue.clone(),
+                        scan_queue: job.scan_queue.clone(),
                     })
                     .await
                     .unwrap();
@@ -3847,6 +3878,7 @@ struct UpdateIgnoreStatusJob {
     abs_path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
     ignore_queue: Sender<UpdateIgnoreStatusJob>,
+    scan_queue: Sender<ScanJob>,
 }
 
 pub trait WorktreeHandle {
