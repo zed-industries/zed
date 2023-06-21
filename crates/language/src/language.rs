@@ -869,7 +869,7 @@ impl LanguageRegistry {
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
-        println!(
+        log::info!(
             "starting language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
         );
@@ -954,7 +954,6 @@ impl LanguageRegistry {
                     task.await?;
                 }
 
-                println!("starting server");
                 let server = lsp::LanguageServer::new(
                     server_id,
                     binaries,
@@ -985,7 +984,8 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         cx: &mut AppContext,
     ) -> Task<()> {
-        println!("deleting server container");
+        log::info!("deleting server container");
+
         let mut lock = self.lsp_binary_paths.lock();
         lock.remove(&adapter.name);
 
@@ -1066,7 +1066,6 @@ async fn get_binaries(
         task.await?;
     }
 
-    println!("fetching binary");
     let binary = fetch_latest_binary(
         adapter.clone(),
         language.clone(),

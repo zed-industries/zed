@@ -2480,7 +2480,7 @@ impl Project {
                     Ok(server) => Some(server),
 
                     Err(err) => {
-                        println!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("failed to start language server {:?}: {}", server_name, err);
 
                         if let Some(this) = this.upgrade(&cx) {
                             if let Some(container_dir) = container_dir {
@@ -2518,7 +2518,7 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<()>> {
-        println!("starting to reinstall server");
+        log::info!("beginning to reinstall server");
         let (language, adapter, server) = match self.language_servers.remove(&server_id) {
             Some(LanguageServerState::Running {
                 language,
@@ -2543,7 +2543,7 @@ impl Project {
 
         Some(cx.spawn(move |this, mut cx| async move {
             if let Some(task) = server.and_then(|server| server.shutdown()) {
-                println!("shutting down existing server");
+                log::info!("shutting down existing server");
                 task.await;
             }
 
@@ -2565,7 +2565,6 @@ impl Project {
                     let worktree_id = worktree.id();
                     let root_path = worktree.abs_path();
 
-                    println!("prompting server start: {:?}", &adapter.name.0);
                     this.start_language_server(
                         worktree_id,
                         root_path,
@@ -3082,7 +3081,8 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         cx.spawn(|this, mut cx| async move {
-            println!("About to spawn test binary");
+            log::info!("About to spawn test binary");
+
             // A lack of test binary counts as a failure
             let process = installation_test_binary.and_then(|binary| {
                 smol::process::Command::new(&binary.path)
@@ -3103,18 +3103,21 @@ impl Project {
             if let Some(mut process) = process {
                 futures::select! {
                     status = process.status().fuse() => match status {
-                        Ok(status) => errored = !dbg!(status.success()),
+                        Ok(status) => errored = !status.success(),
                         Err(_) => errored = true,
                     },
 
-                    _ = timeout => { println!("test binary time-ed out"); }
+                    _ = timeout => {
+                        log::info!("test binary time-ed out, this counts as a success");
+                    }
                 }
             } else {
-                println!("test binary failed to launch");
+                log::warn!("test binary failed to launch");
                 errored = true;
             }
 
             if errored {
+                log::warn!("test binary check failed");
                 let task = this.update(&mut cx, move |this, mut cx| {
                     this.reinstall_language_server(server_id, &mut cx)
                 });
