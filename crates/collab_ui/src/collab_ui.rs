@@ -16,7 +16,7 @@ use std::sync::Arc;
 use util::ResultExt;
 use workspace::AppState;
 
-actions!(collab, [ToggleScreenSharing, ToggleMute, ToggleDeafen, ShareMic]);
+actions!(collab, [ToggleScreenSharing, ToggleMute, ToggleDeafen, ShareMicrophone]);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
@@ -30,7 +30,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     cx.add_global_action(toggle_screen_sharing);
     cx.add_global_action(toggle_mute);
     cx.add_global_action(toggle_deafen);
-    cx.add_global_action(share_mic);
+    cx.add_global_action(share_microphone);
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
@@ -62,8 +62,8 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     }
 }
 
-pub fn share_mic(_: &ShareMic, cx: &mut AppContext) {
+pub fn share_microphone(_: &ShareMicrophone, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, Room::share_mic).detach_and_log_err(cx)
+        room.update(cx, Room::share_microphone).detach_and_log_err(cx)
     }
 }

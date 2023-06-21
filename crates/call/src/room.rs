@@ -148,8 +148,13 @@ impl Room {
                 }
             });
 
-            cx.foreground()
-                .spawn(room.connect(&connection_info.server_url, &connection_info.token))
+            let connect = room.connect(&connection_info.server_url, &connection_info.token);
+            cx.spawn(|this, mut cx| async move {
+                    connect.await?;
+                    this.update(&mut cx, |this, cx| this.share_microphone(cx)).await?;
+
+                    anyhow::Ok(())
+                })
                 .detach_and_log_err(cx);
 
             Some(LiveKitRoom {
@@ -228,15 +233,6 @@ impl Room {
                 .await
             {
                 Ok(()) => {
-                    if option_env!("START_MIC").is_some()
-                        || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
-                    {
-                        let share_mic = room.update(&mut cx, |room, cx| room.share_mic(cx));
-                        cx.update(|cx| {
-                            cx.background().spawn(share_mic).detach_and_log_err(cx);
-                        });
-                    }
-
                     Ok(room)
                 }
                 Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
@@ -266,14 +262,6 @@ impl Room {
             room.update(&mut cx, |room, cx| {
                 room.leave_when_empty = true;
                 room.apply_room_update(room_proto, cx)?;
-
-                if option_env!("START_MIC").is_some()
-                    || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
-                {
-                    let share_mic = room.share_mic(cx);
-                    cx.background().spawn(share_mic).detach_and_log_err(cx);
-                }
-
                 anyhow::Ok(())
             })?;
             Ok(room)
@@ -1022,7 +1010,7 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn share_mic(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         } else if self.is_sharing_mic() {
@@ -1225,11 +1213,11 @@ impl Room {
                     .room
                     .remote_audio_track_publications(&participant.user.id.to_string())
                 {
-                    tasks.push(cx.background().spawn(track.set_enabled(!live_kit.deafened)));
+                    tasks.push(cx.foreground().spawn(track.set_enabled(!live_kit.deafened)));
                 }
             }
 
-            Ok(cx.background().spawn(async move {
+            Ok(cx.foreground().spawn(async move {
                 for task in tasks {
                     task.await?;
                 }

@@ -10,7 +10,7 @@ class LKRoomDelegate: RoomDelegate {
     var onDidUnsubscribeFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
     var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
-    
+
     init(
         data: UnsafeRawPointer,
         onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
@@ -40,7 +40,7 @@ class LKRoomDelegate: RoomDelegate {
             self.onDidSubscribeToRemoteAudioTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque())
         }
     }
-    
+
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
             self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString)
@@ -279,13 +279,10 @@ public func LKRemoteTrackPublicationSetEnabled(
     callback_data: UnsafeRawPointer
 ) {
     let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
-    
+
     publication.set(enabled: enabled).then {
         on_complete(callback_data, nil)
     }.catch { error in
         on_complete(callback_data, error.localizedDescription as CFString)
     }
 }
-
-
-
