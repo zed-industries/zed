@@ -1073,6 +1073,40 @@ impl Project {
         }
     }
 
+    pub fn expand_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        if self.is_local() {
+            worktree.update(cx, |worktree, cx| {
+                worktree.as_local_mut().unwrap().expand_entry(entry_id, cx)
+            })
+        } else {
+            let worktree = worktree.downgrade();
+            let request = self.client.request(proto::ExpandProjectEntry {
+                project_id: self.remote_id().unwrap(),
+                entry_id: entry_id.to_proto(),
+            });
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let response = request.await?;
+                if let Some(worktree) = worktree.upgrade(&cx) {
+                    worktree
+                        .update(&mut cx, |worktree, _| {
+                            worktree
+                                .as_remote_mut()
+                                .unwrap()
+                                .wait_for_snapshot(response.worktree_scan_id as usize)
+                        })
+                        .await?;
+                }
+                Ok(())
+            }))
+        }
+    }
+
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.client_state.is_some() {
             return Err(anyhow!("project was already shared"));
@@ -5404,31 +5438,6 @@ impl Project {
         Some(ProjectPath { worktree_id, path })
     }
 
-    pub fn mark_entry_expanded(
-        &mut self,
-        worktree_id: WorktreeId,
-        entry_id: ProjectEntryId,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        if self.is_local() {
-            let worktree = self.worktree_for_id(worktree_id, cx)?;
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .expand_entry_for_id(entry_id, cx);
-            });
-        } else if let Some(project_id) = self.remote_id() {
-            cx.background()
-                .spawn(self.client.request(proto::ExpandProjectEntry {
-                    project_id,
-                    entry_id: entry_id.to_proto(),
-                }))
-                .log_err();
-        }
-        Some(())
-    }
-
     pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
         let workspace_root = self
             .worktree_for_id(project_path.worktree_id, cx)?
@@ -5736,18 +5745,22 @@ impl Project {
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
             .read_with(&cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .ok_or_else(|| anyhow!("invalid request"))?;
-        worktree.update(&mut cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .expand_entry_for_id(entry_id, cx)
-        });
-        Ok(proto::Ack {})
+        worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .expand_entry(entry_id, cx)
+                    .ok_or_else(|| anyhow!("invalid entry"))
+            })?
+            .await?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id()) as u64;
+        Ok(proto::ExpandProjectEntryResponse { worktree_scan_id })
     }
 
     async fn handle_update_diagnostic_summary(

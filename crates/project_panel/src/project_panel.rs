@@ -423,7 +423,7 @@ impl ProjectPanel {
                     Ok(_) => self.select_next(&SelectNext, cx),
                     Err(ix) => {
                         self.project.update(cx, |project, cx| {
-                            project.mark_entry_expanded(worktree_id, entry_id, cx);
+                            project.expand_entry(worktree_id, entry_id, cx);
                         });
 
                         expanded_dir_ids.insert(ix, entry_id);
@@ -477,7 +477,7 @@ impl ProjectPanel {
                             expanded_dir_ids.remove(ix);
                         }
                         Err(ix) => {
-                            project.mark_entry_expanded(worktree_id, entry_id, cx);
+                            project.expand_entry(worktree_id, entry_id, cx);
                             expanded_dir_ids.insert(ix, entry_id);
                         }
                     }
@@ -1084,7 +1084,7 @@ impl ProjectPanel {
                 .worktree_for_id(worktree_id, cx)
                 .zip(self.expanded_dir_ids.get_mut(&worktree_id))
             {
-                project.mark_entry_expanded(worktree_id, entry_id, cx);
+                project.expand_entry(worktree_id, entry_id, cx);
                 let worktree = worktree.read(cx);
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {

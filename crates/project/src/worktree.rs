@@ -1127,21 +1127,17 @@ impl LocalWorktree {
         }))
     }
 
-    pub fn expand_entry_for_id(
+    pub fn expand_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        _cx: &mut ModelContext<Worktree>,
-    ) -> barrier::Receiver {
-        let (tx, rx) = barrier::channel();
-        if let Some(entry) = self.entry_for_id(entry_id) {
-            self.scan_requests_tx
-                .try_send(ScanRequest {
-                    relative_paths: vec![entry.path.clone()],
-                    done: tx,
-                })
-                .ok();
-        }
-        rx
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        let path = self.entry_for_id(entry_id)?.path.clone();
+        let mut refresh = self.refresh_entries_for_paths(vec![path]);
+        Some(cx.background().spawn(async move {
+            refresh.next().await;
+            Ok(())
+        }))
     }
 
     pub fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
@@ -1337,7 +1333,7 @@ impl RemoteWorktree {
         self.completed_scan_id >= scan_id
     }
 
-    fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
+    pub(crate) fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
