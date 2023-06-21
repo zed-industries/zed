@@ -3956,7 +3956,7 @@ impl Editor {
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
         let mut row_ranges = Vec::<Range<u32>>::new();
-        for selection in self.selections.ranges::<Point>(cx) {
+        for selection in self.selections.all::<Point>(cx) {
             let start = selection.start.row;
             let end = if selection.start.row == selection.end.row {
                 selection.start.row + 1
