@@ -6917,18 +6917,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "theme_testbench"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "project",
- "settings",
- "smallvec",
- "theme",
- "workspace",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8888,7 +8876,6 @@ dependencies = [
  "text",
  "theme",
  "theme_selector",
- "theme_testbench",
  "thiserror",
  "tiny_http",
  "toml",
