@@ -1082,3 +1082,16 @@ pub struct Style {
     pub border: Color,
     pub foreground: Color,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schemars::schema_for;
+
+    #[test]
+    fn export_schema() {
+        let theme = schema_for!(Theme);
+        let output = serde_json::to_string_pretty(&theme).unwrap();
+        std::fs::write("schemas/theme.json", output).ok();
+    }
+}
