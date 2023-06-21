@@ -35,11 +35,8 @@ async fn test_traversal(cx: &mut TestAppContext) {
     )
     .await;
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
-
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root"),
         true,
         fs,
@@ -108,11 +105,8 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
     )
     .await;
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
-
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root"),
         true,
         fs,
@@ -208,9 +202,8 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
     fs.insert_symlink("/root/lib/a/lib", "..".into()).await;
     fs.insert_symlink("/root/lib/b/lib", "..".into()).await;
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root"),
         true,
         fs.clone(),
@@ -306,9 +299,8 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     fs.insert_symlink("/root/dir1/deps/dep-dir3", "../../dir3".into())
         .await;
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root/dir1"),
         true,
         fs.clone(),
@@ -433,9 +425,8 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     )
     .await;
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root"),
         true,
         fs.clone(),
@@ -551,6 +542,128 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "node_modules\n",
+            "a": {
+                "a.js": "",
+            },
+            "b": {
+                "b.js": "",
+            },
+            "node_modules": {
+                "c": {
+                    "c.js": "",
+                },
+                "d": {
+                    "d.js": "",
+                    "e": {
+                        "e1.js": "",
+                        "e2.js": "",
+                    },
+                    "f": {
+                        "f1.js": "",
+                        "f2.js": "",
+                    }
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        build_client(cx),
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Open a file within the gitignored directory, forcing some of its
+    // subdirectories to be read, but not all.
+    let read_dir_count_1 = fs.read_dir_call_count();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("node_modules/d/d.js").into()])
+    })
+    .recv()
+    .await;
+
+    // Those subdirectories are now loaded.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|e| (e.path.as_ref(), e.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("a"), false),
+                (Path::new("a/a.js"), false),
+                (Path::new("b"), false),
+                (Path::new("b/b.js"), false),
+                (Path::new("node_modules"), true),
+                (Path::new("node_modules/c"), true),
+                (Path::new("node_modules/d"), true),
+                (Path::new("node_modules/d/d.js"), true),
+                (Path::new("node_modules/d/e"), true),
+                (Path::new("node_modules/d/f"), true),
+            ]
+        );
+    });
+    let read_dir_count_2 = fs.read_dir_call_count();
+    assert_eq!(read_dir_count_2 - read_dir_count_1, 2);
+
+    // Update the gitignore so that node_modules is no longer ignored,
+    // but a subdirectory is ignored
+    fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
+        .await
+        .unwrap();
+    cx.foreground().run_until_parked();
+
+    // All of the directories that are no longer ignored are now loaded.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|e| (e.path.as_ref(), e.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("a"), false),
+                (Path::new("a/a.js"), false),
+                (Path::new("b"), false),
+                (Path::new("b/b.js"), false),
+                (Path::new("node_modules"), false),
+                (Path::new("node_modules/c"), false),
+                (Path::new("node_modules/c/c.js"), false),
+                (Path::new("node_modules/d"), false),
+                (Path::new("node_modules/d/d.js"), false),
+                // This subdirectory is now ignored
+                (Path::new("node_modules/d/e"), true),
+                (Path::new("node_modules/d/f"), false),
+                (Path::new("node_modules/d/f/f1.js"), false),
+                (Path::new("node_modules/d/f/f2.js"), false),
+            ]
+        );
+    });
+
+    // Each of the newly-loaded directories is scanned only once.
+    let read_dir_count_3 = fs.read_dir_call_count();
+    assert_eq!(read_dir_count_3 - read_dir_count_2, 4);
+}
+
+#[gpui::test]
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     // .gitignores are handled explicitly by Zed and do not use the git
     // machinery that the git_tests module checks
@@ -570,10 +683,8 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     }));
     let dir = parent_dir.path().join("tree");
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         dir.as_path(),
         true,
         Arc::new(RealFs),
@@ -648,10 +759,8 @@ async fn test_write_file(cx: &mut TestAppContext) {
         "ignored-dir": {}
     }));
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         dir.path(),
         true,
         Arc::new(RealFs),
@@ -695,8 +804,6 @@ async fn test_write_file(cx: &mut TestAppContext) {
 
 #[gpui::test(iterations = 30)]
 async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -709,7 +816,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     .await;
 
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         "/root".as_ref(),
         true,
         fs,
@@ -774,9 +881,8 @@ async fn test_random_worktree_operations_during_initial_scan(
     }
     log::info!("generated initial tree");
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
     let worktree = Worktree::local(
-        client.clone(),
+        build_client(cx),
         root_dir,
         true,
         fs.clone(),
@@ -864,9 +970,8 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     }
     log::info!("generated initial tree");
 
-    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
     let worktree = Worktree::local(
-        client.clone(),
+        build_client(cx),
         root_dir,
         true,
         fs.clone(),
@@ -939,7 +1044,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     {
         let new_worktree = Worktree::local(
-            client.clone(),
+            build_client(cx),
             root_dir,
             true,
             fs.clone(),
@@ -1276,10 +1381,8 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     }));
     let root_path = root.path();
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         root_path,
         true,
         Arc::new(RealFs),
@@ -1355,10 +1458,8 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         },
     }));
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         root.path(),
         true,
         Arc::new(RealFs),
@@ -1479,10 +1580,8 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
 
     }));
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         root.path(),
         true,
         Arc::new(RealFs),
@@ -1686,10 +1785,8 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
         ],
     );
 
-    let http_client = FakeHttpClient::with_404_response();
-    let client = cx.read(|cx| Client::new(http_client, cx));
     let tree = Worktree::local(
-        client,
+        build_client(cx),
         Path::new("/root"),
         true,
         fs.clone(),
@@ -1766,6 +1863,11 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
             expected_statuses
         );
     }
+}
+
+fn build_client(cx: &mut TestAppContext) -> Arc<Client> {
+    let http_client = FakeHttpClient::with_404_response();
+    cx.read(|cx| Client::new(http_client, cx))
 }
 
 #[track_caller]
