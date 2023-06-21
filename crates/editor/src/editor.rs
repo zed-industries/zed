@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::{InlayHintCache, InlayHintQuery};
+use inlay_hint_cache::{get_update_state, InlayHintCache, InlaySplice};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -1196,7 +1196,7 @@ enum GotoDefinitionKind {
 #[derive(Debug, Copy, Clone)]
 enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
-    Scroll(ScrollAnchor),
+    Scroll,
     VisibleExcerptsChange,
 }
 
@@ -1367,10 +1367,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_cache: InlayHintCache::new(
-                settings::get::<EditorSettings>(cx).inlay_hints,
-                cx,
-            ),
+            inlay_hint_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2612,67 +2609,23 @@ impl Editor {
         {
             return;
         }
-
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let current_inlays = self
-            .display_map
-            .read(cx)
-            .current_inlays()
-            .cloned()
-            .filter(|inlay| Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id))
-            .collect();
         match reason {
-            InlayRefreshReason::SettingsChange(new_settings) => self
-                .inlay_hint_cache
-                .spawn_settings_update(multi_buffer_snapshot, new_settings, current_inlays),
-            InlayRefreshReason::Scroll(scrolled_to) => {
-                if let Some(new_query) = self.excerpt_visible_offsets(cx).into_iter().find_map(
-                    |(buffer, _, excerpt_id)| {
-                        let buffer_id = scrolled_to.anchor.buffer_id?;
-                        if buffer_id == buffer.read(cx).remote_id()
-                            && scrolled_to.anchor.excerpt_id == excerpt_id
-                        {
-                            Some(InlayHintQuery {
-                                buffer_id,
-                                buffer_version: buffer.read(cx).version(),
-                                cache_version: self.inlay_hint_cache.version(),
-                                excerpt_id,
-                            })
-                        } else {
-                            None
-                        }
-                    },
-                ) {
-                    self.inlay_hint_cache.spawn_hints_update(
-                        multi_buffer_snapshot,
-                        vec![new_query],
-                        current_inlays,
-                        false,
-                        cx,
-                    )
+            InlayRefreshReason::SettingsChange(new_settings) => {
+                let update_state = get_update_state(self, cx);
+                let new_splice = self
+                    .inlay_hint_cache
+                    .update_settings(new_settings, update_state);
+                if let Some(InlaySplice {
+                    to_remove,
+                    to_insert,
+                }) = new_splice
+                {
+                    self.splice_inlay_hints(to_remove, to_insert, cx);
                 }
             }
+            InlayRefreshReason::Scroll => self.inlay_hint_cache.spawn_hints_update(false, cx),
             InlayRefreshReason::VisibleExcerptsChange => {
-                let replacement_queries = self
-                    .excerpt_visible_offsets(cx)
-                    .into_iter()
-                    .map(|(buffer, _, excerpt_id)| {
-                        let buffer = buffer.read(cx);
-                        InlayHintQuery {
-                            buffer_id: buffer.remote_id(),
-                            buffer_version: buffer.version(),
-                            cache_version: self.inlay_hint_cache.version(),
-                            excerpt_id,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                self.inlay_hint_cache.spawn_hints_update(
-                    multi_buffer_snapshot,
-                    replacement_queries,
-                    current_inlays,
-                    true,
-                    cx,
-                )
+                self.inlay_hint_cache.spawn_hints_update(true, cx)
             }
         };
     }
@@ -2701,13 +2654,13 @@ impl Editor {
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
+        to_insert: Vec<(Anchor, InlayId, project::InlayHint)>,
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx).read(cx);
         let new_inlays = to_insert
             .into_iter()
-            .map(|(id, position, hint)| {
+            .map(|(position, id, hint)| {
                 let mut text = hint.text();
                 // TODO kb styling instead?
                 if hint.padding_right {
@@ -7298,7 +7251,7 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
-                true
+                false
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(Event::Reparsed);
@@ -7336,7 +7289,11 @@ impl Editor {
         };
 
         if refresh_inlays {
-            self.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
+            if let Some(_project) = self.project.as_ref() {
+                // TODO kb non-rust buffer can be edited (e.g. settings) and trigger rust updates
+                // let zz = project.read(cx).language_servers_for_buffer(buffer, cx);
+                self.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
+            }
         }
     }
 

@@ -4929,7 +4929,7 @@ impl Project {
         )
     }
 
-    pub fn query_inlay_hints_for_buffer<T: ToOffset>(
+    pub fn inlay_hints<T: ToOffset>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
@@ -6768,7 +6768,7 @@ impl Project {
             .update(&mut cx, |project, cx| {
                 let buffer_end = buffer.read(cx).len();
                 // TODO kb use cache before querying?
-                project.query_inlay_hints_for_buffer(
+                project.inlay_hints(
                     buffer,
                     envelope
                         .payload
