@@ -214,7 +214,8 @@
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "s": "vim::Substitute"
     }
   },
   {

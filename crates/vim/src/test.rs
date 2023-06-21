@@ -98,3 +98,13 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
         assert_eq!(bar.query_editor.read(cx).text(cx), "jumps");
     })
 }
+
+
+#[gpui::test]
+async fn test_substitute(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["s", "x"]);
+    cx.assert_editor_state("xˇbc\n");
+}
