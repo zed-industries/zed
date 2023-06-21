@@ -50,20 +50,19 @@ export default function editor(colorScheme: ColorScheme) {
         suggestion: syntax.predictive,
         codeActions: {
             indicator: toggleable({
-                base:
-                    interactive({
-                        base: {
-                            color: foreground(layer, "variant"),
+                base: interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
+                    },
+                    state: {
+                        hovered: {
+                            color: foreground(layer, "variant", "hovered"),
                         },
-                        state: {
-                            hovered: {
-                                color: foreground(layer, "variant", "hovered"),
-                            },
-                            clicked: {
-                                color: foreground(layer, "variant", "pressed"),
-                            },
+                        clicked: {
+                            color: foreground(layer, "variant", "pressed"),
                         },
-                    }),
+                    },
+                }),
                 state: {
                     active: {
                         default: {
@@ -75,10 +74,9 @@ export default function editor(colorScheme: ColorScheme) {
                         clicked: {
                             color: foreground(layer, "accent", "pressed"),
                         },
-                    }
-                }
-            }
-            ),
+                    },
+                },
+            }),
 
             verticalScale: 0.55,
         },
@@ -87,20 +85,19 @@ export default function editor(colorScheme: ColorScheme) {
             foldedIcon: "icons/chevron_right_8.svg",
             foldableIcon: "icons/chevron_down_8.svg",
             indicator: toggleable({
-                base:
-                    interactive({
-                        base: {
-                            color: foreground(layer, "variant"),
+                base: interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
+                    },
+                    state: {
+                        hovered: {
+                            color: foreground(layer, "on"),
                         },
-                        state: {
-                            hovered: {
-                                color: foreground(layer, "on"),
-                            },
-                            clicked: {
-                                color: foreground(layer, "base"),
-                            },
+                        clicked: {
+                            color: foreground(layer, "base"),
                         },
-                    }),
+                    },
+                }),
                 state: {
                     active: {
                         default: {
@@ -109,10 +106,9 @@ export default function editor(colorScheme: ColorScheme) {
                         hovered: {
                             color: foreground(layer, "variant"),
                         },
-                    }
-                }
-            }
-            ),
+                    },
+                },
+            }),
             ellipses: {
                 textColor: colorScheme.ramps.neutral(0.71).hex(),
                 cornerRadiusFactor: 0.15,

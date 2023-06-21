@@ -19,7 +19,7 @@ export default function dropdownMenu(colorScheme: ColorScheme) {
                 secondaryTextSpacing: 10,
                 padding: { left: 8, right: 8, top: 2, bottom: 2 },
                 cornerRadius: 6,
-                background: background(layer, "on")
+                background: background(layer, "on"),
             },
             state: {
                 hovered: {
@@ -35,21 +35,20 @@ export default function dropdownMenu(colorScheme: ColorScheme) {
             padding: { left: 8, right: 8, top: 8, bottom: 8 },
         },
         item: toggleable({
-            base:
-                interactive({
-                    base: {
-                        ...text(layer, "sans", { size: "sm" }),
-                        secondaryTextSpacing: 10,
-                        secondaryText: text(layer, "sans", { size: "sm" }),
-                        padding: { left: 18, right: 18, top: 2, bottom: 2 },
+            base: interactive({
+                base: {
+                    ...text(layer, "sans", { size: "sm" }),
+                    secondaryTextSpacing: 10,
+                    secondaryText: text(layer, "sans", { size: "sm" }),
+                    padding: { left: 18, right: 18, top: 2, bottom: 2 },
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                        ...text(layer, "sans", "hovered", { size: "sm" }),
                     },
-                    state: {
-                        hovered: {
-                            background: background(layer, "hovered"),
-                            ...text(layer, "sans", "hovered", { size: "sm" }),
-                        },
-                    },
-                }),
+                },
+            }),
             state: {
                 active: {
                     default: {
@@ -58,9 +57,8 @@ export default function dropdownMenu(colorScheme: ColorScheme) {
                     hovered: {
                         background: background(layer, "hovered"),
                     },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
     }
 }

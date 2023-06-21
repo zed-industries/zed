@@ -108,25 +108,24 @@ export default function statusBar(colorScheme: ColorScheme) {
             groupBottom: {},
             groupRight: {},
             button: toggleable({
-                base:
-                    interactive({
-                        base: {
-                            ...statusContainer,
-                            iconSize: 16,
-                            iconColor: foreground(layer, "variant"),
-                            label: {
-                                margin: { left: 6 },
-                                ...text(layer, "sans", { size: "sm" }),
-                            },
+                base: interactive({
+                    base: {
+                        ...statusContainer,
+                        iconSize: 16,
+                        iconColor: foreground(layer, "variant"),
+                        label: {
+                            margin: { left: 6 },
+                            ...text(layer, "sans", { size: "sm" }),
                         },
-                        state: {
-                            hovered: {
-                                iconColor: foreground(layer, "hovered"),
-                                background: background(layer, "variant"),
-                            },
+                    },
+                    state: {
+                        hovered: {
+                            iconColor: foreground(layer, "hovered"),
+                            background: background(layer, "variant"),
                         },
-                    }), state:
-                {
+                    },
+                }),
+                state: {
                     active: {
                         default: {
                             iconColor: foreground(layer, "active"),
@@ -140,11 +139,9 @@ export default function statusBar(colorScheme: ColorScheme) {
                             iconColor: foreground(layer, "pressed"),
                             background: background(layer, "pressed"),
                         },
-
-                    }
-                }
-            }
-            ),
+                    },
+                },
+            }),
             badge: {
                 cornerRadius: 3,
                 padding: 2,

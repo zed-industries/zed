@@ -27,8 +27,8 @@ export default function commandPalette(colorScheme: ColorScheme) {
             active: {
                 text: text(layer, "mono", "on", "default", { size: "xs" }),
                 background: withOpacity(background(layer, "on"), 0.2),
-            }
-        }
+            },
+        },
     })
 
     return {
@@ -37,6 +37,6 @@ export default function commandPalette(colorScheme: ColorScheme) {
         key: {
             inactive: { ...key.inactive },
             active: key.active,
-        }
+        },
     }
 }

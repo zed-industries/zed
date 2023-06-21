@@ -37,36 +37,35 @@ export default function search(colorScheme: ColorScheme) {
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
         matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
         optionButton: toggleable({
-            base:
-                interactive({
-                    base: {
-                        ...text(layer, "mono", "on"),
-                        background: background(layer, "on"),
-                        cornerRadius: 6,
-                        border: border(layer, "on"),
-                        margin: {
-                            right: 4,
-                        },
-                        padding: {
-                            bottom: 2,
-                            left: 10,
-                            right: 10,
-                            top: 2,
-                        },
+            base: interactive({
+                base: {
+                    ...text(layer, "mono", "on"),
+                    background: background(layer, "on"),
+                    cornerRadius: 6,
+                    border: border(layer, "on"),
+                    margin: {
+                        right: 4,
                     },
-                    state: {
-                        hovered: {
-                            ...text(layer, "mono", "on", "hovered"),
-                            background: background(layer, "on", "hovered"),
-                            border: border(layer, "on", "hovered"),
-                        },
-                        clicked: {
-                            ...text(layer, "mono", "on", "pressed"),
-                            background: background(layer, "on", "pressed"),
-                            border: border(layer, "on", "pressed"),
-                        },
+                    padding: {
+                        bottom: 2,
+                        left: 10,
+                        right: 10,
+                        top: 2,
                     },
-                }),
+                },
+                state: {
+                    hovered: {
+                        ...text(layer, "mono", "on", "hovered"),
+                        background: background(layer, "on", "hovered"),
+                        border: border(layer, "on", "hovered"),
+                    },
+                    clicked: {
+                        ...text(layer, "mono", "on", "pressed"),
+                        background: background(layer, "on", "pressed"),
+                        border: border(layer, "on", "pressed"),
+                    },
+                },
+            }),
             state: {
                 active: {
                     default: {
@@ -78,10 +77,9 @@ export default function search(colorScheme: ColorScheme) {
                     clicked: {
                         ...text(layer, "mono", "accent", "pressed"),
                     },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
         editor,
         invalidEditor: {
             ...editor,

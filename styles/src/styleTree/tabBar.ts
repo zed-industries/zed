@@ -89,24 +89,22 @@ export default function tabBar(colorScheme: ColorScheme) {
         },
         draggedTab,
         paneButton: toggleable({
-            base:
-                interactive({
-                    base: {
-                        color: foreground(layer, "variant"),
-                        iconWidth: 12,
-                        buttonWidth: activePaneActiveTab.height,
+            base: interactive({
+                base: {
+                    color: foreground(layer, "variant"),
+                    iconWidth: 12,
+                    buttonWidth: activePaneActiveTab.height,
+                },
+                state: {
+                    hovered: {
+                        color: foreground(layer, "hovered"),
                     },
-                    state: {
-                        hovered: {
-                            color: foreground(layer, "hovered"),
-                        },
-                        clicked: {
-                            color: foreground(layer, "pressed"),
-                        },
+                    clicked: {
+                        color: foreground(layer, "pressed"),
                     },
-                }),
-            state:
-            {
+                },
+            }),
+            state: {
                 active: {
                     default: {
                         color: foreground(layer, "accent"),
@@ -117,10 +115,9 @@ export default function tabBar(colorScheme: ColorScheme) {
                     clicked: {
                         color: foreground(layer, "pressed"),
                     },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
         paneButtonContainer: {
             background: tab.background,
             border: {

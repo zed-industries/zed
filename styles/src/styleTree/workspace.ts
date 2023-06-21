@@ -18,37 +18,36 @@ export default function workspace(colorScheme: ColorScheme) {
     const isLight = colorScheme.isLight
     const itemSpacing = 8
     const titlebarButton = toggleable({
-        base:
-            interactive({
-                base: {
-                    cornerRadius: 6,
-                    padding: {
-                        top: 1,
-                        bottom: 1,
-                        left: 8,
-                        right: 8,
-                    },
-                    ...text(layer, "sans", "variant", { size: "xs" }),
-                    background: background(layer, "variant"),
-                    border: border(layer),
+        base: interactive({
+            base: {
+                cornerRadius: 6,
+                padding: {
+                    top: 1,
+                    bottom: 1,
+                    left: 8,
+                    right: 8,
                 },
-                state: {
-                    hovered: {
-                        ...text(layer, "sans", "variant", "hovered", {
-                            size: "xs",
-                        }),
-                        background: background(layer, "variant", "hovered"),
-                        border: border(layer, "variant", "hovered"),
-                    },
-                    clicked: {
-                        ...text(layer, "sans", "variant", "pressed", {
-                            size: "xs",
-                        }),
-                        background: background(layer, "variant", "pressed"),
-                        border: border(layer, "variant", "pressed"),
-                    },
+                ...text(layer, "sans", "variant", { size: "xs" }),
+                background: background(layer, "variant"),
+                border: border(layer),
+            },
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "variant", "hovered", {
+                        size: "xs",
+                    }),
+                    background: background(layer, "variant", "hovered"),
+                    border: border(layer, "variant", "hovered"),
                 },
-            }),
+                clicked: {
+                    ...text(layer, "sans", "variant", "pressed", {
+                        size: "xs",
+                    }),
+                    background: background(layer, "variant", "pressed"),
+                    border: border(layer, "variant", "pressed"),
+                },
+            },
+        }),
         state: {
             active: {
                 default: {
@@ -56,10 +55,9 @@ export default function workspace(colorScheme: ColorScheme) {
                     background: background(layer, "variant", "active"),
                     border: border(layer, "variant", "active"),
                 },
-            }
-        }
-    }
-    )
+            },
+        },
+    })
     const avatarWidth = 18
     const avatarOuterWidth = avatarWidth + 4
     const followerAvatarWidth = 14
@@ -275,25 +273,24 @@ export default function workspace(colorScheme: ColorScheme) {
                 },
             }),
             toggleContactsButton: toggleable({
-                base:
-                    interactive({
-                        base: {
-                            margin: { left: itemSpacing },
-                            cornerRadius: 6,
-                            color: foreground(layer, "variant"),
-                            iconWidth: 14,
-                            buttonWidth: 20,
+                base: interactive({
+                    base: {
+                        margin: { left: itemSpacing },
+                        cornerRadius: 6,
+                        color: foreground(layer, "variant"),
+                        iconWidth: 14,
+                        buttonWidth: 20,
+                    },
+                    state: {
+                        clicked: {
+                            background: background(layer, "variant", "pressed"),
                         },
-                        state: {
-                            clicked: {
-                                background: background(layer, "variant", "pressed"),
-                            },
-                            hovered: {
-                                background: background(layer, "variant", "hovered"),
-                            },
+                        hovered: {
+                            background: background(layer, "variant", "hovered"),
                         },
-                    }), state:
-                {
+                    },
+                }),
+                state: {
                     active: {
                         default: {
                             background: background(layer, "on", "default"),
@@ -303,11 +300,10 @@ export default function workspace(colorScheme: ColorScheme) {
                         },
                         clicked: {
                             background: background(layer, "on", "pressed"),
-                        }
-                    }
-                }
-            }
-            ),
+                        },
+                    },
+                },
+            }),
             userMenuButton: merge(titlebarButton, {
                 inactive: {
                     default: {

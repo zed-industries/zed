@@ -43,7 +43,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
             },
             clicked: {
                 background: background(layer, "variant", "pressed"),
-            }
+            },
         },
     })
 
@@ -52,7 +52,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
         state: {
             active: interactive({
                 base: {
-                    ...default_entry
+                    ...default_entry,
                 },
                 state: {
                     default: {
@@ -66,9 +66,8 @@ export default function projectPanel(colorScheme: ColorScheme) {
                     },
                 },
             }),
-        }
-    }
-    )
+        },
+    })
 
     return {
         openProjectButton: interactive({
@@ -99,7 +98,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
                     ...text(layer, "sans", "default", { size: "sm" }),
                     background: background(layer, "pressed"),
                     border: border(layer, "active"),
-                }
+                },
             },
         }),
         background: background(layer),

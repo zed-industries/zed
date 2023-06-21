@@ -12,39 +12,38 @@ export default function contextMenu(colorScheme: ColorScheme) {
         border: border(layer),
         keystrokeMargin: 30,
         item: toggleable({
-            base:
-                interactive({
-                    base: {
-                        iconSpacing: 8,
-                        iconWidth: 14,
-                        padding: { left: 6, right: 6, top: 2, bottom: 2 },
-                        cornerRadius: 6,
-                        label: text(layer, "sans", { size: "sm" }),
+            base: interactive({
+                base: {
+                    iconSpacing: 8,
+                    iconWidth: 14,
+                    padding: { left: 6, right: 6, top: 2, bottom: 2 },
+                    cornerRadius: 6,
+                    label: text(layer, "sans", { size: "sm" }),
+                    keystroke: {
+                        ...text(layer, "sans", "variant", {
+                            size: "sm",
+                            weight: "bold",
+                        }),
+                        padding: { left: 3, right: 3 },
+                    },
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                        label: text(layer, "sans", "hovered", { size: "sm" }),
                         keystroke: {
-                            ...text(layer, "sans", "variant", {
+                            ...text(layer, "sans", "hovered", {
                                 size: "sm",
                                 weight: "bold",
                             }),
                             padding: { left: 3, right: 3 },
                         },
                     },
-                    state: {
-                        hovered: {
-                            background: background(layer, "hovered"),
-                            label: text(layer, "sans", "hovered", { size: "sm" }),
-                            keystroke: {
-                                ...text(layer, "sans", "hovered", {
-                                    size: "sm",
-                                    weight: "bold",
-                                }),
-                                padding: { left: 3, right: 3 },
-                            },
-                        },
-                        clicked: {
-                            background: background(layer, "pressed"),
-                        },
+                    clicked: {
+                        background: background(layer, "pressed"),
                     },
-                }),
+                },
+            }),
             state: {
                 active: {
                     default: {
@@ -56,10 +55,9 @@ export default function contextMenu(colorScheme: ColorScheme) {
                     clicked: {
                         background: background(layer, "pressed"),
                     },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
 
         separator: {
             background: borderColor(layer),

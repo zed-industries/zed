@@ -88,7 +88,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
                     },
                     clicked: {
                         background: background(layer, "pressed"),
-                    }
+                    },
                 }, // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
             }),
             state: {
@@ -102,9 +102,9 @@ export default function contactsPanel(colorScheme: ColorScheme) {
                     },
                     clicked: {
                         background: background(layer, "pressed"),
-                    }
-                }
-            }
+                    },
+                },
+            },
         }),
         leaveCall: interactive({
             base: {
@@ -190,55 +190,51 @@ export default function contactsPanel(colorScheme: ColorScheme) {
             ...text(layer, "mono", "variant", { size: "xs" }),
         },
         treeBranch: toggleable({
-            base:
-                interactive({
-                    base: {
+            base: interactive({
+                base: {
+                    color: borderColor(layer),
+                    width: 1,
+                },
+                state: {
+                    hovered: {
                         color: borderColor(layer),
-                        width: 1,
                     },
-                    state: {
-                        hovered: {
-                            color: borderColor(layer),
-                        },
-                    },
-                }),
+                },
+            }),
             state: {
                 active: {
                     default: {
                         color: borderColor(layer),
                     },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
         projectRow: toggleable({
-            base:
-                interactive({
-                    base: {
-                        ...projectRow,
-                        background: background(layer),
-                        icon: {
-                            margin: { left: nameMargin },
-                            color: foreground(layer, "variant"),
-                            width: 12,
-                        },
-                        name: {
-                            ...projectRow.name,
-                            ...text(layer, "mono", { size: "sm" }),
-                        },
+            base: interactive({
+                base: {
+                    ...projectRow,
+                    background: background(layer),
+                    icon: {
+                        margin: { left: nameMargin },
+                        color: foreground(layer, "variant"),
+                        width: 12,
                     },
-                    state: {
-                        hovered: {
-                            background: background(layer, "hovered"),
-                        },
+                    name: {
+                        ...projectRow.name,
+                        ...text(layer, "mono", { size: "sm" }),
                     },
-                }),
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+            }),
             state: {
                 active: {
                     default: { background: background(layer, "active") },
-                }
-            }
-        }
-        ),
+                },
+            },
+        }),
     }
 }
