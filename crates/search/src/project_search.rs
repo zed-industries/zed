@@ -896,7 +896,7 @@ impl ProjectSearchBar {
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.option_button.style_for(state, false);
+            let style = theme.search.option_button.inactive_state().style_for(state);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -927,7 +927,11 @@ impl ProjectSearchBar {
         let is_active = self.is_option_enabled(option, cx);
         MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.option_button.style_for(state, is_active);
+            let style = theme
+                .search
+                .option_button
+                .in_state(is_active)
+                .style_for(state);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)

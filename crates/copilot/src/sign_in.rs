@@ -127,16 +127,16 @@ impl CopilotCodeVerification {
                 .with_child(
                     Label::new(
                         if copied { "Copied!" } else { "Copy" },
-                        device_code_style.cta.style_for(state, false).text.clone(),
+                        device_code_style.cta.style_for(state).text.clone(),
                     )
                     .aligned()
                     .contained()
-                    .with_style(*device_code_style.right_container.style_for(state, false))
+                    .with_style(*device_code_style.right_container.style_for(state))
                     .constrained()
                     .with_width(device_code_style.right),
                 )
                 .contained()
-                .with_style(device_code_style.cta.style_for(state, false).container)
+                .with_style(device_code_style.cta.style_for(state).container)
         })
         .on_click(gpui::platform::MouseButton::Left, {
             let user_code = data.user_code.clone();
