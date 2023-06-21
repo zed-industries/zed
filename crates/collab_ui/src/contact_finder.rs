@@ -117,7 +117,8 @@ impl PickerDelegate for ContactFinderDelegate {
             .contact_finder
             .picker
             .item
-            .style_for(mouse_state, selected);
+            .in_state(selected)
+            .style_for(mouse_state);
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)

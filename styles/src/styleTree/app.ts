@@ -1,4 +1,3 @@
-import { text } from "./components"
 import contactFinder from "./contactFinder"
 import contactsPopover from "./contactsPopover"
 import commandPalette from "./commandPalette"

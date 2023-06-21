@@ -128,12 +128,12 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Interactive<ContainedText>,
+    pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
-    pub share_button: Interactive<ContainedText>,
+    pub share_button: Toggleable<Interactive<ContainedText>>,
     pub call_control: Interactive<IconButton>,
-    pub toggle_contacts_button: Interactive<IconButton>,
-    pub user_menu_button: Interactive<IconButton>,
+    pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
+    pub user_menu_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_badge: ContainerStyle,
 }
 
@@ -204,12 +204,12 @@ pub struct ContactList {
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,
-    pub header_row: Interactive<ContainedText>,
+    pub header_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
-    pub contact_row: Interactive<ContainerStyle>,
+    pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub row_height: f32,
-    pub project_row: Interactive<ProjectRow>,
-    pub tree_branch: Interactive<TreeBranch>,
+    pub project_row: Toggleable<Interactive<ProjectRow>>,
+    pub tree_branch: Toggleable<Interactive<TreeBranch>>,
     pub contact_avatar: ImageStyle,
     pub contact_status_free: ContainerStyle,
     pub contact_status_busy: ContainerStyle,
@@ -251,7 +251,7 @@ pub struct DropdownMenu {
     pub container: ContainerStyle,
     pub header: Interactive<DropdownMenuItem>,
     pub section_header: ContainedText,
-    pub item: Interactive<DropdownMenuItem>,
+    pub item: Toggleable<Interactive<DropdownMenuItem>>,
     pub row_height: f32,
 }
 
@@ -270,7 +270,7 @@ pub struct DropdownMenuItem {
 pub struct TabBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub pane_button: Interactive<IconButton>,
+    pub pane_button: Toggleable<Interactive<IconButton>>,
     pub pane_button_container: ContainerStyle,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
@@ -359,7 +359,7 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Interactive<ContainedText>,
+    pub option_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
@@ -395,7 +395,7 @@ pub struct StatusBarPanelButtons {
     pub group_left: ContainerStyle,
     pub group_bottom: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub button: Interactive<PanelButton>,
+    pub button: Toggleable<Interactive<PanelButton>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -444,10 +444,10 @@ pub struct PanelButton {
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub entry: Interactive<ProjectPanelEntry>,
+    pub entry: Toggleable<Interactive<ProjectPanelEntry>>,
     pub dragged_entry: ProjectPanelEntry,
-    pub ignored_entry: Interactive<ProjectPanelEntry>,
-    pub cut_entry: Interactive<ProjectPanelEntry>,
+    pub ignored_entry: Toggleable<Interactive<ProjectPanelEntry>>,
+    pub cut_entry: Toggleable<Interactive<ProjectPanelEntry>>,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
     pub open_project_button: Interactive<ContainedText>,
@@ -481,7 +481,7 @@ pub struct GitProjectStatus {
 pub struct ContextMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub item: Interactive<ContextMenuItem>,
+    pub item: Toggleable<Interactive<ContextMenuItem>>,
     pub keystroke_margin: f32,
     pub separator: ContainerStyle,
 }
@@ -498,7 +498,7 @@ pub struct ContextMenuItem {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CommandPalette {
-    pub key: Interactive<ContainedLabel>,
+    pub key: Toggleable<ContainedLabel>,
     pub keystroke_spacing: f32,
 }
 
@@ -565,7 +565,7 @@ pub struct Picker {
     pub input_editor: FieldEditor,
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
-    pub item: Interactive<ContainedLabel>,
+    pub item: Toggleable<Interactive<ContainedLabel>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -771,13 +771,13 @@ pub struct InteractiveColor {
 #[derive(Clone, Deserialize, Default)]
 pub struct CodeActions {
     #[serde(default)]
-    pub indicator: Interactive<InteractiveColor>,
+    pub indicator: Toggleable<Interactive<InteractiveColor>>,
     pub vertical_scale: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Folds {
-    pub indicator: Interactive<InteractiveColor>,
+    pub indicator: Toggleable<Interactive<InteractiveColor>>,
     pub ellipses: FoldEllipses,
     pub fold_background: Color,
     pub icon_margin_scale: f32,
@@ -805,38 +805,46 @@ pub struct DiffStyle {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Interactive<T> {
     pub default: T,
-    pub hover: Option<T>,
-    pub hover_and_active: Option<T>,
+    pub hovered: Option<T>,
     pub clicked: Option<T>,
-    pub click_and_active: Option<T>,
-    pub active: Option<T>,
     pub disabled: Option<T>,
 }
 
-impl<T> Interactive<T> {
-    pub fn style_for(&self, state: &mut MouseState, active: bool) -> &T {
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub struct Toggleable<T> {
+    active: T,
+    inactive: T,
+}
+
+impl<T> Toggleable<T> {
+    pub fn new(active: T, inactive: T) -> Self {
+        Self { active, inactive }
+    }
+    pub fn in_state(&self, active: bool) -> &T {
         if active {
-            if state.hovered() {
-                self.hover_and_active
-                    .as_ref()
-                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
-            } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some()
-            {
-                self.click_and_active
-                    .as_ref()
-                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
-            } else {
-                self.active.as_ref().unwrap_or(&self.default)
-            }
-        } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
+            &self.active
+        } else {
+            &self.inactive
+        }
+    }
+    pub fn active_state(&self) -> &T {
+        self.in_state(true)
+    }
+    pub fn inactive_state(&self) -> &T {
+        self.in_state(false)
+    }
+}
+
+impl<T> Interactive<T> {
+    pub fn style_for(&self, state: &mut MouseState) -> &T {
+        if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
-            self.hover.as_ref().unwrap_or(&self.default)
+            self.hovered.as_ref().unwrap_or(&self.default)
         } else {
             &self.default
         }
     }
-
     pub fn disabled_style(&self) -> &T {
         self.disabled.as_ref().unwrap_or(&self.default)
     }
@@ -849,13 +857,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
     {
         #[derive(Deserialize)]
         struct Helper {
-            #[serde(flatten)]
             default: Value,
-            hover: Option<Value>,
-            hover_and_active: Option<Value>,
+            hovered: Option<Value>,
             clicked: Option<Value>,
-            click_and_active: Option<Value>,
-            active: Option<Value>,
             disabled: Option<Value>,
         }
 
@@ -880,21 +884,15 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             }
         };
 
-        let hover = deserialize_state(json.hover)?;
-        let hover_and_active = deserialize_state(json.hover_and_active)?;
+        let hovered = deserialize_state(json.hovered)?;
         let clicked = deserialize_state(json.clicked)?;
-        let click_and_active = deserialize_state(json.click_and_active)?;
-        let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
 
         Ok(Interactive {
             default,
-            hover,
-            hover_and_active,
+            hovered,
             clicked,
-            click_and_active,
-            active,
             disabled,
         })
     }

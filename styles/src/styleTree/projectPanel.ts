@@ -1,7 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
-
+import { interactive, toggleable } from "../element"
 export default function projectPanel(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
 
@@ -28,48 +28,79 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
     }
 
-    let entry = {
-        ...baseEntry,
-        text: text(layer, "mono", "variant", { size: "sm" }),
-        hover: {
-            background: background(layer, "variant", "hovered"),
+    const default_entry = interactive({
+        base: {
+            ...baseEntry,
+            text: text(layer, "mono", "variant", { size: "sm" }),
+            status,
         },
-        active: {
-            background: colorScheme.isLight
-                ? withOpacity(background(layer, "active"), 0.5)
-                : background(layer, "active"),
-            text: text(layer, "mono", "active", { size: "sm" }),
+        state: {
+            default: {
+                background: background(layer),
+            },
+            hovered: {
+                background: background(layer, "variant", "hovered"),
+            },
+            clicked: {
+                background: background(layer, "variant", "pressed"),
+            },
         },
-        activeHover: {
-            background: background(layer, "active"),
-            text: text(layer, "mono", "active", { size: "sm" }),
+    })
+
+    let entry = toggleable({
+        base: default_entry,
+        state: {
+            active: interactive({
+                base: {
+                    ...default_entry,
+                },
+                state: {
+                    default: {
+                        background: background(colorScheme.lowest),
+                    },
+                    hovered: {
+                        background: background(colorScheme.lowest, "hovered"),
+                    },
+                    clicked: {
+                        background: background(colorScheme.lowest, "pressed"),
+                    },
+                },
+            }),
         },
-        status,
-    }
+    })
 
     return {
-        openProjectButton: {
-            background: background(layer),
-            border: border(layer, "active"),
-            cornerRadius: 4,
-            margin: {
-                top: 16,
-                left: 16,
-                right: 16,
-            },
-            padding: {
-                top: 3,
-                bottom: 3,
-                left: 7,
-                right: 7,
-            },
-            ...text(layer, "sans", "default", { size: "sm" }),
-            hover: {
-                ...text(layer, "sans", "default", { size: "sm" }),
-                background: background(layer, "hovered"),
+        openProjectButton: interactive({
+            base: {
+                background: background(layer),
                 border: border(layer, "active"),
+                cornerRadius: 4,
+                margin: {
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                },
+                padding: {
+                    top: 3,
+                    bottom: 3,
+                    left: 7,
+                    right: 7,
+                },
+                ...text(layer, "sans", "default", { size: "sm" }),
             },
-        },
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "default", { size: "sm" }),
+                    background: background(layer, "hovered"),
+                    border: border(layer, "active"),
+                },
+                clicked: {
+                    ...text(layer, "sans", "default", { size: "sm" }),
+                    background: background(layer, "pressed"),
+                    border: border(layer, "active"),
+                },
+            },
+        }),
         background: background(layer),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
         indentWidth: 12,
@@ -94,8 +125,12 @@ export default function projectPanel(colorScheme: ColorScheme) {
             ...entry,
             text: text(layer, "mono", "disabled"),
             active: {
-                background: background(layer, "active"),
-                text: text(layer, "mono", "disabled", { size: "sm" }),
+                ...entry.active,
+                default: {
+                    ...entry.active.default,
+                    background: background(layer, "active"),
+                    text: text(layer, "mono", "disabled", { size: "sm" }),
+                },
             },
         },
         filenameEditor: {

@@ -3320,15 +3320,21 @@ impl Editor {
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
-        active: bool,
+        is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
                 MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
-                    Svg::new("icons/bolt_8.svg")
-                        .with_color(style.code_actions.indicator.style_for(state, active).color)
+                    Svg::new("icons/bolt_8.svg").with_color(
+                        style
+                            .code_actions
+                            .indicator
+                            .in_state(is_active)
+                            .style_for(state)
+                            .color,
+                    )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
@@ -3378,10 +3384,8 @@ impl Editor {
                                     .with_color(
                                         style
                                             .indicator
-                                            .style_for(
-                                                mouse_state,
-                                                fold_status == FoldStatus::Folded,
-                                            )
+                                            .in_state(fold_status == FoldStatus::Folded)
+                                            .style_for(mouse_state)
                                             .color,
                                     )
                                     .constrained()

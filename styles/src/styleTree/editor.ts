@@ -4,6 +4,7 @@ import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
 import { buildSyntax } from "../theme/syntax"
+import { interactive, toggleable } from "../element"
 
 export default function editor(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
@@ -48,46 +49,76 @@ export default function editor(colorScheme: ColorScheme) {
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
         suggestion: syntax.predictive,
         codeActions: {
-            indicator: {
-                color: foreground(layer, "variant"),
+            indicator: toggleable({
+                base: interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
+                    },
+                    state: {
+                        hovered: {
+                            color: foreground(layer, "variant", "hovered"),
+                        },
+                        clicked: {
+                            color: foreground(layer, "variant", "pressed"),
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            color: foreground(layer, "accent"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "accent", "hovered"),
+                        },
+                        clicked: {
+                            color: foreground(layer, "accent", "pressed"),
+                        },
+                    },
+                },
+            }),
 
-                clicked: {
-                    color: foreground(layer, "base"),
-                },
-                hover: {
-                    color: foreground(layer, "on"),
-                },
-                active: {
-                    color: foreground(layer, "on"),
-                },
-            },
             verticalScale: 0.55,
         },
         folds: {
             iconMarginScale: 2.5,
             foldedIcon: "icons/chevron_right_8.svg",
             foldableIcon: "icons/chevron_down_8.svg",
-            indicator: {
-                color: foreground(layer, "variant"),
-
-                clicked: {
-                    color: foreground(layer, "base"),
+            indicator: toggleable({
+                base: interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
+                    },
+                    state: {
+                        hovered: {
+                            color: foreground(layer, "on"),
+                        },
+                        clicked: {
+                            color: foreground(layer, "base"),
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            color: foreground(layer, "default"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "variant"),
+                        },
+                    },
                 },
-                hover: {
-                    color: foreground(layer, "on"),
-                },
-                active: {
-                    color: foreground(layer, "on"),
-                },
-            },
+            }),
             ellipses: {
                 textColor: colorScheme.ramps.neutral(0.71).hex(),
                 cornerRadiusFactor: 0.15,
                 background: {
                     // Copied from hover_popover highlight
-                    color: colorScheme.ramps.neutral(0.5).alpha(0.0).hex(),
+                    default: {
+                        color: colorScheme.ramps.neutral(0.5).alpha(0.0).hex(),
+                    },
 
-                    hover: {
+                    hovered: {
                         color: colorScheme.ramps.neutral(0.5).alpha(0.5).hex(),
                     },
 
@@ -223,21 +254,26 @@ export default function editor(colorScheme: ColorScheme) {
             color: syntax.linkUri.color,
             underline: syntax.linkUri.underline,
         },
-        jumpIcon: {
-            color: foreground(layer, "on"),
-            iconWidth: 20,
-            buttonWidth: 20,
-            cornerRadius: 6,
-            padding: {
-                top: 6,
-                bottom: 6,
-                left: 6,
-                right: 6,
+        jumpIcon: interactive({
+            base: {
+                color: foreground(layer, "on"),
+                iconWidth: 20,
+                buttonWidth: 20,
+                cornerRadius: 6,
+                padding: {
+                    top: 6,
+                    bottom: 6,
+                    left: 6,
+                    right: 6,
+                },
             },
-            hover: {
-                background: background(layer, "on", "hovered"),
+            state: {
+                hovered: {
+                    background: background(layer, "on", "hovered"),
+                },
             },
-        },
+        }),
+
         scrollbar: {
             width: 12,
             minHeightFactor: 1.0,

@@ -1,5 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, text } from "./components"
+import { interactive, toggleable } from "../element"
 
 export default function contextMenu(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
@@ -10,37 +11,54 @@ export default function contextMenu(colorScheme: ColorScheme) {
         shadow: colorScheme.popoverShadow,
         border: border(layer),
         keystrokeMargin: 30,
-        item: {
-            iconSpacing: 8,
-            iconWidth: 14,
-            padding: { left: 6, right: 6, top: 2, bottom: 2 },
-            cornerRadius: 6,
-            label: text(layer, "sans", { size: "sm" }),
-            keystroke: {
-                ...text(layer, "sans", "variant", {
-                    size: "sm",
-                    weight: "bold",
-                }),
-                padding: { left: 3, right: 3 },
-            },
-            hover: {
-                background: background(layer, "hovered"),
-                label: text(layer, "sans", "hovered", { size: "sm" }),
-                keystroke: {
-                    ...text(layer, "sans", "hovered", {
-                        size: "sm",
-                        weight: "bold",
-                    }),
-                    padding: { left: 3, right: 3 },
+        item: toggleable({
+            base: interactive({
+                base: {
+                    iconSpacing: 8,
+                    iconWidth: 14,
+                    padding: { left: 6, right: 6, top: 2, bottom: 2 },
+                    cornerRadius: 6,
+                    label: text(layer, "sans", { size: "sm" }),
+                    keystroke: {
+                        ...text(layer, "sans", "variant", {
+                            size: "sm",
+                            weight: "bold",
+                        }),
+                        padding: { left: 3, right: 3 },
+                    },
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                        label: text(layer, "sans", "hovered", { size: "sm" }),
+                        keystroke: {
+                            ...text(layer, "sans", "hovered", {
+                                size: "sm",
+                                weight: "bold",
+                            }),
+                            padding: { left: 3, right: 3 },
+                        },
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        background: background(layer, "active"),
+                    },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
                 },
             },
-            active: {
-                background: background(layer, "active"),
-            },
-            activeHover: {
-                background: background(layer, "active"),
-            },
-        },
+        }),
+
         separator: {
             background: borderColor(layer),
             margin: { top: 2, bottom: 2 },

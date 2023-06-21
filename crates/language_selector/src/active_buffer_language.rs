@@ -55,7 +55,7 @@ impl View for ActiveBufferLanguage {
 
             MouseEventHandler::<Self, Self>::new(0, cx, |state, cx| {
                 let theme = &theme::current(cx).workspace.status_bar;
-                let style = theme.active_language.style_for(state, false);
+                let style = theme.active_language.style_for(state);
                 Label::new(active_language_text, style.text.clone())
                     .contained()
                     .with_style(style.container)

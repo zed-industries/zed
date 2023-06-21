@@ -49,7 +49,7 @@ impl View for UpdateNotification {
                         )
                         .with_child(
                             MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
-                                let style = theme.dismiss_button.style_for(state, false);
+                                let style = theme.dismiss_button.style_for(state);
                                 Svg::new("icons/x_mark_8.svg")
                                     .with_color(style.color)
                                     .constrained()
@@ -74,7 +74,7 @@ impl View for UpdateNotification {
                         ),
                 )
                 .with_child({
-                    let style = theme.action_message.style_for(state, false);
+                    let style = theme.action_message.style_for(state);
                     Text::new("View the release notes", style.text.clone())
                         .contained()
                         .with_style(style.container)
