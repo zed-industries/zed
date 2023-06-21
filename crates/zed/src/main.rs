@@ -152,6 +152,7 @@ fn main() {
         project_panel::init(cx);
         diagnostics::init(cx);
         search::init(cx);
+        vector_store::init(fs.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
         theme_testbench::init(cx);

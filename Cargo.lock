@@ -7878,6 +7878,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vector_store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "project",
+ "smol",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8917,6 +8931,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.3.2",
+ "vector_store",
  "vim",
  "welcome",
  "workspace",
