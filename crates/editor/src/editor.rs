@@ -1197,7 +1197,7 @@ enum GotoDefinitionKind {
 enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
     NewLinesShown,
-    VisibleLineEdited,
+    ExcerptEdited,
 }
 
 impl Editor {
@@ -1311,7 +1311,7 @@ impl Editor {
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlays = event {
-                        editor.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
+                        editor.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
                     };
                 }));
             }
@@ -1392,7 +1392,7 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
-        this.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
+        this.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
         this
     }
 
@@ -2627,7 +2627,7 @@ impl Editor {
                 return;
             }
             InlayRefreshReason::NewLinesShown => false,
-            InlayRefreshReason::VisibleLineEdited => true,
+            InlayRefreshReason::ExcerptEdited => true,
         };
 
         let excerpts_to_query = self
@@ -7244,7 +7244,7 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
-                self.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
+                self.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -7256,7 +7256,6 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
