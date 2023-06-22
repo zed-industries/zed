@@ -505,7 +505,6 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
         let avatar_style = &theme.workspace.titlebar.follower_avatar;
-        let active = self.user_menu.read(cx).visible();
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
