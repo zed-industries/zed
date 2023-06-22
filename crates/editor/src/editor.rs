@@ -2614,9 +2614,12 @@ impl Editor {
 
         let invalidate_cache = match reason {
             InlayRefreshReason::SettingsChange(new_settings) => {
-                let new_splice = self
-                    .inlay_hint_cache
-                    .update_settings(new_settings, get_update_state(self, cx));
+                let new_splice = self.inlay_hint_cache.update_settings(
+                    &self.buffer,
+                    new_settings,
+                    get_update_state(self, cx),
+                    cx,
+                );
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
