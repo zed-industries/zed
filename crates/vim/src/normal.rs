@@ -1,5 +1,6 @@
 mod change;
 mod delete;
+mod substitute;
 mod yank;
 
 use std::{borrow::Cow, cmp::Ordering, sync::Arc};
@@ -25,6 +26,7 @@ use workspace::Workspace;
 use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    substitute::substitute,
     yank::{yank_motion, yank_object},
 };
 
@@ -476,25 +478,6 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
         });
         vim.pop_operator(cx)
     });
-}
-
-pub fn substitute(vim: &mut Vim, count: usize, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |editor, cx| {
-        editor.transact(cx, |editor, cx| {
-            let selections = editor.selections.all::<Point>(cx);
-            for selection in selections.into_iter().rev() {
-                let end = if selection.start == selection.end {
-                    selection.start + Point::new(0, count as u32)
-                } else {
-                    selection.end
-                };
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit([(selection.start..end, "")], None, cx)
-                })
-            }
-        })
-    });
-    vim.switch_mode(Mode::Insert, true, cx)
 }
 
 #[cfg(test)]
