@@ -332,7 +332,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 
         assert_eq!(
             tree.entry_for_path("deps/dep-dir2").unwrap().kind,
-            EntryKind::PendingDir
+            EntryKind::UnloadedDir
         );
     });
 
@@ -915,7 +915,7 @@ async fn test_random_worktree_operations_during_initial_scan(
             .await
             .log_err();
         worktree.read_with(cx, |tree, _| {
-            tree.as_local().unwrap().snapshot().check_invariants()
+            tree.as_local().unwrap().snapshot().check_invariants(true)
         });
 
         if rng.gen_bool(0.6) {
@@ -932,7 +932,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     let final_snapshot = worktree.read_with(cx, |tree, _| {
         let tree = tree.as_local().unwrap();
         let snapshot = tree.snapshot();
-        snapshot.check_invariants();
+        snapshot.check_invariants(true);
         snapshot
     });
 
@@ -1037,7 +1037,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     cx.foreground().run_until_parked();
 
     let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
-    snapshot.check_invariants();
+    snapshot.check_invariants(true);
     let expanded_paths = snapshot
         .expanded_entries()
         .map(|e| e.path.clone())
@@ -1095,7 +1095,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     fn ignore_pending_dir(entry: &Entry) -> Entry {
         let mut entry = entry.clone();
-        if entry.kind == EntryKind::PendingDir {
+        if entry.kind.is_dir() {
             entry.kind = EntryKind::Dir
         }
         entry

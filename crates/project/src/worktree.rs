@@ -1053,17 +1053,13 @@ impl LocalWorktree {
 
         Some(cx.spawn(|this, mut cx| async move {
             let path = delete.await?;
-            let (tx, mut rx) = barrier::channel();
             this.update(&mut cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
-                    .scan_requests_tx
-                    .try_send(ScanRequest {
-                        relative_paths: vec![path],
-                        done: tx,
-                    })
-            })?;
-            rx.recv().await;
+                    .refresh_entries_for_paths(vec![path])
+            })
+            .recv()
+            .await;
             Ok(())
         }))
     }
@@ -2049,7 +2045,9 @@ impl LocalSnapshot {
     }
 
     #[cfg(test)]
-    pub fn check_invariants(&self) {
+    pub fn check_invariants(&self, git_state: bool) {
+        use pretty_assertions::assert_eq;
+
         assert_eq!(
             self.entries_by_path
                 .cursor::<()>()
@@ -2079,7 +2077,11 @@ impl LocalSnapshot {
         assert!(visible_files.next().is_none());
 
         let mut bfs_paths = Vec::new();
-        let mut stack = vec![Path::new("")];
+        let mut stack = self
+            .root_entry()
+            .map(|e| e.path.as_ref())
+            .into_iter()
+            .collect::<Vec<_>>();
         while let Some(path) = stack.pop() {
             bfs_paths.push(path);
             let ix = stack.len();
@@ -2101,12 +2103,15 @@ impl LocalSnapshot {
             .collect::<Vec<_>>();
         assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
-        for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
-            let ignore_parent_path = ignore_parent_abs_path.strip_prefix(&self.abs_path).unwrap();
-            assert!(self.entry_for_path(&ignore_parent_path).is_some());
-            assert!(self
-                .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
-                .is_some());
+        if git_state {
+            for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
+                let ignore_parent_path =
+                    ignore_parent_abs_path.strip_prefix(&self.abs_path).unwrap();
+                assert!(self.entry_for_path(&ignore_parent_path).is_some());
+                assert!(self
+                    .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
+                    .is_some());
+            }
         }
     }
 
@@ -2129,7 +2134,7 @@ impl BackgroundScannerState {
             || self
                 .snapshot
                 .entry_for_path(&path)
-                .map_or(true, |entry| self.expanded_dirs.contains(&entry.id))
+                .map_or(false, |entry| self.expanded_dirs.contains(&entry.id))
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -2146,6 +2151,10 @@ impl BackgroundScannerState {
         if entry.path.file_name() == Some(&DOT_GIT) {
             self.build_repository(entry.path.clone(), fs);
         }
+
+        #[cfg(test)]
+        self.snapshot.check_invariants(false);
+
         entry
     }
 
@@ -2171,7 +2180,7 @@ impl BackgroundScannerState {
         };
 
         match parent_entry.kind {
-            EntryKind::PendingDir => parent_entry.kind = EntryKind::Dir,
+            EntryKind::PendingDir | EntryKind::UnloadedDir => parent_entry.kind = EntryKind::Dir,
             EntryKind::Dir => {}
             _ => return,
         }
@@ -2214,6 +2223,9 @@ impl BackgroundScannerState {
         if let Err(ix) = self.changed_paths.binary_search(parent_path) {
             self.changed_paths.insert(ix, parent_path.clone());
         }
+
+        #[cfg(test)]
+        self.snapshot.check_invariants(false);
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -2248,6 +2260,9 @@ impl BackgroundScannerState {
                 *needs_update = true;
             }
         }
+
+        #[cfg(test)]
+        self.snapshot.check_invariants(false);
     }
 
     fn reload_repositories(&mut self, changed_paths: &[Arc<Path>], fs: &dyn Fs) {
@@ -2669,6 +2684,7 @@ pub struct Entry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
+    UnloadedDir,
     PendingDir,
     Dir,
     File(CharBag),
@@ -2737,7 +2753,10 @@ impl Entry {
 
 impl EntryKind {
     pub fn is_dir(&self) -> bool {
-        matches!(self, EntryKind::Dir | EntryKind::PendingDir)
+        matches!(
+            self,
+            EntryKind::Dir | EntryKind::PendingDir | EntryKind::UnloadedDir
+        )
     }
 
     pub fn is_file(&self) -> bool {
@@ -3025,6 +3044,8 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, request: ScanRequest) -> bool {
+        log::debug!("rescanning paths {:?}", request.relative_paths);
+
         let root_path = self.expand_paths(&request.relative_paths).await;
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
@@ -3051,6 +3072,8 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&mut self, abs_paths: Vec<PathBuf>) {
+        log::debug!("received fs events {:?}", abs_paths);
+
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
@@ -3069,7 +3092,10 @@ impl BackgroundScanner {
                 Some(scan_job_tx.clone()),
             )
             .await;
+        drop(scan_job_tx);
+        self.scan_dirs(false, scan_job_rx).await;
 
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
         self.update_ignore_statuses(scan_job_tx).await;
         self.scan_dirs(false, scan_job_rx).await;
 
@@ -3091,7 +3117,7 @@ impl BackgroundScanner {
             for path in paths {
                 for ancestor in path.ancestors() {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
-                        if entry.kind == EntryKind::PendingDir {
+                        if entry.kind == EntryKind::UnloadedDir {
                             let abs_path = root_path.join(ancestor);
                             let ignore_stack =
                                 state.snapshot.ignore_stack_for_abs_path(&abs_path, true);
@@ -3217,14 +3243,8 @@ impl BackgroundScanner {
     }
 
     async fn scan_dir(&self, job: &ScanJob) -> Result<()> {
-        log::debug!(
-            "scan directory {:?}. external: {}",
-            job.path,
-            job.is_external
-        );
+        log::debug!("scan directory {:?}", job.path);
 
-        let mut new_entries: Vec<Entry> = Vec::new();
-        let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
         let (root_abs_path, root_char_bag, next_entry_id, repository) = {
@@ -3240,6 +3260,8 @@ impl BackgroundScanner {
         };
 
         let mut root_canonical_path = None;
+        let mut new_entries: Vec<Entry> = Vec::new();
+        let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
         while let Some(child_abs_path) = child_paths.next().await {
             let child_abs_path: Arc<Path> = match child_abs_path {
@@ -3383,25 +3405,26 @@ impl BackgroundScanner {
         }
 
         let mut state = self.state.lock();
-        state.populate_dir(&job.path, new_entries, new_ignore, self.fs.as_ref());
-
-        for new_job in new_jobs {
-            if let Some(new_job) = new_job {
-                // If a subdirectory is ignored, or is external to the worktree, don't scan
-                // it unless it is marked as expanded.
-                if (new_job.is_external || new_job.ignore_stack.is_all())
-                    && !state.is_path_expanded(&new_job.path)
+        let mut new_jobs = new_jobs.into_iter();
+        for entry in &mut new_entries {
+            if entry.is_dir() {
+                let new_job = new_jobs.next().expect("missing scan job for entry");
+                if (entry.is_external || entry.is_ignored)
+                    && entry.kind == EntryKind::PendingDir
+                    && !state.is_path_expanded(&entry.path)
                 {
-                    log::debug!("defer scanning directory {:?}", new_job.path);
-                    continue;
+                    log::debug!("defer scanning directory {:?} {:?}", entry.path, entry.kind);
+                    entry.kind = EntryKind::UnloadedDir;
+                } else if let Some(new_job) = new_job {
+                    job.scan_queue
+                        .try_send(new_job)
+                        .expect("channel is unbounded");
                 }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
             }
         }
+        assert!(new_jobs.next().is_none());
 
+        state.populate_dir(&job.path, new_entries, new_ignore, self.fs.as_ref());
         Ok(())
     }
 
@@ -3459,6 +3482,7 @@ impl BackgroundScanner {
         // detected regardless of the order of the paths.
         for (path, metadata) in event_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
+                log::trace!("remove path {:?}", path);
                 state.remove_path(path);
             }
         }
@@ -3655,6 +3679,8 @@ impl BackgroundScanner {
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
+        log::trace!("update ignore status {:?}", job.abs_path);
+
         let mut ignore_stack = job.ignore_stack;
         if let Some((ignore, _)) = snapshot.ignores_by_parent_abs_path.get(&job.abs_path) {
             ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
@@ -3679,7 +3705,7 @@ impl BackgroundScanner {
                 if was_ignored
                     && !entry.is_ignored
                     && !entry.is_external
-                    && entry.kind == EntryKind::PendingDir
+                    && entry.kind == EntryKind::UnloadedDir
                 {
                     job.scan_queue
                         .try_send(ScanJob {
