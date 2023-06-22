@@ -24,7 +24,7 @@ export default function assistant(colorScheme: ColorScheme) {
             },
           },
           container: {
-            margin: { left: 8 },
+            margin: { left: 12 },
           }
         },
         plusButton: {
@@ -37,11 +37,11 @@ export default function assistant(colorScheme: ColorScheme) {
             },
           },
           container: {
-            margin: { right: 8 },
+            margin: { right: 12 },
           }
         },
         title: {
-          margin: { left: 8 },
+          margin: { left: 12 },
           ...text(layer, "sans", "default", { size: "sm" })
         },
         savedConversation: {
@@ -76,28 +76,21 @@ export default function assistant(colorScheme: ColorScheme) {
         },
         model: {
             background: background(layer, "on"),
-            border: border(layer, "on", { overlay: true }),
+            margin: { right: 8 },
             padding: 4,
             cornerRadius: 4,
             ...text(layer, "sans", "default", { size: "xs" }),
             hover: {
                 background: background(layer, "on", "hovered"),
+                border: border(layer, "on", { overlay: true }),
             },
         },
         remainingTokens: {
-            background: background(layer, "on"),
-            border: border(layer, "on", { overlay: true }),
-            padding: 4,
-            margin: { left: 4 },
-            cornerRadius: 4,
+            margin: { right: 12 },
             ...text(layer, "sans", "positive", { size: "xs" }),
         },
         noRemainingTokens: {
-            background: background(layer, "on"),
-            border: border(layer, "on", { overlay: true }),
-            padding: 4,
-            margin: { left: 4 },
-            cornerRadius: 4,
+            margin: { right: 12 },
             ...text(layer, "sans", "negative", { size: "xs" }),
         },
         errorIcon: {

@@ -38,7 +38,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::ui::IconStyle;
+use theme::{ui::IconStyle, AssistantStyle};
 use util::{
     channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, truncate_and_trailoff, ResultExt,
     TryFutureExt,
@@ -112,8 +112,8 @@ pub enum AssistantPanelEvent {
 pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
-    active_conversation_index: Option<usize>,
-    conversation_editors: Vec<ViewHandle<ConversationEditor>>,
+    active_editor_index: Option<usize>,
+    editors: Vec<ViewHandle<ConversationEditor>>,
     saved_conversations: Vec<SavedConversationMetadata>,
     saved_conversations_list_state: UniformListState,
     zoomed: bool,
@@ -162,8 +162,8 @@ impl AssistantPanel {
                     });
 
                     let mut this = Self {
-                        active_conversation_index: Default::default(),
-                        conversation_editors: Default::default(),
+                        active_editor_index: Default::default(),
+                        editors: Default::default(),
                         saved_conversations,
                         saved_conversations_list_state: Default::default(),
                         zoomed: false,
@@ -216,8 +216,12 @@ impl AssistantPanel {
         self.subscriptions
             .push(cx.subscribe(&editor, Self::handle_conversation_editor_event));
 
-        self.active_conversation_index = Some(self.conversation_editors.len());
-        self.conversation_editors.push(editor.clone());
+        let conversation = editor.read(cx).conversation.clone();
+        self.subscriptions
+            .push(cx.observe(&conversation, |_, _, cx| cx.notify()));
+
+        self.active_editor_index = Some(self.editors.len());
+        self.editors.push(editor.clone());
         if self.has_focus(cx) {
             cx.focus(&editor);
         }
@@ -271,9 +275,8 @@ impl AssistantPanel {
         }
     }
 
-    fn active_conversation_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
-        self.conversation_editors
-            .get(self.active_conversation_index?)
+    fn active_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
+        self.editors.get(self.active_editor_index?)
     }
 
     fn render_hamburger_button(style: &IconStyle) -> impl Element<Self> {
@@ -284,9 +287,69 @@ impl AssistantPanel {
             .mouse::<ListConversations>(0)
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                this.active_conversation_index = None;
+                this.active_editor_index = None;
                 cx.notify();
             })
+    }
+
+    fn render_current_model(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl Element<Self>> {
+        enum Model {}
+
+        let model = self
+            .active_editor()?
+            .read(cx)
+            .conversation
+            .read(cx)
+            .model
+            .clone();
+
+        Some(
+            MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
+                let style = style.model.style_for(state, false);
+                Label::new(model, style.text.clone())
+                    .contained()
+                    .with_style(style.container)
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |_, this, cx| {
+                if let Some(editor) = this.active_editor() {
+                    editor.update(cx, |editor, cx| {
+                        editor.cycle_model(cx);
+                    });
+                }
+            }),
+        )
+    }
+
+    fn render_remaining_tokens(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl Element<Self>> {
+        self.active_editor().and_then(|editor| {
+            editor
+                .read(cx)
+                .conversation
+                .read(cx)
+                .remaining_tokens()
+                .map(|remaining_tokens| {
+                    let remaining_tokens_style = if remaining_tokens <= 0 {
+                        &style.no_remaining_tokens
+                    } else {
+                        &style.remaining_tokens
+                    };
+                    Label::new(
+                        remaining_tokens.to_string(),
+                        remaining_tokens_style.text.clone(),
+                    )
+                    .contained()
+                    .with_style(remaining_tokens_style.container)
+                })
+        })
     }
 
     fn render_plus_button(style: &IconStyle) -> impl Element<Self> {
@@ -337,8 +400,8 @@ impl AssistantPanel {
     }
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        if let Some(ix) = self.conversation_editor_index_for_path(&path, cx) {
-            self.active_conversation_index = Some(ix);
+        if let Some(ix) = self.editor_index_for_path(&path, cx) {
+            self.active_editor_index = Some(ix);
             cx.notify();
             return Task::ready(Ok(()));
         }
@@ -356,8 +419,8 @@ impl AssistantPanel {
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
-                if let Some(ix) = this.conversation_editor_index_for_path(&path, cx) {
-                    this.active_conversation_index = Some(ix);
+                if let Some(ix) = this.editor_index_for_path(&path, cx) {
+                    this.active_editor_index = Some(ix);
                 } else {
                     let editor = cx
                         .add_view(|cx| ConversationEditor::from_conversation(conversation, fs, cx));
@@ -368,8 +431,8 @@ impl AssistantPanel {
         })
     }
 
-    fn conversation_editor_index_for_path(&self, path: &Path, cx: &AppContext) -> Option<usize> {
-        self.conversation_editors
+    fn editor_index_for_path(&self, path: &Path, cx: &AppContext) -> Option<usize> {
+        self.editors
             .iter()
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
@@ -418,11 +481,13 @@ impl View for AssistantPanel {
                 .aligned()
                 .into_any()
         } else {
-            let title = self.active_conversation_editor().map(|editor| {
+            let title = self.active_editor().map(|editor| {
                 Label::new(editor.read(cx).title(cx), style.title.text.clone())
                     .contained()
                     .with_style(style.title.container)
                     .aligned()
+                    .left()
+                    .flex(1., false)
             });
 
             Flex::column()
@@ -432,6 +497,14 @@ impl View for AssistantPanel {
                             Self::render_hamburger_button(&style.hamburger_button).aligned(),
                         )
                         .with_children(title)
+                        .with_children(
+                            self.render_current_model(&style, cx)
+                                .map(|current_model| current_model.aligned().flex_float()),
+                        )
+                        .with_children(
+                            self.render_remaining_tokens(&style, cx)
+                                .map(|remaining_tokens| remaining_tokens.aligned().flex_float()),
+                        )
                         .with_child(
                             Self::render_plus_button(&style.plus_button)
                                 .aligned()
@@ -443,7 +516,7 @@ impl View for AssistantPanel {
                         .constrained()
                         .with_height(theme.workspace.tab_bar.height),
                 )
-                .with_child(if let Some(editor) = self.active_conversation_editor() {
+                .with_child(if let Some(editor) = self.active_editor() {
                     ChildView::new(editor, cx).flex(1., true).into_any()
                 } else {
                     UniformList::new(
@@ -466,7 +539,7 @@ impl View for AssistantPanel {
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = true;
         if cx.is_self_focused() {
-            if let Some(editor) = self.active_conversation_editor() {
+            if let Some(editor) = self.active_editor() {
                 cx.focus(editor);
             } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
                 cx.focus(api_key_editor);
@@ -562,7 +635,7 @@ impl Panel for AssistantPanel {
                 }
             }
 
-            if self.conversation_editors.is_empty() {
+            if self.editors.is_empty() {
                 self.new_conversation(cx);
             }
         }
@@ -1700,7 +1773,7 @@ impl ConversationEditor {
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
                 let conversation = panel
-                    .active_conversation_editor()
+                    .active_editor()
                     .cloned()
                     .unwrap_or_else(|| panel.new_conversation(cx));
                 conversation.update(cx, |conversation, cx| {
@@ -1781,7 +1854,7 @@ impl ConversationEditor {
             .summary
             .as_ref()
             .map(|summary| summary.text.clone())
-            .unwrap_or_else(|| "New Context".into())
+            .unwrap_or_else(|| "New Conversation".into())
     }
 }
 
@@ -1795,49 +1868,10 @@ impl View for ConversationEditor {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        enum Model {}
         let theme = &theme::current(cx).assistant;
-        let conversation = self.conversation.read(cx);
-        let model = conversation.model.clone();
-        let remaining_tokens = conversation.remaining_tokens().map(|remaining_tokens| {
-            let remaining_tokens_style = if remaining_tokens <= 0 {
-                &theme.no_remaining_tokens
-            } else {
-                &theme.remaining_tokens
-            };
-            Label::new(
-                remaining_tokens.to_string(),
-                remaining_tokens_style.text.clone(),
-            )
+        ChildView::new(&self.editor, cx)
             .contained()
-            .with_style(remaining_tokens_style.container)
-        });
-
-        Stack::new()
-            .with_child(
-                ChildView::new(&self.editor, cx)
-                    .contained()
-                    .with_style(theme.container),
-            )
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
-                            let style = theme.model.style_for(state, false);
-                            Label::new(model, style.text.clone())
-                                .contained()
-                                .with_style(style.container)
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, |_, this, cx| this.cycle_model(cx)),
-                    )
-                    .with_children(remaining_tokens)
-                    .contained()
-                    .with_style(theme.model_info_container)
-                    .aligned()
-                    .top()
-                    .right(),
-            )
+            .with_style(theme.container)
             .into_any()
     }
 
