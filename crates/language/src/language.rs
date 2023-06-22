@@ -476,12 +476,12 @@ pub struct Language {
 
 pub struct Grammar {
     id: usize,
-    pub(crate) ts_language: tree_sitter::Language,
+    pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
-    pub(crate) outline_config: Option<OutlineConfig>,
+    pub outline_config: Option<OutlineConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
@@ -495,12 +495,12 @@ struct IndentConfig {
     outdent_capture_ix: Option<u32>,
 }
 
-struct OutlineConfig {
-    query: Query,
-    item_capture_ix: u32,
-    name_capture_ix: u32,
-    context_capture_ix: Option<u32>,
-    extra_context_capture_ix: Option<u32>,
+pub struct OutlineConfig {
+    pub query: Query,
+    pub item_capture_ix: u32,
+    pub name_capture_ix: u32,
+    pub context_capture_ix: Option<u32>,
+    pub extra_context_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {

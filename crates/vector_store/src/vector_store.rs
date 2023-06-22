@@ -1,17 +1,25 @@
 mod db;
-use anyhow::Result;
+mod embedding;
+
+use anyhow::{anyhow, Result};
 use db::VectorDatabase;
+use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use language::LanguageRegistry;
 use project::{Fs, Project};
-use rand::Rng;
 use smol::channel;
 use std::{path::PathBuf, sync::Arc, time::Instant};
-use util::ResultExt;
+use tree_sitter::{Parser, QueryCursor};
+use util::{http::HttpClient, ResultExt};
 use workspace::WorkspaceCreated;
 
-pub fn init(fs: Arc<dyn Fs>, language_registry: Arc<LanguageRegistry>, cx: &mut AppContext) {
-    let vector_store = cx.add_model(|cx| VectorStore::new(fs, language_registry));
+pub fn init(
+    fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
+    language_registry: Arc<LanguageRegistry>,
+    cx: &mut AppContext,
+) {
+    let vector_store = cx.add_model(|cx| VectorStore::new(fs, http_client, language_registry));
 
     cx.subscribe_global::<WorkspaceCreated, _>({
         let vector_store = vector_store.clone();
@@ -53,38 +61,86 @@ struct SearchResult {
 
 struct VectorStore {
     fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
 }
 
 impl VectorStore {
-    fn new(fs: Arc<dyn Fs>, language_registry: Arc<LanguageRegistry>) -> Self {
+    fn new(
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
         Self {
             fs,
+            http_client,
             language_registry,
         }
     }
 
     async fn index_file(
+        cursor: &mut QueryCursor,
+        parser: &mut Parser,
+        embedding_provider: &dyn EmbeddingProvider,
         fs: &Arc<dyn Fs>,
         language_registry: &Arc<LanguageRegistry>,
         file_path: PathBuf,
     ) -> Result<IndexedFile> {
-        // This is creating dummy documents to test the database writes.
-        let mut documents = vec![];
-        let mut rng = rand::thread_rng();
-        let rand_num_of_documents: u8 = rng.gen_range(0..200);
-        for _ in 0..rand_num_of_documents {
-            let doc = Document {
-                offset: 0,
-                name: "test symbol".to_string(),
-                embedding: vec![0.32 as f32; 768],
-            };
-            documents.push(doc);
+        let language = language_registry
+            .language_for_file(&file_path, None)
+            .await?;
+
+        if language.name().as_ref() != "Rust" {
+            Err(anyhow!("unsupported language"))?;
+        }
+
+        let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
+        let outline_config = grammar
+            .outline_config
+            .as_ref()
+            .ok_or_else(|| anyhow!("no outline query"))?;
+
+        let content = fs.load(&file_path).await?;
+        parser.set_language(grammar.ts_language).unwrap();
+        let tree = parser
+            .parse(&content, None)
+            .ok_or_else(|| anyhow!("parsing failed"))?;
+
+        let mut documents = Vec::new();
+        let mut context_spans = Vec::new();
+        for mat in cursor.matches(&outline_config.query, tree.root_node(), content.as_bytes()) {
+            let mut item_range = None;
+            let mut name_range = None;
+            for capture in mat.captures {
+                if capture.index == outline_config.item_capture_ix {
+                    item_range = Some(capture.node.byte_range());
+                } else if capture.index == outline_config.name_capture_ix {
+                    name_range = Some(capture.node.byte_range());
+                }
+            }
+
+            if let Some((item_range, name_range)) = item_range.zip(name_range) {
+                if let Some((item, name)) =
+                    content.get(item_range.clone()).zip(content.get(name_range))
+                {
+                    context_spans.push(item);
+                    documents.push(Document {
+                        name: name.to_string(),
+                        offset: item_range.start,
+                        embedding: Vec::new(),
+                    });
+                }
+            }
+        }
+
+        let embeddings = embedding_provider.embed_batch(context_spans).await?;
+        for (document, embedding) in documents.iter_mut().zip(embeddings) {
+            document.embedding = embedding;
         }
 
         return Ok(IndexedFile {
             path: file_path,
-            sha1: "asdfasdfasdf".to_string(),
+            sha1: String::new(),
             documents,
         });
     }
@@ -98,8 +154,9 @@ impl VectorStore {
 
         let fs = self.fs.clone();
         let language_registry = self.language_registry.clone();
+        let client = self.http_client.clone();
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|_, cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
             let worktrees = project.read_with(&cx, |project, cx| {
@@ -131,15 +188,27 @@ impl VectorStore {
                 })
                 .detach();
 
+            let provider = OpenAIEmbeddings { client };
+
+            let t0 = Instant::now();
+
             cx.background()
                 .scoped(|scope| {
                     for _ in 0..cx.background().num_cpus() {
                         scope.spawn(async {
+                            let mut parser = Parser::new();
+                            let mut cursor = QueryCursor::new();
                             while let Ok(file_path) = paths_rx.recv().await {
-                                if let Some(indexed_file) =
-                                    Self::index_file(&fs, &language_registry, file_path)
-                                        .await
-                                        .log_err()
+                                if let Some(indexed_file) = Self::index_file(
+                                    &mut cursor,
+                                    &mut parser,
+                                    &provider,
+                                    &fs,
+                                    &language_registry,
+                                    file_path,
+                                )
+                                .await
+                                .log_err()
                                 {
                                     indexed_files_tx.try_send(indexed_file).unwrap();
                                 }
@@ -148,6 +217,9 @@ impl VectorStore {
                     }
                 })
                 .await;
+
+            let duration = t0.elapsed();
+            log::info!("indexed project in {duration:?}");
         })
         .detach();
     }

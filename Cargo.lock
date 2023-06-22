@@ -1390,15 +1390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "conv"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78ff10625fd0ac447827aa30ea8b861fead473bb60aeb73af6c1c58caf0d1299"
-dependencies = [
- "custom_derive",
-]
-
-[[package]]
 name = "copilot"
 version = "0.1.0"
 dependencies = [
@@ -1774,12 +1765,6 @@ dependencies = [
  "vcpkg",
  "winapi 0.3.9",
 ]
-
-[[package]]
-name = "custom_derive"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
 name = "cxx"
@@ -2218,6 +2203,12 @@ name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fancy-regex"
@@ -2907,6 +2898,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
 dependencies = [
  "ahash 0.8.3",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7249a3129cbc1ffccd74857f81464a323a152173cdb134e0fd81bc803b29facf"
+dependencies = [
+ "hashbrown 0.11.2",
 ]
 
 [[package]]
@@ -5601,6 +5601,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusqlite"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85127183a999f7db96d1a976a309eebbfb6ea3b0b400ddd8340190129de6eb7a"
+dependencies = [
+ "bitflags",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink 0.7.0",
+ "libsqlite3-sys",
+ "memchr",
+ "smallvec",
+]
+
+[[package]]
 name = "rust-embed"
 version = "6.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6531,7 +6546,7 @@ dependencies = [
  "futures-executor",
  "futures-intrusive",
  "futures-util",
- "hashlink",
+ "hashlink 0.8.1",
  "hex",
  "hkdf",
  "hmac 0.12.1",
@@ -7898,14 +7913,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compat",
- "conv",
+ "async-trait",
  "futures 0.3.28",
  "gpui",
+ "isahc",
  "language",
+ "lazy_static",
+ "log",
  "project",
- "rand 0.8.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "smol",
  "sqlx",
+ "tree-sitter",
  "util",
  "workspace",
 ]

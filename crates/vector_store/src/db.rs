@@ -1,8 +1,6 @@
 use anyhow::Result;
 use async_compat::{Compat, CompatExt};
-use conv::ValueFrom;
-use sqlx::{migrate::MigrateDatabase, Pool, Sqlite, SqlitePool};
-use std::time::{Duration, Instant};
+use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
 
 use crate::IndexedFile;
 
