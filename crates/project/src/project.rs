@@ -6764,22 +6764,19 @@ impl Project {
                 )
             })?;
 
+        let start = envelope
+            .payload
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing range start")?;
+        let end = envelope
+            .payload
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing range end")?;
         let buffer_hints = this
             .update(&mut cx, |project, cx| {
-                let buffer_end = buffer.read(cx).len();
-                // TODO kb use cache before querying?
-                project.inlay_hints(
-                    buffer,
-                    envelope
-                        .payload
-                        .start
-                        .map_or(0, |anchor| anchor.offset as usize)
-                        ..envelope
-                            .payload
-                            .end
-                            .map_or(buffer_end, |anchor| anchor.offset as usize),
-                    cx,
-                )
+                project.inlay_hints(buffer, start..end, cx)
             })
             .await
             .context("inlay hints fetch")?
