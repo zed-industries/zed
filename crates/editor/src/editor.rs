@@ -1196,8 +1196,8 @@ enum GotoDefinitionKind {
 #[derive(Debug, Copy, Clone)]
 enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
-    Scroll,
-    VisibleExcerptsChange,
+    NewLinesShown,
+    VisibleLineEdited,
 }
 
 impl Editor {
@@ -1311,7 +1311,7 @@ impl Editor {
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlays = event {
-                        editor.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
+                        editor.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
                     };
                 }));
             }
@@ -1392,7 +1392,7 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
-        this.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
+        this.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
         this
     }
 
@@ -2605,16 +2605,18 @@ impl Editor {
     }
 
     fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
-        if self.mode != EditorMode::Full || !settings::get::<EditorSettings>(cx).inlay_hints.enabled
+        if self.project.is_none()
+            || self.mode != EditorMode::Full
+            || !settings::get::<EditorSettings>(cx).inlay_hints.enabled
         {
             return;
         }
-        match reason {
+
+        let invalidate_cache = match reason {
             InlayRefreshReason::SettingsChange(new_settings) => {
-                let update_state = get_update_state(self, cx);
                 let new_splice = self
                     .inlay_hint_cache
-                    .update_settings(new_settings, update_state);
+                    .update_settings(new_settings, get_update_state(self, cx));
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
@@ -2622,12 +2624,19 @@ impl Editor {
                 {
                     self.splice_inlay_hints(to_remove, to_insert, cx);
                 }
+                return;
             }
-            InlayRefreshReason::Scroll => self.inlay_hint_cache.spawn_hints_update(false, cx),
-            InlayRefreshReason::VisibleExcerptsChange => {
-                self.inlay_hint_cache.spawn_hints_update(true, cx)
-            }
+            InlayRefreshReason::NewLinesShown => false,
+            InlayRefreshReason::VisibleLineEdited => true,
         };
+
+        let excerpts_to_query = self
+            .excerpt_visible_offsets(cx)
+            .into_iter()
+            .map(|(buffer, _, excerpt_id)| (excerpt_id, buffer.read(cx).remote_id()))
+            .collect::<HashMap<_, _>>();
+        self.inlay_hint_cache
+            .spawn_hints_update(excerpts_to_query, invalidate_cache, cx)
     }
 
     fn excerpt_visible_offsets(
@@ -7227,7 +7236,7 @@ impl Editor {
         event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        let refresh_inlays = match event {
+        match event {
             multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
@@ -7235,7 +7244,7 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
-                true
+                self.refresh_inlays(InlayRefreshReason::VisibleLineEdited, cx);
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -7247,54 +7256,37 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                true
+                self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
-                false
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(Event::Reparsed);
-                false
             }
             multi_buffer::Event::DirtyChanged => {
                 cx.emit(Event::DirtyChanged);
-                false
             }
             multi_buffer::Event::Saved => {
                 cx.emit(Event::Saved);
-                false
             }
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(Event::TitleChanged);
-                false
             }
             multi_buffer::Event::Reloaded => {
                 cx.emit(Event::TitleChanged);
-                false
             }
             multi_buffer::Event::DiffBaseChanged => {
                 cx.emit(Event::DiffBaseChanged);
-                false
             }
             multi_buffer::Event::Closed => {
                 cx.emit(Event::Closed);
-                false
             }
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
-                false
             }
-            _ => false,
+            _ => {}
         };
-
-        if refresh_inlays {
-            if let Some(_project) = self.project.as_ref() {
-                // TODO kb non-rust buffer can be edited (e.g. settings) and trigger rust updates
-                // let zz = project.read(cx).language_servers_for_buffer(buffer, cx);
-                self.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
-            }
-        }
     }
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {

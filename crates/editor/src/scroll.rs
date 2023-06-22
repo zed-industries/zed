@@ -322,7 +322,7 @@ impl Editor {
         );
 
         if !self.is_singleton(cx) {
-            self.refresh_inlays(crate::InlayRefreshReason::Scroll, cx);
+            self.refresh_inlays(crate::InlayRefreshReason::NewLinesShown, cx);
         }
     }
 

@@ -106,7 +106,28 @@ impl InlayHintCache {
         new_splice
     }
 
-    pub fn spawn_hints_update(&self, invalidate_cache: bool, cx: &mut ViewContext<Editor>) {
+    pub fn spawn_hints_update(
+        &mut self,
+        mut excerpts_to_query: HashMap<ExcerptId, u64>,
+        invalidate_cache: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let update_tasks = &mut self.update_tasks;
+        if invalidate_cache {
+            update_tasks
+                .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
+        }
+        excerpts_to_query.retain(|visible_excerpt_id, _| {
+            match update_tasks.entry(*visible_excerpt_id) {
+                hash_map::Entry::Occupied(o) => match o.get().version.cmp(&self.snapshot.version) {
+                    cmp::Ordering::Less => true,
+                    cmp::Ordering::Equal => invalidate_cache,
+                    cmp::Ordering::Greater => false,
+                },
+                hash_map::Entry::Vacant(_) => true,
+            }
+        });
+
         cx.spawn(|editor, mut cx| async move {
             editor
                 .update(&mut cx, |editor, cx| {
