@@ -143,6 +143,7 @@
         "Delete"
       ],
       "shift-d": "vim::DeleteToEndOfLine",
+      "shift-j": "editor::JoinLines",
       "y": [
         "vim::PushOperator",
         "Yank"
