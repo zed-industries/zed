@@ -484,7 +484,7 @@ pub fn substitute(vim: &mut Vim, count: usize, cx: &mut WindowContext) {
             let selections = editor.selections.all::<Point>(cx);
             for selection in selections.into_iter().rev() {
                 let end = if selection.start == selection.end {
-                    selection.start + Point::new(0, 1)
+                    selection.start + Point::new(0, count as u32)
                 } else {
                     selection.end
                 };

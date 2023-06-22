@@ -117,4 +117,8 @@ async fn test_substitute(cx: &mut gpui::TestAppContext) {
     cx.set_state(indoc! {"a«bcˇ»deˇfg\n"}, Mode::Normal);
     cx.simulate_keystrokes(["s", "x"]);
     cx.assert_editor_state("axˇdexˇg\n");
+
+    cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["2", "s", "x"]);
+    cx.assert_editor_state("xˇc\n");
 }
