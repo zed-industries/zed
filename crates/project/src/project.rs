@@ -4934,7 +4934,7 @@ impl Project {
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Vec<InlayHint>>>> {
+    ) -> Task<Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         let range_start = range.start;
@@ -4952,11 +4952,7 @@ impl Project {
                     })
                     .await
                     .context("waiting for inlay hint request range edits")?;
-                match lsp_request_task.await {
-                    Ok(hints) => Ok(Some(hints)),
-                    Err(e) if is_content_modified_error(&e) => Ok(None),
-                    Err(other_e) => Err(other_e).context("inlay hints LSP request"),
-                }
+                lsp_request_task.await.context("inlay hints LSP request")
             })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
@@ -4981,13 +4977,7 @@ impl Project {
                 )
                 .await;
 
-                match hints_request_result {
-                    Ok(hints) => Ok(Some(hints)),
-                    Err(e) if is_content_modified_error(&e) => Ok(None),
-                    Err(other_err) => {
-                        Err(other_err).context("inlay hints proto response conversion")
-                    }
-                }
+                hints_request_result.context("inlay hints proto response conversion")
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -6779,8 +6769,7 @@ impl Project {
                 project.inlay_hints(buffer, start..end, cx)
             })
             .await
-            .context("inlay hints fetch")?
-            .unwrap_or_default();
+            .context("inlay hints fetch")?;
 
         Ok(this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
@@ -7854,9 +7843,4 @@ async fn wait_for_loading_buffer(
         }
         receiver.next().await;
     }
-}
-
-// TODO kb what are better ways?
-fn is_content_modified_error(error: &anyhow::Error) -> bool {
-    format!("{error:#}").contains("content modified")
 }

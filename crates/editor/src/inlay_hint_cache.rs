@@ -523,7 +523,7 @@ fn hints_fetch_task(
                 return Ok(None);
             };
         Ok(match task {
-            Some(task) => task.await.context("inlays for buffer task")?,
+            Some(task) => Some(task.await.context("inlays for buffer task")?),
             None => Some(Vec::new()),
         })
     })
