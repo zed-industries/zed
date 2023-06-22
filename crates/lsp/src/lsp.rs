@@ -64,7 +64,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    server: Option<Mutex<Child>>,
+    _server: Option<Mutex<Child>>,
     installation_test_binary: Option<LanguageServerBinary>,
 }
 
@@ -247,21 +247,8 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            server: server.map(|server| Mutex::new(server)),
+            _server: server.map(|server| Mutex::new(server)),
             installation_test_binary,
-        }
-    }
-
-    pub fn is_dead(&self) -> bool {
-        let server = match self.server.as_ref() {
-            Some(server) => server,
-            None => return false, // Fake server for tests
-        };
-
-        match server.lock().try_status() {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(_) => true,
         }
     }
 

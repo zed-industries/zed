@@ -3061,20 +3061,6 @@ impl Project {
         .detach();
     }
 
-    fn check_errored_language_server(
-        &self,
-        language_server: Arc<LanguageServer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if !language_server.is_dead() {
-            return;
-        }
-
-        let server_id = language_server.server_id();
-        let installation_test_binary = language_server.installation_test_binary().clone();
-        Self::check_errored_server_id(server_id, installation_test_binary, cx);
-    }
-
     fn check_errored_server_id(
         server_id: LanguageServerId,
         installation_test_binary: Option<LanguageServerBinary>,
@@ -3909,14 +3895,14 @@ impl Project {
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
-        let result = if !matches!(formatting_provider, Some(OneOf::Left(false))) {
+        let lsp_edits = if !matches!(formatting_provider, Some(OneOf::Left(false))) {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
                     options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
-                .await
+                .await?
         } else if !matches!(range_formatting_provider, Some(OneOf::Left(false))) {
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
@@ -3928,27 +3914,9 @@ impl Project {
                     options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
-                .await
+                .await?
         } else {
-            Ok(None)
-        };
-
-        let lsp_edits = match result {
-            Ok(lsp_edits) => lsp_edits,
-
-            Err(err) => {
-                log::warn!(
-                    "Error firing format request to {}: {}",
-                    language_server.name(),
-                    err
-                );
-
-                this.update(cx, |this, cx| {
-                    this.check_errored_language_server(language_server.clone(), cx);
-                });
-
-                None
-            }
+            None
         };
 
         if let Some(lsp_edits) = lsp_edits {
@@ -4091,8 +4059,9 @@ impl Project {
                                 ..Default::default()
                             },
                         )
-                        .map_ok(move |response| {
-                            let lsp_symbols = response.map(|symbol_response| match symbol_response {
+                        .log_err()
+                        .map(move |response| {
+                            let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
                                 lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
                                     flat_responses.into_iter().map(|lsp_symbol| {
                                         (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
@@ -4132,22 +4101,14 @@ impl Project {
 
                 let symbols = this.read_with(&cx, |this, cx| {
                     let mut symbols = Vec::new();
-                    for response in responses {
-                        let (
-                            adapter,
-                            adapter_language,
-                            source_worktree_id,
-                            worktree_abs_path,
-                            lsp_symbols,
-                        ) = match response {
-                            Ok(response) => response,
-
-                            Err(err) => {
-                                // TODO: Prompt installation validity check LSP ERROR
-                                return Vec::new();
-                            }
-                        };
-
+                    for (
+                        adapter,
+                        adapter_language,
+                        source_worktree_id,
+                        worktree_abs_path,
+                        lsp_symbols,
+                    ) in responses
+                    {
                         symbols.extend(lsp_symbols.into_iter().filter_map(
                             |(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
@@ -4322,17 +4283,9 @@ impl Project {
             };
 
             cx.spawn(|this, mut cx| async move {
-                let resolved_completion = match lang_server
+                let resolved_completion = lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await
-                {
-                    Ok(resolved_completion) => resolved_completion,
-
-                    Err(err) => {
-                        // TODO: LSP ERROR
-                        return Ok(None);
-                    }
-                };
+                    .await?;
 
                 if let Some(edits) = resolved_completion.additional_text_edits {
                     let edits = this
@@ -4451,17 +4404,9 @@ impl Project {
                     .and_then(|d| d.get_mut("range"))
                 {
                     *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp_action = match lang_server
+                    action.lsp_action = lang_server
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                        .await
-                    {
-                        Ok(lsp_action) => lsp_action,
-
-                        Err(err) => {
-                            // LSP ERROR
-                            return Err(err);
-                        }
-                    };
+                        .await?;
                 } else {
                     let actions = this
                         .update(&mut cx, |this, cx| {
