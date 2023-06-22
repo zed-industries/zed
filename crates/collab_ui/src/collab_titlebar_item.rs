@@ -1,6 +1,6 @@
 use crate::{
-    contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
-    toggle_screen_sharing, ToggleScreenSharing,
+    contact_notification::ContactNotification, contacts_popover, face_pile::FacePile, toggle_mute,
+    toggle_screen_sharing, ToggleMute, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
@@ -88,6 +88,7 @@ impl View for CollabTitlebarItem {
             left_container
                 .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
+            right_container.add_child(self.render_toggle_microphone(&theme, &room, cx));
             right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
         }
 
@@ -396,7 +397,6 @@ impl CollabTitlebarItem {
             .with_children(self.render_contacts_popover_host(titlebar, cx))
             .into_any()
     }
-
     fn render_toggle_screen_sharing_button(
         &self,
         theme: &Theme,
@@ -435,6 +435,54 @@ impl CollabTitlebarItem {
             0,
             tooltip.into(),
             Some(Box::new(ToggleScreenSharing)),
+            theme.tooltip.clone(),
+            cx,
+        )
+        .aligned()
+        .into_any()
+    }
+    fn render_toggle_microphone(
+        &self,
+        theme: &Theme,
+        room: &ModelHandle<Room>,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let icon;
+        let tooltip;
+        let background;
+        if room.read(cx).is_muted().unwrap_or(false) {
+            icon = "icons/microphone_inactive_12.svg";
+            tooltip = "Unmute microphone\nRight click for options";
+            background = Color::red();
+        } else {
+            icon = "icons/microphone_active_12.svg";
+            tooltip = "Mute microphone\nRight click for options";
+            background = Color::transparent_black();
+        }
+
+        let titlebar = &theme.workspace.titlebar;
+        MouseEventHandler::<ToggleMute, Self>::new(0, cx, |state, _| {
+            let style = titlebar.call_control.style_for(state);
+            Svg::new(icon)
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+                .contained()
+                .with_style(style.container)
+                .with_background_color(background)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, _, cx| {
+            toggle_mute(&Default::default(), cx)
+        })
+        .with_tooltip::<ToggleMute>(
+            0,
+            tooltip.into(),
+            Some(Box::new(ToggleMute)),
             theme.tooltip.clone(),
             cx,
         )
