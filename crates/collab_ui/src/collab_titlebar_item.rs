@@ -344,8 +344,20 @@ impl CollabTitlebarItem {
                     .contained()
                     .with_style(titlebar.toggle_contacts_badge)
                     .contained()
-                    .with_margin_left(titlebar.toggle_contacts_button.default.icon_width)
-                    .with_margin_top(titlebar.toggle_contacts_button.default.icon_width)
+                    .with_margin_left(
+                        titlebar
+                            .toggle_contacts_button
+                            .inactive_state()
+                            .default
+                            .icon_width,
+                    )
+                    .with_margin_top(
+                        titlebar
+                            .toggle_contacts_button
+                            .inactive_state()
+                            .default
+                            .icon_width,
+                    )
                     .aligned(),
             )
         };
@@ -355,7 +367,8 @@ impl CollabTitlebarItem {
                 MouseEventHandler::<ToggleContactsMenu, Self>::new(0, cx, |state, _| {
                     let style = titlebar
                         .toggle_contacts_button
-                        .style_for(state, self.contacts_popover.is_some());
+                        .in_state(self.contacts_popover.is_some())
+                        .style_for(state);
                     Svg::new("icons/user_plus_16.svg")
                         .with_color(style.color)
                         .constrained()
@@ -402,7 +415,7 @@ impl CollabTitlebarItem {
 
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state, false);
+            let style = titlebar.call_control.style_for(state);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
@@ -456,7 +469,7 @@ impl CollabTitlebarItem {
                 .with_child(
                     MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
                         //TODO: Ensure this button has consistent width for both text variations
-                        let style = titlebar.share_button.style_for(state, false);
+                        let style = titlebar.share_button.inactive_state().style_for(state);
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
@@ -496,7 +509,7 @@ impl CollabTitlebarItem {
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
-                    let style = titlebar.call_control.style_for(state, active);
+                    let style = titlebar.call_control.style_for(state);
 
                     let img = if let Some(avatar_img) = avatar {
                         Self::render_face(avatar_img, *avatar_style, Color::transparent_black())
@@ -542,7 +555,7 @@ impl CollabTitlebarItem {
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
-            let style = titlebar.sign_in_prompt.style_for(state, false);
+            let style = titlebar.sign_in_prompt.inactive_state().style_for(state);
             Label::new("Sign In", style.text.clone())
                 .contained()
                 .with_style(style.container)

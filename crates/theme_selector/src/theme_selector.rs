@@ -208,7 +208,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
         let theme = theme::current(cx);
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
 
         let theme_match = &self.matches[ix];
         Label::new(theme_match.string.clone(), style.label.clone())

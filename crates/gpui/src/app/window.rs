@@ -394,7 +394,7 @@ impl<'a> WindowContext<'a> {
             .iter()
             .filter_map(move |(name, (type_id, deserialize))| {
                 if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
-                    let action = deserialize("{}").ok()?;
+                    let action = deserialize(serde_json::Value::Object(Default::default())).ok()?;
                     let bindings = self
                         .keystroke_matcher
                         .bindings_for_action_type(*type_id)

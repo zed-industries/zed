@@ -1,6 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { background, border, text } from "./components"
+import { interactive, toggleable } from "../element"
 
 export default function picker(colorScheme: ColorScheme): any {
     let layer = colorScheme.lowest
@@ -38,35 +39,65 @@ export default function picker(colorScheme: ColorScheme): any {
             ...container,
             padding: {},
         },
-        item: {
-            padding: {
-                bottom: 4,
-                left: 12,
-                right: 12,
-                top: 4,
+        item: toggleable({
+            base: interactive({
+                base: {
+                    padding: {
+                        bottom: 4,
+                        left: 12,
+                        right: 12,
+                        top: 4,
+                    },
+                    margin: {
+                        top: 1,
+                        left: 4,
+                        right: 4,
+                    },
+                    cornerRadius: 8,
+                    text: text(layer, "sans", "variant"),
+                    highlightText: text(layer, "sans", "accent", {
+                        weight: "bold",
+                    }),
+                },
+                state: {
+                    hovered: {
+                        background: withOpacity(
+                            background(layer, "hovered"),
+                            0.5
+                        ),
+                    },
+                    clicked: {
+                        background: withOpacity(
+                            background(layer, "pressed"),
+                            0.5
+                        ),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        background: withOpacity(
+                            background(layer, "base", "active"),
+                            0.5
+                        ),
+                    },
+                    hovered: {
+                        background: withOpacity(
+                            background(layer, "hovered"),
+                            0.5
+                        ),
+                    },
+                    clicked: {
+                        background: withOpacity(
+                            background(layer, "pressed"),
+                            0.5
+                        ),
+                    },
+                },
             },
-            margin: {
-                top: 1,
-                left: 4,
-                right: 4,
-            },
-            cornerRadius: 8,
-            text: text(layer, "sans", "variant"),
-            highlightText: text(layer, "sans", "accent", { weight: "bold" }),
-            active: {
-                background: withOpacity(
-                    background(layer, "base", "active"),
-                    0.5
-                ),
-                text: text(layer, "sans", "base", "active"),
-                highlightText: text(layer, "sans", "accent", {
-                    weight: "bold",
-                }),
-            },
-            hover: {
-                background: withOpacity(background(layer, "hovered"), 0.5),
-            },
-        },
+        }),
+
         inputEditor,
         emptyInputEditor,
         noMatches: {

@@ -4,6 +4,7 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
 use language::{
     language_settings::all_language_settings, LanguageServerBinary, LanguageServerName, LspAdapter,
+    LspAdapterDelegate,
 };
 use node_runtime::NodeRuntime;
 use serde_json::Value;
@@ -15,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::ResultExt;
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -42,7 +42,7 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
@@ -54,8 +54,8 @@ impl LspAdapter for YamlLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
@@ -72,7 +72,11 @@ impl LspAdapter for YamlLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

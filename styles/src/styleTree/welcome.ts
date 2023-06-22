@@ -8,6 +8,7 @@ import {
     TextProperties,
     svg,
 } from "./components"
+import { interactive } from "../element"
 
 export default function welcome(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
@@ -63,27 +64,31 @@ export default function welcome(colorScheme: ColorScheme) {
                 bottom: 2,
             },
         },
-        button: {
-            background: background(layer),
-            border: border(layer, "active"),
-            cornerRadius: 4,
-            margin: {
-                top: 4,
-                bottom: 4,
-            },
-            padding: {
-                top: 3,
-                bottom: 3,
-                left: 7,
-                right: 7,
-            },
-            ...text(layer, "sans", "default", interactive_text_size),
-            hover: {
-                ...text(layer, "sans", "default", interactive_text_size),
-                background: background(layer, "hovered"),
+        button: interactive({
+            base: {
+                background: background(layer),
                 border: border(layer, "active"),
+                cornerRadius: 4,
+                margin: {
+                    top: 4,
+                    bottom: 4,
+                },
+                padding: {
+                    top: 3,
+                    bottom: 3,
+                    left: 7,
+                    right: 7,
+                },
+                ...text(layer, "sans", "default", interactive_text_size),
             },
-        },
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "default", interactive_text_size),
+                    background: background(layer, "hovered"),
+                },
+            },
+        }),
+
         usageNote: {
             ...text(layer, "sans", "variant", { size: "2xs" }),
             padding: {

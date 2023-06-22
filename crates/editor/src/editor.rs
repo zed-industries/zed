@@ -3320,15 +3320,21 @@ impl Editor {
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
-        active: bool,
+        is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
                 MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
-                    Svg::new("icons/bolt_8.svg")
-                        .with_color(style.code_actions.indicator.style_for(state, active).color)
+                    Svg::new("icons/bolt_8.svg").with_color(
+                        style
+                            .code_actions
+                            .indicator
+                            .in_state(is_active)
+                            .style_for(state)
+                            .color,
+                    )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
@@ -3378,10 +3384,8 @@ impl Editor {
                                     .with_color(
                                         style
                                             .indicator
-                                            .style_for(
-                                                mouse_state,
-                                                fold_status == FoldStatus::Folded,
-                                            )
+                                            .in_state(fold_status == FoldStatus::Folded)
+                                            .style_for(mouse_state)
                                             .color,
                                     )
                                     .constrained()
@@ -7949,6 +7953,7 @@ impl Deref for EditorStyle {
 
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
     let mut highlighted_lines = Vec::new();
+
     for (index, line) in diagnostic.message.lines().enumerate() {
         let line = match &diagnostic.source {
             Some(source) if index == 0 => {
@@ -7960,25 +7965,44 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         };
         highlighted_lines.push(line);
     }
-
+    let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
+        let message = message.clone();
         let settings = settings::get::<ThemeSettings>(cx);
+        let tooltip_style = settings.theme.tooltip.clone();
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
         let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-        Flex::column()
-            .with_children(highlighted_lines.iter().map(|(line, highlights)| {
-                Label::new(
-                    line.clone(),
-                    style.message.clone().with_font_size(font_size),
-                )
-                .with_highlights(highlights.clone())
-                .contained()
-                .with_margin_left(cx.anchor_x)
-            }))
-            .aligned()
-            .left()
-            .into_any()
+        let anchor_x = cx.anchor_x;
+        enum BlockContextToolip {}
+        MouseEventHandler::<BlockContext, _>::new(cx.block_id, cx, |_, _| {
+            Flex::column()
+                .with_children(highlighted_lines.iter().map(|(line, highlights)| {
+                    Label::new(
+                        line.clone(),
+                        style.message.clone().with_font_size(font_size),
+                    )
+                    .with_highlights(highlights.clone())
+                    .contained()
+                    .with_margin_left(anchor_x)
+                }))
+                .aligned()
+                .left()
+                .into_any()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+        })
+        // We really need to rethink this ID system...
+        .with_tooltip::<BlockContextToolip>(
+            cx.block_id,
+            "Copy diagnostic message".to_string(),
+            None,
+            tooltip_style,
+            cx,
+        )
+        .into_any()
     })
 }
 

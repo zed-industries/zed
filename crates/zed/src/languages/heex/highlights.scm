@@ -1,17 +1,11 @@
 ; HEEx delimiters
 [
-  "%>"
   "--%>"
   "-->"
   "/>"
   "<!"
   "<!--"
   "<"
-  "<%!--"
-  "<%"
-  "<%#"
-  "<%%="
-  "<%="
   "</"
   "</:"
   "<:"
@@ -19,6 +13,15 @@
   "{"
   "}"
 ] @punctuation.bracket
+
+[
+  "<%!--"
+  "<%"
+  "<%#"
+  "<%%="
+  "<%="
+  "%>"
+] @keyword
 
 ; HEEx operators are highlighted as such
 "=" @operator

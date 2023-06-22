@@ -353,7 +353,7 @@ impl WrapSnapshot {
                         }
 
                         old_cursor.next(&());
-                        new_transforms.push_tree(
+                        new_transforms.append(
                             old_cursor.slice(&next_edit.old.start, Bias::Right, &()),
                             &(),
                         );
@@ -366,7 +366,7 @@ impl WrapSnapshot {
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
-                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                    new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
         }
@@ -500,7 +500,7 @@ impl WrapSnapshot {
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
                         old_cursor.next(&());
-                        new_transforms.push_tree(
+                        new_transforms.append(
                             old_cursor.slice(
                                 &TabPoint::new(next_edit.old_rows.start, 0),
                                 Bias::Right,
@@ -517,7 +517,7 @@ impl WrapSnapshot {
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
-                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                    new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
         }
