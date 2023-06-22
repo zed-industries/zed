@@ -384,13 +384,7 @@ impl AssistantPanel {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, |_, this, cx| {
-            if this.zoomed {
-                cx.emit(AssistantPanelEvent::ZoomOut)
-            } else {
-                this.has_focus = true; // Hack: Because focus_in is processed last, we need to set this here.
-                cx.focus_self();
-                cx.emit(AssistantPanelEvent::ZoomIn);
-            }
+            this.toggle_zoom(&ToggleZoom, cx);
         })
     }
 

@@ -905,10 +905,11 @@ impl Workspace {
                     });
                 } else if T::should_zoom_in_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-                    if panel.has_focus(cx) {
-                        this.zoomed = Some(panel.downgrade().into_any());
-                        this.zoomed_position = Some(panel.read(cx).position(cx));
+                    if !panel.has_focus(cx) {
+                        cx.focus(&panel);
                     }
+                    this.zoomed = Some(panel.downgrade().into_any());
+                    this.zoomed_position = Some(panel.read(cx).position(cx));
                 } else if T::should_zoom_out_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
                     if this.zoomed_position == Some(prev_position) {
