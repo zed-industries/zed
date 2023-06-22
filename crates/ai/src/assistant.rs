@@ -46,7 +46,7 @@ use util::{
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
-    Save, Workspace,
+    Save, ToggleZoom, Workspace,
 };
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
@@ -364,6 +364,36 @@ impl AssistantPanel {
             })
     }
 
+    fn render_zoom_button(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element<Self> {
+        enum ToggleZoomButton {}
+
+        let style = if self.zoomed {
+            &style.zoom_out_button
+        } else {
+            &style.zoom_in_button
+        };
+
+        MouseEventHandler::<ToggleZoomButton, _>::new(0, cx, |_, _| {
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this, cx| {
+            if this.zoomed {
+                cx.emit(AssistantPanelEvent::ZoomOut)
+            } else {
+                this.has_focus = true; // Hack: Because focus_in is processed last, we need to set this here.
+                cx.focus_self();
+                cx.emit(AssistantPanelEvent::ZoomIn);
+            }
+        })
+    }
+
     fn render_saved_conversation(
         &mut self,
         index: usize,
@@ -510,6 +540,7 @@ impl View for AssistantPanel {
                                 .aligned()
                                 .flex_float(),
                         )
+                        .with_child(self.render_zoom_button(&style, cx).aligned().flex_float())
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .expanded()

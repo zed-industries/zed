@@ -27,6 +27,32 @@ export default function assistant(colorScheme: ColorScheme) {
             margin: { left: 12 },
           }
         },
+        zoomInButton: {
+          icon: {
+            color: text(layer, "sans", "default", { size: "sm" }).color,
+            asset: "icons/maximize_8.svg",
+            dimensions: {
+              width: 12,
+              height: 12,
+            },
+          },
+          container: {
+            margin: { right: 12 },
+          }
+        },
+        zoomOutButton: {
+          icon: {
+            color: text(layer, "sans", "default", { size: "sm" }).color,
+            asset: "icons/minimize_8.svg",
+            dimensions: {
+              width: 12,
+              height: 12,
+            },
+          },
+          container: {
+            margin: { right: 12 },
+          }
+        },
         plusButton: {
           icon: {
             color: text(layer, "sans", "default", { size: "sm" }).color,
