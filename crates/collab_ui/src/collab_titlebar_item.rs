@@ -500,10 +500,10 @@ impl CollabTitlebarItem {
         let icon;
         let tooltip;
         if room.read(cx).is_deafened().unwrap_or(false) {
-            icon = "icons/speakers_inactive_12.svg";
+            icon = "icons/radix/speaker-off.svg";
             tooltip = "Unmute speakers\nRight click for options";
         } else {
-            icon = "icons/speakers_active_12.svg";
+            icon = "icons/radix/speaker-loud.svg";
             tooltip = "Mute speakers\nRight click for options";
         }
 
