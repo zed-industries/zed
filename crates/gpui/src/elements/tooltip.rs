@@ -9,6 +9,7 @@ use crate::{
     Action, Axis, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint, Task, View,
     ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},
@@ -33,7 +34,7 @@ struct TooltipState {
     debounce: RefCell<Option<Task<()>>>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct TooltipStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -42,7 +43,7 @@ pub struct TooltipStyle {
     pub max_text_width: Option<f32>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct KeystrokeStyle {
     #[serde(flatten)]
     container: ContainerStyle,
