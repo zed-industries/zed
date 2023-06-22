@@ -279,79 +279,19 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
 }
 
-pub struct ProjectLanguageServer {
-    server: Arc<LanguageServer>,
-    project: WeakModelHandle<Project>,
-}
-
-impl std::ops::Deref for ProjectLanguageServer {
-    type Target = LanguageServer;
-
-    fn deref(&self) -> &Self::Target {
-        &self.server
-    }
-}
-
-impl ProjectLanguageServer {
-    pub fn new(server: Arc<LanguageServer>, project: WeakModelHandle<Project>) -> Self {
-        ProjectLanguageServer { server, project }
-    }
-
-    pub fn request<T: lsp::request::Request + 'static>(
-        &self,
-        params: T::Params,
-        cx: &mut AsyncAppContext,
-    ) -> impl Future<Output = Result<T::Result>>
-    where
-        T::Result: 'static + Send,
-    {
-        let server = self.server.clone();
-        let project = self.project.clone();
-
-        let future = server.request::<T>(params);
-
-        cx.spawn(|mut cx| async move {
-            let result = future.await;
-            if result.is_ok() {
-                return result;
-            }
-
-            let project = match project.upgrade(&cx) {
-                Some(project) => project,
-                None => return result,
-            };
-
-            project.update(&mut cx, |_, cx| {
-                Project::check_errored_language_server(server, cx);
-            });
-
-            result
-        })
-    }
-
-    pub fn notify<T: lsp::notification::Notification>(&self, params: T::Params) -> Result<()> {
-        let result = self.server.notify::<T>(params);
-        if result.is_ok() {
-            return Ok(());
-        }
-
-        result
-    }
-}
-
 pub enum LanguageServerState {
-    Validating(Task<Option<Arc<ProjectLanguageServer>>>),
+    Validating(Task<Option<Arc<LanguageServer>>>),
 
     Starting {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
-        task: Task<Option<Arc<ProjectLanguageServer>>>,
+        task: Task<Option<Arc<LanguageServer>>>,
     },
 
     Running {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
-        server: Arc<ProjectLanguageServer>,
+        server: Arc<LanguageServer>,
         watched_paths: HashMap<WorktreeId, GlobSet>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
@@ -2297,13 +2237,7 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<
-        Item = (
-            &Arc<CachedLspAdapter>,
-            &Arc<Language>,
-            &Arc<ProjectLanguageServer>,
-        ),
-    > {
+    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<Language>, &Arc<LanguageServer>)> {
         self.language_server_ids
             .iter()
             .filter_map(move |((language_server_worktree_id, _), id)| {
@@ -2543,7 +2477,7 @@ impl Project {
                 .await;
 
                 match result {
-                    Ok(server) => Some(Arc::new(ProjectLanguageServer::new(server, this))),
+                    Ok(server) => Some(server),
 
                     Err(err) => {
                         log::error!("failed to start language server {:?}: {}", server_name, err);
@@ -2869,10 +2803,7 @@ impl Project {
                 adapter: adapter.clone(),
                 language: language.clone(),
                 watched_paths: Default::default(),
-                server: Arc::new(ProjectLanguageServer::new(
-                    language_server.clone(),
-                    cx.weak_handle(),
-                )),
+                server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
             },
         );
@@ -3131,6 +3062,7 @@ impl Project {
     }
 
     fn check_errored_language_server(
+        &self,
         language_server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -3965,7 +3897,7 @@ impl Project {
         this: &ModelHandle<Self>,
         buffer: &ModelHandle<Buffer>,
         abs_path: &Path,
-        language_server: &Arc<ProjectLanguageServer>,
+        language_server: &Arc<LanguageServer>,
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
@@ -3979,29 +3911,23 @@ impl Project {
 
         let result = if !matches!(formatting_provider, Some(OneOf::Left(false))) {
             language_server
-                .request::<lsp::request::Formatting>(
-                    lsp::DocumentFormattingParams {
-                        text_document,
-                        options: lsp_command::lsp_formatting_options(tab_size.get()),
-                        work_done_progress_params: Default::default(),
-                    },
-                    cx,
-                )
+                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                    text_document,
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
+                    work_done_progress_params: Default::default(),
+                })
                 .await
         } else if !matches!(range_formatting_provider, Some(OneOf::Left(false))) {
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
 
             language_server
-                .request::<lsp::request::RangeFormatting>(
-                    lsp::DocumentRangeFormattingParams {
-                        text_document,
-                        range: lsp::Range::new(buffer_start, buffer_end),
-                        options: lsp_command::lsp_formatting_options(tab_size.get()),
-                        work_done_progress_params: Default::default(),
-                    },
-                    cx,
-                )
+                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                    text_document,
+                    range: lsp::Range::new(buffer_start, buffer_end),
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
+                    work_done_progress_params: Default::default(),
+                })
                 .await
         } else {
             Ok(None)
@@ -4017,8 +3943,8 @@ impl Project {
                     err
                 );
 
-                this.update(cx, |_, cx| {
-                    Self::check_errored_language_server(language_server.server.clone(), cx);
+                this.update(cx, |this, cx| {
+                    this.check_errored_language_server(language_server.clone(), cx);
                 });
 
                 None
@@ -4164,7 +4090,6 @@ impl Project {
                                 query: query.to_string(),
                                 ..Default::default()
                             },
-                            &mut cx.to_async(),
                         )
                         .map_ok(move |response| {
                             let lsp_symbols = response.map(|symbol_response| match symbol_response {
@@ -4398,10 +4323,7 @@ impl Project {
 
             cx.spawn(|this, mut cx| async move {
                 let resolved_completion = match lang_server
-                    .request::<lsp::request::ResolveCompletionItem>(
-                        completion.lsp_completion,
-                        &mut cx,
-                    )
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                     .await
                 {
                     Ok(resolved_completion) => resolved_completion,
@@ -4530,10 +4452,7 @@ impl Project {
                 {
                     *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
                     action.lsp_action = match lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(
-                            action.lsp_action,
-                            &mut cx,
-                        )
+                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                         .await
                     {
                         Ok(lsp_action) => lsp_action,
@@ -4577,14 +4496,11 @@ impl Project {
                     });
 
                     let result = lang_server
-                        .request::<lsp::request::ExecuteCommand>(
-                            lsp::ExecuteCommandParams {
-                                command: command.command,
-                                arguments: command.arguments.unwrap_or_default(),
-                                ..Default::default()
-                            },
-                            &mut cx,
-                        )
+                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                            command: command.command,
+                            arguments: command.arguments.unwrap_or_default(),
+                            ..Default::default()
+                        })
                         .await;
 
                     if let Err(err) = result {
@@ -4691,7 +4607,7 @@ impl Project {
         edits: Vec<lsp::TextEdit>,
         push_to_history: bool,
         _: Arc<CachedLspAdapter>,
-        language_server: Arc<ProjectLanguageServer>,
+        language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Transaction>> {
         let edits = this
@@ -4732,7 +4648,7 @@ impl Project {
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
         lsp_adapter: Arc<CachedLspAdapter>,
-        language_server: Arc<ProjectLanguageServer>,
+        language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let fs = this.read_with(cx, |this, _| this.fs.clone());
@@ -5154,15 +5070,12 @@ impl Project {
                     .map(|(_, server)| server.clone()),
             ) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
-                return cx.spawn(|this, mut cx| async move {
+                return cx.spawn(|this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
-                    let result = language_server
-                        .request::<R::LspRequest>(lsp_params, &mut cx)
-                        .await;
-
+                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
                     let response = match result {
                         Ok(response) => response,
 
@@ -7364,10 +7277,7 @@ impl Project {
             })
     }
 
-    pub fn language_server_for_id(
-        &self,
-        id: LanguageServerId,
-    ) -> Option<Arc<ProjectLanguageServer>> {
+    pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
             Some(server.clone())
         } else {
@@ -7379,7 +7289,7 @@ impl Project {
         &self,
         buffer: &Buffer,
         cx: &AppContext,
-    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<ProjectLanguageServer>)> {
+    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_server_ids_for_buffer(buffer, cx)
             .into_iter()
             .filter_map(|server_id| {
@@ -7399,7 +7309,7 @@ impl Project {
         &self,
         buffer: &Buffer,
         cx: &AppContext,
-    ) -> Option<(&Arc<CachedLspAdapter>, &Arc<ProjectLanguageServer>)> {
+    ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_servers_for_buffer(buffer, cx).next()
     }
 
@@ -7408,7 +7318,7 @@ impl Project {
         buffer: &Buffer,
         server_id: LanguageServerId,
         cx: &AppContext,
-    ) -> Option<(&Arc<CachedLspAdapter>, &Arc<ProjectLanguageServer>)> {
+    ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_servers_for_buffer(buffer, cx)
             .find(|(_, s)| s.server_id() == server_id)
     }

@@ -1,6 +1,6 @@
 use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
-    ProjectLanguageServer, ProjectTransaction,
+    ProjectTransaction,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{DocumentHighlightKind, LanguageServerId, ServerCapabilities};
+use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
@@ -40,7 +40,7 @@ pub(crate) trait LspCommand: 'static + Sized {
         &self,
         path: &Path,
         buffer: &Buffer,
-        language_server: &Arc<ProjectLanguageServer>,
+        language_server: &Arc<LanguageServer>,
         cx: &AppContext,
     ) -> <Self::LspRequest as lsp::request::Request>::Params;
 
@@ -156,7 +156,7 @@ impl LspCommand for PrepareRename {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::TextDocumentPositionParams {
         lsp::TextDocumentPositionParams {
@@ -279,7 +279,7 @@ impl LspCommand for PerformRename {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::RenameParams {
         lsp::RenameParams {
@@ -398,7 +398,7 @@ impl LspCommand for GetDefinition {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::GotoDefinitionParams {
         lsp::GotoDefinitionParams {
@@ -499,7 +499,7 @@ impl LspCommand for GetTypeDefinition {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::GotoTypeDefinitionParams {
         lsp::GotoTypeDefinitionParams {
@@ -587,7 +587,7 @@ fn language_server_for_buffer(
     buffer: &ModelHandle<Buffer>,
     server_id: LanguageServerId,
     cx: &mut AsyncAppContext,
-) -> Result<(Arc<CachedLspAdapter>, Arc<ProjectLanguageServer>)> {
+) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     project
         .read_with(cx, |project, cx| {
             project
@@ -784,7 +784,7 @@ impl LspCommand for GetReferences {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::ReferenceParams {
         lsp::ReferenceParams {
@@ -949,7 +949,7 @@ impl LspCommand for GetDocumentHighlights {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::DocumentHighlightParams {
         lsp::DocumentHighlightParams {
@@ -1096,7 +1096,7 @@ impl LspCommand for GetHover {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::HoverParams {
         lsp::HoverParams {
@@ -1314,7 +1314,7 @@ impl LspCommand for GetCompletions {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::CompletionParams {
         lsp::CompletionParams {
@@ -1530,7 +1530,7 @@ impl LspCommand for GetCodeActions {
         &self,
         path: &Path,
         buffer: &Buffer,
-        language_server: &Arc<ProjectLanguageServer>,
+        language_server: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::CodeActionParams {
         let relevant_diagnostics = buffer
@@ -1673,7 +1673,7 @@ impl LspCommand for OnTypeFormatting {
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<ProjectLanguageServer>,
+        _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::DocumentOnTypeFormattingParams {
         lsp::DocumentOnTypeFormattingParams {
