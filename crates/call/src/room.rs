@@ -1176,24 +1176,31 @@ impl Room {
                 })
         })
     }
-
-    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
-        if let Some(live_kit) = self.live_kit.as_mut() {
-            match &mut live_kit.microphone_track {
-                LocalTrack::None => Err(anyhow!("microphone was not shared")),
-                LocalTrack::Pending { muted, .. } => {
-                    *muted = !*muted;
-                    Ok(Task::Ready(Some(Ok(()))))
-                }
-                LocalTrack::Published {
-                    track_publication,
-                    muted,
-                } => {
-                    *muted = !*muted;
-
-                    Ok(cx.background().spawn(track_publication.set_mute(*muted)))
-                }
+    fn set_mute(
+        live_kit: &mut LiveKitRoom,
+        should_mute: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<()>>> {
+        match &mut live_kit.microphone_track {
+            LocalTrack::None => Err(anyhow!("microphone was not shared")),
+            LocalTrack::Pending { muted, .. } => {
+                *muted = should_mute;
+                Ok(Task::Ready(Some(Ok(()))))
             }
+            LocalTrack::Published {
+                track_publication,
+                muted,
+            } => {
+                *muted = should_mute;
+
+                Ok(cx.background().spawn(track_publication.set_mute(*muted)))
+            }
+        }
+    }
+    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+        let should_mute = self.is_muted().unwrap_or(false);
+        if let Some(live_kit) = self.live_kit.as_mut() {
+            Self::set_mute(live_kit, !should_mute, cx)
         } else {
             Err(anyhow!("LiveKit not started"))
         }
@@ -1204,9 +1211,9 @@ impl Room {
             (*live_kit).deafened = !live_kit.deafened
         }
 
-        if let Some(live_kit) = &self.live_kit {
+        if let Some(live_kit) = self.live_kit.as_mut() {
             let mut tasks = Vec::with_capacity(self.remote_participants.len());
-
+            let _ = Self::set_mute(live_kit, live_kit.deafened, cx)?; // todo (osiewicz): we probably want to schedule it on fg/bg?
             for participant in self.remote_participants.values() {
                 for track in live_kit
                     .room
@@ -1215,7 +1222,6 @@ impl Room {
                     tasks.push(cx.foreground().spawn(track.set_enabled(!live_kit.deafened)));
                 }
             }
-
             Ok(cx.foreground().spawn(async move {
                 for task in tasks {
                     task.await?;
