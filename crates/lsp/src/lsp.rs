@@ -665,11 +665,11 @@ impl LanguageServer {
         }
     }
 
-    pub fn name<'a>(self: &'a Arc<Self>) -> &'a str {
+    pub fn name<'a>(&self) -> &str {
         &self.name
     }
 
-    pub fn capabilities<'a>(self: &'a Arc<Self>) -> &'a ServerCapabilities {
+    pub fn capabilities<'a>(&self) -> &ServerCapabilities {
         &self.capabilities
     }
 
