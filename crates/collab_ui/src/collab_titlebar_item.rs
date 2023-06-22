@@ -370,7 +370,7 @@ impl CollabTitlebarItem {
                         .toggle_contacts_button
                         .in_state(self.contacts_popover.is_some())
                         .style_for(state);
-                    Svg::new("icons/user_plus_16.svg")
+                    Svg::new("icons/radix/person.svg")
                         .with_color(style.color)
                         .constrained()
                         .with_width(style.icon_width)
@@ -406,10 +406,10 @@ impl CollabTitlebarItem {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
-            icon = "icons/enable_screen_sharing_12.svg";
+            icon = "icons/radix/desktop-mute.svg";
             tooltip = "Stop Sharing Screen"
         } else {
-            icon = "icons/disable_screen_sharing_12.svg";
+            icon = "icons/radix/desktop.svg";
             tooltip = "Share Screen";
         }
 
@@ -451,11 +451,11 @@ impl CollabTitlebarItem {
         let tooltip;
         let background;
         if room.read(cx).is_muted().unwrap_or(false) {
-            icon = "icons/microphone_inactive_12.svg";
+            icon = "icons/radix/mic-mute.svg";
             tooltip = "Unmute microphone\nRight click for options";
             background = Color::red();
         } else {
-            icon = "icons/microphone_active_12.svg";
+            icon = "icons/radix/mic.svg";
             tooltip = "Mute microphone\nRight click for options";
             background = Color::transparent_black();
         }
@@ -502,9 +502,9 @@ impl CollabTitlebarItem {
         }
 
         let is_shared = project.read(cx).is_shared();
-        let label = if is_shared { "Unshare" } else { "Share" };
+        let label = if is_shared { "Stop Sharing" } else { "Share" };
         let tooltip = if is_shared {
-            "Unshare project from call participants"
+            "Stop sharing project with call participants"
         } else {
             "Share project with call participants"
         };
