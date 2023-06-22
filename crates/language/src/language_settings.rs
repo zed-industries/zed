@@ -51,6 +51,7 @@ pub struct LanguageSettings {
     pub enable_language_server: bool,
     pub show_copilot_suggestions: bool,
     pub show_whitespaces: ShowWhitespaceSetting,
+    pub extend_comment_on_newline: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -95,6 +96,8 @@ pub struct LanguageSettingsContent {
     pub show_copilot_suggestions: Option<bool>,
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
+    #[serde(default)]
+    pub extend_comment_on_newline: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -340,7 +343,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.show_copilot_suggestions,
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
-
+    merge(
+        &mut settings.extend_comment_on_newline,
+        src.extend_comment_on_newline,
+    );
     fn merge<T>(target: &mut T, value: Option<T>) {
         if let Some(value) = value {
             *target = value;

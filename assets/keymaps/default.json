@@ -200,7 +200,9 @@
     "context": "AssistantEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "cmd->": "assistant::QuoteSelection"
+      "cmd->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole"
     }
   },
   {
@@ -409,6 +411,7 @@
       "ctrl-shift-k": "editor::DeleteLine",
       "cmd-shift-d": "editor::DuplicateLine",
       "cmd-shift-l": "editor::SplitSelectionIntoLines",
+      "ctrl-j": "editor::JoinLines",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",

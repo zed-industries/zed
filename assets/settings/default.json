@@ -108,6 +108,8 @@
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
+  // Whether to start a new line with a comment when a previous line is a comment as well.
+  "extend_comment_on_newline": true,
   // Whether or not to ensure there's a single newline at the end of a buffer
   // when saving it.
   "ensure_final_newline_on_save": true,

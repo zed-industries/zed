@@ -1,6 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { text, border, background, foreground } from "./components"
 import editor from "./editor"
+import { interactive } from "../element"
 
 export default function assistant(colorScheme: ColorScheme) {
     const layer = colorScheme.highest
@@ -15,13 +16,28 @@ export default function assistant(colorScheme: ColorScheme) {
             background: editor(colorScheme).background,
         },
         userSender: {
-            ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
+            default: {
+                ...text(layer, "sans", "default", {
+                    size: "sm",
+                    weight: "bold",
+                }),
+            },
         },
         assistantSender: {
-            ...text(layer, "sans", "accent", { size: "sm", weight: "bold" }),
+            default: {
+                ...text(layer, "sans", "accent", {
+                    size: "sm",
+                    weight: "bold",
+                }),
+            },
         },
         systemSender: {
-            ...text(layer, "sans", "variant", { size: "sm", weight: "bold" }),
+            default: {
+                ...text(layer, "sans", "variant", {
+                    size: "sm",
+                    weight: "bold",
+                }),
+            },
         },
         sentAt: {
             margin: { top: 2, left: 8 },
@@ -30,16 +46,20 @@ export default function assistant(colorScheme: ColorScheme) {
         modelInfoContainer: {
             margin: { right: 16, top: 4 },
         },
-        model: {
-            background: background(layer, "on"),
-            border: border(layer, "on", { overlay: true }),
-            padding: 4,
-            cornerRadius: 4,
-            ...text(layer, "sans", "default", { size: "xs" }),
-            hover: {
-                background: background(layer, "on", "hovered"),
+        model: interactive({
+            base: {
+                background: background(layer, "on"),
+                border: border(layer, "on", { overlay: true }),
+                padding: 4,
+                cornerRadius: 4,
+                ...text(layer, "sans", "default", { size: "xs" }),
             },
-        },
+            state: {
+                hovered: {
+                    background: background(layer, "on", "hovered"),
+                },
+            },
+        }),
         remainingTokens: {
             background: background(layer, "on"),
             border: border(layer, "on", { overlay: true }),

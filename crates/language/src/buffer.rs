@@ -8,7 +8,8 @@ use crate::{
     language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
-        SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
+        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot,
+        ToTreeSitterPoint,
     },
     CodeLabel, LanguageScope, Outline,
 };
@@ -2116,12 +2117,20 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayerInfo> + '_ {
+        self.syntax.layers_for_range(0..self.len(), &self.text)
+    }
+
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayerInfo> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)
-            .filter(|l| l.node.end_byte() > offset)
+            .filter(|l| l.node().end_byte() > offset)
             .last()
+    }
+
+    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
+        self.syntax_layer_at(position)
             .map(|info| info.language)
             .or(self.language.as_ref())
     }
@@ -2140,7 +2149,7 @@ impl BufferSnapshot {
         if let Some(layer_info) = self
             .syntax
             .layers_for_range(offset..offset, &self.text)
-            .filter(|l| l.node.end_byte() > offset)
+            .filter(|l| l.node().end_byte() > offset)
             .last()
         {
             Some(LanguageScope {
@@ -2188,7 +2197,7 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
         'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
-            let mut cursor = layer.node.walk();
+            let mut cursor = layer.node().walk();
 
             // Descend to the first leaf that touches the start of the range,
             // and if the range is non-empty, extends beyond the start.

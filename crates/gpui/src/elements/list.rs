@@ -211,7 +211,7 @@ impl<V: View> Element<V> for List<V> {
         let mut cursor = old_items.cursor::<Count>();
 
         if state.rendered_range.start < new_rendered_range.start {
-            new_items.push_tree(
+            new_items.append(
                 cursor.slice(&Count(state.rendered_range.start), Bias::Right, &()),
                 &(),
             );
@@ -221,7 +221,7 @@ impl<V: View> Element<V> for List<V> {
                 cursor.next(&());
             }
         }
-        new_items.push_tree(
+        new_items.append(
             cursor.slice(&Count(new_rendered_range.start), Bias::Right, &()),
             &(),
         );
@@ -230,7 +230,7 @@ impl<V: View> Element<V> for List<V> {
         cursor.seek(&Count(new_rendered_range.end), Bias::Right, &());
 
         if new_rendered_range.end < state.rendered_range.start {
-            new_items.push_tree(
+            new_items.append(
                 cursor.slice(&Count(state.rendered_range.start), Bias::Right, &()),
                 &(),
             );
@@ -240,7 +240,7 @@ impl<V: View> Element<V> for List<V> {
             cursor.next(&());
         }
 
-        new_items.push_tree(cursor.suffix(&()), &());
+        new_items.append(cursor.suffix(&()), &());
 
         state.items = new_items;
         state.rendered_range = new_rendered_range;
@@ -413,7 +413,7 @@ impl<V: View> ListState<V> {
         old_heights.seek_forward(&Count(old_range.end), Bias::Right, &());
 
         new_heights.extend((0..count).map(|_| ListItem::Unrendered), &());
-        new_heights.push_tree(old_heights.suffix(&()), &());
+        new_heights.append(old_heights.suffix(&()), &());
         drop(old_heights);
         state.items = new_heights;
     }

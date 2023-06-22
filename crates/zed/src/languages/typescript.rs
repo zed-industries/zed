@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::AppContext;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::CodeActionKind;
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, github::latest_github_release, http::HttpClient};
+use util::{fs::remove_matching, github::latest_github_release};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -58,7 +58,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
@@ -72,8 +72,8 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
@@ -99,7 +99,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             let old_server_path = container_dir.join(Self::OLD_SERVER_PATH);
             let new_server_path = container_dir.join(Self::NEW_SERVER_PATH);
@@ -204,12 +208,13 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         // At the time of writing the latest vscode-eslint release was released in 2020 and requires
         // special custom LSP protocol extensions be handled to fully initialize. Download the latest
         // prerelease instead to sidestep this issue
-        let release = latest_github_release("microsoft/vscode-eslint", true, http).await?;
+        let release =
+            latest_github_release("microsoft/vscode-eslint", true, delegate.http_client()).await?;
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.name,
             url: release.tarball_url,
@@ -219,8 +224,8 @@ impl LspAdapter for EsLintLspAdapter {
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
@@ -229,7 +234,8 @@ impl LspAdapter for EsLintLspAdapter {
         if fs::metadata(&server_path).await.is_err() {
             remove_matching(&container_dir, |entry| entry != destination_path).await;
 
-            let mut response = http
+            let mut response = delegate
+                .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
@@ -257,7 +263,11 @@ impl LspAdapter for EsLintLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         (|| async move {
             // This is unfortunate but we don't know what the version is to build a path directly
             let mut dir = fs::read_dir(&container_dir).await?;

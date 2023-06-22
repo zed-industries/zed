@@ -294,7 +294,7 @@ impl FollowableItem for Editor {
         match event {
             Event::Edited => true,
             Event::SelectionsChanged { local } => *local,
-            Event::ScrollPositionChanged { local } => *local,
+            Event::ScrollPositionChanged { local, .. } => *local,
             _ => false,
         }
     }

@@ -1,4 +1,3 @@
-import { text } from "./components"
 import contactFinder from "./contactFinder"
 import contactsPopover from "./contactsPopover"
 import commandPalette from "./commandPalette"
@@ -17,7 +16,7 @@ import projectSharedNotification from "./projectSharedNotification"
 import tooltip from "./tooltip"
 import terminal from "./terminal"
 import contactList from "./contactList"
-import lspLogMenu from "./lspLogMenu"
+import toolbarDropdownMenu from "./toolbarDropdownMenu"
 import incomingCallNotification from "./incomingCallNotification"
 import { ColorScheme } from "../theme/colorScheme"
 import feedback from "./feedback"
@@ -46,7 +45,7 @@ export default function app(colorScheme: ColorScheme): Object {
         contactsPopover: contactsPopover(colorScheme),
         contactFinder: contactFinder(colorScheme),
         contactList: contactList(colorScheme),
-        lspLogMenu: lspLogMenu(colorScheme),
+        toolbarDropdownMenu: toolbarDropdownMenu(colorScheme),
         search: search(colorScheme),
         sharedScreen: sharedScreen(colorScheme),
         updateNotification: updateNotification(colorScheme),

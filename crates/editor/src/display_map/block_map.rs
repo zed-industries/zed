@@ -88,6 +88,7 @@ pub struct BlockContext<'a, 'b, 'c> {
     pub gutter_padding: f32,
     pub em_width: f32,
     pub line_height: f32,
+    pub block_id: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -243,7 +244,7 @@ impl BlockMap {
             // Preserve any old transforms that precede this edit.
             let old_start = WrapRow(edit.old.start);
             let new_start = WrapRow(edit.new.start);
-            new_transforms.push_tree(cursor.slice(&old_start, Bias::Left, &()), &());
+            new_transforms.append(cursor.slice(&old_start, Bias::Left, &()), &());
             if let Some(transform) = cursor.item() {
                 if transform.is_isomorphic() && old_start == cursor.end(&()) {
                     new_transforms.push(transform.clone(), &());
@@ -425,7 +426,7 @@ impl BlockMap {
             push_isomorphic(&mut new_transforms, extent_after_edit);
         }
 
-        new_transforms.push_tree(cursor.suffix(&()), &());
+        new_transforms.append(cursor.suffix(&()), &());
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1

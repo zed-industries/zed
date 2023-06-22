@@ -254,13 +254,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             workspace.toggle_panel_focus::<TerminalPanel>(cx);
         },
     );
-    cx.add_action(
-        |workspace: &mut Workspace,
-         _: &ai::assistant::ToggleFocus,
-         cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        },
-    );
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut AppContext| {
@@ -312,8 +305,11 @@ pub fn initialize_workspace(
                                 let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
                                 toolbar.add_item(feedback_info_text, cx);
                                 let lsp_log_item =
-                                    cx.add_view(|_| lsp_log::LspLogToolbarItemView::new());
+                                    cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
                                 toolbar.add_item(lsp_log_item, cx);
+                                let syntax_tree_item = cx
+                                    .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                                toolbar.add_item(syntax_tree_item, cx);
                             })
                         });
                     }
@@ -365,9 +361,12 @@ pub fn initialize_workspace(
 
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-        let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-        let (project_panel, terminal_panel, assistant_panel) =
-            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
+        let assistant_panel = if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
+            None
+        } else {
+            Some(AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
+        };
+        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
@@ -385,8 +384,12 @@ pub fn initialize_workspace(
                 workspace.toggle_dock(project_panel_position, cx);
             }
 
+            cx.focus_self();
+
             workspace.add_panel(terminal_panel, cx);
-            workspace.add_panel(assistant_panel, cx);
+            if let Some(assistant_panel) = assistant_panel {
+                workspace.add_panel(assistant_panel, cx);
+            }
         })?;
         Ok(())
     })

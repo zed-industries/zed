@@ -23,7 +23,11 @@ done
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
-which cargo-bundle > /dev/null || cargo install cargo-bundle --version 0.5.0
+cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
+    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+fi
+
 rustup target add wasm32-wasi
 
 # Deal with versions of macOS that don't include libstdc++ headers
@@ -46,9 +50,7 @@ sed \
     -i .backup \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
-app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin | xargs)
-
-echo app_path
+app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
 
 mv Cargo.toml.backup Cargo.toml
 popd
@@ -70,13 +72,6 @@ echo "Copying WebRTC.framework into the frameworks folder"
 mkdir "${app_path}/Contents/Frameworks"
 cp -R target/x86_64-apple-darwin/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 
-mv "${app_path}/Contents/Info.plist" "${app_path}/Contents/WithoutDocumentTypes.plist"
-awk \
-    "/<\/dict>/{while(getline line<\"./crates/zed/BundleDocumentTypes.plist\"){print line}}1" \
-    "${app_path}/Contents/WithoutDocumentTypes.plist" \
-    > "${app_path}/Contents/Info.plist"
-rm "${app_path}/Contents/WithoutDocumentTypes.plist"
-
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
     security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
@@ -86,12 +81,12 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}" -v
+    /usr/bin/codesign --force --deep --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --sign - "${app_path}" -v
+    codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign - "${app_path}" -v
 fi
 
 if [ "$target_dir" = "debug" ]; then

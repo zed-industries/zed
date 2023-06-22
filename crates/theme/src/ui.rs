@@ -171,7 +171,7 @@ where
     F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
     MouseEventHandler::<Tag, V>::new(0, cx, |state, _| {
-        let style = style.style_for(state, false);
+        let style = style.style_for(state);
         Label::new(label, style.text.to_owned())
             .aligned()
             .contained()
@@ -221,13 +221,13 @@ where
                     title,
                     style
                         .title_text
-                        .style_for(&mut MouseState::default(), false)
+                        .style_for(&mut MouseState::default())
                         .clone(),
                 ))
                 .with_child(
                     // FIXME: Get a better tag type
                     MouseEventHandler::<Tag, V>::new(999999, cx, |state, _cx| {
-                        let style = style.close_icon.style_for(state, false);
+                        let style = style.close_icon.style_for(state);
                         icon(style)
                     })
                     .on_click(platform::MouseButton::Left, move |_, _, cx| {

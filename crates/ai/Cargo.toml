@@ -28,6 +28,7 @@ isahc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 tiktoken-rs = "0.4"
 
 [dev-dependencies]

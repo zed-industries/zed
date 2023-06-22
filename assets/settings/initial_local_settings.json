@@ -1,11 +1,5 @@
-// Folder-specific Zed settings
+// Folder-specific settings
 //
-// A subset of Zed's settings can be configured on a per-folder basis.
-//
-// For information on how to configure Zed, see the Zed
-// documentation: https://zed.dev/docs/configuring-zed
-//
-// To see all of Zed's default settings without changing your
-// custom settings, run the `open default settings` command
-// from the command palette or from `Zed` application menu.
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://docs.zed.dev/configuration/configuring-zed#folder-specific-settings
 {}

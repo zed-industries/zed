@@ -1,5 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { foreground, text } from "./components"
+import { interactive } from "../element"
 
 const headerPadding = 8
 
@@ -10,22 +11,30 @@ export default function updateNotification(colorScheme: ColorScheme): Object {
             ...text(layer, "sans", { size: "xs" }),
             margin: { left: headerPadding, right: headerPadding },
         },
-        actionMessage: {
-            ...text(layer, "sans", { size: "xs" }),
-            margin: { left: headerPadding, top: 6, bottom: 6 },
-            hover: {
-                color: foreground(layer, "hovered"),
+        actionMessage: interactive({
+            base: {
+                ...text(layer, "sans", { size: "xs" }),
+                margin: { left: headerPadding, top: 6, bottom: 6 },
             },
-        },
-        dismissButton: {
-            color: foreground(layer),
-            iconWidth: 8,
-            iconHeight: 8,
-            buttonWidth: 8,
-            buttonHeight: 8,
-            hover: {
-                color: foreground(layer, "hovered"),
+            state: {
+                hovered: {
+                    color: foreground(layer, "hovered"),
+                },
             },
-        },
+        }),
+        dismissButton: interactive({
+            base: {
+                color: foreground(layer),
+                iconWidth: 8,
+                iconHeight: 8,
+                buttonWidth: 8,
+                buttonHeight: 8,
+            },
+            state: {
+                hovered: {
+                    color: foreground(layer, "hovered"),
+                },
+            },
+        }),
     }
 }

@@ -430,7 +430,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, cx);
+            editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().map(|block| {
                     let (excerpt_id, text_anchor) = block.position;
@@ -442,6 +442,7 @@ impl ProjectDiagnosticsEditor {
                         disposition: block.disposition,
                     }
                 }),
+                Some(Autoscroll::fit()),
                 cx,
             );
 
@@ -1508,7 +1509,8 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             snapshot
                 .blocks_in_range(0..snapshot.max_point().row())
-                .filter_map(|(row, block)| {
+                .enumerate()
+                .filter_map(|(ix, (row, block))| {
                     let name = match block {
                         TransformBlock::Custom(block) => block
                             .render(&mut BlockContext {
@@ -1519,6 +1521,7 @@ mod tests {
                                 gutter_width: 0.,
                                 line_height: 0.,
                                 em_width: 0.,
+                                block_id: ix,
                             })
                             .name()?
                             .to_string(),
