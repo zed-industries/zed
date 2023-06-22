@@ -7,14 +7,14 @@ use clap::Parser;
 use schemars::schema_for;
 use theme::Theme;
 
-fn build_themes(mut out_dir: PathBuf, file_name: PathBuf) -> Result<()> {
+fn build_themes(out_dir: PathBuf, file_name: PathBuf) -> Result<()> {
     let theme = schema_for!(Theme);
     let output = serde_json::to_string_pretty(&theme)?;
 
     std::fs::create_dir(&out_dir)?;
 
     let mut file_path = out_dir;
-    out_dir.push(file_name);
+    file_path.push(file_name);
 
     std::fs::write(file_path, output)?;
 
