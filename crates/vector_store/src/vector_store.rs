@@ -1,9 +1,12 @@
-use anyhow::{anyhow, Result};
+mod db;
+use anyhow::Result;
+use db::VectorDatabase;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use language::LanguageRegistry;
 use project::{Fs, Project};
+use rand::Rng;
 use smol::channel;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 use util::ResultExt;
 use workspace::WorkspaceCreated;
 
@@ -27,13 +30,15 @@ pub fn init(fs: Arc<dyn Fs>, language_registry: Arc<LanguageRegistry>, cx: &mut 
     .detach();
 }
 
+#[derive(Debug, sqlx::FromRow)]
 struct Document {
     offset: usize,
     name: String,
     embedding: Vec<f32>,
 }
 
-struct IndexedFile {
+#[derive(Debug, sqlx::FromRow)]
+pub struct IndexedFile {
     path: PathBuf,
     sha1: String,
     documents: Vec<Document>,
@@ -64,9 +69,24 @@ impl VectorStore {
         language_registry: &Arc<LanguageRegistry>,
         file_path: PathBuf,
     ) -> Result<IndexedFile> {
-        eprintln!("indexing file {file_path:?}");
-        Err(anyhow!("not implemented"))
-        // todo!();
+        // This is creating dummy documents to test the database writes.
+        let mut documents = vec![];
+        let mut rng = rand::thread_rng();
+        let rand_num_of_documents: u8 = rng.gen_range(0..200);
+        for _ in 0..rand_num_of_documents {
+            let doc = Document {
+                offset: 0,
+                name: "test symbol".to_string(),
+                embedding: vec![0.32 as f32; 768],
+            };
+            documents.push(doc);
+        }
+
+        return Ok(IndexedFile {
+            path: file_path,
+            sha1: "asdfasdfasdf".to_string(),
+            documents,
+        });
     }
 
     fn add_project(&mut self, project: ModelHandle<Project>, cx: &mut ModelContext<Self>) {
@@ -100,13 +120,17 @@ impl VectorStore {
                     }
                 })
                 .detach();
+
             cx.background()
                 .spawn(async move {
+                    // Initialize Database, creates database and tables if not exists
+                    VectorDatabase::initialize_database().await.log_err();
                     while let Ok(indexed_file) = indexed_files_rx.recv().await {
-                        // write document to database
+                        VectorDatabase::insert_file(indexed_file).await.log_err();
                     }
                 })
                 .detach();
+
             cx.background()
                 .scoped(|scope| {
                     for _ in 0..cx.background().num_cpus() {

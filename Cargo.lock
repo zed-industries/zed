@@ -1390,6 +1390,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "conv"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78ff10625fd0ac447827aa30ea8b861fead473bb60aeb73af6c1c58caf0d1299"
+dependencies = [
+ "custom_derive",
+]
+
+[[package]]
 name = "copilot"
 version = "0.1.0"
 dependencies = [
@@ -1765,6 +1774,12 @@ dependencies = [
  "vcpkg",
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "custom_derive"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
 name = "cxx"
@@ -7882,11 +7897,15 @@ name = "vector_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compat",
+ "conv",
  "futures 0.3.28",
  "gpui",
  "language",
  "project",
+ "rand 0.8.5",
  "smol",
+ "sqlx",
  "util",
  "workspace",
 ]

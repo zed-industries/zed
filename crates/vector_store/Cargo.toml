@@ -17,6 +17,10 @@ util = { path = "../util" }
 anyhow.workspace = true
 futures.workspace = true
 smol.workspace = true
+sqlx = { version = "0.6", features = ["sqlite","runtime-tokio-rustls"] }
+async-compat = "0.2.1"
+conv = "0.3.3"
+rand.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
