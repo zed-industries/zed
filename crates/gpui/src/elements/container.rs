@@ -12,9 +12,7 @@ use crate::{
     scene::{self, Border, CursorRegion, Quad},
     AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
-use schemars::{
-    JsonSchema,
-};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -334,7 +332,6 @@ impl ToJson for ContainerStyle {
         })
     }
 }
-
 
 #[derive(Clone, Copy, Debug, Default, JsonSchema)]
 pub struct Margin {

@@ -4,7 +4,8 @@ use collections::BTreeMap;
 use gpui::{keymap_matcher::Binding, AppContext};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
-    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation}, JsonSchema,
+    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
+    JsonSchema,
 };
 use serde::Deserialize;
 use serde_json::Value;
