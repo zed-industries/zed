@@ -5,6 +5,7 @@ use crate::{
     MultiBufferSnapshot,
 };
 use anyhow::Context;
+use clock::Global;
 use gpui::{ModelHandle, Task, ViewContext};
 use language::{Buffer, BufferSnapshot};
 use log::error;
@@ -31,6 +32,7 @@ struct CacheSnapshot {
 
 struct CachedExcerptHints {
     version: usize,
+    buffer_version: Global,
     hints: Vec<(InlayId, InlayHint)>,
 }
 
@@ -41,7 +43,14 @@ struct ExcerptQuery {
     excerpt_range_start: language::Anchor,
     excerpt_range_end: language::Anchor,
     cache_version: usize,
-    invalidate_cache: bool,
+    invalidate: InvalidationStrategy,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InvalidationStrategy {
+    All,
+    OnConflict,
+    None,
 }
 
 #[derive(Debug, Default)]
@@ -116,10 +125,14 @@ impl InlayHintCache {
     pub fn spawn_hints_update(
         &mut self,
         mut excerpts_to_query: HashMap<ExcerptId, ModelHandle<Buffer>>,
-        invalidate_cache: bool,
+        invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
     ) {
         let update_tasks = &mut self.update_tasks;
+        let invalidate_cache = matches!(
+            invalidate,
+            InvalidationStrategy::All | InvalidationStrategy::OnConflict
+        );
         if invalidate_cache {
             update_tasks
                 .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
@@ -179,7 +192,7 @@ impl InlayHintCache {
                                 excerpt_range_start: excerpt_range.start,
                                 excerpt_range_end: excerpt_range.end,
                                 cache_version,
-                                invalidate_cache,
+                                invalidate,
                             };
                             let cached_excxerpt_hints = editor
                                 .inlay_hint_cache
@@ -187,6 +200,20 @@ impl InlayHintCache {
                                 .hints
                                 .get(&excerpt_id)
                                 .cloned();
+
+                            if let Some(cached_excerpt_hints) = &cached_excxerpt_hints {
+                                let new_task_buffer_version = buffer_snapshot.version();
+                                let cached_buffer_version = &cached_excerpt_hints.buffer_version;
+                                if cached_buffer_version.changed_since(new_task_buffer_version) {
+                                    return;
+                                }
+                                if !new_task_buffer_version.changed_since(&cached_buffer_version)
+                                    && !matches!(invalidate, InvalidationStrategy::All)
+                                {
+                                    return;
+                                }
+                            }
+
                             editor.inlay_hint_cache.update_tasks.insert(
                                 excerpt_id,
                                 new_update_task(
@@ -252,6 +279,7 @@ fn new_update_task(
                                     .or_insert_with(|| {
                                         Arc::new(CachedExcerptHints {
                                             version: new_update.cache_version,
+                                            buffer_version: buffer_snapshot.version().clone(),
                                             hints: Vec::new(),
                                         })
                                     });
@@ -267,7 +295,8 @@ fn new_update_task(
                                 cached_excerpt_hints.hints.retain(|(hint_id, _)| {
                                     !new_update.remove_from_cache.contains(hint_id)
                                 });
-
+                                cached_excerpt_hints.buffer_version =
+                                    buffer_snapshot.version().clone();
                                 editor.inlay_hint_cache.snapshot.version += 1;
 
                                 let mut splice = InlaySplice {
@@ -457,7 +486,10 @@ fn new_excerpt_hints_update_result(
 
     let mut remove_from_visible = Vec::new();
     let mut remove_from_cache = HashSet::default();
-    if query.invalidate_cache {
+    if matches!(
+        query.invalidate,
+        InvalidationStrategy::All | InvalidationStrategy::OnConflict
+    ) {
         remove_from_visible.extend(
             visible_hints
                 .iter()

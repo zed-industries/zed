@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::{visible_inlay_hints, InlayHintCache, InlaySplice};
+use inlay_hint_cache::{visible_inlay_hints, InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -1198,6 +1198,7 @@ enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
     NewLinesShown,
     ExcerptEdited,
+    RefreshRequested,
 }
 
 impl Editor {
@@ -1311,7 +1312,7 @@ impl Editor {
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlays = event {
-                        editor.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
+                        editor.refresh_inlays(InlayRefreshReason::RefreshRequested, cx);
                     };
                 }));
             }
@@ -2629,8 +2630,9 @@ impl Editor {
                 }
                 return;
             }
-            InlayRefreshReason::NewLinesShown => false,
-            InlayRefreshReason::ExcerptEdited => true,
+            InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
+            InlayRefreshReason::ExcerptEdited => InvalidationStrategy::OnConflict,
+            InlayRefreshReason::RefreshRequested => InvalidationStrategy::All,
         };
 
         let excerpts_to_query = self

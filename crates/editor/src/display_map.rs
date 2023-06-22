@@ -255,7 +255,6 @@ impl DisplayMap {
         if to_remove.is_empty() && to_insert.is_empty() {
             return;
         }
-
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
