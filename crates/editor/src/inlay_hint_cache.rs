@@ -236,15 +236,18 @@ fn new_update_task(
                                         ));
                                     }
 
-                                    match cached_excerpt_hints.hints.binary_search_by(|probe| {
-                                        probe.0.cmp(&new_hint_position, &task_multi_buffer_snapshot)
-                                    }) {
-                                        Ok(ix) | Err(ix) => cached_excerpt_hints.hints.insert(
-                                            ix,
-                                            (new_hint_position, new_inlay_id, new_hint),
-                                        ),
-                                    }
+                                    cached_excerpt_hints.hints.push((
+                                        new_hint_position,
+                                        new_inlay_id,
+                                        new_hint,
+                                    ));
                                 }
+
+                                cached_excerpt_hints.hints.sort_by(
+                                    |(position_a, _, _), (position_b, _, _)| {
+                                        position_a.cmp(position_b, &task_multi_buffer_snapshot)
+                                    },
+                                );
                                 editor.inlay_hint_cache.snapshot.hints.retain(
                                     |_, excerpt_hints| {
                                         excerpt_hints.hints.retain(|(_, hint_id, _)| {
@@ -389,7 +392,6 @@ fn new_excerpt_hints_update_result(
         let new_hint_anchor = state
             .multi_buffer_snapshot
             .anchor_in_excerpt(excerpt_id, new_hint.position);
-        // TODO kb use merge sort or something else better
         let should_add_to_cache = match cached_excerpt_hints
             .binary_search_by(|probe| probe.0.cmp(&new_hint_anchor, &state.multi_buffer_snapshot))
         {
