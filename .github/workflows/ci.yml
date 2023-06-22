@@ -51,6 +51,7 @@ jobs:
           rustup set profile minimal
           rustup update stable
           rustup target add wasm32-wasi
+          cargo install cargo-nextest
 
       - name: Install Node
         uses: actions/setup-node@v2
@@ -70,7 +71,7 @@ jobs:
         run: cargo check --workspace
 
       - name: Run tests
-        run: cargo test --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast
 
       - name: Build collab
         run: cargo build -p collab
