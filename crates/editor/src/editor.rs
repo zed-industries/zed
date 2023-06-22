@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::{get_update_state, InlayHintCache, InlaySplice};
+use inlay_hint_cache::{visible_inlay_hints, InlayHintCache, InlaySplice};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -2617,7 +2617,7 @@ impl Editor {
                 let new_splice = self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
-                    get_update_state(self, cx),
+                    visible_inlay_hints(self, cx).cloned().collect(),
                     cx,
                 );
                 if let Some(InlaySplice {
@@ -2636,7 +2636,7 @@ impl Editor {
         let excerpts_to_query = self
             .excerpt_visible_offsets(cx)
             .into_iter()
-            .map(|(buffer, _, excerpt_id)| (excerpt_id, buffer.read(cx).remote_id()))
+            .map(|(buffer, _, excerpt_id)| (excerpt_id, buffer))
             .collect::<HashMap<_, _>>();
         self.inlay_hint_cache
             .spawn_hints_update(excerpts_to_query, invalidate_cache, cx)
