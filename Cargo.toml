@@ -117,3 +117,4 @@ split-debuginfo = "unpacked"
 [profile.release]
 debug = true
 lto = "thin"
+codegen-units = 1
