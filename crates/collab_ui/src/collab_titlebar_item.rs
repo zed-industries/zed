@@ -510,19 +510,26 @@ impl CollabTitlebarItem {
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
                     let style = titlebar.call_control.style_for(state);
 
-                    let img = if let Some(avatar_img) = avatar {
-                        Self::render_face(avatar_img, *avatar_style, Color::transparent_black())
-                    } else {
-                        Svg::new("icons/ellipsis_14.svg")
-                            .with_color(style.color)
-                            .into_any()
-                    };
+                    let mut dropdown = Flex::row().align_children_center();
 
-                    img.constrained()
-                        .with_width(style.icon_width)
+                    if let Some(avatar_img) = avatar {
+                        dropdown = dropdown.with_child(Self::render_face(
+                            avatar_img,
+                            *avatar_style,
+                            Color::transparent_black(),
+                        ));
+                    };
+                    dropdown
+                        .with_child(
+                            Svg::new("icons/caret_down_8.svg")
+                                .with_color(style.color)
+                                .constrained()
+                                .with_width(style.icon_width)
+                                .contained()
+                                .into_any(),
+                        )
                         .aligned()
                         .constrained()
-                        .with_width(style.button_width)
                         .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
