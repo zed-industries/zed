@@ -150,12 +150,13 @@ impl Room {
 
             let connect = room.connect(&connection_info.server_url, &connection_info.token);
             cx.spawn(|this, mut cx| async move {
-                    connect.await?;
-                    this.update(&mut cx, |this, cx| this.share_microphone(cx)).await?;
+                connect.await?;
+                this.update(&mut cx, |this, cx| this.share_microphone(cx))
+                    .await?;
 
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
 
             Some(LiveKitRoom {
                 room,
@@ -232,9 +233,7 @@ impl Room {
                 })
                 .await
             {
-                Ok(()) => {
-                    Ok(room)
-                }
+                Ok(()) => Ok(room),
                 Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
             }
         })
