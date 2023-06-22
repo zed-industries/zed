@@ -19,7 +19,7 @@ use live_kit_client::{
 use postage::stream::Stream;
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
-use util::{channel::ReleaseChannel, post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
