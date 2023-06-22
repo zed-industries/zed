@@ -206,6 +206,7 @@ actions!(
         DuplicateLine,
         MoveLineUp,
         MoveLineDown,
+        JoinLines,
         Transpose,
         Cut,
         Copy,
@@ -321,6 +322,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
+    cx.add_action(Editor::join_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -3952,6 +3954,60 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
+            });
+        });
+    }
+
+    pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        let mut row_ranges = Vec::<Range<u32>>::new();
+        for selection in self.selections.all::<Point>(cx) {
+            let start = selection.start.row;
+            let end = if selection.start.row == selection.end.row {
+                selection.start.row + 1
+            } else {
+                selection.end.row
+            };
+
+            if let Some(last_row_range) = row_ranges.last_mut() {
+                if start <= last_row_range.end {
+                    last_row_range.end = end;
+                    continue;
+                }
+            }
+            row_ranges.push(start..end);
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut cursor_positions = Vec::new();
+        for row_range in &row_ranges {
+            let anchor = snapshot.anchor_before(Point::new(
+                row_range.end - 1,
+                snapshot.line_len(row_range.end - 1),
+            ));
+            cursor_positions.push(anchor.clone()..anchor);
+        }
+
+        self.transact(cx, |this, cx| {
+            for row_range in row_ranges.into_iter().rev() {
+                for row in row_range.rev() {
+                    let end_of_line = Point::new(row, snapshot.line_len(row));
+                    let indent = snapshot.indent_size_for_line(row + 1);
+                    let start_of_next_line = Point::new(row + 1, indent.len);
+
+                    let replace = if snapshot.line_len(row + 1) > indent.len {
+                        " "
+                    } else {
+                        ""
+                    };
+
+                    this.buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+                    });
+                }
+            }
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_anchor_ranges(cursor_positions)
             });
         });
     }

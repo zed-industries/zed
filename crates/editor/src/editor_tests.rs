@@ -1,7 +1,10 @@
 use super::*;
-use crate::test::{
-    assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-    editor_test_context::EditorTestContext, select_ranges,
+use crate::{
+    test::{
+        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
+        editor_test_context::EditorTestContext, select_ranges,
+    },
+    JoinLines,
 };
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
@@ -2322,6 +2325,137 @@ fn test_delete_line(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
         );
+    });
+}
+
+#[gpui::test]
+fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 0)..Point::new(0, 0)]
+        );
+
+        // When on single line, replace newline at end by space
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 3)..Point::new(0, 3)]
+        );
+
+        // When multiple lines are selected, remove newlines that are spanned by the selection
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 11)..Point::new(0, 11)]
+        );
+
+        // Undo should be transactional
+        editor.undo(&Undo, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
+
+        // When joining an empty line don't insert a space
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // We can remove trailing newlines
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // We don't blow up on the last line
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // reset to test indentation
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(1, 0)..Point::new(1, 2), "  "),
+                    (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
+                ],
+                None,
+                cx,
+            )
+        });
+
+        // We remove any leading spaces
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
+
+        // We don't insert a space for a line containing only spaces
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
+
+        // We ignore any leading tabs
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
+
+        editor
+    });
+}
+
+#[gpui::test]
+fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 2)..Point::new(1, 1),
+                Point::new(1, 2)..Point::new(1, 2),
+                Point::new(3, 1)..Point::new(3, 2),
+            ])
+        });
+
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [
+                Point::new(0, 7)..Point::new(0, 7),
+                Point::new(1, 3)..Point::new(1, 3)
+            ]
+        );
+        editor
     });
 }
 
