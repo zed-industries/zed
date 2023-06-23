@@ -451,21 +451,22 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let icon;
         let tooltip;
-        let background;
-        if room.read(cx).is_muted().unwrap_or(false) {
+        let is_muted = room.read(cx).is_muted().unwrap_or(false);
+        if is_muted {
             icon = "icons/radix/mic-mute.svg";
             tooltip = "Unmute microphone\nRight click for options";
-            background = Color::red();
         } else {
             icon = "icons/radix/mic.svg";
             tooltip = "Mute microphone\nRight click for options";
-            background = Color::transparent_black();
         }
 
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<ToggleMute, Self>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state);
-            Svg::new(icon)
+            let style = titlebar
+                .toggle_microphone_button
+                .in_state(is_muted)
+                .style_for(state);
+            let image = Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
                 .with_width(style.icon_width)
@@ -474,8 +475,12 @@ impl CollabTitlebarItem {
                 .with_width(style.button_width)
                 .with_height(style.button_width)
                 .contained()
-                .with_style(style.container)
-                .with_background_color(background)
+                .with_style(style.container);
+            if let Some(color) = style.container.background_color {
+                image.with_background_color(color)
+            } else {
+                image
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, _, cx| {
@@ -499,7 +504,8 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let icon;
         let tooltip;
-        if room.read(cx).is_deafened().unwrap_or(false) {
+        let is_deafened = room.read(cx).is_deafened().unwrap_or(false);
+        if is_deafened {
             icon = "icons/radix/speaker-off.svg";
             tooltip = "Unmute speakers\nRight click for options";
         } else {
@@ -509,7 +515,10 @@ impl CollabTitlebarItem {
 
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<ToggleDeafen, Self>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state);
+            let style = titlebar
+                .toggle_speakers_button
+                .in_state(is_deafened)
+                .style_for(state);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()

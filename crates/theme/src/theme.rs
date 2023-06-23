@@ -133,6 +133,8 @@ pub struct Titlebar {
     pub share_button: Toggleable<Interactive<ContainedText>>,
     pub call_control: Interactive<IconButton>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
     pub user_menu_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_badge: ContainerStyle,
 }

@@ -343,6 +343,70 @@ export default function workspace(colorScheme: ColorScheme) {
                     },
                 },
             }),
+            toggleMicrophoneButton: toggleable({
+                base: interactive({
+                    base: {
+                        margin: { left: itemSpacing },
+                        cornerRadius: 6,
+                        color: foreground(layer, "variant"),
+                        iconWidth: 14,
+                        buttonWidth: 20,
+                    },
+                    state: {
+                        clicked: {
+                            background: background(layer, "variant", "pressed"),
+                        },
+                        hovered: {
+                            background: background(layer, "variant", "hovered"),
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            background: background(layer, "on", "default"),
+                        },
+                        hovered: {
+                            background: background(layer, "on", "hovered"),
+                        },
+                        clicked: {
+                            background: background(layer, "on", "pressed"),
+                        },
+                    },
+                },
+            }),
+            toggleSpeakersButton: toggleable({
+                base: interactive({
+                    base: {
+                        margin: { left: itemSpacing },
+                        cornerRadius: 6,
+                        color: foreground(layer, "variant"),
+                        iconWidth: 14,
+                        buttonWidth: 20,
+                    },
+                    state: {
+                        clicked: {
+                            background: background(layer, "variant", "pressed"),
+                        },
+                        hovered: {
+                            background: background(layer, "variant", "hovered"),
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            background: background(layer, "on", "default"),
+                        },
+                        hovered: {
+                            background: background(layer, "on", "hovered"),
+                        },
+                        clicked: {
+                            background: background(layer, "on", "pressed"),
+                        },
+                    },
+                },
+            }),
             userMenuButton: merge(titlebarButton, {
                 inactive: {
                     default: {
