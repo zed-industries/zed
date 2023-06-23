@@ -1,6 +1,6 @@
 use crate::{
     contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
-    toggle_deafen, toggle_mute, toggle_screen_sharing, ToggleDeafen, ToggleMute,
+    toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute,
     ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
@@ -85,7 +85,7 @@ impl View for CollabTitlebarItem {
         {
             right_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
-
+            right_container.add_child(self.render_leave_call(&theme, cx));
             left_container
                 .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
@@ -538,6 +538,43 @@ impl CollabTitlebarItem {
             0,
             tooltip.into(),
             Some(Box::new(ToggleDeafen)),
+            theme.tooltip.clone(),
+            cx,
+        )
+        .aligned()
+        .into_any()
+    }
+    fn render_leave_call(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let icon = "icons/radix/exit.svg";
+        let tooltip = "Leave call";
+
+        let titlebar = &theme.workspace.titlebar;
+        MouseEventHandler::<LeaveCall, Self>::new(0, cx, |state, _| {
+            let style = titlebar
+                .toggle_speakers_button
+                .in_state(false)
+                .style_for(state);
+            Svg::new(icon)
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, _, cx| {
+            ActiveCall::global(cx)
+                .update(cx, |call, cx| call.hang_up(cx))
+                .detach_and_log_err(cx);
+        })
+        .with_tooltip::<LeaveCall>(
+            0,
+            tooltip.into(),
+            Some(Box::new(LeaveCall)),
             theme.tooltip.clone(),
             cx,
         )

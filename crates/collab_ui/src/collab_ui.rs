@@ -22,6 +22,7 @@ actions!(
         ToggleScreenSharing,
         ToggleMute,
         ToggleDeafen,
+        LeaveCall,
         ShareMicrophone
     ]
 );
