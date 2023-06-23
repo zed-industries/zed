@@ -15,6 +15,7 @@ use serde_json::json;
 use std::{
     env,
     fmt::Write,
+    mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -313,6 +314,21 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
+    let tree_updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let tree_updates = tree_updates.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedEntries(update) = event {
+                tree_updates.lock().extend(
+                    update
+                        .iter()
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
     // The symlinked directories are not scanned by default.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
@@ -365,6 +381,14 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
             ]
         );
     });
+    assert_eq!(
+        mem::take(&mut *tree_updates.lock()),
+        &[
+            (Path::new("deps/dep-dir3").into(), PathChange::Loaded),
+            (Path::new("deps/dep-dir3/deps").into(), PathChange::Loaded),
+            (Path::new("deps/dep-dir3/src").into(), PathChange::Loaded)
+        ]
+    );
 
     // Expand a subdirectory of one of the symlinked directories.
     tree.read_with(cx, |tree, _| {
@@ -396,6 +420,21 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
             ]
         );
     });
+
+    assert_eq!(
+        mem::take(&mut *tree_updates.lock()),
+        &[
+            (Path::new("deps/dep-dir3/src").into(), PathChange::Loaded),
+            (
+                Path::new("deps/dep-dir3/src/e.rs").into(),
+                PathChange::Loaded
+            ),
+            (
+                Path::new("deps/dep-dir3/src/f.rs").into(),
+                PathChange::Loaded
+            )
+        ]
+    );
 }
 
 #[gpui::test]
@@ -1114,7 +1153,6 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
                     Ok(ix) | Err(ix) => ix,
                 };
                 match change_type {
-                    PathChange::Loaded => entries.insert(ix, entry.unwrap()),
                     PathChange::Added => entries.insert(ix, entry.unwrap()),
                     PathChange::Removed => drop(entries.remove(ix)),
                     PathChange::Updated => {
@@ -1123,7 +1161,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
                         assert_eq!(existing_entry.path, entry.path);
                         *existing_entry = entry;
                     }
-                    PathChange::AddedOrUpdated => {
+                    PathChange::AddedOrUpdated | PathChange::Loaded => {
                         let entry = entry.unwrap();
                         if entries.get(ix).map(|e| &e.path) == Some(&entry.path) {
                             *entries.get_mut(ix).unwrap() = entry;

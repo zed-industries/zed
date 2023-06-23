@@ -2759,6 +2759,10 @@ impl EntryKind {
         )
     }
 
+    pub fn is_unloaded(&self) -> bool {
+        matches!(self, EntryKind::UnloadedDir)
+    }
+
     pub fn is_file(&self) -> bool {
         matches!(self, EntryKind::File(_))
     }
@@ -3773,6 +3777,7 @@ impl BackgroundScanner {
         let mut changes = Vec::new();
         let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>();
         let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>();
+        let mut last_newly_loaded_dir_path = None;
         old_paths.next(&());
         new_paths.next(&());
         for path in event_paths {
@@ -3820,20 +3825,33 @@ impl BackgroundScanner {
                                     changes.push((old_entry.path.clone(), old_entry.id, Removed));
                                     changes.push((new_entry.path.clone(), new_entry.id, Added));
                                 } else if old_entry != new_entry {
-                                    changes.push((new_entry.path.clone(), new_entry.id, Updated));
+                                    if old_entry.kind.is_unloaded() {
+                                        last_newly_loaded_dir_path = Some(&new_entry.path);
+                                        changes.push((
+                                            new_entry.path.clone(),
+                                            new_entry.id,
+                                            Loaded,
+                                        ));
+                                    } else {
+                                        changes.push((
+                                            new_entry.path.clone(),
+                                            new_entry.id,
+                                            Updated,
+                                        ));
+                                    }
                                 }
                                 old_paths.next(&());
                                 new_paths.next(&());
                             }
                             Ordering::Greater => {
+                                let is_newly_loaded = self.phase == InitialScan
+                                    || last_newly_loaded_dir_path
+                                        .as_ref()
+                                        .map_or(false, |dir| new_entry.path.starts_with(&dir));
                                 changes.push((
                                     new_entry.path.clone(),
                                     new_entry.id,
-                                    if self.phase == InitialScan {
-                                        Loaded
-                                    } else {
-                                        Added
-                                    },
+                                    if is_newly_loaded { Loaded } else { Added },
                                 ));
                                 new_paths.next(&());
                             }
