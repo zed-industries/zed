@@ -2643,8 +2643,10 @@ impl Editor {
                 (excerpt_id, (buffer, excerpt_visible_range))
             })
             .collect::<HashMap<_, _>>();
-        self.inlay_hint_cache
-            .spawn_hints_update(excerpts_to_query, invalidate_cache, cx)
+        if !excerpts_to_query.is_empty() {
+            self.inlay_hint_cache
+                .refresh_inlay_hints(excerpts_to_query, invalidate_cache, cx)
+        }
     }
 
     fn excerpt_visible_offsets(

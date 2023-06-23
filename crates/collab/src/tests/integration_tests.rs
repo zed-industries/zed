@@ -7817,6 +7817,10 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     cx_a.update(|cx| {
         cx.update_global(|store: &mut SettingsStore, cx| {
@@ -7876,22 +7880,30 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
         .unwrap();
-    let (window_a, _) = cx_a.add_window(|_| EmptyView);
-    let editor_a = cx_a.add_view(window_a, |cx| {
-        Editor::for_buffer(buffer_a, Some(project_a.clone()), cx)
-    });
-    editor_a.update(cx_a, |editor, cx| {
-        editor.set_scroll_position(vec2f(0., 1.), cx);
-        cx.focus(&editor_a)
-    });
+
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
     cx_a.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert!(
@@ -7908,20 +7920,16 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "New cache should have no version updates"
         );
     });
-
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
-    let (window_b, _) = cx_b.add_window(|_| EmptyView);
-    let editor_b = cx_b.add_view(window_b, |cx| {
-        Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
-    });
-    editor_b.update(cx_b, |editor, cx| {
-        editor.set_scroll_position(vec2f(0., 1.), cx);
-        cx.focus(&editor_b)
-    });
+
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert!(
