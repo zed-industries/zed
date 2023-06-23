@@ -47,6 +47,18 @@ pub trait EmbeddingProvider: Sync {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>>;
 }
 
+pub struct DummyEmbeddings {}
+
+#[async_trait]
+impl EmbeddingProvider for DummyEmbeddings {
+    async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+        // 1024 is the OpenAI Embeddings size for ada models.
+        // the model we will likely be starting with.
+        let dummy_vec = vec![0.32 as f32; 1024];
+        return Ok(vec![dummy_vec; spans.len()]);
+    }
+}
+
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {

@@ -3,7 +3,7 @@ mod embedding;
 
 use anyhow::{anyhow, Result};
 use db::VectorDatabase;
-use embedding::{EmbeddingProvider, OpenAIEmbeddings};
+use embedding::{DummyEmbeddings, EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use language::LanguageRegistry;
 use project::{Fs, Project};
@@ -38,14 +38,14 @@ pub fn init(
     .detach();
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 struct Document {
     offset: usize,
     name: String,
     embedding: Vec<f32>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct IndexedFile {
     path: PathBuf,
     sha1: String,
@@ -188,7 +188,8 @@ impl VectorStore {
                 })
                 .detach();
 
-            let provider = OpenAIEmbeddings { client };
+            // let provider = OpenAIEmbeddings { client };
+            let provider = DummyEmbeddings {};
 
             let t0 = Instant::now();
 

@@ -1,6 +1,5 @@
 use anyhow::Result;
-use async_compat::{Compat, CompatExt};
-use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
+use rusqlite::params;
 
 use crate::IndexedFile;
 
@@ -13,32 +12,20 @@ pub struct VectorDatabase {}
 
 impl VectorDatabase {
     pub async fn initialize_database() -> Result<()> {
-        // If database doesnt exist create database
-        if !Sqlite::database_exists(VECTOR_DB_URL)
-            .compat()
-            .await
-            .unwrap_or(false)
-        {
-            Sqlite::create_database(VECTOR_DB_URL).compat().await?;
-        }
-
-        let db = SqlitePool::connect(VECTOR_DB_URL).compat().await?;
+        // This will create the database if it doesnt exist
+        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
 
         // Initialize Vector Databasing Tables
-        // We may be able to skip this assuming the database is never created
-        // without creating the tables at the same time.
-        sqlx::query(
+        db.execute(
             "CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path NVARCHAR(100) NOT NULL,
-            sha1 NVARCHAR(40) NOT NULL
-            )",
-        )
-        .execute(&db)
-        .compat()
-        .await?;
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path NVARCHAR(100) NOT NULL,
+        sha1 NVARCHAR(40) NOT NULL
+        )",
+            [],
+        )?;
 
-        sqlx::query(
+        db.execute(
             "CREATE TABLE IF NOT EXISTS documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id INTEGER NOT NULL,
@@ -47,26 +34,22 @@ impl VectorDatabase {
             embedding BLOB NOT NULL,
             FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             )",
-        )
-        .execute(&db)
-        .compat()
-        .await?;
+            [],
+        )?;
 
         Ok(())
     }
 
     pub async fn insert_file(indexed_file: IndexedFile) -> Result<()> {
         // Write to files table, and return generated id.
-        let db = SqlitePool::connect(VECTOR_DB_URL).compat().await?;
+        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
 
-        let files_insert = sqlx::query("INSERT INTO files (path, sha1) VALUES ($1, $2)")
-            .bind(indexed_file.path.to_str())
-            .bind(indexed_file.sha1)
-            .execute(&db)
-            .compat()
-            .await?;
+        let files_insert = db.execute(
+            "INSERT INTO files (path, sha1) VALUES (?1, ?2)",
+            params![indexed_file.path.to_str(), indexed_file.sha1],
+        )?;
 
-        let inserted_id = files_insert.last_insert_rowid();
+        let inserted_id = db.last_insert_rowid();
 
         // I stole this from https://stackoverflow.com/questions/71829931/how-do-i-convert-a-negative-f32-value-to-binary-string-and-back-again
         // I imagine there is a better way to serialize to/from blob
@@ -88,16 +71,15 @@ impl VectorDatabase {
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.
         for document in indexed_file.documents {
-            sqlx::query(
-                "INSERT INTO documents (file_id, offset, name, embedding) VALUES ($1, $2, $3, $4)",
-            )
-            .bind(inserted_id)
-            .bind(document.offset.to_string())
-            .bind(document.name)
-            .bind(get_binary_from_values(document.embedding))
-            .execute(&db)
-            .compat()
-            .await?;
+            db.execute(
+                "INSERT INTO documents (file_id, offset, name, embedding) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    inserted_id,
+                    document.offset.to_string(),
+                    document.name,
+                    get_binary_from_values(document.embedding)
+                ],
+            )?;
         }
 
         Ok(())

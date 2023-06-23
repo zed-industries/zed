@@ -7912,7 +7912,6 @@ name = "vector_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compat",
  "async-trait",
  "futures 0.3.28",
  "gpui",
@@ -7925,7 +7924,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "sqlx",
  "tree-sitter",
  "util",
  "workspace",
