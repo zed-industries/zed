@@ -536,7 +536,6 @@ struct BracketConfig {
 
 #[derive(Clone)]
 pub enum LanguageServerBinaryStatus {
-    Validating,
     CheckingForUpdate,
     Downloading,
     Downloaded,

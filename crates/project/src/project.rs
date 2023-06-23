@@ -280,8 +280,6 @@ pub enum Event {
 }
 
 pub enum LanguageServerState {
-    Validating(Task<Option<Arc<LanguageServer>>>),
-
     Starting(Task<Option<Arc<LanguageServer>>>),
 
     Running {
@@ -2485,7 +2483,7 @@ impl Project {
                                     .await;
 
                                 this.update(&mut cx, |_, cx| {
-                                    Self::check_errored_server_id(
+                                    Self::check_errored_server(
                                         language,
                                         adapter,
                                         server_id,
@@ -2935,7 +2933,6 @@ impl Project {
                 let mut root_path = None;
 
                 let server = match server_state {
-                    Some(LanguageServerState::Validating(task)) => task.await,
                     Some(LanguageServerState::Starting(task)) => task.await,
                     Some(LanguageServerState::Running { server, .. }) => Some(server),
                     None => None,
@@ -3047,7 +3044,7 @@ impl Project {
         .detach();
     }
 
-    fn check_errored_server_id(
+    fn check_errored_server(
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
@@ -7391,7 +7388,7 @@ impl Entity for Project {
                 use LanguageServerState::*;
                 match server_state {
                     Running { server, .. } => server.shutdown()?.await,
-                    Starting(task) | Validating(task) => task.await?.shutdown()?.await,
+                    Starting(task) => task.await?.shutdown()?.await,
                 }
             })
             .collect::<Vec<_>>();

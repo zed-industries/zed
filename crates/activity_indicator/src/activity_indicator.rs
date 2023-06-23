@@ -203,14 +203,12 @@ impl ActivityIndicator {
         }
 
         // Show any language server installation info.
-        let mut validating = SmallVec::<[_; 3]>::new();
         let mut downloading = SmallVec::<[_; 3]>::new();
         let mut checking_for_update = SmallVec::<[_; 3]>::new();
         let mut failed = SmallVec::<[_; 3]>::new();
         for status in &self.statuses {
             let name = status.name.clone();
             match status.status {
-                LanguageServerBinaryStatus::Validating => validating.push(name),
                 LanguageServerBinaryStatus::CheckingForUpdate => checking_for_update.push(name),
                 LanguageServerBinaryStatus::Downloading => downloading.push(name),
                 LanguageServerBinaryStatus::Failed { .. } => failed.push(name),
@@ -242,7 +240,7 @@ impl ActivityIndicator {
                 ),
                 on_click: None,
             };
-        } else if !failed.is_empty() || !validating.is_empty() {
+        } else if !failed.is_empty() {
             return Content {
                 icon: Some(WARNING_ICON),
                 message: format!(
