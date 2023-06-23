@@ -20,7 +20,7 @@ activity_indicator = { path = "../activity_indicator" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
-cli = { path = "../cli" }
+cli_rpc = { path = "../cli_rpc" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }

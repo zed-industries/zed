@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[lib]
-path = "src/cli.rs"
-doctest = false
 
 [[bin]]
 name = "cli"
@@ -20,6 +17,7 @@ ipc-channel = "0.16"
 serde.workspace = true
 serde_derive.workspace = true
 util = { path = "../util" }
+cli_rpc = {path = "../cli_rpc"}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"

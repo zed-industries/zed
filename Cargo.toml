@@ -6,6 +6,7 @@ members = [
     "crates/breadcrumbs",
     "crates/call",
     "crates/cli",
+    "crates/cli_rpc",
     "crates/client",
     "crates/clock",
     "crates/collab",
@@ -27,6 +28,7 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
+    "crates/gpui_mac",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",
@@ -79,7 +81,7 @@ env_logger = { version = "0.9" }
 futures = { version = "0.3" }
 globset = { version = "0.4" }
 indoc = "1"
-isahc = "1.7.2"
+isahc = {version = "1.7.2", default-features = false, features = ["text-decoding"]}
 lazy_static = { version = "1.4.0" }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = { version = "2.1.1" }

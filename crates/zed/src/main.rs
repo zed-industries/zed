@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
-use cli::{
+use cli_rpc::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
@@ -67,7 +67,8 @@ fn main() {
 
     log::info!("========== starting zed ==========");
     let platform = platform();
-    let foreground = std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
+    let foreground =
+        std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
     let fplatform = foreground_platform(foreground);
     let mut app = gpui::App::new(Assets, platform, fplatform).unwrap();
 
@@ -666,7 +667,7 @@ async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()>
 fn connect_to_cli(
     server_name: &str,
 ) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
-    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
+    let handshake_tx = cli_rpc::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
         .context("error connecting to cli")?;
     let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
     let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;

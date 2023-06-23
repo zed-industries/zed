@@ -1,0 +1,11 @@
+[package]
+name = "cli_rpc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ipc-channel = "0.16"
+serde.workspace = true
+serde_derive.workspace = true

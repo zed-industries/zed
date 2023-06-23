@@ -1230,6 +1230,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 3.2.25",
+ "cli_rpc",
  "core-foundation",
  "core-services",
  "dirs 3.0.2",
@@ -1238,6 +1239,15 @@ dependencies = [
  "serde",
  "serde_derive",
  "util",
+]
+
+[[package]]
+name = "cli_rpc"
+version = "0.1.0"
+dependencies = [
+ "ipc-channel",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -1855,7 +1865,6 @@ checksum = "14d05c10f541ae6f3bc5b3d923c20001f47db7d5f0b2bc6ad16490133842db79"
 dependencies = [
  "cc",
  "libc",
- "libnghttp2-sys",
  "libz-sys",
  "openssl-sys",
  "pkg-config",
@@ -2885,20 +2894,12 @@ dependencies = [
  "anyhow",
  "async-task",
  "backtrace",
- "bindgen",
- "block",
- "cc",
- "cocoa",
  "collections",
- "core-foundation",
- "core-graphics",
- "core-text",
  "ctor",
  "dhat",
  "env_logger 0.9.3",
  "etagere",
  "font-kit",
- "foreign-types",
  "futures 0.3.28",
  "gpui_macros",
  "image",
@@ -2906,9 +2907,7 @@ dependencies = [
  "lazy_static",
  "log",
  "media",
- "metal",
  "num_cpus",
- "objc",
  "ordered-float",
  "parking",
  "parking_lot 0.11.2",
@@ -2934,6 +2933,41 @@ dependencies = [
  "util",
  "uuid 1.3.2",
  "waker-fn",
+]
+
+[[package]]
+name = "gpui_mac"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-task",
+ "bindgen",
+ "block",
+ "cc",
+ "cocoa",
+ "collections",
+ "core-foundation",
+ "core-graphics",
+ "core-text",
+ "ctor",
+ "etagere",
+ "font-kit",
+ "foreign-types",
+ "gpui",
+ "log",
+ "media",
+ "metal",
+ "objc",
+ "ordered-float",
+ "parking_lot 0.11.2",
+ "pathfinder_geometry",
+ "postage",
+ "resvg",
+ "smol",
+ "time 0.3.21",
+ "tiny-skia",
+ "usvg",
+ "uuid 1.3.2",
 ]
 
 [[package]]
@@ -3690,16 +3724,6 @@ name = "libm"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "348108ab3fba42ec82ff6e9564fc4ca0247bdccdc68dd8af9764bbc79c3c8ffb"
-
-[[package]]
-name = "libnghttp2-sys"
-version = "0.1.7+1.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57ed28aba195b38d5ff02b9170cbff627e336a20925e43b4945390401c5dc93f"
-dependencies = [
- "cc",
- "libc",
-]
 
 [[package]]
 name = "libsqlite3-sys"
@@ -8919,7 +8943,7 @@ dependencies = [
  "breadcrumbs",
  "call",
  "chrono",
- "cli",
+ "cli_rpc",
  "client",
  "clock",
  "collab_ui",
@@ -8941,6 +8965,7 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
+ "gpui_mac",
  "ignore",
  "image",
  "indexmap",
