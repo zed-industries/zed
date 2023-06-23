@@ -7891,11 +7891,11 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     editor_a.update(cx_a, |_, cx| cx.focus(&editor_a));
     cx_a.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
         assert!(
-            inlay_cache.hints.is_empty(),
+            extract_hint_labels(editor).is_empty(),
             "No inlays should be in the new cache"
         );
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Cache should use editor settings to get the allowed hint kinds"
@@ -7918,11 +7918,11 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     editor_b.update(cx_b, |_, cx| cx.focus(&editor_b));
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
         assert!(
-            inlay_cache.hints.is_empty(),
+            extract_hint_labels(editor).is_empty(),
             "No inlays should be in the new cache"
         );
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Cache should use editor settings to get the allowed hint kinds"
@@ -7978,32 +7978,27 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_a.foreground().finish_waiting();
     cx_a.foreground().run_until_parked();
 
-    fn extract_hint_labels(editor: &Editor) -> Vec<&str> {
-        editor
-            .inlay_hint_cache()
-            .snapshot()
-            .hints
-            .iter()
-            .map(|(_, excerpt_hints)| {
-                excerpt_hints
-                    .hints
-                    .iter()
-                    .map(|(_, inlay)| match &inlay.label {
-                        project::InlayHintLabel::String(s) => s.as_str(),
-                        _ => unreachable!(),
-                    })
-            })
-            .flatten()
-            .collect::<Vec<_>>()
+    fn extract_hint_labels(editor: &Editor) -> Vec<String> {
+        let mut labels = Vec::new();
+        for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
+            let excerpt_hints = excerpt_hints.read();
+            for (_, inlay) in excerpt_hints.hints.iter() {
+                match &inlay.label {
+                    project::InlayHintLabel::String(s) => labels.push(s.to_string()),
+                    _ => unreachable!(),
+                }
+            }
+        }
+        labels
     }
 
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0"],
+            vec!["0".to_string()],
             extract_hint_labels(editor),
             "Host should get hints from the 1st edit and 1st LSP query"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
         assert_eq!(
             inlay_cache.version, edits_made,
@@ -8012,11 +8007,11 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0", "1"],
+            vec!["0".to_string(), "1".to_string()],
             extract_hint_labels(editor),
             "Guest should get hints the 1st edit and 2nd LSP query"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
         assert_eq!(
             inlay_cache.version, edits_made,
@@ -8034,12 +8029,12 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0", "1", "2"],
+            vec!["0".to_string(), "1".to_string(), "2".to_string()],
             extract_hint_labels(editor),
             "Host should get hints from 3rd edit, 5th LSP query: \
 4th query was made by guest (but not applied) due to cache invalidation logic"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
         assert_eq!(
             inlay_cache.version, edits_made,
@@ -8048,11 +8043,16 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0", "1", "2", "3"],
+            vec![
+                "0".to_string(),
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string()
+            ],
             extract_hint_labels(editor),
             "Guest should get hints from 3rd edit, 6th LSP query"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Inlay kinds settings never change during the test"
@@ -8072,11 +8072,17 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0", "1", "2", "3", "4"],
+            vec![
+                "0".to_string(),
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "4".to_string()
+            ],
             extract_hint_labels(editor),
             "Host should react to /refresh LSP request and get new hints from 7th LSP query"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Inlay kinds settings never change during the test"
@@ -8088,11 +8094,11 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0", "1", "2", "3", "4", "5"],
+            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string(), "4".to_string(), "5".to_string()],
             extract_hint_labels(editor),
             "Guest should get a /refresh LSP request propagated by host and get new hints from 8th LSP query"
         );
-        let inlay_cache = editor.inlay_hint_cache().snapshot();
+        let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Inlay kinds settings never change during the test"

@@ -9,26 +9,22 @@ use clock::Global;
 use gpui::{ModelHandle, Task, ViewContext};
 use language::{Buffer, BufferSnapshot};
 use log::error;
+use parking_lot::RwLock;
 use project::{InlayHint, InlayHintKind};
 
 use collections::{hash_map, HashMap, HashSet};
 use util::post_inc;
 
 pub struct InlayHintCache {
-    snapshot: CacheSnapshot,
+    pub hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
+    pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
+    pub version: usize,
     update_tasks: HashMap<ExcerptId, InlayHintUpdateTask>,
 }
 
 struct InlayHintUpdateTask {
     version: usize,
     _task: Task<()>,
-}
-
-#[derive(Debug)]
-pub struct CacheSnapshot {
-    pub hints: HashMap<ExcerptId, Arc<CachedExcerptHints>>,
-    pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
-    pub version: usize,
 }
 
 #[derive(Debug)]
@@ -84,17 +80,11 @@ struct ExcerptHintsUpdate {
 impl InlayHintCache {
     pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
         Self {
-            snapshot: CacheSnapshot {
-                allowed_hint_kinds: allowed_hint_types(inlay_hint_settings),
-                hints: HashMap::default(),
-                version: 0,
-            },
+            allowed_hint_kinds: allowed_hint_types(inlay_hint_settings),
+            hints: HashMap::default(),
             update_tasks: HashMap::default(),
+            version: 0,
         }
-    }
-
-    pub fn snapshot(&self) -> &CacheSnapshot {
-        &self.snapshot
     }
 
     pub fn update_settings(
@@ -106,37 +96,33 @@ impl InlayHintCache {
     ) -> Option<InlaySplice> {
         let new_allowed_hint_kinds = allowed_hint_types(inlay_hint_settings);
         if !inlay_hint_settings.enabled {
-            if self.snapshot.hints.is_empty() {
-                self.snapshot.allowed_hint_kinds = new_allowed_hint_kinds;
+            if self.hints.is_empty() {
+                self.allowed_hint_kinds = new_allowed_hint_kinds;
+                None
             } else {
                 self.clear();
-                self.snapshot.allowed_hint_kinds = new_allowed_hint_kinds;
-                return Some(InlaySplice {
+                self.allowed_hint_kinds = new_allowed_hint_kinds;
+                Some(InlaySplice {
                     to_remove: visible_hints.iter().map(|inlay| inlay.id).collect(),
                     to_insert: Vec::new(),
-                });
+                })
             }
-
-            return None;
+        } else if new_allowed_hint_kinds == self.allowed_hint_kinds {
+            None
+        } else {
+            let new_splice = self.new_allowed_hint_kinds_splice(
+                multi_buffer,
+                &visible_hints,
+                &new_allowed_hint_kinds,
+                cx,
+            );
+            if new_splice.is_some() {
+                self.version += 1;
+                self.update_tasks.clear();
+                self.allowed_hint_kinds = new_allowed_hint_kinds;
+            }
+            new_splice
         }
-
-        if new_allowed_hint_kinds == self.snapshot.allowed_hint_kinds {
-            return None;
-        }
-
-        let new_splice = new_allowed_hint_kinds_splice(
-            &self.snapshot,
-            multi_buffer,
-            &visible_hints,
-            &new_allowed_hint_kinds,
-            cx,
-        );
-        if new_splice.is_some() {
-            self.snapshot.version += 1;
-            self.update_tasks.clear();
-            self.snapshot.allowed_hint_kinds = new_allowed_hint_kinds;
-        }
-        new_splice
     }
 
     pub fn spawn_hints_update(
@@ -154,9 +140,10 @@ impl InlayHintCache {
             update_tasks
                 .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
         }
+        let cache_version = self.version;
         excerpts_to_query.retain(|visible_excerpt_id, _| {
             match update_tasks.entry(*visible_excerpt_id) {
-                hash_map::Entry::Occupied(o) => match o.get().version.cmp(&self.snapshot.version) {
+                hash_map::Entry::Occupied(o) => match o.get().version.cmp(&cache_version) {
                     cmp::Ordering::Less => true,
                     cmp::Ordering::Equal => invalidate_cache,
                     cmp::Ordering::Greater => false,
@@ -169,7 +156,6 @@ impl InlayHintCache {
             update_tasks
                 .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
         }
-        let cache_version = self.snapshot.version;
         excerpts_to_query.retain(|visible_excerpt_id, _| {
             match update_tasks.entry(*visible_excerpt_id) {
                 hash_map::Entry::Occupied(o) => match o.get().version.cmp(&cache_version) {
@@ -211,15 +197,12 @@ impl InlayHintCache {
                                 cache_version,
                                 invalidate,
                             };
-                            let cached_excxerpt_hints = editor
-                                .inlay_hint_cache
-                                .snapshot
-                                .hints
-                                .get(&excerpt_id)
-                                .cloned();
+                            let cached_excxerpt_hints =
+                                editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
 
                             if let Some(cached_excerpt_hints) = &cached_excxerpt_hints {
                                 let new_task_buffer_version = buffer_snapshot.version();
+                                let cached_excerpt_hints = cached_excerpt_hints.read();
                                 let cached_buffer_version = &cached_excerpt_hints.buffer_version;
                                 if cached_buffer_version.changed_since(new_task_buffer_version) {
                                     return;
@@ -250,11 +233,113 @@ impl InlayHintCache {
         .detach();
     }
 
+    fn new_allowed_hint_kinds_splice(
+        &self,
+        multi_buffer: &ModelHandle<MultiBuffer>,
+        visible_hints: &[Inlay],
+        new_kinds: &HashSet<Option<InlayHintKind>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<InlaySplice> {
+        let old_kinds = &self.allowed_hint_kinds;
+        if new_kinds == old_kinds {
+            return None;
+        }
+
+        let mut to_remove = Vec::new();
+        let mut to_insert = Vec::new();
+        let mut shown_hints_to_remove = visible_hints.iter().fold(
+            HashMap::<ExcerptId, Vec<(Anchor, InlayId)>>::default(),
+            |mut current_hints, inlay| {
+                current_hints
+                    .entry(inlay.position.excerpt_id)
+                    .or_default()
+                    .push((inlay.position, inlay.id));
+                current_hints
+            },
+        );
+
+        let multi_buffer = multi_buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+
+        for (excerpt_id, excerpt_cached_hints) in &self.hints {
+            let shown_excerpt_hints_to_remove =
+                shown_hints_to_remove.entry(*excerpt_id).or_default();
+            let excerpt_cached_hints = excerpt_cached_hints.read();
+            let mut excerpt_cache = excerpt_cached_hints.hints.iter().fuse().peekable();
+            shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
+                let Some(buffer) = shown_anchor
+                    .buffer_id
+                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id)) else { return false };
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                loop {
+                    match excerpt_cache.peek() {
+                        Some((cached_hint_id, cached_hint)) => {
+                            if cached_hint_id == shown_hint_id {
+                                excerpt_cache.next();
+                                return !new_kinds.contains(&cached_hint.kind);
+                            }
+
+                            match cached_hint
+                                .position
+                                .cmp(&shown_anchor.text_anchor, &buffer_snapshot)
+                            {
+                                cmp::Ordering::Less | cmp::Ordering::Equal => {
+                                    if !old_kinds.contains(&cached_hint.kind)
+                                        && new_kinds.contains(&cached_hint.kind)
+                                    {
+                                        to_insert.push((
+                                            multi_buffer_snapshot.anchor_in_excerpt(
+                                                *excerpt_id,
+                                                cached_hint.position,
+                                            ),
+                                            *cached_hint_id,
+                                            cached_hint.clone(),
+                                        ));
+                                    }
+                                    excerpt_cache.next();
+                                }
+                                cmp::Ordering::Greater => return true,
+                            }
+                        }
+                        None => return true,
+                    }
+                }
+            });
+
+            for (cached_hint_id, maybe_missed_cached_hint) in excerpt_cache {
+                let cached_hint_kind = maybe_missed_cached_hint.kind;
+                if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
+                    to_insert.push((
+                        multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position),
+                        *cached_hint_id,
+                        maybe_missed_cached_hint.clone(),
+                    ));
+                }
+            }
+        }
+
+        to_remove.extend(
+            shown_hints_to_remove
+                .into_values()
+                .flatten()
+                .map(|(_, hint_id)| hint_id),
+        );
+        if to_remove.is_empty() && to_insert.is_empty() {
+            None
+        } else {
+            Some(InlaySplice {
+                to_remove,
+                to_insert,
+            })
+        }
+    }
+
     fn clear(&mut self) {
-        self.snapshot.version += 1;
+        self.version += 1;
         self.update_tasks.clear();
-        self.snapshot.hints.clear();
-        self.snapshot.allowed_hint_kinds.clear();
+        self.hints.clear();
+        self.allowed_hint_kinds.clear();
     }
 }
 
@@ -263,7 +348,7 @@ fn new_update_task(
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
-    cached_excerpt_hints: Option<Arc<CachedExcerptHints>>,
+    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> InlayHintUpdateTask {
     let hints_fetch_task = hints_fetch_task(query, cx);
@@ -290,19 +375,16 @@ fn new_update_task(
                             .update(&mut cx, |editor, cx| {
                                 let cached_excerpt_hints = editor
                                     .inlay_hint_cache
-                                    .snapshot
                                     .hints
                                     .entry(new_update.excerpt_id)
                                     .or_insert_with(|| {
-                                        Arc::new(CachedExcerptHints {
+                                        Arc::new(RwLock::new(CachedExcerptHints {
                                             version: new_update.cache_version,
                                             buffer_version: buffer_snapshot.version().clone(),
                                             hints: Vec::new(),
-                                        })
+                                        }))
                                     });
-                                let cached_excerpt_hints = Arc::get_mut(cached_excerpt_hints)
-                                    .expect("Cached excerpt hints were dropped with the task");
-
+                                let mut cached_excerpt_hints = cached_excerpt_hints.write();
                                 match new_update.cache_version.cmp(&cached_excerpt_hints.version) {
                                     cmp::Ordering::Less => return,
                                     cmp::Ordering::Greater | cmp::Ordering::Equal => {
@@ -314,7 +396,7 @@ fn new_update_task(
                                 });
                                 cached_excerpt_hints.buffer_version =
                                     buffer_snapshot.version().clone();
-                                editor.inlay_hint_cache.snapshot.version += 1;
+                                editor.inlay_hint_cache.version += 1;
 
                                 let mut splice = InlaySplice {
                                     to_remove: new_update.remove_from_visible,
@@ -327,7 +409,6 @@ fn new_update_task(
                                     let new_inlay_id = InlayId(post_inc(&mut editor.next_inlay_id));
                                     if editor
                                         .inlay_hint_cache
-                                        .snapshot
                                         .allowed_hint_kinds
                                         .contains(&new_hint.kind)
                                     {
@@ -346,6 +427,7 @@ fn new_update_task(
                                     .sort_by(|(_, hint_a), (_, hint_b)| {
                                         hint_a.position.cmp(&hint_b.position, &buffer_snapshot)
                                     });
+                                drop(cached_excerpt_hints);
 
                                 let InlaySplice {
                                     to_remove,
@@ -368,109 +450,11 @@ fn new_update_task(
     }
 }
 
-fn new_allowed_hint_kinds_splice(
-    cache: &CacheSnapshot,
-    multi_buffer: &ModelHandle<MultiBuffer>,
-    visible_hints: &[Inlay],
-    new_kinds: &HashSet<Option<InlayHintKind>>,
-    cx: &mut ViewContext<Editor>,
-) -> Option<InlaySplice> {
-    let old_kinds = &cache.allowed_hint_kinds;
-    if new_kinds == old_kinds {
-        return None;
-    }
-
-    let mut to_remove = Vec::new();
-    let mut to_insert = Vec::new();
-    let mut shown_hints_to_remove = visible_hints.iter().fold(
-        HashMap::<ExcerptId, Vec<(Anchor, InlayId)>>::default(),
-        |mut current_hints, inlay| {
-            current_hints
-                .entry(inlay.position.excerpt_id)
-                .or_default()
-                .push((inlay.position, inlay.id));
-            current_hints
-        },
-    );
-
-    let multi_buffer = multi_buffer.read(cx);
-    let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-
-    for (excerpt_id, excerpt_cached_hints) in &cache.hints {
-        let shown_excerpt_hints_to_remove = shown_hints_to_remove.entry(*excerpt_id).or_default();
-        let mut excerpt_cache = excerpt_cached_hints.hints.iter().fuse().peekable();
-        shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
-            let Some(buffer) = shown_anchor
-                .buffer_id
-                .and_then(|buffer_id| multi_buffer.buffer(buffer_id)) else { return false };
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            loop {
-                match excerpt_cache.peek() {
-                    Some((cached_hint_id, cached_hint)) => {
-                        if cached_hint_id == shown_hint_id {
-                            excerpt_cache.next();
-                            return !new_kinds.contains(&cached_hint.kind);
-                        }
-
-                        match cached_hint
-                            .position
-                            .cmp(&shown_anchor.text_anchor, &buffer_snapshot)
-                        {
-                            cmp::Ordering::Less | cmp::Ordering::Equal => {
-                                if !old_kinds.contains(&cached_hint.kind)
-                                    && new_kinds.contains(&cached_hint.kind)
-                                {
-                                    to_insert.push((
-                                        multi_buffer_snapshot
-                                            .anchor_in_excerpt(*excerpt_id, cached_hint.position),
-                                        *cached_hint_id,
-                                        cached_hint.clone(),
-                                    ));
-                                }
-                                excerpt_cache.next();
-                            }
-                            cmp::Ordering::Greater => return true,
-                        }
-                    }
-                    None => return true,
-                }
-            }
-        });
-
-        for (cached_hint_id, maybe_missed_cached_hint) in excerpt_cache {
-            let cached_hint_kind = maybe_missed_cached_hint.kind;
-            if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                to_insert.push((
-                    multi_buffer_snapshot
-                        .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position),
-                    *cached_hint_id,
-                    maybe_missed_cached_hint.clone(),
-                ));
-            }
-        }
-    }
-
-    to_remove.extend(
-        shown_hints_to_remove
-            .into_values()
-            .flatten()
-            .map(|(_, hint_id)| hint_id),
-    );
-    if to_remove.is_empty() && to_insert.is_empty() {
-        None
-    } else {
-        Some(InlaySplice {
-            to_remove,
-            to_insert,
-        })
-    }
-}
-
 fn new_excerpt_hints_update_result(
     query: ExcerptQuery,
     new_excerpt_hints: Vec<InlayHint>,
     buffer_snapshot: &BufferSnapshot,
-    cached_excerpt_hints: Option<Arc<CachedExcerptHints>>,
+    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     visible_hints: &[Inlay],
 ) -> Option<ExcerptHintsUpdate> {
     let mut add_to_cache: Vec<InlayHint> = Vec::new();
@@ -482,6 +466,7 @@ fn new_excerpt_hints_update_result(
         }
         let missing_from_cache = match &cached_excerpt_hints {
             Some(cached_excerpt_hints) => {
+                let cached_excerpt_hints = cached_excerpt_hints.read();
                 match cached_excerpt_hints.hints.binary_search_by(|probe| {
                     probe.1.position.cmp(&new_hint.position, buffer_snapshot)
                 }) {
@@ -518,15 +503,19 @@ fn new_excerpt_hints_update_result(
                 .map(|inlay_hint| inlay_hint.id)
                 .filter(|hint_id| !excerpt_hints_to_persist.contains_key(hint_id)),
         );
-        remove_from_cache.extend(
-            cached_excerpt_hints
-                .iter()
-                .flat_map(|excerpt_hints| excerpt_hints.hints.iter())
-                .filter(|(cached_inlay_id, _)| {
-                    !excerpt_hints_to_persist.contains_key(cached_inlay_id)
-                })
-                .map(|(cached_inlay_id, _)| *cached_inlay_id),
-        );
+
+        if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
+            let cached_excerpt_hints = cached_excerpt_hints.read();
+            remove_from_cache.extend(
+                cached_excerpt_hints
+                    .hints
+                    .iter()
+                    .filter(|(cached_inlay_id, _)| {
+                        !excerpt_hints_to_persist.contains_key(cached_inlay_id)
+                    })
+                    .map(|(cached_inlay_id, _)| *cached_inlay_id),
+            );
+        }
     }
 
     if remove_from_visible.is_empty() && remove_from_cache.is_empty() && add_to_cache.is_empty() {
