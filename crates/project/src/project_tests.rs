@@ -535,8 +535,28 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     fs.insert_tree(
         "/the-root",
         json!({
-            "a.rs": "",
-            "b.rs": "",
+            ".gitignore": "target\n",
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+            },
+            "target": {
+                "x": {
+                    "out": {
+                        "x.rs": ""
+                    }
+                },
+                "y": {
+                    "out": {
+                        "y.rs": "",
+                    }
+                },
+                "z": {
+                    "out": {
+                        "z.rs": ""
+                    }
+                }
+            }
         }),
     )
     .await;
@@ -550,10 +570,31 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Start the language server by opening a buffer with a compatible file extension.
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/a.rs", cx)
+            project.open_local_buffer("/the-root/src/a.rs", cx)
         })
         .await
         .unwrap();
+
+    // Initially, we don't load ignored files because the language server has not explicitly asked us to watch them.
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        assert_eq!(
+            worktree
+                .read(cx)
+                .snapshot()
+                .entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+                (Path::new("target"), true),
+            ]
+        );
+    });
 
     // Keep track of the FS events reported to the language server.
     let fake_server = fake_servers.next().await.unwrap();
@@ -565,12 +606,20 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 method: "workspace/didChangeWatchedFiles".to_string(),
                 register_options: serde_json::to_value(
                     lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: lsp::GlobPattern::String(
-                                "/the-root/*.{rs,c}".to_string(),
-                            ),
-                            kind: None,
-                        }],
+                        watchers: vec![
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/src/*.{rs,c}".to_string(),
+                                ),
+                                kind: None,
+                            },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/target/y/**/*.rs".to_string(),
+                                ),
+                                kind: None,
+                            },
+                        ],
                     },
                 )
                 .ok(),
@@ -588,17 +637,50 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     });
 
     cx.foreground().run_until_parked();
-    assert_eq!(file_changes.lock().len(), 0);
+    assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
+
+    // Now the language server has asked us to watch an ignored directory path,
+    // so we recursively load it.
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        assert_eq!(
+            worktree
+                .read(cx)
+                .snapshot()
+                .entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+                (Path::new("target"), true),
+                (Path::new("target/x"), true),
+                (Path::new("target/y"), true),
+                (Path::new("target/y/out"), true),
+                (Path::new("target/y/out/y.rs"), true),
+                (Path::new("target/z"), true),
+            ]
+        );
+    });
 
     // Perform some file system mutations, two of which match the watched patterns,
     // and one of which does not.
-    fs.create_file("/the-root/c.rs".as_ref(), Default::default())
+    fs.create_file("/the-root/src/c.rs".as_ref(), Default::default())
         .await
         .unwrap();
-    fs.create_file("/the-root/d.txt".as_ref(), Default::default())
+    fs.create_file("/the-root/src/d.txt".as_ref(), Default::default())
         .await
         .unwrap();
-    fs.remove_file("/the-root/b.rs".as_ref(), Default::default())
+    fs.remove_file("/the-root/src/b.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/target/x/out/x2.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/target/y/out/y2.rs".as_ref(), Default::default())
         .await
         .unwrap();
 
@@ -608,11 +690,15 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/b.rs").unwrap(),
+                uri: lsp::Url::from_file_path("/the-root/src/b.rs").unwrap(),
                 typ: lsp::FileChangeType::DELETED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/c.rs").unwrap(),
+                uri: lsp::Url::from_file_path("/the-root/src/c.rs").unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
         ]
@@ -3844,6 +3930,14 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         ]),
         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
     );
+}
+
+#[test]
+fn test_glob_literal_prefix() {
+    assert_eq!(glob_literal_prefix("**/*.js"), "");
+    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
+    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
+    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
 }
 
 async fn search(

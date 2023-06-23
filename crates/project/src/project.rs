@@ -64,7 +64,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::Range,
-    path::{Component, Path, PathBuf},
+    path::{self, Component, Path, PathBuf},
     rc::Rc,
     str,
     sync::{
@@ -3116,23 +3116,44 @@ impl Project {
             for watcher in params.watchers {
                 for worktree in &self.worktrees {
                     if let Some(worktree) = worktree.upgrade(cx) {
-                        let worktree = worktree.read(cx);
-                        if let Some(abs_path) = worktree.abs_path().to_str() {
-                            if let Some(suffix) = match &watcher.glob_pattern {
-                                lsp::GlobPattern::String(s) => s,
-                                lsp::GlobPattern::Relative(rp) => &rp.pattern,
-                            }
-                            .strip_prefix(abs_path)
-                            .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
-                            {
-                                if let Some(glob) = Glob::new(suffix).log_err() {
-                                    builders
-                                        .entry(worktree.id())
-                                        .or_insert_with(|| GlobSetBuilder::new())
-                                        .add(glob);
+                        let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
+                            if let Some(abs_path) = tree.abs_path().to_str() {
+                                let relative_glob_pattern = match &watcher.glob_pattern {
+                                    lsp::GlobPattern::String(s) => s
+                                        .strip_prefix(abs_path)
+                                        .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR)),
+                                    lsp::GlobPattern::Relative(rp) => {
+                                        let base_uri = match &rp.base_uri {
+                                            lsp::OneOf::Left(workspace_folder) => {
+                                                &workspace_folder.uri
+                                            }
+                                            lsp::OneOf::Right(base_uri) => base_uri,
+                                        };
+                                        base_uri.to_file_path().ok().and_then(|file_path| {
+                                            (file_path.to_str() == Some(abs_path))
+                                                .then_some(rp.pattern.as_str())
+                                        })
+                                    }
+                                };
+                                if let Some(relative_glob_pattern) = relative_glob_pattern {
+                                    let literal_prefix =
+                                        glob_literal_prefix(&relative_glob_pattern);
+                                    tree.as_local_mut()
+                                        .unwrap()
+                                        .add_path_prefix_to_scan(Path::new(literal_prefix).into());
+                                    if let Some(glob) = Glob::new(relative_glob_pattern).log_err() {
+                                        builders
+                                            .entry(tree.id())
+                                            .or_insert_with(|| GlobSetBuilder::new())
+                                            .add(glob);
+                                    }
+                                    return true;
                                 }
-                                break;
                             }
+                            false
+                        });
+                        if glob_is_inside_worktree {
+                            break;
                         }
                     }
                 }
@@ -7103,6 +7124,22 @@ impl Project {
             Vec::new()
         }
     }
+}
+
+fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
+    let mut literal_end = 0;
+    for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
+        if part.contains(&['*', '?', '{', '}']) {
+            break;
+        } else {
+            if i > 0 {
+                // Acount for separator prior to this part
+                literal_end += path::MAIN_SEPARATOR.len_utf8();
+            }
+            literal_end += part.len();
+        }
+    }
+    &glob[..literal_end]
 }
 
 impl WorktreeHandle {

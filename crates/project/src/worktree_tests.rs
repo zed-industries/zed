@@ -332,7 +332,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // The symlinked directories are not scanned by default.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(true)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
@@ -365,7 +365,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // not scanned yet.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(true)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
@@ -402,7 +402,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // The expanded subdirectory's contents are loaded.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(true)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![

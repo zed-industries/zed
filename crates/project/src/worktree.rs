@@ -68,6 +68,7 @@ pub enum Worktree {
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
+    path_prefixes_to_scan_tx: channel::Sender<Arc<Path>>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_task: Task<()>,
     share: Option<ShareState>,
@@ -219,8 +220,9 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
-    expanded_dirs: HashSet<ProjectEntryId>,
-    expanded_paths: HashSet<Arc<Path>>,
+    scanned_dirs: HashSet<ProjectEntryId>,
+    path_prefixes_to_scan: HashSet<Arc<Path>>,
+    paths_to_scan: HashSet<Arc<Path>>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
@@ -331,6 +333,7 @@ impl Worktree {
             }
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
+            let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
             let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -371,6 +374,7 @@ impl Worktree {
                         scan_states_tx,
                         background,
                         scan_requests_rx,
+                        path_prefixes_to_scan_rx,
                     )
                     .run(events)
                     .await;
@@ -382,6 +386,7 @@ impl Worktree {
                 is_scanning: watch::channel_with(true),
                 share: None,
                 scan_requests_tx,
+                path_prefixes_to_scan_tx,
                 _background_scanner_task: background_scanner_task,
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
@@ -1147,6 +1152,10 @@ impl LocalWorktree {
         rx
     }
 
+    pub fn add_path_prefix_to_scan(&self, path_prefix: Arc<Path>) {
+        self.path_prefixes_to_scan_tx.try_send(path_prefix).ok();
+    }
+
     fn refresh_entry(
         &self,
         path: Arc<Path>,
@@ -1566,7 +1575,7 @@ impl Snapshot {
     }
 
     pub fn visible_file_count(&self) -> usize {
-        self.entries_by_path.summary().visible_file_count
+        self.entries_by_path.summary().non_ignored_file_count
     }
 
     fn traverse_from_offset(
@@ -2067,7 +2076,7 @@ impl LocalSnapshot {
         for entry in self.entries_by_path.cursor::<()>() {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
-                if !entry.is_ignored {
+                if !entry.is_ignored && !entry.is_external {
                     assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                 }
             }
@@ -2129,12 +2138,17 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn is_path_expanded(&self, path: &Path) -> bool {
-        self.expanded_paths.iter().any(|p| p.starts_with(path))
+    fn should_scan_directory(&self, entry: &Entry) -> bool {
+        (!entry.is_external && !entry.is_ignored)
+            || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
-                .snapshot
-                .entry_for_path(&path)
-                .map_or(false, |entry| self.expanded_dirs.contains(&entry.id))
+                .paths_to_scan
+                .iter()
+                .any(|p| p.starts_with(&entry.path))
+            || self
+                .path_prefixes_to_scan
+                .iter()
+                .any(|p| entry.path.starts_with(p))
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -2192,17 +2206,16 @@ impl BackgroundScannerState {
                 .insert(abs_parent_path, (ignore, false));
         }
 
-        self.expanded_dirs.insert(parent_entry.id);
+        self.scanned_dirs.insert(parent_entry.id);
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
         let mut dotgit_path = None;
 
-        for mut entry in entries {
+        for entry in entries {
             if entry.path.file_name() == Some(&DOT_GIT) {
                 dotgit_path = Some(entry.path.clone());
             }
 
-            self.reuse_entry_id(&mut entry);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -2677,7 +2690,20 @@ pub struct Entry {
     pub inode: u64,
     pub mtime: SystemTime,
     pub is_symlink: bool,
+
+    /// Whether this entry is ignored by Git.
+    ///
+    /// We only scan ignored entries once the directory is expanded and
+    /// exclude them from searches.
     pub is_ignored: bool,
+
+    /// Whether this entry's canonical path is outside of the worktree.
+    /// This means the entry is only accessible from the worktree root via a
+    /// symlink.
+    ///
+    /// We only scan entries outside of the worktree once the symlinked
+    /// directory is expanded. External entries are treated like gitignored
+    /// entries in that they are not included in searches.
     pub is_external: bool,
     pub git_status: Option<GitFileStatus>,
 }
@@ -2772,15 +2798,19 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self) -> Self::Summary {
-        let visible_count = if self.is_ignored { 0 } else { 1 };
+        let non_ignored_count = if self.is_ignored || self.is_external {
+            0
+        } else {
+            1
+        };
         let file_count;
-        let visible_file_count;
+        let non_ignored_file_count;
         if self.is_file() {
             file_count = 1;
-            visible_file_count = visible_count;
+            non_ignored_file_count = non_ignored_count;
         } else {
             file_count = 0;
-            visible_file_count = 0;
+            non_ignored_file_count = 0;
         }
 
         let mut statuses = GitStatuses::default();
@@ -2796,9 +2826,9 @@ impl sum_tree::Item for Entry {
         EntrySummary {
             max_path: self.path.clone(),
             count: 1,
-            visible_count,
+            non_ignored_count,
             file_count,
-            visible_file_count,
+            non_ignored_file_count,
             statuses,
         }
     }
@@ -2816,9 +2846,9 @@ impl sum_tree::KeyedItem for Entry {
 pub struct EntrySummary {
     max_path: Arc<Path>,
     count: usize,
-    visible_count: usize,
+    non_ignored_count: usize,
     file_count: usize,
-    visible_file_count: usize,
+    non_ignored_file_count: usize,
     statuses: GitStatuses,
 }
 
@@ -2827,9 +2857,9 @@ impl Default for EntrySummary {
         Self {
             max_path: Arc::from(Path::new("")),
             count: 0,
-            visible_count: 0,
+            non_ignored_count: 0,
             file_count: 0,
-            visible_file_count: 0,
+            non_ignored_file_count: 0,
             statuses: Default::default(),
         }
     }
@@ -2841,9 +2871,9 @@ impl sum_tree::Summary for EntrySummary {
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
         self.count += rhs.count;
-        self.visible_count += rhs.visible_count;
+        self.non_ignored_count += rhs.non_ignored_count;
         self.file_count += rhs.file_count;
-        self.visible_file_count += rhs.visible_file_count;
+        self.non_ignored_file_count += rhs.non_ignored_file_count;
         self.statuses += rhs.statuses;
     }
 }
@@ -2912,6 +2942,7 @@ struct BackgroundScanner {
     status_updates_tx: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
     scan_requests_rx: channel::Receiver<ScanRequest>,
+    path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
     next_entry_id: Arc<AtomicUsize>,
     phase: BackgroundScannerPhase,
 }
@@ -2931,20 +2962,23 @@ impl BackgroundScanner {
         status_updates_tx: UnboundedSender<ScanState>,
         executor: Arc<executor::Background>,
         scan_requests_rx: channel::Receiver<ScanRequest>,
+        path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
     ) -> Self {
         Self {
             fs,
             status_updates_tx,
             executor,
             scan_requests_rx,
+            path_prefixes_to_scan_rx,
             next_entry_id,
             state: Mutex::new(BackgroundScannerState {
                 prev_snapshot: snapshot.snapshot.clone(),
                 snapshot,
-                expanded_dirs: Default::default(),
+                scanned_dirs: Default::default(),
+                path_prefixes_to_scan: Default::default(),
+                paths_to_scan: Default::default(),
                 removed_entry_ids: Default::default(),
                 changed_paths: Default::default(),
-                expanded_paths: Default::default(),
             }),
             phase: BackgroundScannerPhase::InitialScan,
         }
@@ -2952,7 +2986,7 @@ impl BackgroundScanner {
 
     async fn run(
         &mut self,
-        mut events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>,
+        mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>,
     ) {
         use futures::FutureExt as _;
 
@@ -3014,9 +3048,9 @@ impl BackgroundScanner {
         // For these events, update events cannot be as precise, because we didn't
         // have the previous state loaded yet.
         self.phase = BackgroundScannerPhase::EventsReceivedDuringInitialScan;
-        if let Poll::Ready(Some(events)) = futures::poll!(events_rx.next()) {
+        if let Poll::Ready(Some(events)) = futures::poll!(fs_events_rx.next()) {
             let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
-            while let Poll::Ready(Some(more_events)) = futures::poll!(events_rx.next()) {
+            while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_events.into_iter().map(|e| e.path));
             }
             self.process_events(paths).await;
@@ -3035,10 +3069,26 @@ impl BackgroundScanner {
                     }
                 }
 
-                events = events_rx.next().fuse() => {
+                path_prefix = self.path_prefixes_to_scan_rx.recv().fuse() => {
+                    let Ok(path_prefix) = path_prefix else { break };
+
+                    self.forcibly_load_paths(&[path_prefix.clone()]).await;
+
+                    let abs_path =
+                    {
+                        let mut state = self.state.lock();
+                        state.path_prefixes_to_scan.insert(path_prefix.clone());
+                        state.snapshot.abs_path.join(path_prefix)
+                    };
+                    if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
+                        self.process_events(vec![abs_path]).await;
+                    }
+                }
+
+                events = fs_events_rx.next().fuse() => {
                     let Some(events) = events else { break };
                     let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
-                    while let Poll::Ready(Some(more_events)) = futures::poll!(events_rx.next()) {
+                    while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_events.into_iter().map(|e| e.path));
                     }
                     self.process_events(paths.clone()).await;
@@ -3050,7 +3100,7 @@ impl BackgroundScanner {
     async fn process_scan_request(&self, request: ScanRequest, scanning: bool) -> bool {
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
-        let root_path = self.expand_paths(&request.relative_paths).await;
+        let root_path = self.forcibly_load_paths(&request.relative_paths).await;
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -3108,14 +3158,14 @@ impl BackgroundScanner {
             state.reload_repositories(&paths, self.fs.as_ref());
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
             for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
-                state.expanded_dirs.remove(&entry_id);
+                state.scanned_dirs.remove(&entry_id);
             }
         }
 
         self.send_status_update(false, None);
     }
 
-    async fn expand_paths(&self, paths: &[Arc<Path>]) -> Arc<Path> {
+    async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> Arc<Path> {
         let root_path;
         let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
         {
@@ -3140,7 +3190,7 @@ impl BackgroundScanner {
                                     is_external: entry.is_external,
                                 })
                                 .unwrap();
-                            state.expanded_paths.insert(path.clone());
+                            state.paths_to_scan.insert(path.clone());
                             break;
                         }
                     }
@@ -3151,7 +3201,7 @@ impl BackgroundScanner {
         while let Some(job) = scan_job_rx.next().await {
             self.scan_dir(&job).await.log_err();
         }
-        self.state.lock().expanded_paths.clear();
+        self.state.lock().paths_to_scan.clear();
         root_path
     }
 
@@ -3414,18 +3464,19 @@ impl BackgroundScanner {
         let mut state = self.state.lock();
         let mut new_jobs = new_jobs.into_iter();
         for entry in &mut new_entries {
+            state.reuse_entry_id(entry);
+
             if entry.is_dir() {
                 let new_job = new_jobs.next().expect("missing scan job for entry");
-                if (entry.is_external || entry.is_ignored)
-                    && entry.kind == EntryKind::PendingDir
-                    && !state.is_path_expanded(&entry.path)
-                {
+                if state.should_scan_directory(&entry) {
+                    if let Some(new_job) = new_job {
+                        job.scan_queue
+                            .try_send(new_job)
+                            .expect("channel is unbounded");
+                    }
+                } else {
                     log::debug!("defer scanning directory {:?} {:?}", entry.path, entry.kind);
                     entry.kind = EntryKind::UnloadedDir;
-                } else if let Some(new_job) = new_job {
-                    job.scan_queue
-                        .try_send(new_job)
-                        .expect("channel is unbounded");
                 }
             }
         }
@@ -3865,14 +3916,14 @@ impl BackgroundScanner {
                         old_paths.next(&());
                     }
                     (None, Some(new_entry)) => {
+                        let is_newly_loaded = self.phase == InitialScan
+                            || last_newly_loaded_dir_path
+                                .as_ref()
+                                .map_or(false, |dir| new_entry.path.starts_with(&dir));
                         changes.push((
                             new_entry.path.clone(),
                             new_entry.id,
-                            if self.phase == InitialScan {
-                                Loaded
-                            } else {
-                                Added
-                            },
+                            if is_newly_loaded { Loaded } else { Added },
                         ));
                         new_paths.next(&());
                     }
@@ -3975,9 +4026,9 @@ impl WorktreeHandle for ModelHandle<Worktree> {
 struct TraversalProgress<'a> {
     max_path: &'a Path,
     count: usize,
-    visible_count: usize,
+    non_ignored_count: usize,
     file_count: usize,
-    visible_file_count: usize,
+    non_ignored_file_count: usize,
 }
 
 impl<'a> TraversalProgress<'a> {
@@ -3985,8 +4036,8 @@ impl<'a> TraversalProgress<'a> {
         match (include_ignored, include_dirs) {
             (true, true) => self.count,
             (true, false) => self.file_count,
-            (false, true) => self.visible_count,
-            (false, false) => self.visible_file_count,
+            (false, true) => self.non_ignored_count,
+            (false, false) => self.non_ignored_file_count,
         }
     }
 }
@@ -3995,9 +4046,9 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for TraversalProgress<'a> {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         self.max_path = summary.max_path.as_ref();
         self.count += summary.count;
-        self.visible_count += summary.visible_count;
+        self.non_ignored_count += summary.non_ignored_count;
         self.file_count += summary.file_count;
-        self.visible_file_count += summary.visible_file_count;
+        self.non_ignored_file_count += summary.non_ignored_file_count;
     }
 }
 
@@ -4006,9 +4057,9 @@ impl<'a> Default for TraversalProgress<'a> {
         Self {
             max_path: Path::new(""),
             count: 0,
-            visible_count: 0,
+            non_ignored_count: 0,
             file_count: 0,
-            visible_file_count: 0,
+            non_ignored_file_count: 0,
         }
     }
 }
