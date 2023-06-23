@@ -1,5 +1,6 @@
 mod change;
 mod delete;
+mod substitute;
 mod yank;
 
 use std::{borrow::Cow, cmp::Ordering, sync::Arc};
@@ -25,6 +26,7 @@ use workspace::Workspace;
 use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    substitute::substitute,
     yank::{yank_motion, yank_object},
 };
 
@@ -45,6 +47,7 @@ actions!(
         DeleteToEndOfLine,
         Paste,
         Yank,
+        Substitute,
     ]
 );
 
@@ -56,6 +59,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_end_of_line);
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
+    cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
+        Vim::update(cx, |vim, cx| {
+            let times = vim.pop_number_operator(cx);
+            substitute(vim, times, cx);
+        })
+    });
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
