@@ -1185,6 +1185,7 @@ impl Room {
             LocalTrack::None => Err(anyhow!("microphone was not shared")),
             LocalTrack::Pending { muted, .. } => {
                 *muted = should_mute;
+                cx.notify();
                 Ok(Task::Ready(Some(Ok(()))))
             }
             LocalTrack::Published {
@@ -1192,7 +1193,7 @@ impl Room {
                 muted,
             } => {
                 *muted = should_mute;
-
+                cx.notify();
                 Ok(cx.background().spawn(track_publication.set_mute(*muted)))
             }
         }
@@ -1207,11 +1208,9 @@ impl Room {
     }
 
     pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
-        if let Some(live_kit) = &mut self.live_kit {
-            (*live_kit).deafened = !live_kit.deafened
-        }
-
         if let Some(live_kit) = self.live_kit.as_mut() {
+            (*live_kit).deafened = !live_kit.deafened;
+            cx.notify();
             let mut tasks = Vec::with_capacity(self.remote_participants.len());
             let _ = Self::set_mute(live_kit, live_kit.deafened, cx)?; // todo (osiewicz): we probably want to schedule it on fg/bg?
             for participant in self.remote_participants.values() {
