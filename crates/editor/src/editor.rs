@@ -32,7 +32,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
-pub use editor_settings::EditorSettings;
+pub use editor_settings::{EditorSettings, InlayHints, InlayHintsContent};
 pub use element::{
     Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
 };

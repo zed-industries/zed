@@ -45,6 +45,17 @@ struct ExcerptQuery {
     cache_version: usize,
     invalidate: InvalidationStrategy,
 }
+impl ExcerptQuery {
+    fn contains_position(&self, position: text::Anchor, buffer_snapshot: &BufferSnapshot) -> bool {
+        self.excerpt_range_start
+            .cmp(&position, buffer_snapshot)
+            .is_le()
+            && self
+                .excerpt_range_end
+                .cmp(&position, buffer_snapshot)
+                .is_ge()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum InvalidationStrategy {
@@ -284,7 +295,7 @@ fn new_update_task(
                                         })
                                     });
                                 let cached_excerpt_hints = Arc::get_mut(cached_excerpt_hints)
-                                    .expect("Cached excerot hints were dropped with the task");
+                                    .expect("Cached excerpt hints were dropped with the task");
 
                                 match new_update.cache_version.cmp(&cached_excerpt_hints.version) {
                                     cmp::Ordering::Less => return,
@@ -460,6 +471,9 @@ fn new_excerpt_hints_update_result(
 
     let mut excerpt_hints_to_persist = HashMap::default();
     for new_hint in new_excerpt_hints {
+        if !query.contains_position(new_hint.position, buffer_snapshot) {
+            continue;
+        }
         let missing_from_cache = match &cached_excerpt_hints {
             Some(cached_excerpt_hints) => {
                 match cached_excerpt_hints.hints.binary_search_by(|probe| {
@@ -494,18 +508,7 @@ fn new_excerpt_hints_update_result(
             visible_hints
                 .iter()
                 .filter(|hint| hint.position.excerpt_id == query.excerpt_id)
-                .filter(|hint| {
-                    query
-                        .excerpt_range_start
-                        .cmp(&hint.position.text_anchor, buffer_snapshot)
-                        .is_le()
-                })
-                .filter(|hint| {
-                    query
-                        .excerpt_range_end
-                        .cmp(&hint.position.text_anchor, buffer_snapshot)
-                        .is_ge()
-                })
+                .filter(|hint| query.contains_position(hint.position.text_anchor, buffer_snapshot))
                 .map(|inlay_hint| inlay_hint.id)
                 .filter(|hint_id| !excerpt_hints_to_persist.contains_key(hint_id)),
         );
