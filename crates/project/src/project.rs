@@ -563,6 +563,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -2855,9 +2856,13 @@ impl Project {
                         let this = this
                             .upgrade(&cx)
                             .ok_or_else(|| anyhow!("project dropped"))?;
-                        this.update(&mut cx, |_, cx| {
+                        this.update(&mut cx, |project, cx| {
                             cx.emit(Event::RefreshInlays);
-                        });
+                            project.remote_id().map(|project_id| {
+                                project.client.send(proto::RefreshInlayHints { project_id })
+                            })
+                        })
+                        .transpose()?;
                         Ok(())
                     }
                 })
@@ -6774,6 +6779,18 @@ impl Project {
         Ok(this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
         }))
+    }
+
+    async fn handle_refresh_inlay_hints(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::RefreshInlayHints>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::RefreshInlays);
+        });
+        Ok(proto::Ack {})
     }
 
     async fn handle_lsp_command<T: LspCommand>(

@@ -7596,6 +7596,10 @@ impl Editor {
     pub fn next_inlay_id(&mut self) -> InlayId {
         InlayId(post_inc(&mut self.next_inlay_id))
     }
+
+    pub fn inlay_hint_cache(&self) -> &InlayHintCache {
+        &self.inlay_hint_cache
+    }
 }
 
 fn consume_contiguous_rows(

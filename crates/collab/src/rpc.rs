@@ -201,6 +201,7 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
+            .add_message_handler(refresh_inlay_hints)
             .add_request_handler(forward_project_request::<proto::GetHover>)
             .add_request_handler(forward_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_project_request::<proto::GetTypeDefinition>)
@@ -1575,6 +1576,10 @@ async fn update_worktree_settings(
     Ok(())
 }
 
+async fn refresh_inlay_hints(request: proto::RefreshInlayHints, session: Session) -> Result<()> {
+    broadcast_project_message(request.project_id, request, session).await
+}
+
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -1751,7 +1756,15 @@ async fn buffer_reloaded(request: proto::BufferReloaded, session: Session) -> Re
 }
 
 async fn buffer_saved(request: proto::BufferSaved, session: Session) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
+    broadcast_project_message(request.project_id, request, session).await
+}
+
+async fn broadcast_project_message<T: EnvelopedMessage>(
+    project_id: u64,
+    request: T,
+    session: Session,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(project_id);
     let project_connection_ids = session
         .db()
         .await

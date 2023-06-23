@@ -139,6 +139,7 @@ message Envelope {
 
         InlayHints inlay_hints = 114;
         InlayHintsResponse inlay_hints_response = 115;
+        RefreshInlayHints refresh_inlay_hints = 116;
     }
 }
 
@@ -759,6 +760,10 @@ message InlayHintLabelPartTooltip {
         string value = 1;
         MarkupContent markup_content = 2;
     }
+}
+
+message RefreshInlayHints {
+    uint64 project_id = 1;
 }
 
 message MarkupContent {

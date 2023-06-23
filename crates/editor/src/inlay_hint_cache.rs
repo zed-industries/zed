@@ -24,16 +24,18 @@ struct InlayHintUpdateTask {
     _task: Task<()>,
 }
 
-struct CacheSnapshot {
-    hints: HashMap<ExcerptId, Arc<CachedExcerptHints>>,
-    allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
-    version: usize,
+#[derive(Debug)]
+pub struct CacheSnapshot {
+    pub hints: HashMap<ExcerptId, Arc<CachedExcerptHints>>,
+    pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
+    pub version: usize,
 }
 
-struct CachedExcerptHints {
+#[derive(Debug)]
+pub struct CachedExcerptHints {
     version: usize,
     buffer_version: Global,
-    hints: Vec<(InlayId, InlayHint)>,
+    pub hints: Vec<(InlayId, InlayHint)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +91,10 @@ impl InlayHintCache {
             },
             update_tasks: HashMap::default(),
         }
+    }
+
+    pub fn snapshot(&self) -> &CacheSnapshot {
+        &self.snapshot
     }
 
     pub fn update_settings(
