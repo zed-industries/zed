@@ -3030,7 +3030,7 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.scan_requests_rx.recv().fuse() => {
                     let Ok(request) = request else { break };
-                    if !self.process_scan_request(request).await {
+                    if !self.process_scan_request(request, false).await {
                         return;
                     }
                 }
@@ -3047,7 +3047,7 @@ impl BackgroundScanner {
         }
     }
 
-    async fn process_scan_request(&self, request: ScanRequest) -> bool {
+    async fn process_scan_request(&self, request: ScanRequest, scanning: bool) -> bool {
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
         let root_path = self.expand_paths(&request.relative_paths).await;
@@ -3072,7 +3072,7 @@ impl BackgroundScanner {
             .collect::<Vec<_>>();
         self.reload_entries_for_paths(root_path, root_canonical_path, abs_paths, None)
             .await;
-        self.send_status_update(false, Some(request.done))
+        self.send_status_update(scanning, Some(request.done))
     }
 
     async fn process_events(&mut self, abs_paths: Vec<PathBuf>) {
@@ -3107,6 +3107,9 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             state.reload_repositories(&paths, self.fs.as_ref());
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
+            for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
+                state.expanded_dirs.remove(&entry_id);
+            }
         }
 
         self.send_status_update(false, None);
@@ -3182,7 +3185,7 @@ impl BackgroundScanner {
                                 // the scan queue, so that user operations are prioritized.
                                 request = self.scan_requests_rx.recv().fuse() => {
                                     let Ok(request) = request else { break };
-                                    if !self.process_scan_request(request).await {
+                                    if !self.process_scan_request(request, true).await {
                                         return;
                                     }
                                 }
@@ -3664,7 +3667,7 @@ impl BackgroundScanner {
                                 // the queue of ignore statuses.
                                 request = self.scan_requests_rx.recv().fuse() => {
                                     let Ok(request) = request else { break };
-                                    if !self.process_scan_request(request).await {
+                                    if !self.process_scan_request(request, true).await {
                                         return;
                                     }
                                 }
