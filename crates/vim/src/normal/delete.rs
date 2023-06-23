@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
 use gpui::WindowContext;
 
-pub fn delete_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
+pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
