@@ -54,6 +54,7 @@ use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
+use gpui_mac::{foreground_platform, platform};
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
@@ -63,7 +64,6 @@ use zed::{
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
     only_instance::{ensure_only_instance, IsOnlyInstance},
 };
-
 fn main() {
     let http = http::client();
     init_paths();
@@ -74,7 +74,10 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let mut app = gpui::App::new(Assets).unwrap();
+    let platform = platform();
+    let foreground = std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
+    let fplatform = foreground_platform(foreground);
+    let mut app = gpui::App::new(Assets, platform, fplatform).unwrap();
 
     let installation_id = app.background().block(installation_id()).ok();
     init_panic_hook(&app, installation_id.clone());

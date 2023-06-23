@@ -1,11 +1,4 @@
 mod event;
-#[cfg(target_os = "macos")]
-pub mod mac;
-pub mod test;
-pub mod current {
-    #[cfg(target_os = "macos")]
-    pub use super::mac::*;
-}
 
 use crate::{
     executor,
@@ -88,7 +81,7 @@ pub trait Platform: Send + Sync {
     fn restart(&self);
 }
 
-pub(crate) trait ForegroundPlatform {
+pub trait ForegroundPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
@@ -312,9 +305,9 @@ impl Default for CursorStyle {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AppVersion {
-    major: usize,
-    minor: usize,
-    patch: usize,
+    pub major: usize,
+    pub minor: usize,
+    pub patch: usize,
 }
 
 impl FromStr for AppVersion {

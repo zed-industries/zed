@@ -1,0 +1,41 @@
+[package]
+name = "gpui_mac"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+resvg = "0.14"
+gpui = {path = "../gpui"}
+usvg = { version = "0.14", features = [] }
+tiny-skia = "0.5"
+uuid = { version = "1.1.2", features = ["v4"] }
+time.workspace = true
+etagere = "0.2"
+ordered-float.workspace = true
+postage.workspace = true
+smol.workspace = true
+ctor.workspace = true
+parking_lot.workspace = true
+collections = { path = "../collections" }
+async-task = "4.0.3"
+pathfinder_geometry = "0.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+media = { path = "../media" }
+anyhow.workspace = true
+block = "0.1"
+cocoa = "0.24"
+core-foundation = { version = "0.9.3", features = ["with-uuid"] }
+core-graphics = "0.22.3"
+core-text = "19.2"
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "b2f77d56f450338aa4f7dd2f0197d8c9acb0cf18" }
+foreign-types = "0.3"
+log.workspace = true
+metal = "0.21.0"
+objc = "0.2"
+
+[build-dependencies]
+bindgen = "0.65.1"
+cc = "1.0.67"

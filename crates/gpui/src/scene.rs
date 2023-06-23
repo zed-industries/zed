@@ -15,7 +15,7 @@ use crate::{
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    platform::{current::Surface, CursorStyle},
+    platform::CursorStyle,
     ImageData,
 };
 pub use mouse_event::*;
@@ -160,6 +160,11 @@ pub struct Icon {
     pub svg: usvg::Tree,
     pub path: Cow<'static, str>,
     pub color: Color,
+}
+
+pub struct Surface {
+    pub bounds: RectF,
+    pub image_buffer: media::core_video::CVImageBuffer,
 }
 
 #[derive(Clone, Copy, Default, Debug, JsonSchema)]

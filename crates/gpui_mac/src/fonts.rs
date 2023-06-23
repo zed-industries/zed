@@ -1,15 +1,5 @@
 mod open_type;
 
-use crate::{
-    fonts::{Features, FontId, GlyphId, Metrics, Properties},
-    geometry::{
-        rect::{RectF, RectI},
-        transform2d::Transform2F,
-        vector::{vec2f, Vector2F},
-    },
-    platform::{self, RasterizationOptions},
-    text_layout::{Glyph, LineLayout, Run, RunStyle},
-};
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
 use core_foundation::{
@@ -26,6 +16,16 @@ use core_graphics::{
 use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
     handle::Handle, hinting::HintingOptions, source::SystemSource, sources::mem::MemSource,
+};
+use gpui::{
+    fonts::{Features, FontId, GlyphId, Metrics, Properties},
+    geometry::{
+        rect::{RectF, RectI},
+        transform2d::Transform2F,
+        vector::{vec2f, Vector2F},
+    },
+    platform::{self, RasterizationOptions},
+    text_layout::{Glyph, LineLayout, Run, RunStyle},
 };
 use parking_lot::RwLock;
 use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
@@ -506,8 +506,8 @@ extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AppContext;
     use font_kit::properties::{Style, Weight};
+    use gpui::AppContext;
     use platform::FontSystem as _;
 
     #[crate::test(self, retries = 5)]

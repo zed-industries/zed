@@ -1,12 +1,8 @@
+use crate::event::EventFromNative;
+
 use super::{
     event::key_to_native, screen::Screen, status_item::StatusItem, BoolExt as _, Dispatcher,
     FontSystem, MacWindow,
-};
-use crate::{
-    executor,
-    keymap_matcher::KeymapMatcher,
-    platform::{self, AppVersion, CursorStyle, Event},
-    Action, AnyWindowHandle, ClipboardItem, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -30,6 +26,12 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
+use gpui::{
+    executor,
+    keymap_matcher::KeymapMatcher,
+    platform::{self, AppVersion, CursorStyle, Event},
+    Action, AnyWindowHandle, ClipboardItem, Menu, MenuItem,
+};
 use objc::{
     class,
     declare::ClassDecl,
@@ -235,12 +237,12 @@ impl MacForegroundPlatform {
                     .find(|binding| binding.action().eq(action.as_ref()))
                     .map(|binding| binding.keystrokes());
                 let selector = match os_action {
-                    Some(crate::OsAction::Cut) => selector("cut:"),
-                    Some(crate::OsAction::Copy) => selector("copy:"),
-                    Some(crate::OsAction::Paste) => selector("paste:"),
-                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-                    Some(crate::OsAction::Undo) => selector("undo:"),
-                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    Some(gpui::OsAction::Cut) => selector("cut:"),
+                    Some(gpui::OsAction::Copy) => selector("copy:"),
+                    Some(gpui::OsAction::Paste) => selector("paste:"),
+                    Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
+                    Some(gpui::OsAction::Undo) => selector("undo:"),
+                    Some(gpui::OsAction::Redo) => selector("redo:"),
                     None => selector("handleGPUIMenuItem:"),
                 };
 
@@ -611,14 +613,14 @@ impl platform::Platform for MacPlatform {
 
             let text_bytes = NSData::dataWithBytes_length_(
                 nil,
-                item.text.as_ptr() as *const c_void,
-                item.text.len() as u64,
+                item.text().as_ptr() as *const c_void,
+                item.text().len() as u64,
             );
             self.pasteboard
                 .setData_forType(text_bytes, NSPasteboardTypeString);
 
-            if let Some(metadata) = item.metadata.as_ref() {
-                let hash_bytes = ClipboardItem::text_hash(&item.text).to_be_bytes();
+            if let Some(metadata) = item.raw_metadata() {
+                let hash_bytes = ClipboardItem::text_hash(&item.text()).to_be_bytes();
                 let hash_bytes = NSData::dataWithBytes_length_(
                     nil,
                     hash_bytes.as_ptr() as *const c_void,
@@ -652,21 +654,12 @@ impl platform::Platform for MacPlatform {
 
                 if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {
                     if hash == ClipboardItem::text_hash(&text) {
-                        Some(ClipboardItem {
-                            text,
-                            metadata: Some(metadata),
-                        })
+                        Some(ClipboardItem::new(text).with_metadata(metadata))
                     } else {
-                        Some(ClipboardItem {
-                            text,
-                            metadata: None,
-                        })
+                        Some(ClipboardItem::new(text))
                     }
                 } else {
-                    Some(ClipboardItem {
-                        text,
-                        metadata: None,
-                    })
+                    Some(ClipboardItem::new(text))
                 }
             } else {
                 None
@@ -868,7 +861,7 @@ impl platform::Platform for MacPlatform {
         "macOS"
     }
 
-    fn os_version(&self) -> Result<crate::platform::AppVersion> {
+    fn os_version(&self) -> Result<gpui::platform::AppVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();
@@ -1096,7 +1089,7 @@ mod security {
 
 #[cfg(test)]
 mod tests {
-    use crate::platform::Platform;
+    use gpui::platform::Platform;
 
     use super::*;
 

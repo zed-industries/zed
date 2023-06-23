@@ -12,10 +12,10 @@ fn main() {
 
 fn generate_dispatch_bindings() {
     println!("cargo:rustc-link-lib=framework=System");
-    println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
+    println!("cargo:rerun-if-changed=src/dispatch.h");
 
     let bindings = bindgen::Builder::default()
-        .header("src/platform/mac/dispatch.h")
+        .header("src/dispatch.h")
         .allowlist_var("_dispatch_main_q")
         .allowlist_function("dispatch_async_f")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
@@ -29,10 +29,10 @@ fn generate_dispatch_bindings() {
         .expect("couldn't write dispatch bindings");
 }
 
-const SHADER_HEADER_PATH: &str = "./src/platform/mac/shaders/shaders.h";
+const SHADER_HEADER_PATH: &str = "./src/shaders/shaders.h";
 
 fn compile_metal_shaders() {
-    let shader_path = "./src/platform/mac/shaders/shaders.metal";
+    let shader_path = "./src/shaders/shaders.metal";
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
     let metallib_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
 

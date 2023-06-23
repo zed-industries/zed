@@ -10,7 +10,7 @@ use objc::{
 };
 use std::ffi::c_void;
 
-use crate::platform;
+use gpui::platform;
 
 include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
 

@@ -80,7 +80,7 @@ impl View for SharedScreen {
                         vec2f(frame.width() as f32, frame.height() as f32),
                     );
                     let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                    scene.push_surface(gpui::platform::mac::Surface {
+                    scene.push_surface(gpui::scene::Surface {
                         bounds: RectF::new(origin, size),
                         image_buffer: frame.image(),
                     });

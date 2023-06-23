@@ -33,8 +33,11 @@ impl ClipboardItem {
             .as_ref()
             .and_then(|m| serde_json::from_str(m).ok())
     }
+    pub fn raw_metadata(&self) -> Option<&str> {
+        self.metadata.as_deref()
+    }
 
-    pub(crate) fn text_hash(text: &str) -> u64 {
+    pub fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()

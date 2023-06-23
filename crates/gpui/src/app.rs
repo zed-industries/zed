@@ -153,10 +153,12 @@ pub trait BorrowWindowContext {
 pub struct App(Rc<RefCell<AppContext>>);
 
 impl App {
-    pub fn new(asset_source: impl AssetSource) -> Result<Self> {
-        let platform = platform::current::platform();
+    pub fn new(
+        asset_source: impl AssetSource,
+        platform: Arc<dyn Platform>,
+        foreground_platform: Rc<dyn platform::ForegroundPlatform>,
+    ) -> Result<Self> {
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
-        let foreground_platform = platform::current::foreground_platform(foreground.clone());
         let app = Self(Rc::new(RefCell::new(AppContext::new(
             foreground,
             Arc::new(executor::Background::new()),

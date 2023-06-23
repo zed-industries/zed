@@ -1,12 +1,12 @@
 use super::atlas::{AllocId, AtlasAllocator};
-use crate::{
+use anyhow::anyhow;
+use gpui::{
     fonts::{FontId, GlyphId},
     geometry::{rect::RectI, vector::Vector2I},
     platform::{FontSystem, RasterizationOptions},
     scene::ImageGlyph,
     ImageData,
 };
-use anyhow::anyhow;
 use metal::{MTLPixelFormat, TextureDescriptor, TextureRef};
 use ordered_float::OrderedFloat;
 use std::{collections::HashMap, mem, sync::Arc};

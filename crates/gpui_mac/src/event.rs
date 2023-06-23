@@ -1,12 +1,3 @@
-use crate::{
-    geometry::vector::vec2f,
-    keymap_matcher::Keystroke,
-    platform::{
-        Event, KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton,
-        MouseButtonEvent, MouseExitedEvent, MouseMovedEvent, NavigationDirection, ScrollDelta,
-        ScrollWheelEvent, TouchPhase,
-    },
-};
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{id, YES},
@@ -18,6 +9,15 @@ use core_graphics::{
 };
 use ctor::ctor;
 use foreign_types::ForeignType;
+use gpui::{
+    geometry::vector::vec2f,
+    keymap_matcher::Keystroke,
+    platform::{
+        Event, KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+        MouseButtonEvent, MouseExitedEvent, MouseMovedEvent, NavigationDirection, ScrollDelta,
+        ScrollWheelEvent, TouchPhase,
+    },
+};
 use objc::{class, msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::CStr, mem, os::raw::c_char, ptr};
 
@@ -86,8 +86,11 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
     }
 }
 
-impl Event {
-    pub unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Self> {
+pub trait EventFromNative {
+    unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Event>;
+}
+impl EventFromNative for Event {
+    unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Event> {
         let event_type = native_event.eventType();
 
         // Filter out event types that aren't in the NSEventType enum.
