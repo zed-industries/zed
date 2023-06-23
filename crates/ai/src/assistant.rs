@@ -1300,21 +1300,21 @@ impl Conversation {
     ) -> Vec<Message> {
         let mut result = Vec::new();
 
-        let buffer_len = self.buffer.read(cx).len();
         let mut messages = self.messages(cx).peekable();
         let mut offsets = offsets.into_iter().peekable();
+        let mut current_message = messages.next();
         while let Some(offset) = offsets.next() {
-            // Skip messages that start after the offset.
-            while messages.peek().map_or(false, |message| {
-                message.range.end < offset || (message.range.end == offset && offset < buffer_len)
+            // Locate the message that contains the offset.
+            while current_message.as_ref().map_or(false, |message| {
+                !message.range.contains(&offset) && messages.peek().is_some()
             }) {
-                messages.next();
+                current_message = messages.next();
             }
-            let Some(message) = messages.peek() else { continue };
+            let Some(message) = current_message.as_ref() else { break };
 
             // Skip offsets that are in the same message.
             while offsets.peek().map_or(false, |offset| {
-                message.range.contains(offset) || message.range.end == buffer_len
+                message.range.contains(offset) || messages.peek().is_none()
             }) {
                 offsets.next();
             }
@@ -2358,6 +2358,26 @@ mod tests {
         assert_eq!(
             message_ids_for_offsets(&conversation, &[0, 1, 11], cx),
             [message_1.id, message_3.id]
+        );
+
+        let message_4 = conversation
+            .update(cx, |conversation, cx| {
+                conversation.insert_message_after(message_3.id, Role::User, MessageStatus::Done, cx)
+            })
+            .unwrap();
+        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\n");
+        assert_eq!(
+            messages(&conversation, cx),
+            vec![
+                (message_1.id, Role::User, 0..4),
+                (message_2.id, Role::User, 4..8),
+                (message_3.id, Role::User, 8..12),
+                (message_4.id, Role::User, 12..12)
+            ]
+        );
+        assert_eq!(
+            message_ids_for_offsets(&conversation, &[0, 4, 8, 12], cx),
+            [message_1.id, message_2.id, message_3.id, message_4.id]
         );
 
         fn message_ids_for_offsets(
