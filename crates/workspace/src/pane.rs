@@ -1,9 +1,10 @@
 mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
+pub use crate::toolbar::Toolbar;
 use crate::{
-    item::WeakItemHandle, notify_of_new_dock, toolbar::Toolbar, AutosaveSetting, Item,
-    NewCenterTerminal, NewFile, NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, notify_of_new_dock, AutosaveSetting, Item, NewCenterTerminal, NewFile,
+    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -250,7 +251,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: cx.add_view(|_| Toolbar::new(handle)),
+            toolbar: cx.add_view(|_| Toolbar::new(Some(handle))),
             tab_bar_context_menu: TabBarContextMenu {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,
@@ -1112,7 +1113,7 @@ impl Pane {
             .get(self.active_item_index)
             .map(|item| item.as_ref());
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_active_pane_item(active_item, cx);
+            toolbar.set_active_item(active_item, cx);
         });
     }
 
@@ -1602,7 +1603,7 @@ impl View for Pane {
         }
 
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.pane_focus_update(true, cx);
+            toolbar.focus_changed(true, cx);
         });
 
         if let Some(active_item) = self.active_item() {
@@ -1631,7 +1632,7 @@ impl View for Pane {
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = false;
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.pane_focus_update(false, cx);
+            toolbar.focus_changed(false, cx);
         });
         cx.notify();
     }

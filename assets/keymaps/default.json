@@ -198,6 +198,13 @@
     }
   },
   {
+    "context": "AssistantPanel",
+    "bindings": {
+        "cmd-g": "search::SelectNextMatch",
+        "cmd-shift-g": "search::SelectPrevMatch"
+    }
+  },
+  {
     "context": "ConversationEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",

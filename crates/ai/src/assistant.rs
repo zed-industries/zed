@@ -24,6 +24,7 @@ use gpui::{
 };
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::SettingsStore;
 use std::{
@@ -46,7 +47,8 @@ use util::{
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
-    Save, ToggleZoom, Workspace,
+    searchable::Direction,
+    Save, ToggleZoom, Toolbar, Workspace,
 };
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
@@ -93,6 +95,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantPanel::save_api_key);
     cx.add_action(AssistantPanel::reset_api_key);
     cx.add_action(AssistantPanel::toggle_zoom);
+    cx.add_action(AssistantPanel::deploy);
+    cx.add_action(AssistantPanel::select_next_match);
+    cx.add_action(AssistantPanel::select_prev_match);
+    cx.add_action(AssistantPanel::handle_editor_cancel);
     cx.add_action(
         |workspace: &mut Workspace, _: &ToggleFocus, cx: &mut ViewContext<Workspace>| {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -118,6 +124,7 @@ pub struct AssistantPanel {
     saved_conversations_list_state: UniformListState,
     zoomed: bool,
     has_focus: bool,
+    toolbar: ViewHandle<Toolbar>,
     api_key: Rc<RefCell<Option<String>>>,
     api_key_editor: Option<ViewHandle<Editor>>,
     has_read_credentials: bool,
@@ -161,6 +168,12 @@ impl AssistantPanel {
                         anyhow::Ok(())
                     });
 
+                    let toolbar = cx.add_view(|cx| {
+                        let mut toolbar = Toolbar::new(None);
+                        toolbar.set_can_navigate(false, cx);
+                        toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
+                        toolbar
+                    });
                     let mut this = Self {
                         active_editor_index: Default::default(),
                         editors: Default::default(),
@@ -168,6 +181,7 @@ impl AssistantPanel {
                         saved_conversations_list_state: Default::default(),
                         zoomed: false,
                         has_focus: false,
+                        toolbar,
                         api_key: Rc::new(RefCell::new(None)),
                         api_key_editor: None,
                         has_read_credentials: false,
@@ -220,11 +234,27 @@ impl AssistantPanel {
         self.subscriptions
             .push(cx.observe(&conversation, |_, _, cx| cx.notify()));
 
-        self.active_editor_index = Some(self.editors.len());
-        self.editors.push(editor.clone());
-        if self.has_focus(cx) {
-            cx.focus(&editor);
+        let index = self.editors.len();
+        self.editors.push(editor);
+        self.set_active_editor_index(Some(index), cx);
+    }
+
+    fn set_active_editor_index(&mut self, index: Option<usize>, cx: &mut ViewContext<Self>) {
+        self.active_editor_index = index;
+        if let Some(editor) = self.active_editor() {
+            let editor = editor.read(cx).editor.clone();
+            self.toolbar.update(cx, |toolbar, cx| {
+                toolbar.set_active_item(Some(&editor), cx);
+            });
+            if self.has_focus(cx) {
+                cx.focus(&editor);
+            }
+        } else {
+            self.toolbar.update(cx, |toolbar, cx| {
+                toolbar.set_active_item(None, cx);
+            });
         }
+
         cx.notify();
     }
 
@@ -275,6 +305,39 @@ impl AssistantPanel {
         }
     }
 
+    fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
+        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, true, cx)) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    }
+
+    fn handle_editor_cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
+            if !search_bar.read(cx).is_dismissed() {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.dismiss(&Default::default(), cx)
+                });
+                return;
+            }
+        }
+        cx.propagate_action();
+    }
+
+    fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, cx));
+        }
+    }
+
+    fn select_prev_match(&mut self, _: &search::SelectPrevMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, cx));
+        }
+    }
+
     fn active_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
         self.editors.get(self.active_editor_index?)
     }
@@ -287,8 +350,7 @@ impl AssistantPanel {
             .mouse::<ListConversations>(0)
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                this.active_editor_index = None;
-                cx.notify();
+                this.set_active_editor_index(None, cx);
             })
     }
 
@@ -425,8 +487,7 @@ impl AssistantPanel {
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(ix) = self.editor_index_for_path(&path, cx) {
-            self.active_editor_index = Some(ix);
-            cx.notify();
+            self.set_active_editor_index(Some(ix), cx);
             return Task::ready(Ok(()));
         }
 
@@ -444,7 +505,7 @@ impl AssistantPanel {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
                 if let Some(ix) = this.editor_index_for_path(&path, cx) {
-                    this.active_editor_index = Some(ix);
+                    this.set_active_editor_index(Some(ix), cx);
                 } else {
                     let editor = cx
                         .add_view(|cx| ConversationEditor::from_conversation(conversation, fs, cx));
@@ -541,6 +602,11 @@ impl View for AssistantPanel {
                         .constrained()
                         .with_height(theme.workspace.tab_bar.height),
                 )
+                .with_children(if self.toolbar.read(cx).hidden() {
+                    None
+                } else {
+                    Some(ChildView::new(&self.toolbar, cx).expanded())
+                })
                 .with_child(if let Some(editor) = self.active_editor() {
                     ChildView::new(editor, cx).flex(1., true).into_any()
                 } else {
@@ -563,6 +629,8 @@ impl View for AssistantPanel {
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = true;
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         if cx.is_self_focused() {
             if let Some(editor) = self.active_editor() {
                 cx.focus(editor);
@@ -572,8 +640,10 @@ impl View for AssistantPanel {
         }
     }
 
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = false;
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
     }
 }
 

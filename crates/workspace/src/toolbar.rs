@@ -38,7 +38,7 @@ trait ToolbarItemViewHandle {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext);
+    fn focus_changed(&mut self, pane_focused: bool, cx: &mut WindowContext);
     fn row_count(&self, cx: &WindowContext) -> usize;
 }
 
@@ -51,10 +51,10 @@ pub enum ToolbarItemLocation {
 }
 
 pub struct Toolbar {
-    active_pane_item: Option<Box<dyn ItemHandle>>,
+    active_item: Option<Box<dyn ItemHandle>>,
     hidden: bool,
     can_navigate: bool,
-    pane: WeakViewHandle<Pane>,
+    pane: Option<WeakViewHandle<Pane>>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
@@ -121,7 +121,7 @@ impl View for Toolbar {
         let pane = self.pane.clone();
         let mut enable_go_backward = false;
         let mut enable_go_forward = false;
-        if let Some(pane) = pane.upgrade(cx) {
+        if let Some(pane) = pane.and_then(|pane| pane.upgrade(cx)) {
             let pane = pane.read(cx);
             enable_go_backward = pane.can_navigate_backward();
             enable_go_forward = pane.can_navigate_forward();
@@ -143,19 +143,17 @@ impl View for Toolbar {
                 enable_go_backward,
                 spacing,
                 {
-                    let pane = pane.clone();
                     move |toolbar, cx| {
-                        if let Some(workspace) = toolbar
-                            .pane
-                            .upgrade(cx)
-                            .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
+                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
                         {
-                            let pane = pane.clone();
-                            cx.window_context().defer(move |cx| {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.go_back(pane.clone(), cx).detach_and_log_err(cx);
-                                });
-                            })
+                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
+                                let pane = pane.downgrade();
+                                cx.window_context().defer(move |cx| {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.go_back(pane, cx).detach_and_log_err(cx);
+                                    });
+                                })
+                            }
                         }
                     }
                 },
@@ -171,21 +169,17 @@ impl View for Toolbar {
                 enable_go_forward,
                 spacing,
                 {
-                    let pane = pane.clone();
                     move |toolbar, cx| {
-                        if let Some(workspace) = toolbar
-                            .pane
-                            .upgrade(cx)
-                            .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
+                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
                         {
-                            let pane = pane.clone();
-                            cx.window_context().defer(move |cx| {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace
-                                        .go_forward(pane.clone(), cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            });
+                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
+                                let pane = pane.downgrade();
+                                cx.window_context().defer(move |cx| {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.go_forward(pane, cx).detach_and_log_err(cx);
+                                    });
+                                })
+                            }
                         }
                     }
                 },
@@ -269,9 +263,9 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
 }
 
 impl Toolbar {
-    pub fn new(pane: WeakViewHandle<Pane>) -> Self {
+    pub fn new(pane: Option<WeakViewHandle<Pane>>) -> Self {
         Self {
-            active_pane_item: None,
+            active_item: None,
             pane,
             items: Default::default(),
             hidden: false,
@@ -288,7 +282,7 @@ impl Toolbar {
     where
         T: 'static + ToolbarItemView,
     {
-        let location = item.set_active_pane_item(self.active_pane_item.as_deref(), cx);
+        let location = item.set_active_pane_item(self.active_item.as_deref(), cx);
         cx.subscribe(&item, |this, item, event, cx| {
             if let Some((_, current_location)) =
                 this.items.iter_mut().find(|(i, _)| i.id() == item.id())
@@ -307,20 +301,16 @@ impl Toolbar {
         cx.notify();
     }
 
-    pub fn set_active_pane_item(
-        &mut self,
-        pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.active_pane_item = pane_item.map(|item| item.boxed_clone());
+    pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
-            .active_pane_item
+            .active_item
             .as_ref()
             .map(|item| !item.show_toolbar(cx))
             .unwrap_or(false);
 
         for (toolbar_item, current_location) in self.items.iter_mut() {
-            let new_location = toolbar_item.set_active_pane_item(pane_item, cx);
+            let new_location = toolbar_item.set_active_pane_item(item, cx);
             if new_location != *current_location {
                 *current_location = new_location;
                 cx.notify();
@@ -328,9 +318,9 @@ impl Toolbar {
         }
     }
 
-    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut ViewContext<Self>) {
+    pub fn focus_changed(&mut self, focused: bool, cx: &mut ViewContext<Self>) {
         for (toolbar_item, _) in self.items.iter_mut() {
-            toolbar_item.pane_focus_update(pane_focused, cx);
+            toolbar_item.focus_changed(focused, cx);
         }
     }
 
@@ -364,7 +354,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
         })
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext) {
+    fn focus_changed(&mut self, pane_focused: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();
