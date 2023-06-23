@@ -1,3 +1,5 @@
+pub mod github;
+
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use isahc::config::{Configurable, RedirectPolicy};

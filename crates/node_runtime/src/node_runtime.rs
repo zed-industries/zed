@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
+use util_http::HttpClient;
 
 const VERSION: &str = "v18.15.0";
 

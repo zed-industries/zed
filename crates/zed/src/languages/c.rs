@@ -6,10 +6,10 @@ use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
     fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
+
     ResultExt,
 };
-
+use util_http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub struct CLspAdapter;
 
 #[async_trait]

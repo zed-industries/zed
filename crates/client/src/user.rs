@@ -7,7 +7,7 @@ use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use staff_mode::StaffMode;
 use std::sync::{Arc, Weak};
-use util::http::HttpClient;
+use util_http::HttpClient;
 use util::TryFutureExt as _;
 
 #[derive(Default, Debug)]

@@ -17,8 +17,8 @@ use std::{
         Arc,
     },
 };
-use util::{fs::remove_matching, github::latest_github_release, ResultExt};
-
+use util::{fs::remove_matching,  ResultExt};
+use util_http::github::latest_github_release;
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
 }

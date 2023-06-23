@@ -36,6 +36,7 @@ sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 
 anyhow.workspace = true
 async-broadcast = "0.4"

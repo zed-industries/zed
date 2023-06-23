@@ -46,7 +46,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::http::HttpClient;
+use util_http::HttpClient;
 use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]

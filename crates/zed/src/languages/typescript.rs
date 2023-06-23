@@ -16,9 +16,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, github::latest_github_release};
-use util::{github::GitHubLspBinaryVersion, ResultExt};
-
+use util::{fs::remove_matching, ResultExt};
+use util_http::github::{latest_github_release, GitHubLspBinaryVersion};
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![
         server_path.into(),

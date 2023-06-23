@@ -29,8 +29,9 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    fs::remove_matching, paths, ResultExt,
 };
+use util_http::{HttpClient, github::latest_github_release};
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);

@@ -41,7 +41,7 @@ use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
 use util::channel::ReleaseChannel;
-use util::http::HttpClient;
+use util_http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -141,7 +141,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] util::http::Error),
+    Http(#[from] util_http::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -1416,7 +1416,7 @@ mod tests {
     use gpui::{executor::Deterministic, TestAppContext};
     use parking_lot::Mutex;
     use std::future;
-    use util::http::FakeHttpClient;
+    use util_http::FakeHttpClient;
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {

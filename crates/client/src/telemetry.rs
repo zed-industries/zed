@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use tempfile::NamedTempFile;
-use util::http::HttpClient;
+use util_http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
 use uuid::Uuid;
 

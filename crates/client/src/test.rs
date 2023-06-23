@@ -8,7 +8,7 @@ use rpc::{
     ConnectionId, Peer, Receipt, TypedEnvelope,
 };
 use std::{rc::Rc, sync::Arc};
-use util::http::FakeHttpClient;
+use util_http::FakeHttpClient;
 
 pub struct FakeServer {
     peer: Arc<Peer>,

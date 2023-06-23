@@ -1,4 +1,4 @@
-use crate::http::HttpClient;
+use crate::HttpClient;
 use anyhow::{anyhow, Context, Result};
 use futures::AsyncReadExt;
 use serde::Deserialize;

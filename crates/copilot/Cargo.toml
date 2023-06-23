@@ -28,6 +28,7 @@ theme = { path = "../theme" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"
 anyhow.workspace = true

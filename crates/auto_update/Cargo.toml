@@ -18,6 +18,7 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 anyhow.workspace = true
 isahc.workspace = true
 lazy_static.workspace = true

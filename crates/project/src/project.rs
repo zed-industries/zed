@@ -75,9 +75,10 @@ use std::{
 };
 use terminals::Terminals;
 use util::{
-    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    debug_panic, defer, merge_json_value_into,
     paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
+use util_http::HttpClient;
 
 pub use fs::*;
 pub use worktree::*;
@@ -681,7 +682,7 @@ impl Project {
     ) -> ModelHandle<Project> {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
-        let http_client = util::http::FakeHttpClient::with_404_response();
+        let http_client = util_http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project =

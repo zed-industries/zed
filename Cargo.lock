@@ -609,6 +609,7 @@ dependencies = [
  "tempdir",
  "theme",
  "util",
+ "util_http",
  "workspace",
 ]
 
@@ -1281,6 +1282,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
+ "util_http",
  "uuid 1.3.2",
 ]
 
@@ -1520,6 +1522,7 @@ dependencies = [
  "smol",
  "theme",
  "util",
+ "util_http",
 ]
 
 [[package]]
@@ -3628,6 +3631,7 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+ "util_http",
 ]
 
 [[package]]
@@ -4265,6 +4269,7 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
+ "util_http",
 ]
 
 [[package]]
@@ -5035,6 +5040,7 @@ dependencies = [
  "toml",
  "unindent",
  "util",
+ "util_http",
 ]
 
 [[package]]
@@ -7922,7 +7928,6 @@ dependencies = [
  "dirs 3.0.2",
  "futures 0.3.28",
  "git2",
- "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
@@ -7931,6 +7936,20 @@ dependencies = [
  "serde_json",
  "smol",
  "take-until",
+ "tempdir",
+]
+
+[[package]]
+name = "util_http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "isahc",
+ "log",
+ "serde",
+ "serde_json",
+ "smol",
  "tempdir",
  "url",
 ]
@@ -9036,6 +9055,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "util_http",
  "uuid 1.3.2",
  "vim",
  "welcome",

@@ -63,6 +63,7 @@ terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }

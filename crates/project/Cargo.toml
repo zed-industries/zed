@@ -36,6 +36,7 @@ settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 terminal = { path = "../terminal" }
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 
 aho-corasick = "0.7"
 anyhow.workspace = true

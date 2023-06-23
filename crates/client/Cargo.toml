@@ -16,6 +16,7 @@ collections = { path = "../collections" }
 db = { path = "../db" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
+util_http = { path = "../util_http" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 staff_mode = { path = "../staff_mode" }

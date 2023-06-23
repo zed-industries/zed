@@ -9,7 +9,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["tempdir", "git2"]
+test-support = []
 
 [dependencies]
 anyhow.workspace = true
@@ -17,15 +17,12 @@ backtrace = "0.3"
 log.workspace = true
 lazy_static.workspace = true
 futures.workspace = true
-isahc.workspace = true
 smol.workspace = true
-url = "2.2"
+
 rand.workspace = true
 rust-embed.workspace = true
-tempdir = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-git2 = { version = "0.15", default-features = false, optional = true }
 dirs = "3.0"
 take-until = "0.2.0"
 

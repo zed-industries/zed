@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+util_http = { path = "../util_http" }
 util = { path = "../util" }
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"

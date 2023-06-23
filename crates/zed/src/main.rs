@@ -45,9 +45,10 @@ use std::{
 use sum_tree::Bias;
 use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
 use util::{
-    http::{self, HttpClient},
+
     paths::PathLikeWithPosition,
 };
+use util_http::{self as http, HttpClient};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
