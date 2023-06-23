@@ -1,4 +1,4 @@
-use std::{cmp, sync::Arc};
+use std::{cmp, ops::Range, sync::Arc};
 
 use crate::{
     display_map::Inlay, editor_settings, Anchor, Editor, ExcerptId, InlayId, MultiBuffer,
@@ -38,20 +38,43 @@ pub struct CachedExcerptHints {
 struct ExcerptQuery {
     buffer_id: u64,
     excerpt_id: ExcerptId,
-    excerpt_range_start: language::Anchor,
-    excerpt_range_end: language::Anchor,
+    dimensions: ExcerptDimensions,
     cache_version: usize,
     invalidate: InvalidationStrategy,
 }
-impl ExcerptQuery {
-    fn contains_position(&self, position: text::Anchor, buffer_snapshot: &BufferSnapshot) -> bool {
-        self.excerpt_range_start
-            .cmp(&position, buffer_snapshot)
-            .is_le()
-            && self
-                .excerpt_range_end
+
+#[derive(Debug, Clone, Copy)]
+struct ExcerptDimensions {
+    excerpt_range_start: language::Anchor,
+    excerpt_range_end: language::Anchor,
+    excerpt_visible_range_start: language::Anchor,
+    excerpt_visible_range_end: language::Anchor,
+}
+
+impl ExcerptDimensions {
+    fn contains_position(
+        &self,
+        position: language::Anchor,
+        buffer_snapshot: &BufferSnapshot,
+        visible_only: bool,
+    ) -> bool {
+        if visible_only {
+            self.excerpt_visible_range_start
                 .cmp(&position, buffer_snapshot)
-                .is_ge()
+                .is_le()
+                && self
+                    .excerpt_visible_range_end
+                    .cmp(&position, buffer_snapshot)
+                    .is_ge()
+        } else {
+            self.excerpt_range_start
+                .cmp(&position, buffer_snapshot)
+                .is_le()
+                && self
+                    .excerpt_range_end
+                    .cmp(&position, buffer_snapshot)
+                    .is_ge()
+        }
     }
 }
 
@@ -127,7 +150,7 @@ impl InlayHintCache {
 
     pub fn spawn_hints_update(
         &mut self,
-        mut excerpts_to_query: HashMap<ExcerptId, ModelHandle<Buffer>>,
+        mut excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)>,
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -172,34 +195,12 @@ impl InlayHintCache {
                 .update(&mut cx, |editor, cx| {
                     let visible_hints =
                         Arc::new(visible_inlay_hints(editor, cx).cloned().collect::<Vec<_>>());
-                    for (excerpt_id, buffer_handle) in excerpts_to_query {
-                        let (multi_buffer_snapshot, excerpt_range) =
-                            editor.buffer.update(cx, |multi_buffer, cx| {
-                                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-                                (
-                                    multi_buffer_snapshot,
-                                    multi_buffer
-                                        .excerpts_for_buffer(&buffer_handle, cx)
-                                        .into_iter()
-                                        .find(|(id, _)| id == &excerpt_id)
-                                        .map(|(_, range)| range.context),
-                                )
-                            });
-
-                        if let Some(excerpt_range) = excerpt_range {
+                    for (excerpt_id, (buffer_handle, excerpt_visible_range)) in excerpts_to_query {
+                        if !excerpt_visible_range.is_empty() {
                             let buffer = buffer_handle.read(cx);
                             let buffer_snapshot = buffer.snapshot();
-                            let query = ExcerptQuery {
-                                buffer_id: buffer.remote_id(),
-                                excerpt_id,
-                                excerpt_range_start: excerpt_range.start,
-                                excerpt_range_end: excerpt_range.end,
-                                cache_version,
-                                invalidate,
-                            };
                             let cached_excxerpt_hints =
                                 editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-
                             if let Some(cached_excerpt_hints) = &cached_excxerpt_hints {
                                 let new_task_buffer_version = buffer_snapshot.version();
                                 let cached_excerpt_hints = cached_excerpt_hints.read();
@@ -214,17 +215,50 @@ impl InlayHintCache {
                                 }
                             }
 
-                            editor.inlay_hint_cache.update_tasks.insert(
-                                excerpt_id,
-                                new_update_task(
-                                    query,
-                                    multi_buffer_snapshot,
-                                    buffer_snapshot,
-                                    Arc::clone(&visible_hints),
-                                    cached_excxerpt_hints,
-                                    cx,
-                                ),
-                            );
+                            let buffer_id = buffer.remote_id();
+                            let excerpt_range_start =
+                                buffer.anchor_before(excerpt_visible_range.start);
+                            let excerpt_range_end = buffer.anchor_after(excerpt_visible_range.end);
+
+                            let (multi_buffer_snapshot, full_excerpt_range) =
+                                editor.buffer.update(cx, |multi_buffer, cx| {
+                                    let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+                                    (
+                                        multi_buffer_snapshot,
+                                        multi_buffer
+                                            .excerpts_for_buffer(&buffer_handle, cx)
+                                            .into_iter()
+                                            .find(|(id, _)| id == &excerpt_id)
+                                            .map(|(_, range)| range.context),
+                                    )
+                                });
+
+                            if let Some(full_excerpt_range) = full_excerpt_range {
+                                let query = ExcerptQuery {
+                                    buffer_id,
+                                    excerpt_id,
+                                    dimensions: ExcerptDimensions {
+                                        excerpt_range_start,
+                                        excerpt_range_end,
+                                        excerpt_visible_range_start: full_excerpt_range.start,
+                                        excerpt_visible_range_end: full_excerpt_range.end,
+                                    },
+                                    cache_version,
+                                    invalidate,
+                                };
+
+                                editor.inlay_hint_cache.update_tasks.insert(
+                                    excerpt_id,
+                                    new_update_task(
+                                        query,
+                                        multi_buffer_snapshot,
+                                        buffer_snapshot,
+                                        Arc::clone(&visible_hints),
+                                        cached_excxerpt_hints,
+                                        cx,
+                                    ),
+                                );
+                            }
                         }
                     }
                 })
@@ -461,7 +495,10 @@ fn new_excerpt_hints_update_result(
 
     let mut excerpt_hints_to_persist = HashMap::default();
     for new_hint in new_excerpt_hints {
-        if !query.contains_position(new_hint.position, buffer_snapshot) {
+        if !query
+            .dimensions
+            .contains_position(new_hint.position, buffer_snapshot, false)
+        {
             continue;
         }
         let missing_from_cache = match &cached_excerpt_hints {
@@ -499,7 +536,13 @@ fn new_excerpt_hints_update_result(
             visible_hints
                 .iter()
                 .filter(|hint| hint.position.excerpt_id == query.excerpt_id)
-                .filter(|hint| query.contains_position(hint.position.text_anchor, buffer_snapshot))
+                .filter(|hint| {
+                    query.dimensions.contains_position(
+                        hint.position.text_anchor,
+                        buffer_snapshot,
+                        false,
+                    )
+                })
                 .map(|inlay_hint| inlay_hint.id)
                 .filter(|hint_id| !excerpt_hints_to_persist.contains_key(hint_id)),
         );
@@ -563,7 +606,9 @@ fn hints_fetch_task(
                         Some(project.update(cx, |project, cx| {
                             project.inlay_hints(
                                 buffer,
-                                query.excerpt_range_start..query.excerpt_range_end,
+                                // TODO kb split into 3 queries
+                                query.dimensions.excerpt_range_start
+                                    ..query.dimensions.excerpt_range_end,
                                 cx,
                             )
                         }))

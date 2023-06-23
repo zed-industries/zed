@@ -7888,7 +7888,10 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let editor_a = cx_a.add_view(window_a, |cx| {
         Editor::for_buffer(buffer_a, Some(project_a.clone()), cx)
     });
-    editor_a.update(cx_a, |_, cx| cx.focus(&editor_a));
+    editor_a.update(cx_a, |editor, cx| {
+        editor.set_scroll_position(vec2f(0., 1.), cx);
+        cx.focus(&editor_a)
+    });
     cx_a.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert!(
@@ -7915,7 +7918,10 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let editor_b = cx_b.add_view(window_b, |cx| {
         Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
     });
-    editor_b.update(cx_b, |_, cx| cx.focus(&editor_b));
+    editor_b.update(cx_b, |editor, cx| {
+        editor.set_scroll_position(vec2f(0., 1.), cx);
+        cx.focus(&editor_b)
+    });
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert!(

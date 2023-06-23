@@ -2638,7 +2638,10 @@ impl Editor {
         let excerpts_to_query = self
             .excerpt_visible_offsets(cx)
             .into_iter()
-            .map(|(buffer, _, excerpt_id)| (excerpt_id, buffer))
+            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer, excerpt_visible_range, excerpt_id)| {
+                (excerpt_id, (buffer, excerpt_visible_range))
+            })
             .collect::<HashMap<_, _>>();
         self.inlay_hint_cache
             .spawn_hints_update(excerpts_to_query, invalidate_cache, cx)
@@ -2661,7 +2664,6 @@ impl Editor {
             Bias::Left,
         );
         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
-
         multi_buffer.range_to_buffer_ranges(multi_buffer_visible_range, cx)
     }
 
