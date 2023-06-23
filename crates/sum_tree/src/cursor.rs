@@ -97,6 +97,42 @@ where
         }
     }
 
+    pub fn next_item(&self) -> Option<&'a T> {
+        self.assert_did_seek();
+        if let Some(entry) = self.stack.last() {
+            if entry.index == entry.tree.0.items().len() - 1 {
+                if let Some(next_leaf) = self.next_leaf() {
+                    Some(next_leaf.0.items().first().unwrap())
+                } else {
+                    None
+                }
+            } else {
+                match *entry.tree.0 {
+                    Node::Leaf { ref items, .. } => Some(&items[entry.index + 1]),
+                    _ => unreachable!(),
+                }
+            }
+        } else if self.at_end {
+            None
+        } else {
+            self.tree.first()
+        }
+    }
+
+    fn next_leaf(&self) -> Option<&'a SumTree<T>> {
+        for entry in self.stack.iter().rev().skip(1) {
+            if entry.index < entry.tree.0.child_trees().len() - 1 {
+                match *entry.tree.0 {
+                    Node::Internal {
+                        ref child_trees, ..
+                    } => return Some(child_trees[entry.index + 1].leftmost_leaf()),
+                    Node::Leaf { .. } => unreachable!(),
+                };
+            }
+        }
+        None
+    }
+
     pub fn prev_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {

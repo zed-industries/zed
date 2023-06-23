@@ -816,6 +816,14 @@ mod tests {
                         assert_eq!(cursor.item(), None);
                     }
 
+                    if before_start {
+                        assert_eq!(cursor.next_item(), reference_items.get(0));
+                    } else if pos + 1 < reference_items.len() {
+                        assert_eq!(cursor.next_item().unwrap(), &reference_items[pos + 1]);
+                    } else {
+                        assert_eq!(cursor.next_item(), None);
+                    }
+
                     if i < 5 {
                         cursor.next(&());
                         if pos < reference_items.len() {
@@ -861,14 +869,17 @@ mod tests {
         );
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
         cursor.prev(&());
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
         cursor.next(&());
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
         // Single-element tree
@@ -881,22 +892,26 @@ mod tests {
         );
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
         cursor.next(&());
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
         let mut cursor = tree.cursor::<IntegersSummary>();
         assert_eq!(cursor.slice(&Count(1), Bias::Right, &()).items(&()), [1]);
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
         cursor.seek(&Count(0), Bias::Right, &());
@@ -908,6 +923,7 @@ mod tests {
         );
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
         // Multiple-element tree
@@ -918,67 +934,80 @@ mod tests {
         assert_eq!(cursor.slice(&Count(2), Bias::Right, &()).items(&()), [1, 2]);
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
+        assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
         cursor.next(&());
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
+        assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
         cursor.next(&());
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
+        assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
         cursor.next(&());
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
         cursor.next(&());
         cursor.next(&());
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&6));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
+        assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
+        assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
+        assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&2));
         assert_eq!(cursor.prev_item(), Some(&1));
+        assert_eq!(cursor.next_item(), Some(&3));
         assert_eq!(cursor.start().sum, 1);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&2));
         assert_eq!(cursor.start().sum, 0);
 
         cursor.prev(&());
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&1));
         assert_eq!(cursor.start().sum, 0);
 
         cursor.next(&());
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&2));
         assert_eq!(cursor.start().sum, 0);
 
         let mut cursor = tree.cursor::<IntegersSummary>();
@@ -990,6 +1019,7 @@ mod tests {
         );
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&6));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
         cursor.seek(&Count(3), Bias::Right, &());
@@ -1001,6 +1031,7 @@ mod tests {
         );
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&6));
+        assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
         // Seeking can bias left or right
