@@ -550,10 +550,7 @@ impl CollabTitlebarItem {
 
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<LeaveCall, Self>::new(0, cx, |state, _| {
-            let style = titlebar
-                .toggle_speakers_button
-                .in_state(false)
-                .style_for(state);
+            let style = titlebar.leave_call_button.style_for(state);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()

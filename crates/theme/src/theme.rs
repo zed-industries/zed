@@ -135,6 +135,7 @@ pub struct Titlebar {
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
     pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
     pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
+    pub leave_call_button: Interactive<IconButton>,
     pub user_menu_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_badge: ContainerStyle,
 }

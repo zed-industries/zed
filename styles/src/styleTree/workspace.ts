@@ -407,6 +407,24 @@ export default function workspace(colorScheme: ColorScheme) {
                     },
                 },
             }),
+            leaveCallButton: interactive({
+                base: {
+                    margin: { left: itemSpacing },
+                    cornerRadius: 6,
+                    color: foreground(layer, "variant"),
+                    iconWidth: 14,
+                    buttonWidth: 20,
+                },
+                state: {
+                    clicked: {
+                        background: background(layer, "variant", "pressed"),
+                    },
+                    hovered: {
+                        background: background(layer, "variant", "hovered"),
+                    },
+                },
+            }),
+
             userMenuButton: merge(titlebarButton, {
                 inactive: {
                     default: {
