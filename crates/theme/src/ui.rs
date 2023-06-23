@@ -12,11 +12,12 @@ use gpui::{
     scene::MouseClick,
     Action, Element, EventContext, MouseState, View, ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{ContainedText, Interactive};
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct CheckboxStyle {
     pub icon: SvgStyle,
     pub label: ContainedText,
@@ -100,7 +101,7 @@ pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
         .with_height(style.dimensions.height)
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct IconStyle {
     pub icon: SvgStyle,
     pub container: ContainerStyle,
@@ -150,7 +151,7 @@ where
     F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
     MouseEventHandler::<Tag, V>::new(0, cx, |state, _| {
-        let style = style.style_for(state, false);
+        let style = style.style_for(state);
         Label::new(label, style.text.to_owned())
             .aligned()
             .contained()
@@ -162,7 +163,7 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct ModalStyle {
     close_icon: Interactive<IconStyle>,
     container: ContainerStyle,
@@ -200,13 +201,13 @@ where
                     title,
                     style
                         .title_text
-                        .style_for(&mut MouseState::default(), false)
+                        .style_for(&mut MouseState::default())
                         .clone(),
                 ))
                 .with_child(
                     // FIXME: Get a better tag type
                     MouseEventHandler::<Tag, V>::new(999999, cx, |state, _cx| {
-                        let style = style.close_icon.style_for(state, false);
+                        let style = style.close_icon.style_for(state);
                         icon(style)
                     })
                     .on_click(platform::MouseButton::Left, move |_, _, cx| {

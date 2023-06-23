@@ -1,5 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
+import { toggleable } from "../element"
 import {
     background,
     border,
@@ -10,38 +11,53 @@ import {
 } from "./components"
 import statusBar from "./statusBar"
 import tabBar from "./tabBar"
-
+import { interactive } from "../element"
+import merge from "ts-deepmerge"
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest
     const isLight = colorScheme.isLight
     const itemSpacing = 8
-    const titlebarButton = {
-        cornerRadius: 6,
-        padding: {
-            top: 1,
-            bottom: 1,
-            left: 8,
-            right: 8,
+    const titlebarButton = toggleable({
+        base: interactive({
+            base: {
+                cornerRadius: 6,
+                padding: {
+                    top: 1,
+                    bottom: 1,
+                    left: 8,
+                    right: 8,
+                },
+                ...text(layer, "sans", "variant", { size: "xs" }),
+                background: background(layer, "variant"),
+                border: border(layer),
+            },
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "variant", "hovered", {
+                        size: "xs",
+                    }),
+                    background: background(layer, "variant", "hovered"),
+                    border: border(layer, "variant", "hovered"),
+                },
+                clicked: {
+                    ...text(layer, "sans", "variant", "pressed", {
+                        size: "xs",
+                    }),
+                    background: background(layer, "variant", "pressed"),
+                    border: border(layer, "variant", "pressed"),
+                },
+            },
+        }),
+        state: {
+            active: {
+                default: {
+                    ...text(layer, "sans", "variant", "active", { size: "xs" }),
+                    background: background(layer, "variant", "active"),
+                    border: border(layer, "variant", "active"),
+                },
+            },
         },
-        ...text(layer, "sans", "variant", { size: "xs" }),
-        background: background(layer, "variant"),
-        border: border(layer),
-        hover: {
-            ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
-            background: background(layer, "variant", "hovered"),
-            border: border(layer, "variant", "hovered"),
-        },
-        clicked: {
-            ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
-            background: background(layer, "variant", "pressed"),
-            border: border(layer, "variant", "pressed"),
-        },
-        active: {
-            ...text(layer, "sans", "variant", "active", { size: "xs" }),
-            background: background(layer, "variant", "active"),
-            border: border(layer, "variant", "active"),
-        },
-    }
+    })
     const avatarWidth = 18
     const avatarOuterWidth = avatarWidth + 4
     const followerAvatarWidth = 14
@@ -78,19 +94,24 @@ export default function workspace(colorScheme: ColorScheme) {
                 },
                 cornerRadius: 4,
             },
-            keyboardHint: {
-                ...text(layer, "sans", "variant", { size: "sm" }),
-                padding: {
-                    top: 3,
-                    left: 8,
-                    right: 8,
-                    bottom: 3,
+            keyboardHint: interactive({
+                base: {
+                    ...text(layer, "sans", "variant", { size: "sm" }),
+                    padding: {
+                        top: 3,
+                        left: 8,
+                        right: 8,
+                        bottom: 3,
+                    },
+                    cornerRadius: 8,
                 },
-                cornerRadius: 8,
-                hover: {
-                    ...text(layer, "sans", "active", { size: "sm" }),
+                state: {
+                    hovered: {
+                        ...text(layer, "sans", "active", { size: "sm" }),
+                    },
                 },
-            },
+            }),
+
             keyboardHintWidth: 320,
         },
         joiningProjectAvatar: {
@@ -201,12 +222,15 @@ export default function workspace(colorScheme: ColorScheme) {
 
             // Sign in buttom
             // FlatButton, Variant
-            signInPrompt: {
-                margin: {
-                    left: itemSpacing,
+            signInPrompt: merge(titlebarButton, {
+                inactive: {
+                    default: {
+                        margin: {
+                            left: itemSpacing,
+                        },
+                    },
                 },
-                ...titlebarButton,
-            },
+            }),
 
             // Offline Indicator
             offlineIcon: {
@@ -234,40 +258,68 @@ export default function workspace(colorScheme: ColorScheme) {
                 },
                 cornerRadius: 6,
             },
-            callControl: {
-                cornerRadius: 6,
-                color: foreground(layer, "variant"),
-                iconWidth: 12,
-                buttonWidth: 20,
-                hover: {
-                    background: background(layer, "variant", "hovered"),
-                    color: foreground(layer, "variant", "hovered"),
+            callControl: interactive({
+                base: {
+                    cornerRadius: 6,
+                    color: foreground(layer, "variant"),
+                    iconWidth: 12,
+                    buttonWidth: 20,
                 },
-            },
-            toggleContactsButton: {
-                margin: { left: itemSpacing },
-                cornerRadius: 6,
-                color: foreground(layer, "variant"),
-                iconWidth: 14,
-                buttonWidth: 20,
+                state: {
+                    hovered: {
+                        background: background(layer, "variant", "hovered"),
+                        color: foreground(layer, "variant", "hovered"),
+                    },
+                },
+            }),
+            toggleContactsButton: toggleable({
+                base: interactive({
+                    base: {
+                        margin: { left: itemSpacing },
+                        cornerRadius: 6,
+                        color: foreground(layer, "variant"),
+                        iconWidth: 14,
+                        buttonWidth: 20,
+                    },
+                    state: {
+                        clicked: {
+                            background: background(layer, "variant", "pressed"),
+                        },
+                        hovered: {
+                            background: background(layer, "variant", "hovered"),
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            background: background(layer, "on", "default"),
+                        },
+                        hovered: {
+                            background: background(layer, "on", "hovered"),
+                        },
+                        clicked: {
+                            background: background(layer, "on", "pressed"),
+                        },
+                    },
+                },
+            }),
+            userMenuButton: merge(titlebarButton, {
+                inactive: {
+                    default: {
+                        buttonWidth: 20,
+                        iconWidth: 12,
+                    },
+                },
                 active: {
-                    background: background(layer, "variant", "active"),
-                    color: foreground(layer, "variant", "active"),
+                    // posiewic: these properties are not currently set on main
+                    default: {
+                        iconWidth: 12,
+                        button_width: 20,
+                    },
                 },
-                clicked: {
-                    background: background(layer, "variant", "pressed"),
-                    color: foreground(layer, "variant", "pressed"),
-                },
-                hover: {
-                    background: background(layer, "variant", "hovered"),
-                    color: foreground(layer, "variant", "hovered"),
-                },
-            },
-            userMenuButton: {
-                buttonWidth: 20,
-                iconWidth: 12,
-                ...titlebarButton,
-            },
+            }),
+
             toggleContactsBadge: {
                 cornerRadius: 3,
                 padding: 2,
@@ -285,12 +337,45 @@ export default function workspace(colorScheme: ColorScheme) {
             background: background(colorScheme.highest),
             border: border(colorScheme.highest, { bottom: true }),
             itemSpacing: 8,
-            navButton: {
-                color: foreground(colorScheme.highest, "on"),
-                iconWidth: 12,
-                buttonWidth: 24,
+            navButton: interactive({
+                base: {
+                    color: foreground(colorScheme.highest, "on"),
+                    iconWidth: 12,
+                    buttonWidth: 24,
+                    cornerRadius: 6,
+                },
+                state: {
+                    hovered: {
+                        color: foreground(colorScheme.highest, "on", "hovered"),
+                        background: background(
+                            colorScheme.highest,
+                            "on",
+                            "hovered"
+                        ),
+                    },
+                    disabled: {
+                        color: foreground(
+                            colorScheme.highest,
+                            "on",
+                            "disabled"
+                        ),
+                    },
+                },
+            }),
+            padding: { left: 8, right: 8, top: 4, bottom: 4 },
+        },
+        breadcrumbHeight: 24,
+        breadcrumbs: interactive({
+            base: {
+                ...text(colorScheme.highest, "sans", "variant"),
                 cornerRadius: 6,
-                hover: {
+                padding: {
+                    left: 6,
+                    right: 6,
+                },
+            },
+            state: {
+                hovered: {
                     color: foreground(colorScheme.highest, "on", "hovered"),
                     background: background(
                         colorScheme.highest,
@@ -298,25 +383,8 @@ export default function workspace(colorScheme: ColorScheme) {
                         "hovered"
                     ),
                 },
-                disabled: {
-                    color: foreground(colorScheme.highest, "on", "disabled"),
-                },
             },
-            padding: { left: 8, right: 8, top: 4, bottom: 4 },
-        },
-        breadcrumbHeight: 24,
-        breadcrumbs: {
-            ...text(colorScheme.highest, "sans", "variant"),
-            cornerRadius: 6,
-            padding: {
-                left: 6,
-                right: 6,
-            },
-            hover: {
-                color: foreground(colorScheme.highest, "on", "hovered"),
-                background: background(colorScheme.highest, "on", "hovered"),
-            },
-        },
+        }),
         disconnectedOverlay: {
             ...text(layer, "sans"),
             background: withOpacity(background(layer), 0.8),

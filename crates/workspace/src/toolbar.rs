@@ -231,7 +231,7 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
 ) -> AnyElement<Toolbar> {
     MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
-            style.style_for(state, false)
+            style.style_for(state)
         } else {
             style.disabled_style()
         };

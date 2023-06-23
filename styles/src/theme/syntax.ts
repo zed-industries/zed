@@ -129,8 +129,6 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         [key: string]: Omit<SyntaxHighlightStyle, "color">
     } = {}
 
-    const light = colorScheme.isLight
-
     // then spread the default to each style
     for (const key of Object.keys({} as Syntax)) {
         syntax[key as keyof Syntax] = {

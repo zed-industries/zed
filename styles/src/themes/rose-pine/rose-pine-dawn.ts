@@ -6,6 +6,13 @@ import {
     ThemeConfig,
 } from "../../common"
 
+import { color as c, syntax } from "./common";
+
+const color = c.dawn
+
+const green = chroma.mix(color.foam, "#10b981", 0.6, 'lab');
+const magenta = chroma.mix(color.love, color.pine, 0.5, 'lab');
+
 export const theme: ThemeConfig = {
     name: "Rosé Pine Dawn",
     author: "edunfelt",
@@ -14,26 +21,17 @@ export const theme: ThemeConfig = {
     licenseUrl: "https://github.com/edunfelt/base16-rose-pine-scheme",
     licenseFile: `${__dirname}/LICENSE`,
     inputColor: {
-        neutral: chroma
-            .scale([
-                "#575279",
-                "#797593",
-                "#9893A5",
-                "#B5AFB8",
-                "#D3CCCC",
-                "#F2E9E1",
-                "#FFFAF3",
-                "#FAF4ED",
-            ])
-            .domain([0, 0.35, 0.45, 0.65, 0.7, 0.8, 0.9, 1]),
-        red: colorRamp(chroma("#B4637A")),
-        orange: colorRamp(chroma("#D7827E")),
-        yellow: colorRamp(chroma("#EA9D34")),
-        green: colorRamp(chroma("#679967")),
-        cyan: colorRamp(chroma("#286983")),
-        blue: colorRamp(chroma("#56949F")),
-        violet: colorRamp(chroma("#907AA9")),
-        magenta: colorRamp(chroma("#79549F")),
+        neutral: chroma.scale([color.base, color.surface, color.highlightHigh, color.overlay, color.muted, color.subtle, color.text].reverse()).domain([0, 0.35, 0.45, 0.65, 0.7, 0.8, 0.9, 1]),
+        red: colorRamp(chroma(color.love)),
+        orange: colorRamp(chroma(color.iris)),
+        yellow: colorRamp(chroma(color.gold)),
+        green: colorRamp(chroma(green)),
+        cyan: colorRamp(chroma(color.pine)),
+        blue: colorRamp(chroma(color.foam)),
+        violet: colorRamp(chroma(color.iris)),
+        magenta: colorRamp(chroma(magenta)),
     },
-    override: { syntax: {} },
+    override: {
+        syntax: syntax(color)
+    }
 }

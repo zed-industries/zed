@@ -309,7 +309,7 @@ impl AssistantPanel {
 
         Some(
             MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
-                let style = style.model.style_for(state, false);
+                let style = style.model.style_for(state);
                 Label::new(model, style.text.clone())
                     .contained()
                     .with_style(style.container)
@@ -414,7 +414,7 @@ impl AssistantPanel {
                         .with_style(style.title.container),
                 )
                 .contained()
-                .with_style(*style.container.style_for(state, false))
+                .with_style(*style.container.style_for(state))
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1668,19 +1668,19 @@ impl ConversationEditor {
                                 cx,
                                 |state, _| match message.role {
                                     Role::User => {
-                                        let style = style.user_sender.style_for(state, false);
+                                        let style = style.user_sender.style_for(state);
                                         Label::new("You", style.text.clone())
                                             .contained()
                                             .with_style(style.container)
                                     }
                                     Role::Assistant => {
-                                        let style = style.assistant_sender.style_for(state, false);
+                                        let style = style.assistant_sender.style_for(state);
                                         Label::new("Assistant", style.text.clone())
                                             .contained()
                                             .with_style(style.container)
                                     }
                                     Role::System => {
-                                        let style = style.system_sender.style_for(state, false);
+                                        let style = style.system_sender.style_for(state);
                                         Label::new("System", style.text.clone())
                                             .contained()
                                             .with_style(style.container)

@@ -8,6 +8,7 @@ use crate::{
     scene, Border, Element, ImageData, LayoutContext, SceneBuilder, SizeConstraint, View,
     ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
 
@@ -21,7 +22,7 @@ pub struct Image {
     style: ImageStyle,
 }
 
-#[derive(Copy, Clone, Default, Deserialize)]
+#[derive(Copy, Clone, Default, Deserialize, JsonSchema)]
 pub struct ImageStyle {
     #[serde(default)]
     pub border: Border,

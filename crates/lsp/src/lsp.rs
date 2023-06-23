@@ -33,7 +33,7 @@ const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(bool, &str)>;
 
 pub struct LanguageServer {
@@ -302,9 +302,9 @@ impl LanguageServer {
                     if let Some(error) = error {
                         handler(Err(error));
                     } else if let Some(result) = result {
-                        handler(Ok(result.get()));
+                        handler(Ok(result.get().into()));
                     } else {
-                        handler(Ok("null"));
+                        handler(Ok("null".into()));
                     }
                 }
             } else {
@@ -457,11 +457,13 @@ impl LanguageServer {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
+            let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
             let shutdown_request = Self::request_internal::<request::Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
+                &executor,
                 (),
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
@@ -658,6 +660,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.executor,
             params,
         )
     }
@@ -666,6 +669,7 @@ impl LanguageServer {
         next_id: &AtomicUsize,
         response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        executor: &Arc<executor::Background>,
         params: T::Params,
     ) -> impl 'static + Future<Output = Result<T::Result>>
     where
@@ -686,15 +690,20 @@ impl LanguageServer {
             .as_mut()
             .ok_or_else(|| anyhow!("server shut down"))
             .map(|handlers| {
+                let executor = executor.clone();
                 handlers.insert(
                     id,
                     Box::new(move |result| {
-                        let response = match result {
-                            Ok(response) => serde_json::from_str(response)
-                                .context("failed to deserialize response"),
-                            Err(error) => Err(anyhow!("{}", error.message)),
-                        };
-                        let _ = tx.send(response);
+                        executor
+                            .spawn(async move {
+                                let response = match result {
+                                    Ok(response) => serde_json::from_str(&response)
+                                        .context("failed to deserialize response"),
+                                    Err(error) => Err(anyhow!("{}", error.message)),
+                                };
+                                let _ = tx.send(response);
+                            })
+                            .detach();
                     }),
                 );
             });

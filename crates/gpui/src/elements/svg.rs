@@ -8,6 +8,7 @@ use crate::{
     },
     scene, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
+use schemars::JsonSchema;
 use serde_derive::Deserialize;
 use serde_json::json;
 use std::{borrow::Cow, ops::Range};
@@ -115,14 +116,14 @@ impl<V: View> Element<V> for Svg {
     }
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct SvgStyle {
     pub color: Color,
     pub asset: String,
     pub dimensions: Dimensions,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Dimensions {
     pub width: f32,
     pub height: f32,

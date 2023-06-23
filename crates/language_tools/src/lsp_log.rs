@@ -681,7 +681,7 @@ impl LspLogToolbarItemView {
                     )
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            let style = theme.toolbar_dropdown_menu.header.style_for(state, false);
+            let style = theme.toolbar_dropdown_menu.header.style_for(state);
             Label::new(label, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -722,7 +722,8 @@ impl LspLogToolbarItemView {
                     let style = theme
                         .toolbar_dropdown_menu
                         .item
-                        .style_for(state, logs_selected);
+                        .in_state(logs_selected)
+                        .style_for(state);
                     Label::new(SERVER_LOGS, style.text.clone())
                         .contained()
                         .with_style(style.container)
@@ -739,7 +740,8 @@ impl LspLogToolbarItemView {
                     let style = theme
                         .toolbar_dropdown_menu
                         .item
-                        .style_for(state, rpc_trace_selected);
+                        .in_state(rpc_trace_selected)
+                        .style_for(state);
                     Flex::row()
                         .with_child(
                             Label::new(RPC_MESSAGES, style.text.clone())

@@ -1,6 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
+import { interactive, toggleable } from "../element"
 
 export default function tabBar(colorScheme: ColorScheme) {
     const height = 32
@@ -87,17 +88,36 @@ export default function tabBar(colorScheme: ColorScheme) {
             inactiveTab: inactivePaneInactiveTab,
         },
         draggedTab,
-        paneButton: {
-            color: foreground(layer, "variant"),
-            iconWidth: 12,
-            buttonWidth: activePaneActiveTab.height,
-            hover: {
-                color: foreground(layer, "hovered"),
+        paneButton: toggleable({
+            base: interactive({
+                base: {
+                    color: foreground(layer, "variant"),
+                    iconWidth: 12,
+                    buttonWidth: activePaneActiveTab.height,
+                },
+                state: {
+                    hovered: {
+                        color: foreground(layer, "hovered"),
+                    },
+                    clicked: {
+                        color: foreground(layer, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        color: foreground(layer, "accent"),
+                    },
+                    hovered: {
+                        color: foreground(layer, "hovered"),
+                    },
+                    clicked: {
+                        color: foreground(layer, "pressed"),
+                    },
+                },
             },
-            active: {
-                color: foreground(layer, "accent"),
-            },
-        },
+        }),
         paneButtonContainer: {
             background: tab.background,
             border: {
