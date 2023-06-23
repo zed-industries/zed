@@ -2423,7 +2423,7 @@ impl Project {
             return;
         }
 
-        let pending_server = match self.languages.start_pending_language_server(
+        let pending_server = match self.languages.create_pending_language_server(
             language.clone(),
             adapter.clone(),
             worktree_path,

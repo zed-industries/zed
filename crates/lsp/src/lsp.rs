@@ -43,12 +43,6 @@ pub struct LanguageServerBinary {
     pub arguments: Vec<OsString>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct LanguageServerBinaries {
-    pub binary: LanguageServerBinary,
-    pub installation_test_binary: Option<LanguageServerBinary>,
-}
-
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicUsize,
@@ -65,7 +59,6 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
     _server: Option<Mutex<Child>>,
-    installation_test_binary: Option<LanguageServerBinary>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -135,7 +128,7 @@ struct Error {
 impl LanguageServer {
     pub fn new(
         server_id: LanguageServerId,
-        binaries: LanguageServerBinaries,
+        binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -146,9 +139,9 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
-        let mut server = process::Command::new(&binaries.binary.path)
+        let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
-            .args(binaries.binary.arguments)
+            .args(binary.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -162,7 +155,6 @@ impl LanguageServer {
             stdin,
             stout,
             Some(server),
-            binaries.installation_test_binary,
             root_path,
             code_action_kinds,
             cx,
@@ -181,7 +173,7 @@ impl LanguageServer {
             },
         );
 
-        if let Some(name) = binaries.binary.path.file_name() {
+        if let Some(name) = binary.path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
 
@@ -193,7 +185,6 @@ impl LanguageServer {
         stdin: Stdin,
         stdout: Stdout,
         server: Option<Child>,
-        installation_test_binary: Option<LanguageServerBinary>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -248,12 +239,7 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
             _server: server.map(|server| Mutex::new(server)),
-            installation_test_binary,
         }
-    }
-
-    pub fn installation_test_binary(&self) -> &Option<LanguageServerBinary> {
-        &self.installation_test_binary
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -840,7 +826,6 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             None,
-            None,
             Path::new("/"),
             None,
             cx.clone(),
@@ -851,7 +836,6 @@ impl LanguageServer {
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
-                None,
                 None,
                 Path::new("/"),
                 None,

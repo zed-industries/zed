@@ -20,7 +20,7 @@ use futures::{
 use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::{CodeActionKind, LanguageServerBinaries, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
@@ -564,10 +564,7 @@ pub struct LanguageRegistry {
     login_shell_env_loaded: Shared<Task<()>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
-        HashMap<
-            LanguageServerName,
-            Shared<Task<Result<LanguageServerBinaries, Arc<anyhow::Error>>>>,
-        >,
+        HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
     >,
     executor: Option<Arc<Background>>,
 }
@@ -859,7 +856,7 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
-    pub fn start_pending_language_server(
+    pub fn create_pending_language_server(
         self: &Arc<Self>,
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
@@ -932,7 +929,7 @@ impl LanguageRegistry {
                     .entry(adapter.name.clone())
                     .or_insert_with(|| {
                         cx.spawn(|cx| {
-                            get_binaries(
+                            get_binary(
                                 adapter.clone(),
                                 language.clone(),
                                 delegate.clone(),
@@ -953,15 +950,13 @@ impl LanguageRegistry {
                     task.await?;
                 }
 
-                let server = lsp::LanguageServer::new(
+                lsp::LanguageServer::new(
                     server_id,
                     binaries,
                     &root_path,
                     adapter.code_action_kinds(),
                     cx,
-                )?;
-
-                Ok(server)
+                )
             })
         };
 
@@ -1047,14 +1042,14 @@ impl Default for LanguageRegistry {
     }
 }
 
-async fn get_binaries(
+async fn get_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     delegate: Arc<dyn LspAdapterDelegate>,
     container_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     mut cx: AsyncAppContext,
-) -> Result<LanguageServerBinaries> {
+) -> Result<LanguageServerBinary> {
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -1082,13 +1077,7 @@ async fn get_binaries(
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
-            let installation_test_binary = adapter
-                .installation_test_binary(container_dir.to_path_buf())
-                .await;
-            return Ok(LanguageServerBinaries {
-                binary,
-                installation_test_binary,
-            });
+            return Ok(binary);
         } else {
             statuses
                 .broadcast((
@@ -1110,7 +1099,7 @@ async fn fetch_latest_binary(
     delegate: &dyn LspAdapterDelegate,
     container_dir: &Path,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
-) -> Result<LanguageServerBinaries> {
+) -> Result<LanguageServerBinary> {
     let container_dir: Arc<Path> = container_dir.into();
     lsp_binary_statuses_tx
         .broadcast((
@@ -1127,17 +1116,11 @@ async fn fetch_latest_binary(
     let binary = adapter
         .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate)
         .await?;
-    let installation_test_binary = adapter
-        .installation_test_binary(container_dir.to_path_buf())
-        .await;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
         .await?;
 
-    Ok(LanguageServerBinaries {
-        binary,
-        installation_test_binary,
-    })
+    Ok(binary)
 }
 
 impl Language {

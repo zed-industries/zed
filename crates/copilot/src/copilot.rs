@@ -15,7 +15,7 @@ use language::{
     ToPointUtf16,
 };
 use log::{debug, error};
-use lsp::{LanguageServer, LanguageServerBinaries, LanguageServerBinary, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::SettingsStore;
@@ -366,13 +366,9 @@ impl Copilot {
                     path: node_path,
                     arguments,
                 };
-                let binaries = LanguageServerBinaries {
-                    binary: binary.clone(),
-                    installation_test_binary: Some(binary),
-                };
                 let server = LanguageServer::new(
                     LanguageServerId(0),
-                    binaries,
+                    binary,
                     Path::new("/"),
                     None,
                     cx.clone(),
