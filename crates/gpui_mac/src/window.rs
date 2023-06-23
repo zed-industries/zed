@@ -1,18 +1,7 @@
+use crate::appearance::AppearanceFromNative;
+use crate::event::EventFromNative;
 use crate::{
-    executor,
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    keymap_matcher::Keystroke,
-    platform::{
-        self,
-        mac::{
-            platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer, screen::Screen,
-        },
-        Event, InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-        MouseMovedEvent, Scene, WindowBounds, WindowKind,
-    },
+    platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer, screen::Screen,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -27,6 +16,19 @@ use cocoa::{
 use core_graphics::display::CGRect;
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
+use gpui::{
+    executor,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    keymap_matcher::Keystroke,
+    platform::{
+        self, Event, InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton,
+        MouseButtonEvent, MouseMovedEvent, WindowBounds, WindowKind,
+    },
+    Scene,
+};
 use objc::{
     class,
     declare::ClassDecl,

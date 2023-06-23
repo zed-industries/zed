@@ -1,5 +1,14 @@
 use super::{atlas::AtlasAllocator, image_cache::ImageCache, sprite_cache::SpriteCache};
-use crate::{
+use crate::renderer::shaders::ColorToUchar4;
+use cocoa::{
+    base::{NO, YES},
+    foundation::NSUInteger,
+    quartzcore::AutoresizingMask,
+};
+use core_foundation::base::TCFType;
+use foreign_types::ForeignTypeRef;
+pub use gpui::scene::Surface;
+use gpui::{
     color::Color,
     geometry::{
         rect::RectF,
@@ -8,13 +17,6 @@ use crate::{
     platform,
     scene::{Glyph, Icon, Image, ImageGlyph, Layer, Quad, Scene, Shadow, Underline},
 };
-use cocoa::{
-    base::{NO, YES},
-    foundation::NSUInteger,
-    quartzcore::AutoresizingMask,
-};
-use core_foundation::base::TCFType;
-use foreign_types::ForeignTypeRef;
 use log::warn;
 use media::core_video::{self, CVMetalTextureCache};
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
@@ -47,11 +49,6 @@ struct PathSprite {
     layer_id: usize,
     atlas_id: usize,
     shader_data: shaders::GPUISprite,
-}
-
-pub struct Surface {
-    pub bounds: RectF,
-    pub image_buffer: core_video::CVImageBuffer,
 }
 
 impl Renderer {
@@ -1208,7 +1205,7 @@ mod shaders {
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
 
-    use crate::{
+    use gpui::{
         color::Color,
         geometry::vector::{Vector2F, Vector2I},
     };
@@ -1247,9 +1244,11 @@ mod shaders {
             self.to_f32().to_float2()
         }
     }
-
-    impl Color {
-        pub fn to_uchar4(&self) -> vector_uchar4 {
+    pub trait ColorToUchar4 {
+        fn to_uchar4(&self) -> vector_uchar4;
+    }
+    impl ColorToUchar4 for Color {
+        fn to_uchar4(&self) -> vector_uchar4 {
             let mut vec = self.a as vector_uchar4;
             vec <<= 8;
             vec |= self.b as vector_uchar4;

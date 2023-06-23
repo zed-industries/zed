@@ -1,8 +1,6 @@
 mod app;
 pub use app::*;
 mod assets;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test;
 pub use assets::*;
 pub mod elements;
 pub mod font_cache;

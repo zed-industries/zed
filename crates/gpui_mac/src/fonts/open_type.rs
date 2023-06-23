@@ -2,7 +2,6 @@
 
 use std::ptr;
 
-use crate::fonts::Features;
 use cocoa::appkit::CGFloat;
 use core_foundation::{base::TCFType, number::CFNumber};
 use core_graphics::geometry::CGAffineTransform;
@@ -13,6 +12,7 @@ use core_text::{
     },
 };
 use font_kit::font::Font;
+use gpui::fonts::Features;
 
 const kCaseSensitiveLayoutOffSelector: i32 = 1;
 const kCaseSensitiveLayoutOnSelector: i32 = 0;

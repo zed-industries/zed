@@ -1,9 +1,9 @@
-use crate::geometry::{
+use etagere::BucketedAtlasAllocator;
+use foreign_types::ForeignType;
+use gpui::geometry::{
     rect::RectI,
     vector::{vec2i, Vector2I},
 };
-use etagere::BucketedAtlasAllocator;
-use foreign_types::ForeignType;
 use log::warn;
 use metal::{Device, TextureDescriptor};
 use objc::{msg_send, sel, sel_impl};

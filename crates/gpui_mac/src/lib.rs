@@ -10,6 +10,8 @@ mod renderer;
 mod screen;
 mod sprite_cache;
 mod status_item;
+#[cfg(test)]
+mod test;
 mod window;
 
 use cocoa::{
@@ -23,15 +25,15 @@ pub use renderer::Surface;
 use std::{ops::Range, rc::Rc, sync::Arc};
 use window::Window;
 
-use crate::executor;
+use gpui::executor;
 
-pub(crate) fn platform() -> Arc<dyn super::Platform> {
+pub fn platform() -> Arc<dyn gpui::platform::Platform> {
     Arc::new(MacPlatform::new())
 }
 
-pub(crate) fn foreground_platform(
+pub fn foreground_platform(
     foreground: Rc<executor::Foreground>,
-) -> Rc<dyn super::ForegroundPlatform> {
+) -> Rc<dyn gpui::platform::ForegroundPlatform> {
     Rc::new(MacForegroundPlatform::new(foreground))
 }
 

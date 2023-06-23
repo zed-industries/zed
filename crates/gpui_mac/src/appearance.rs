@@ -1,30 +1,33 @@
 use std::ffi::CStr;
 
-use crate::platform::Appearance;
 use cocoa::{
     appkit::{NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight},
     base::id,
     foundation::NSString,
 };
+use gpui::platform::Appearance;
 use objc::{msg_send, sel, sel_impl};
 
-impl Appearance {
-    pub unsafe fn from_native(appearance: id) -> Self {
+pub trait AppearanceFromNative {
+    unsafe fn from_native(appearance: id) -> Self;
+}
+impl AppearanceFromNative for Appearance {
+    unsafe fn from_native(appearance: id) -> Appearance {
         let name: id = msg_send![appearance, name];
         if name == NSAppearanceNameVibrantLight {
-            Self::VibrantLight
+            Appearance::VibrantLight
         } else if name == NSAppearanceNameVibrantDark {
-            Self::VibrantDark
+            Appearance::VibrantDark
         } else if name == NSAppearanceNameAqua {
-            Self::Light
+            Appearance::Light
         } else if name == NSAppearanceNameDarkAqua {
-            Self::Dark
+            Appearance::Dark
         } else {
             println!(
                 "unknown appearance: {:?}",
                 CStr::from_ptr(name.UTF8String())
             );
-            Self::Light
+            Appearance::Light
         }
     }
 }

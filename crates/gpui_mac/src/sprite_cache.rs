@@ -1,10 +1,10 @@
 use super::atlas::AtlasAllocator;
-use crate::{
+use collections::hash_map::Entry;
+use gpui::{
     fonts::{FontId, GlyphId},
     geometry::vector::{vec2f, Vector2F, Vector2I},
     platform::{self, RasterizationOptions},
 };
-use collections::hash_map::Entry;
 use metal::{MTLPixelFormat, TextureDescriptor};
 use ordered_float::OrderedFloat;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};

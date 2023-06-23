@@ -1,6 +1,5 @@
 use std::{any::Any, ffi::c_void};
 
-use crate::platform;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
@@ -11,6 +10,7 @@ use core_foundation::{
     uuid::{CFUUIDGetUUIDBytes, CFUUIDRef},
 };
 use core_graphics::display::CGDirectDisplayID;
+use gpui::platform;
 use pathfinder_geometry::rect::RectF;
 use uuid::Uuid;
 

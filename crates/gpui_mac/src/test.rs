@@ -1,5 +1,7 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
-use crate::{
+use anyhow::{anyhow, Result};
+use collections::VecDeque;
+use gpui::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -7,8 +9,6 @@ use crate::{
     keymap_matcher::KeymapMatcher,
     Action, ClipboardItem, Menu,
 };
-use anyhow::{anyhow, Result};
-use collections::VecDeque;
 use parking_lot::Mutex;
 use postage::oneshot;
 use std::{
@@ -64,7 +64,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
     fn on_quit(&self, _: Box<dyn FnMut()>) {}
     fn on_reopen(&self, _: Box<dyn FnMut()>) {}
-    fn on_event(&self, _: Box<dyn FnMut(crate::platform::Event) -> bool>) {}
+    fn on_event(&self, _: Box<dyn FnMut(gpui::platform::Event) -> bool>) {}
     fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -136,11 +136,11 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn crate::platform::Screen>> {
+    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn gpui::platform::Screen>> {
         None
     }
 
-    fn screens(&self) -> Vec<Rc<dyn crate::platform::Screen>> {
+    fn screens(&self) -> Vec<Rc<dyn gpui::platform::Screen>> {
         Default::default()
     }
 
@@ -165,7 +165,7 @@ impl super::Platform for Platform {
         self.active_window_id.lock().clone()
     }
 
-    fn add_status_item(&self, id: usize) -> Box<dyn crate::platform::Window> {
+    fn add_status_item(&self, id: usize) -> Box<dyn gpui::platform::Window> {
         Box::new(Window::new(
             id,
             vec2f(24., 24.),
@@ -259,7 +259,7 @@ pub struct Window {
     id: usize,
     pub(crate) size: Vector2F,
     scale_factor: f32,
-    current_scene: Option<crate::Scene>,
+    current_scene: Option<gpui::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
     pub(crate) moved_handlers: Vec<Box<dyn FnMut()>>,
@@ -316,11 +316,11 @@ impl super::Window for Window {
         24.
     }
 
-    fn appearance(&self) -> crate::platform::Appearance {
-        crate::platform::Appearance::Light
+    fn appearance(&self) -> gpui::platform::Appearance {
+        gpui::platform::Appearance::Light
     }
 
-    fn screen(&self) -> Rc<dyn crate::platform::Screen> {
+    fn screen(&self) -> Rc<dyn gpui::platform::Screen> {
         Rc::new(Screen)
     }
 
@@ -328,11 +328,11 @@ impl super::Window for Window {
         self
     }
 
-    fn set_input_handler(&mut self, _: Box<dyn crate::platform::InputHandler>) {}
+    fn set_input_handler(&mut self, _: Box<dyn gpui::platform::InputHandler>) {}
 
     fn prompt(
         &self,
-        _: crate::platform::PromptLevel,
+        _: gpui::platform::PromptLevel,
         _: &str,
         _: &[&str],
     ) -> oneshot::Receiver<usize> {
@@ -359,13 +359,13 @@ impl super::Window for Window {
 
     fn zoom(&self) {}
 
-    fn present_scene(&mut self, scene: crate::Scene) {
+    fn present_scene(&mut self, scene: gpui::Scene) {
         self.current_scene = Some(scene);
     }
 
     fn toggle_full_screen(&self) {}
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::platform::Event) -> bool>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(gpui::platform::Event) -> bool>) {
         self.event_handlers.push(callback);
     }
 

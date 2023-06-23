@@ -1,15 +1,6 @@
-use crate::{
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    platform::{
-        self,
-        mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
-        Event, FontSystem, WindowBounds,
-    },
-    Scene,
-};
+use crate::appearance::AppearanceFromNative;
+use crate::event::EventFromNative;
+use crate::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer};
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
     base::{id, nil, YES},
@@ -17,6 +8,14 @@ use cocoa::{
 };
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
+use gpui::{
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    platform::{self, Event, FontSystem, WindowBounds},
+    Scene,
+};
 use objc::{
     class,
     declare::ClassDecl,
@@ -210,7 +209,7 @@ impl platform::Window for StatusItem {
 
     fn prompt(
         &self,
-        _: crate::platform::PromptLevel,
+        _: gpui::platform::PromptLevel,
         _: &str,
         _: &[&str],
     ) -> postage::oneshot::Receiver<usize> {

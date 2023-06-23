@@ -66,6 +66,7 @@ util = { path = "../util" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
+gpui_mac = {path = "../gpui_mac"}
 
 anyhow.workspace = true
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
