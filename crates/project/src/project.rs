@@ -282,11 +282,7 @@ pub enum Event {
 pub enum LanguageServerState {
     Validating(Task<Option<Arc<LanguageServer>>>),
 
-    Starting {
-        language: Arc<Language>,
-        adapter: Arc<CachedLspAdapter>,
-        task: Task<Option<Arc<LanguageServer>>>,
-    },
+    Starting(Task<Option<Arc<LanguageServer>>>),
 
     Running {
         language: Arc<Language>,
@@ -2455,7 +2451,7 @@ impl Project {
 
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
-        let task = {
+        let state = LanguageServerState::Starting({
             let adapter = adapter.clone();
             let server_name = adapter.name.0.clone();
             let languages = self.languages.clone();
@@ -2469,7 +2465,7 @@ impl Project {
                     pending_server,
                     adapter.clone(),
                     languages,
-                    language,
+                    language.clone(),
                     server_id,
                     key,
                     &mut cx,
@@ -2490,6 +2486,8 @@ impl Project {
 
                                 this.update(&mut cx, |_, cx| {
                                     Self::check_errored_server_id(
+                                        language,
+                                        adapter,
                                         server_id,
                                         installation_test_binary,
                                         cx,
@@ -2502,12 +2500,7 @@ impl Project {
                     }
                 }
             })
-        };
-        let state = LanguageServerState::Starting {
-            language,
-            adapter,
-            task,
-        };
+        });
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids.insert(key, server_id);
@@ -2515,23 +2508,16 @@ impl Project {
 
     fn reinstall_language_server(
         &mut self,
+        language: Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<()>> {
         log::info!("beginning to reinstall server");
-        let (language, adapter, server) = match self.language_servers.remove(&server_id) {
-            Some(LanguageServerState::Running {
-                language,
-                adapter,
-                server,
-                ..
-            }) => (language.clone(), adapter.clone(), Some(server)),
 
-            Some(LanguageServerState::Starting {
-                language, adapter, ..
-            }) => (language.clone(), adapter.clone(), None),
-
-            _ => return None,
+        let existing_server = match self.language_servers.remove(&server_id) {
+            Some(LanguageServerState::Running { server, .. }) => Some(server),
+            _ => None,
         };
 
         for worktree in &self.worktrees {
@@ -2542,7 +2528,7 @@ impl Project {
         }
 
         Some(cx.spawn(move |this, mut cx| async move {
-            if let Some(task) = server.and_then(|server| server.shutdown()) {
+            if let Some(task) = existing_server.and_then(|server| server.shutdown()) {
                 log::info!("shutting down existing server");
                 task.await;
             }
@@ -2950,7 +2936,7 @@ impl Project {
 
                 let server = match server_state {
                     Some(LanguageServerState::Validating(task)) => task.await,
-                    Some(LanguageServerState::Starting { task, .. }) => task.await,
+                    Some(LanguageServerState::Starting(task)) => task.await,
                     Some(LanguageServerState::Running { server, .. }) => Some(server),
                     None => None,
                 };
@@ -3062,6 +3048,8 @@ impl Project {
     }
 
     fn check_errored_server_id(
+        language: Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         installation_test_binary: Option<LanguageServerBinary>,
         cx: &mut ModelContext<Self>,
@@ -3105,7 +3093,7 @@ impl Project {
             if errored {
                 log::warn!("test binary check failed");
                 let task = this.update(&mut cx, move |this, mut cx| {
-                    this.reinstall_language_server(server_id, &mut cx)
+                    this.reinstall_language_server(language, adapter, server_id, &mut cx)
                 });
 
                 if let Some(task) = task {
@@ -7403,7 +7391,7 @@ impl Entity for Project {
                 use LanguageServerState::*;
                 match server_state {
                     Running { server, .. } => server.shutdown()?.await,
-                    Starting { task, .. } | Validating(task) => task.await?.shutdown()?.await,
+                    Starting(task) | Validating(task) => task.await?.shutdown()?.await,
                 }
             })
             .collect::<Vec<_>>();
