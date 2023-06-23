@@ -2371,7 +2371,7 @@ mod tests {
                 }
 
                 let indent = "    ".repeat(details.depth);
-                let icon = if matches!(details.kind, EntryKind::Dir | EntryKind::PendingDir) {
+                let icon = if details.kind.is_dir() {
                     if details.is_expanded {
                         "v "
                     } else {
