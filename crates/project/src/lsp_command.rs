@@ -1832,22 +1832,34 @@ impl LspCommand for InlayHints {
             Ok(message
                 .unwrap_or_default()
                 .into_iter()
-                .map(|lsp_hint| InlayHint {
-                    buffer_id: origin_buffer.remote_id(),
-                    position: origin_buffer.anchor_after(
-                        origin_buffer
-                            .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left),
-                    ),
-                    padding_left: lsp_hint.padding_left.unwrap_or(false),
-                    padding_right: lsp_hint.padding_right.unwrap_or(false),
-                    label: match lsp_hint.label {
-                        lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
-                        lsp::InlayHintLabel::LabelParts(lsp_parts) => InlayHintLabel::LabelParts(
-                            lsp_parts
-                                .into_iter()
-                                .map(|label_part| InlayHintLabelPart {
-                                    value: label_part.value,
-                                    tooltip: label_part.tooltip.map(|tooltip| match tooltip {
+                .map(|lsp_hint| {
+                    let kind = lsp_hint.kind.and_then(|kind| match kind {
+                        lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
+                        lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
+                        _ => None,
+                    });
+                    let position = origin_buffer
+                        .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+                    InlayHint {
+                        buffer_id: origin_buffer.remote_id(),
+                        position: if kind == Some(InlayHintKind::Parameter) {
+                            origin_buffer.anchor_before(position)
+                        } else {
+                            origin_buffer.anchor_after(position)
+                        },
+                        padding_left: lsp_hint.padding_left.unwrap_or(false),
+                        padding_right: lsp_hint.padding_right.unwrap_or(false),
+                        label: match lsp_hint.label {
+                            lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
+                            lsp::InlayHintLabel::LabelParts(lsp_parts) => {
+                                InlayHintLabel::LabelParts(
+                                    lsp_parts
+                                        .into_iter()
+                                        .map(|label_part| InlayHintLabelPart {
+                                            value: label_part.value,
+                                            tooltip: label_part.tooltip.map(
+                                                |tooltip| {
+                                                    match tooltip {
                                         lsp::InlayHintLabelPartTooltip::String(s) => {
                                             InlayHintLabelPartTooltip::String(s)
                                         }
@@ -1859,40 +1871,40 @@ impl LspCommand for InlayHints {
                                                 value: markup_content.value,
                                             },
                                         ),
-                                    }),
-                                    location: label_part.location.map(|lsp_location| {
-                                        let target_start = origin_buffer.clip_point_utf16(
-                                            point_from_lsp(lsp_location.range.start),
-                                            Bias::Left,
-                                        );
-                                        let target_end = origin_buffer.clip_point_utf16(
-                                            point_from_lsp(lsp_location.range.end),
-                                            Bias::Left,
-                                        );
-                                        Location {
-                                            buffer: buffer.clone(),
-                                            range: origin_buffer.anchor_after(target_start)
-                                                ..origin_buffer.anchor_before(target_end),
-                                        }
-                                    }),
+                                    }
+                                                },
+                                            ),
+                                            location: label_part.location.map(|lsp_location| {
+                                                let target_start = origin_buffer.clip_point_utf16(
+                                                    point_from_lsp(lsp_location.range.start),
+                                                    Bias::Left,
+                                                );
+                                                let target_end = origin_buffer.clip_point_utf16(
+                                                    point_from_lsp(lsp_location.range.end),
+                                                    Bias::Left,
+                                                );
+                                                Location {
+                                                    buffer: buffer.clone(),
+                                                    range: origin_buffer.anchor_after(target_start)
+                                                        ..origin_buffer.anchor_before(target_end),
+                                                }
+                                            }),
+                                        })
+                                        .collect(),
+                                )
+                            }
+                        },
+                        kind,
+                        tooltip: lsp_hint.tooltip.map(|tooltip| match tooltip {
+                            lsp::InlayHintTooltip::String(s) => InlayHintTooltip::String(s),
+                            lsp::InlayHintTooltip::MarkupContent(markup_content) => {
+                                InlayHintTooltip::MarkupContent(MarkupContent {
+                                    kind: format!("{:?}", markup_content.kind),
+                                    value: markup_content.value,
                                 })
-                                .collect(),
-                        ),
-                    },
-                    kind: lsp_hint.kind.and_then(|kind| match kind {
-                        lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
-                        lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
-                        _ => None,
-                    }),
-                    tooltip: lsp_hint.tooltip.map(|tooltip| match tooltip {
-                        lsp::InlayHintTooltip::String(s) => InlayHintTooltip::String(s),
-                        lsp::InlayHintTooltip::MarkupContent(markup_content) => {
-                            InlayHintTooltip::MarkupContent(MarkupContent {
-                                kind: format!("{:?}", markup_content.kind),
-                                value: markup_content.value,
-                            })
-                        }
-                    }),
+                            }
+                        }),
+                    }
                 })
                 .collect())
         })

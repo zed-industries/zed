@@ -102,6 +102,15 @@ pub enum Bias {
     Right,
 }
 
+impl Bias {
+    pub fn invert(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SumTree<T: Item>(Arc<Node<T>>);
 

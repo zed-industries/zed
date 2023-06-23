@@ -301,7 +301,7 @@ impl InlayMap {
         let version = 0;
         let snapshot = InlaySnapshot {
             buffer: buffer.clone(),
-            transforms: SumTree::from_item(Transform::Isomorphic(buffer.text_summary()), &()),
+            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), &()),
             version,
         };
 
@@ -357,7 +357,7 @@ impl InlayMap {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     if cursor.end(&()).0 == buffer_edit.old.start {
-                        new_transforms.push(Transform::Isomorphic(transform.clone()), &());
+                        push_isomorphic(&mut new_transforms, transform.clone());
                         cursor.next(&());
                     }
                 }
@@ -436,7 +436,7 @@ impl InlayMap {
             }
 
             new_transforms.append(cursor.suffix(&()), &());
-            if new_transforms.first().is_none() {
+            if new_transforms.is_empty() {
                 new_transforms.push(Transform::Isomorphic(Default::default()), &());
             }
 
@@ -654,55 +654,124 @@ impl InlaySnapshot {
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>();
         cursor.seek(&point, Bias::Left, &());
-        match cursor.item() {
-            Some(Transform::Isomorphic(_)) => {
-                let overshoot = point - cursor.start().0;
-                InlayPoint(cursor.start().1 .0 + overshoot)
+        loop {
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    if point == cursor.end(&()).0 {
+                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                            if inlay.position.bias() == Bias::Right {
+                                break;
+                            } else {
+                                cursor.next(&());
+                            }
+                        }
+                        return cursor.end(&()).1;
+                    } else {
+                        let overshoot = point - cursor.start().0;
+                        return InlayPoint(cursor.start().1 .0 + overshoot);
+                    }
+                }
+                Some(Transform::Inlay(inlay)) => {
+                    if inlay.position.bias() == Bias::Left {
+                        cursor.next(&());
+                    } else {
+                        return cursor.start().1;
+                    }
+                }
+                None => {
+                    return self.max_point();
+                }
             }
-            Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.max_point(),
         }
     }
 
-    pub fn clip_point(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
+    pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
         cursor.seek(&point, Bias::Left, &());
-
-        let mut bias = bias;
-        let mut skipped_inlay = false;
         loop {
             match cursor.item() {
                 Some(Transform::Isomorphic(transform)) => {
-                    let overshoot = if skipped_inlay {
-                        match bias {
-                            Bias::Left => transform.lines,
-                            Bias::Right => {
-                                if transform.first_line_chars == 0 {
-                                    Point::new(1, 0)
-                                } else {
-                                    Point::new(0, 1)
-                                }
+                    if cursor.start().0 == point {
+                        if let Some(Transform::Inlay(inlay)) = cursor.prev_item() {
+                            if inlay.position.bias() == Bias::Left {
+                                return point;
+                            } else if bias == Bias::Left {
+                                cursor.prev(&());
+                            } else if transform.first_line_chars == 0 {
+                                point.0 += Point::new(1, 0);
+                            } else {
+                                point.0 += Point::new(0, 1);
                             }
+                        } else {
+                            return point;
+                        }
+                    } else if cursor.end(&()).0 == point {
+                        if let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                            if inlay.position.bias() == Bias::Right {
+                                return point;
+                            } else if bias == Bias::Right {
+                                cursor.next(&());
+                            } else if point.0.column == 0 {
+                                point.0.row -= 1;
+                                point.0.column = self.line_len(point.0.row);
+                            } else {
+                                point.0.column -= 1;
+                            }
+                        } else {
+                            return point;
                         }
                     } else {
-                        point.0 - cursor.start().0 .0
-                    };
-                    let buffer_point = cursor.start().1 + overshoot;
-                    let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
-                    let clipped_overshoot = clipped_buffer_point - cursor.start().1;
-                    return InlayPoint(cursor.start().0 .0 + clipped_overshoot);
+                        let overshoot = point.0 - cursor.start().0 .0;
+                        let buffer_point = cursor.start().1 + overshoot;
+                        let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
+                        let clipped_overshoot = clipped_buffer_point - cursor.start().1;
+                        let clipped_point = InlayPoint(cursor.start().0 .0 + clipped_overshoot);
+                        if clipped_point == point {
+                            return clipped_point;
+                        } else {
+                            point = clipped_point;
+                        }
+                    }
                 }
-                Some(Transform::Inlay(_)) => skipped_inlay = true,
-                None => match bias {
-                    Bias::Left => return Default::default(),
-                    Bias::Right => bias = Bias::Left,
-                },
-            }
+                Some(Transform::Inlay(inlay)) => {
+                    if point == cursor.start().0 && inlay.position.bias() == Bias::Right {
+                        match cursor.prev_item() {
+                            Some(Transform::Inlay(inlay)) => {
+                                if inlay.position.bias() == Bias::Left {
+                                    return point;
+                                }
+                            }
+                            _ => return point,
+                        }
+                    } else if point == cursor.end(&()).0 && inlay.position.bias() == Bias::Left {
+                        match cursor.next_item() {
+                            Some(Transform::Inlay(inlay)) => {
+                                if inlay.position.bias() == Bias::Right {
+                                    return point;
+                                }
+                            }
+                            _ => return point,
+                        }
+                    }
 
-            if bias == Bias::Left {
-                cursor.prev(&());
-            } else {
-                cursor.next(&());
+                    if bias == Bias::Left {
+                        point = cursor.start().0;
+                        cursor.prev(&());
+                    } else {
+                        cursor.next(&());
+                        point = cursor.start().0;
+                    }
+                }
+                None => {
+                    bias = bias.invert();
+                    if bias == Bias::Left {
+                        point = cursor.start().0;
+                        cursor.prev(&());
+                    } else {
+                        cursor.next(&());
+                        point = cursor.start().0;
+                    }
+                }
             }
         }
     }
@@ -833,6 +902,18 @@ impl InlaySnapshot {
         #[cfg(any(debug_assertions, feature = "test-support"))]
         {
             assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
+            let mut transforms = self.transforms.iter().peekable();
+            while let Some(transform) = transforms.next() {
+                let transform_is_isomorphic = matches!(transform, Transform::Isomorphic(_));
+                if let Some(next_transform) = transforms.peek() {
+                    let next_transform_is_isomorphic =
+                        matches!(next_transform, Transform::Isomorphic(_));
+                    assert!(
+                        !transform_is_isomorphic || !next_transform_is_isomorphic,
+                        "two adjacent isomorphic transforms"
+                    );
+                }
+            }
         }
     }
 }
@@ -982,6 +1063,177 @@ mod tests {
             buffer_edits.consume().into_inner(),
         );
         assert_eq!(inlay_snapshot.text(), "abx|123|JKL|456|yDzefghi");
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 0), Bias::Left),
+            InlayPoint::new(0, 0)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 0), Bias::Right),
+            InlayPoint::new(0, 0)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 1), Bias::Left),
+            InlayPoint::new(0, 1)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 1), Bias::Right),
+            InlayPoint::new(0, 1)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 2), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 2), Bias::Right),
+            InlayPoint::new(0, 2)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 3), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 3), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 4), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 4), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 5), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 5), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 6), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 6), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 7), Bias::Left),
+            InlayPoint::new(0, 2)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 7), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 8), Bias::Left),
+            InlayPoint::new(0, 8)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 8), Bias::Right),
+            InlayPoint::new(0, 8)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 9), Bias::Left),
+            InlayPoint::new(0, 9)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 9), Bias::Right),
+            InlayPoint::new(0, 9)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 10), Bias::Left),
+            InlayPoint::new(0, 10)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 10), Bias::Right),
+            InlayPoint::new(0, 10)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 11), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 11), Bias::Right),
+            InlayPoint::new(0, 11)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 12), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 12), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 13), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 13), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 14), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 14), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 15), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 15), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 16), Bias::Left),
+            InlayPoint::new(0, 11)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 16), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 17), Bias::Left),
+            InlayPoint::new(0, 17)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 17), Bias::Right),
+            InlayPoint::new(0, 17)
+        );
+
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 18), Bias::Left),
+            InlayPoint::new(0, 18)
+        );
+        assert_eq!(
+            inlay_snapshot.clip_point(InlayPoint::new(0, 18), Bias::Right),
+            InlayPoint::new(0, 18)
+        );
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map
@@ -1146,6 +1398,41 @@ mod tests {
             assert_eq!(expected_text.max_point(), inlay_snapshot.max_point().0);
             assert_eq!(expected_text.len(), inlay_snapshot.len().0);
 
+            let mut buffer_point = Point::default();
+            let mut inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
+            let mut buffer_chars = buffer_snapshot.chars_at(0);
+            loop {
+                // No matter which bias we clip an inlay point with, it doesn't move
+                // because it was constructed from a buffer point.
+                assert_eq!(
+                    inlay_snapshot.clip_point(inlay_point, Bias::Left),
+                    inlay_point,
+                    "invalid inlay point for buffer point {:?} when clipped left",
+                    buffer_point
+                );
+                assert_eq!(
+                    inlay_snapshot.clip_point(inlay_point, Bias::Right),
+                    inlay_point,
+                    "invalid inlay point for buffer point {:?} when clipped right",
+                    buffer_point
+                );
+
+                if let Some(ch) = buffer_chars.next() {
+                    if ch == '\n' {
+                        buffer_point += Point::new(1, 0);
+                    } else {
+                        buffer_point += Point::new(0, ch.len_utf8() as u32);
+                    }
+
+                    // Ensure that moving forward in the buffer always moves the inlay point forward as well.
+                    let new_inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
+                    assert!(new_inlay_point > inlay_point);
+                    inlay_point = new_inlay_point;
+                } else {
+                    break;
+                }
+            }
+
             let mut inlay_point = InlayPoint::default();
             let mut inlay_offset = InlayOffset::default();
             for ch in expected_text.chars() {
@@ -1161,13 +1448,6 @@ mod tests {
                     "invalid to_point({:?})",
                     inlay_offset
                 );
-                assert_eq!(
-                    inlay_snapshot.to_inlay_point(inlay_snapshot.to_buffer_point(inlay_point)),
-                    inlay_snapshot.clip_point(inlay_point, Bias::Left),
-                    "to_buffer_point({:?}) = {:?}",
-                    inlay_point,
-                    inlay_snapshot.to_buffer_point(inlay_point),
-                );
 
                 let mut bytes = [0; 4];
                 for byte in ch.encode_utf8(&mut bytes).as_bytes() {
@@ -1182,7 +1462,8 @@ mod tests {
                     let clipped_right_point = inlay_snapshot.clip_point(inlay_point, Bias::Right);
                     assert!(
                         clipped_left_point <= clipped_right_point,
-                        "clipped left point {:?} is greater than clipped right point {:?}",
+                        "inlay point {:?} when clipped left is greater than when clipped right ({:?} > {:?})",
+                        inlay_point,
                         clipped_left_point,
                         clipped_right_point
                     );
@@ -1200,6 +1481,24 @@ mod tests {
                     // Ensure the clipped points never overshoot the end of the map.
                     assert!(clipped_left_point <= inlay_snapshot.max_point());
                     assert!(clipped_right_point <= inlay_snapshot.max_point());
+
+                    // Ensure the clipped points are at valid buffer locations.
+                    assert_eq!(
+                        inlay_snapshot
+                            .to_inlay_point(inlay_snapshot.to_buffer_point(clipped_left_point)),
+                        clipped_left_point,
+                        "to_buffer_point({:?}) = {:?}",
+                        clipped_left_point,
+                        inlay_snapshot.to_buffer_point(clipped_left_point),
+                    );
+                    assert_eq!(
+                        inlay_snapshot
+                            .to_inlay_point(inlay_snapshot.to_buffer_point(clipped_right_point)),
+                        clipped_right_point,
+                        "to_buffer_point({:?}) = {:?}",
+                        clipped_right_point,
+                        inlay_snapshot.to_buffer_point(clipped_right_point),
+                    );
                 }
             }
         }
