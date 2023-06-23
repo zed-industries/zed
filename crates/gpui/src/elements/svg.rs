@@ -30,7 +30,6 @@ impl Svg {
         Self::new(style.asset)
             .with_color(style.color)
             .constrained()
-            .constrained()
             .with_width(style.dimensions.width)
             .with_height(style.dimensions.height)
     }
