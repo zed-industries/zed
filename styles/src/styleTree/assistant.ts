@@ -75,6 +75,7 @@ export default function assistant(colorScheme: ColorScheme) {
             container: interactive({
                 base: {
                     background: background(layer, "on"),
+                    padding: { top: 4, bottom: 4 }
                 },
                 state: {
                     hovered: {
@@ -87,7 +88,7 @@ export default function assistant(colorScheme: ColorScheme) {
                 ...text(layer, "sans", "default", { size: "xs" }),
             },
             title: {
-                margin: { left: 8 },
+                margin: { left: 16 },
                 ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
             }
         },

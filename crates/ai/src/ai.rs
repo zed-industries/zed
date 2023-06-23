@@ -11,6 +11,7 @@ use gpui::AppContext;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Reverse,
     fmt::{self, Display},
     path::PathBuf,
     sync::Arc,
@@ -97,6 +98,7 @@ impl SavedConversationMetadata {
                 });
             }
         }
+        conversations.sort_unstable_by_key(|conversation| Reverse(conversation.mtime));
 
         Ok(conversations)
     }
