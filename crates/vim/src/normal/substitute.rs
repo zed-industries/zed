@@ -3,7 +3,7 @@ use language::Point;
 
 use crate::{motion::Motion, Mode, Vim};
 
-pub fn substitute(vim: &mut Vim, count: usize, cx: &mut WindowContext) {
+pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
         editor.change_selections(None, cx, |s| {
