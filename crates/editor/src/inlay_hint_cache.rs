@@ -19,11 +19,17 @@ pub struct InlayHintCache {
     pub hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
     pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     pub version: usize,
-    update_tasks: HashMap<ExcerptId, InlayHintUpdateTask>,
+    update_tasks: HashMap<ExcerptId, UpdateTask>,
 }
 
-struct InlayHintUpdateTask {
+struct UpdateTask {
+    current: (InvalidationStrategy, SpawnedTask),
+    pending_refresh: Option<SpawnedTask>,
+}
+
+struct SpawnedTask {
     version: usize,
+    is_running_rx: smol::channel::Receiver<()>,
     _task: Task<()>,
 }
 
@@ -49,6 +55,31 @@ struct ExcerptDimensions {
     excerpt_range_end: language::Anchor,
     excerpt_visible_range_start: language::Anchor,
     excerpt_visible_range_end: language::Anchor,
+}
+
+impl UpdateTask {
+    fn new(invalidation_strategy: InvalidationStrategy, spawned_task: SpawnedTask) -> Self {
+        Self {
+            current: (invalidation_strategy, spawned_task),
+            pending_refresh: None,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        !self.current.1.is_running_rx.is_closed()
+            || self
+                .pending_refresh
+                .as_ref()
+                .map_or(false, |task| !task.is_running_rx.is_closed())
+    }
+
+    fn cache_version(&self) -> usize {
+        self.current.1.version
+    }
+
+    fn invalidation_strategy(&self) -> InvalidationStrategy {
+        self.current.0
+    }
 }
 
 impl ExcerptDimensions {
@@ -80,7 +111,7 @@ impl ExcerptDimensions {
 
 #[derive(Debug, Clone, Copy)]
 pub enum InvalidationStrategy {
-    All,
+    Forced,
     OnConflict,
     None,
 }
@@ -157,7 +188,7 @@ impl InlayHintCache {
         let update_tasks = &mut self.update_tasks;
         let invalidate_cache = matches!(
             invalidate,
-            InvalidationStrategy::All | InvalidationStrategy::OnConflict
+            InvalidationStrategy::Forced | InvalidationStrategy::OnConflict
         );
         if invalidate_cache {
             update_tasks
@@ -166,22 +197,7 @@ impl InlayHintCache {
         let cache_version = self.version;
         excerpts_to_query.retain(|visible_excerpt_id, _| {
             match update_tasks.entry(*visible_excerpt_id) {
-                hash_map::Entry::Occupied(o) => match o.get().version.cmp(&cache_version) {
-                    cmp::Ordering::Less => true,
-                    cmp::Ordering::Equal => invalidate_cache,
-                    cmp::Ordering::Greater => false,
-                },
-                hash_map::Entry::Vacant(_) => true,
-            }
-        });
-
-        if invalidate_cache {
-            update_tasks
-                .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
-        }
-        excerpts_to_query.retain(|visible_excerpt_id, _| {
-            match update_tasks.entry(*visible_excerpt_id) {
-                hash_map::Entry::Occupied(o) => match o.get().version.cmp(&cache_version) {
+                hash_map::Entry::Occupied(o) => match o.get().cache_version().cmp(&cache_version) {
                     cmp::Ordering::Less => true,
                     cmp::Ordering::Equal => invalidate_cache,
                     cmp::Ordering::Greater => false,
@@ -313,8 +329,8 @@ impl InlayHintCache {
 fn spawn_new_update_tasks(
     editor: &mut Editor,
     excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)>,
-    invalidate: InvalidationStrategy,
-    cache_version: usize,
+    invalidation_strategy: InvalidationStrategy,
+    update_cache_version: usize,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
     let visible_hints = Arc::new(visible_inlay_hints(editor, cx).cloned().collect::<Vec<_>>());
@@ -323,20 +339,26 @@ fn spawn_new_update_tasks(
             let buffer = buffer_handle.read(cx);
             let buffer_snapshot = buffer.snapshot();
             let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-            if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
-                let new_task_buffer_version = buffer_snapshot.version();
-                let cached_excerpt_hints = cached_excerpt_hints.read();
-                let cached_buffer_version = &cached_excerpt_hints.buffer_version;
-                if cached_buffer_version.changed_since(new_task_buffer_version) {
-                    return;
+            let cache_is_empty = match &cached_excerpt_hints {
+                Some(cached_excerpt_hints) => {
+                    let new_task_buffer_version = buffer_snapshot.version();
+                    let cached_excerpt_hints = cached_excerpt_hints.read();
+                    let cached_buffer_version = &cached_excerpt_hints.buffer_version;
+                    if cached_excerpt_hints.version > update_cache_version
+                        || cached_buffer_version.changed_since(new_task_buffer_version)
+                    {
+                        return;
+                    }
+                    if !new_task_buffer_version.changed_since(&cached_buffer_version)
+                        && !matches!(invalidation_strategy, InvalidationStrategy::Forced)
+                    {
+                        return;
+                    }
+
+                    cached_excerpt_hints.hints.is_empty()
                 }
-                // TODO kb on refresh (InvalidationStrategy::All), instead spawn a new task afterwards, that would wait before 1st query finishes
-                if !new_task_buffer_version.changed_since(&cached_buffer_version)
-                    && !matches!(invalidate, InvalidationStrategy::All)
-                {
-                    return;
-                }
-            }
+                None => true,
+            };
 
             let buffer_id = buffer.remote_id();
             let excerpt_visible_range_start = buffer.anchor_before(excerpt_visible_range.start);
@@ -365,21 +387,62 @@ fn spawn_new_update_tasks(
                         excerpt_visible_range_start,
                         excerpt_visible_range_end,
                     },
-                    cache_version,
-                    invalidate,
+                    cache_version: update_cache_version,
+                    invalidate: invalidation_strategy,
                 };
 
-                editor.inlay_hint_cache.update_tasks.insert(
-                    excerpt_id,
+                let new_update_task = |previous_task| {
                     new_update_task(
                         query,
                         multi_buffer_snapshot,
                         buffer_snapshot,
                         Arc::clone(&visible_hints),
                         cached_excerpt_hints,
+                        previous_task,
                         cx,
-                    ),
-                );
+                    )
+                };
+                match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        let update_task = o.get_mut();
+                        if update_task.is_running() {
+                            match (update_task.invalidation_strategy(), invalidation_strategy) {
+                                (InvalidationStrategy::Forced, InvalidationStrategy::Forced)
+                                | (_, InvalidationStrategy::OnConflict) => {
+                                    o.insert(UpdateTask::new(
+                                        invalidation_strategy,
+                                        new_update_task(None),
+                                    ));
+                                }
+                                (InvalidationStrategy::Forced, _) => {}
+                                (_, InvalidationStrategy::Forced) => {
+                                    if cache_is_empty {
+                                        o.insert(UpdateTask::new(
+                                            invalidation_strategy,
+                                            new_update_task(None),
+                                        ));
+                                    } else if update_task.pending_refresh.is_none() {
+                                        update_task.pending_refresh = Some(new_update_task(Some(
+                                            update_task.current.1.is_running_rx.clone(),
+                                        )));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            o.insert(UpdateTask::new(
+                                invalidation_strategy,
+                                new_update_task(None),
+                            ));
+                        }
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(UpdateTask::new(
+                            invalidation_strategy,
+                            new_update_task(None),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -391,10 +454,16 @@ fn new_update_task(
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
+    previous_task: Option<smol::channel::Receiver<()>>,
     cx: &mut ViewContext<'_, '_, Editor>,
-) -> InlayHintUpdateTask {
+) -> SpawnedTask {
     let hints_fetch_tasks = hints_fetch_tasks(query, &buffer_snapshot, cx);
+    let (is_running_tx, is_running_rx) = smol::channel::bounded(1);
     let _task = cx.spawn(|editor, cx| async move {
+        let _is_running_tx = is_running_tx;
+        if let Some(previous_task) = previous_task {
+            previous_task.recv().await.ok();
+        }
         let create_update_task = |range, hint_fetch_task| {
             fetch_and_update_hints(
                 editor.clone(),
@@ -437,9 +506,10 @@ fn new_update_task(
         }
     });
 
-    InlayHintUpdateTask {
+    SpawnedTask {
         version: query.cache_version,
         _task,
+        is_running_rx,
     }
 }
 
@@ -597,7 +667,7 @@ fn calculate_hint_updates(
     let mut remove_from_cache = HashSet::default();
     if matches!(
         query.invalidate,
-        InvalidationStrategy::All | InvalidationStrategy::OnConflict
+        InvalidationStrategy::Forced | InvalidationStrategy::OnConflict
     ) {
         remove_from_visible.extend(
             visible_hints

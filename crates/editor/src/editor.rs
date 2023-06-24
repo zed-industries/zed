@@ -2632,7 +2632,7 @@ impl Editor {
             }
             InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayRefreshReason::ExcerptEdited => InvalidationStrategy::OnConflict,
-            InlayRefreshReason::RefreshRequested => InvalidationStrategy::All,
+            InlayRefreshReason::RefreshRequested => InvalidationStrategy::Forced,
         };
 
         let excerpts_to_query = self
@@ -2680,7 +2680,6 @@ impl Editor {
             .into_iter()
             .map(|(position, id, hint)| {
                 let mut text = hint.text();
-                // TODO kb styling instead?
                 if hint.padding_right {
                     text.push(' ');
                 }
