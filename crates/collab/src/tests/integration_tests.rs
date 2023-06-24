@@ -7896,6 +7896,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    cx_a.foreground().start_waiting();
+
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -7904,58 +7906,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    cx_a.foreground().run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert!(
-            extract_hint_labels(editor).is_empty(),
-            "No inlays should be in the new cache"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Cache should use editor settings to get the allowed hint kinds"
-        );
-        assert_eq!(
-            inlay_cache.version, 0,
-            "New cache should have no version updates"
-        );
-    });
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
 
-    cx_b.foreground().run_until_parked();
-    editor_b.update(cx_b, |editor, _| {
-        assert!(
-            extract_hint_labels(editor).is_empty(),
-            "No inlays should be in the new cache"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Cache should use editor settings to get the allowed hint kinds"
-        );
-        assert_eq!(
-            inlay_cache.version, 0,
-            "New cache should have no version updates"
-        );
-    });
-
-    cx_a.foreground().start_waiting();
-    let mut edits_made = 0;
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
-        editor.handle_input(":", cx);
-        cx.focus(&editor_b);
-        edits_made += 1;
-    });
     let next_call_id = Arc::new(AtomicU32::new(0));
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -7992,36 +7944,76 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_a.foreground().finish_waiting();
     cx_a.foreground().run_until_parked();
 
-    fn extract_hint_labels(editor: &Editor) -> Vec<String> {
-        let mut labels = Vec::new();
-        for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
-            let excerpt_hints = excerpt_hints.read();
-            for (_, inlay) in excerpt_hints.hints.iter() {
-                match &inlay.label {
-                    project::InlayHintLabel::String(s) => labels.push(s.to_string()),
-                    _ => unreachable!(),
-                }
-            }
-        }
-        labels
-    }
-
+    let mut edits_made = 0;
+    edits_made += 1;
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
             vec!["0".to_string()],
             extract_hint_labels(editor),
-            "Host should get hints from the 1st edit and 1st LSP query"
+            "Host should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Cache should use editor settings to get the allowed hint kinds"
+        );
         assert_eq!(
             inlay_cache.version, edits_made,
-            "Each editor should track its own inlay cache history, which should be incremented after every cache/view change"
+            "Host editor should track its own inlay cache history, which should be incremented after every cache/view change"
         );
     });
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
             vec!["0".to_string(), "1".to_string()],
+            extract_hint_labels(editor),
+            "Client should get its first hints when opens an editor"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Cache should use editor settings to get the allowed hint kinds"
+        );
+        assert_eq!(
+            inlay_cache.version, edits_made,
+            "Client editor should track its own inlay cache history, which should be incremented after every cache/view change"
+        );
+    });
+
+    editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
+        editor.handle_input(":", cx);
+        cx.focus(&editor_b);
+        edits_made += 1;
+    });
+    cx_a.foreground().run_until_parked();
+    cx_b.foreground().run_until_parked();
+    editor_a.update(cx_a, |editor, _| {
+        assert_eq!(
+            vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            extract_hint_labels(editor),
+            "Host should get hints from the 1st edit and 1st LSP query"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Inlay kinds settings never change during the test"
+        );
+        assert_eq!(inlay_cache.version, edits_made);
+    });
+    editor_b.update(cx_b, |editor, _| {
+        assert_eq!(
+            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string()],
             extract_hint_labels(editor),
             "Guest should get hints the 1st edit and 2nd LSP query"
         );
@@ -8043,7 +8035,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
             extract_hint_labels(editor),
             "Host should get hints from 3rd edit, 5th LSP query: \
 4th query was made by guest (but not applied) due to cache invalidation logic"
@@ -8061,7 +8053,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                 "0".to_string(),
                 "1".to_string(),
                 "2".to_string(),
-                "3".to_string()
+                "3".to_string(),
+                "4".to_string(),
+                "5".to_string(),
             ],
             extract_hint_labels(editor),
             "Guest should get hints from 3rd edit, 6th LSP query"
@@ -8091,7 +8085,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                 "1".to_string(),
                 "2".to_string(),
                 "3".to_string(),
-                "4".to_string()
+                "4".to_string(),
+                "5".to_string(),
+                "6".to_string(),
             ],
             extract_hint_labels(editor),
             "Host should react to /refresh LSP request and get new hints from 7th LSP query"
@@ -8108,7 +8104,16 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string(), "4".to_string(), "5".to_string()],
+            vec![
+                "0".to_string(),
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "4".to_string(),
+                "5".to_string(),
+                "6".to_string(),
+                "7".to_string(),
+            ],
             extract_hint_labels(editor),
             "Guest should get a /refresh LSP request propagated by host and get new hints from 8th LSP query"
         );
@@ -8120,7 +8125,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         assert_eq!(
             inlay_cache.version,
             edits_made,
-            "Gues should accepted all edits and bump its cache version every time"
+            "Guest should accepted all edits and bump its cache version every time"
         );
     });
 }
@@ -8147,4 +8152,18 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
         pending.sort();
         RoomParticipants { remote, pending }
     })
+}
+
+fn extract_hint_labels(editor: &Editor) -> Vec<String> {
+    let mut labels = Vec::new();
+    for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
+        let excerpt_hints = excerpt_hints.read();
+        for (_, inlay) in excerpt_hints.hints.iter() {
+            match &inlay.label {
+                project::InlayHintLabel::String(s) => labels.push(s.to_string()),
+                _ => unreachable!(),
+            }
+        }
+    }
+    labels
 }
