@@ -1,5 +1,4 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-use db::kvp::KEY_VALUE_STORE;
 use gpui::{executor::Background, serde_json, AppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -8,7 +7,6 @@ use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
-use uuid::Uuid;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -120,39 +118,15 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>) {
-        let this = self.clone();
-        self.executor
-            .spawn(
-                async move {
-                    let installation_id =
-                        if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp("device_id") {
-                            installation_id
-                        } else {
-                            let installation_id = Uuid::new_v4().to_string();
-                            KEY_VALUE_STORE
-                                .write_kvp("device_id".to_string(), installation_id.clone())
-                                .await?;
-                            installation_id
-                        };
+    pub fn start(self: &Arc<Self>, installation_id: Option<String>) {
+        let mut state = self.state.lock();
+        state.installation_id = installation_id.map(|id| id.into());
+        let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
+        drop(state);
 
-                    let installation_id: Arc<str> = installation_id.into();
-                    let mut state = this.state.lock();
-                    state.installation_id = Some(installation_id.clone());
-
-                    let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
-
-                    drop(state);
-
-                    if has_clickhouse_events {
-                        this.flush_clickhouse_events();
-                    }
-
-                    anyhow::Ok(())
-                }
-                .log_err(),
-            )
-            .detach();
+        if has_clickhouse_events {
+            self.flush_clickhouse_events();
+        }
     }
 
     /// This method takes the entire TelemetrySettings struct in order to force client code
