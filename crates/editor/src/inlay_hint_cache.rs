@@ -82,33 +82,6 @@ impl UpdateTask {
     }
 }
 
-impl ExcerptDimensions {
-    fn contains_position(
-        &self,
-        position: language::Anchor,
-        buffer_snapshot: &BufferSnapshot,
-        visible_only: bool,
-    ) -> bool {
-        if visible_only {
-            self.excerpt_visible_range_start
-                .cmp(&position, buffer_snapshot)
-                .is_le()
-                && self
-                    .excerpt_visible_range_end
-                    .cmp(&position, buffer_snapshot)
-                    .is_ge()
-        } else {
-            self.excerpt_range_start
-                .cmp(&position, buffer_snapshot)
-                .is_le()
-                && self
-                    .excerpt_range_end
-                    .cmp(&position, buffer_snapshot)
-                    .is_ge()
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum InvalidationStrategy {
     Forced,
@@ -632,10 +605,7 @@ fn calculate_hint_updates(
 
     let mut excerpt_hints_to_persist = HashMap::default();
     for new_hint in new_excerpt_hints {
-        if !query
-            .dimensions
-            .contains_position(new_hint.position, buffer_snapshot, false)
-        {
+        if !contains_position(&fetch_range, new_hint.position, buffer_snapshot) {
             continue;
         }
         let missing_from_cache = match &cached_excerpt_hints {
@@ -674,11 +644,7 @@ fn calculate_hint_updates(
                 .iter()
                 .filter(|hint| hint.position.excerpt_id == query.excerpt_id)
                 .filter(|hint| {
-                    query.dimensions.contains_position(
-                        hint.position.text_anchor,
-                        buffer_snapshot,
-                        false,
-                    )
+                    contains_position(&fetch_range, hint.position.text_anchor, buffer_snapshot)
                 })
                 .filter(|hint| {
                     fetch_range
@@ -829,4 +795,13 @@ pub fn visible_inlay_hints<'a, 'b: 'a, 'c, 'd: 'a>(
         .read(cx)
         .current_inlays()
         .filter(|inlay| Some(inlay.id) != editor.copilot_state.suggestion.as_ref().map(|h| h.id))
+}
+
+fn contains_position(
+    range: &Range<language::Anchor>,
+    position: language::Anchor,
+    buffer_snapshot: &BufferSnapshot,
+) -> bool {
+    range.start.cmp(&position, buffer_snapshot).is_le()
+        && range.end.cmp(&position, buffer_snapshot).is_ge()
 }
