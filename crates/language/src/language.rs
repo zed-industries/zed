@@ -583,7 +583,7 @@ struct LanguageRegistryState {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<lsp::LanguageServer>>,
+    pub task: Task<Result<Option<lsp::LanguageServer>>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -896,7 +896,8 @@ impl LanguageRegistry {
                         }
                     })
                     .detach();
-                Ok(server)
+
+                Ok(Some(server))
             });
 
             return Some(PendingLanguageServer {
@@ -944,19 +945,24 @@ impl LanguageRegistry {
                     .clone();
                 drop(lock);
 
-                let binaries = entry.clone().map_err(|e| anyhow!(e)).await?;
+                let binary = match entry.clone().await.log_err() {
+                    Some(binary) => binary,
+                    None => return Ok(None),
+                };
 
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
-                    task.await?;
+                    if task.await.log_err().is_none() {
+                        return Ok(None);
+                    }
                 }
 
-                lsp::LanguageServer::new(
+                Ok(Some(lsp::LanguageServer::new(
                     server_id,
-                    binaries,
+                    binary,
                     &root_path,
                     adapter.code_action_kinds(),
                     cx,
-                )
+                )?))
             })
         };
 

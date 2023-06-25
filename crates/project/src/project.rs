@@ -2471,7 +2471,7 @@ impl Project {
                 .await;
 
                 match result {
-                    Ok(server) => Some(server),
+                    Ok(server) => server,
 
                     Err(err) => {
                         log::error!("failed to start language server {:?}: {}", server_name, err);
@@ -2571,8 +2571,8 @@ impl Project {
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<LanguageServer>> {
-        let language_server = Self::setup_pending_language_server(
+    ) -> Result<Option<Arc<LanguageServer>>> {
+        let setup = Self::setup_pending_language_server(
             this,
             initialization_options,
             pending_server,
@@ -2580,8 +2580,12 @@ impl Project {
             languages,
             server_id,
             cx,
-        )
-        .await?;
+        );
+
+        let language_server = match setup.await? {
+            Some(language_server) => language_server,
+            None => return Ok(None),
+        };
 
         let this = match this.upgrade(cx) {
             Some(this) => this,
@@ -2599,7 +2603,7 @@ impl Project {
             )
         })?;
 
-        Ok(language_server)
+        Ok(Some(language_server))
     }
 
     async fn setup_pending_language_server(
@@ -2610,11 +2614,13 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<LanguageServer>> {
+    ) -> Result<Option<Arc<LanguageServer>>> {
         let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
 
-        let language_server = pending_server.task.await?;
-        let language_server = language_server.initialize(initialization_options).await?;
+        let language_server = match pending_server.task.await? {
+            Some(server) => server.initialize(initialization_options).await?,
+            None => return Ok(None),
+        };
 
         language_server
             .on_notification::<lsp::notification::LogMessage, _>({
@@ -2756,7 +2762,7 @@ impl Project {
             )
             .ok();
 
-        Ok(language_server)
+        Ok(Some(language_server))
     }
 
     fn insert_newly_running_language_server(
