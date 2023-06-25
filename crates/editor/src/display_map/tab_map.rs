@@ -5,13 +5,12 @@ use super::{
 use crate::MultiBufferSnapshot;
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Point};
-use parking_lot::Mutex;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
-pub struct TabMap(Mutex<TabSnapshot>);
+pub struct TabMap(TabSnapshot);
 
 impl TabMap {
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
@@ -21,22 +20,22 @@ impl TabMap {
             max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
         };
-        (Self(Mutex::new(snapshot.clone())), snapshot)
+        (Self(snapshot.clone()), snapshot)
     }
 
     #[cfg(test)]
-    pub fn set_max_expansion_column(&self, column: u32) -> TabSnapshot {
-        self.0.lock().max_expansion_column = column;
-        self.0.lock().clone()
+    pub fn set_max_expansion_column(&mut self, column: u32) -> TabSnapshot {
+        self.0.max_expansion_column = column;
+        self.0.clone()
     }
 
     pub fn sync(
-        &self,
+        &mut self,
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
-        let mut old_snapshot = self.0.lock();
+        let old_snapshot = &mut self.0;
         let mut new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size,
@@ -711,7 +710,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());

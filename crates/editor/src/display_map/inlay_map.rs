@@ -5,7 +5,6 @@ use crate::{
 use collections::{BTreeSet, HashMap};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
-use parking_lot::Mutex;
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -14,7 +13,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
 
 pub struct InlayMap {
-    snapshot: Mutex<InlaySnapshot>,
+    snapshot: InlaySnapshot,
     inlays_by_id: HashMap<InlayId, Inlay>,
     inlays: Vec<Inlay>,
 }
@@ -308,7 +307,7 @@ impl InlayMap {
 
         (
             Self {
-                snapshot: Mutex::new(snapshot.clone()),
+                snapshot: snapshot.clone(),
                 inlays_by_id: HashMap::default(),
                 inlays: Vec::new(),
             },
@@ -321,7 +320,7 @@ impl InlayMap {
         buffer_snapshot: MultiBufferSnapshot,
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        let mut snapshot = self.snapshot.lock();
+        let mut snapshot = &mut self.snapshot;
 
         if buffer_edits.is_empty() {
             if snapshot.buffer.trailing_excerpt_update_count()
@@ -456,7 +455,7 @@ impl InlayMap {
         to_remove: Vec<InlayId>,
         to_insert: Vec<(InlayId, InlayProperties<T>)>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        let snapshot = self.snapshot.lock();
+        let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
         self.inlays.retain(|inlay| !to_remove.contains(&inlay.id));
@@ -521,7 +520,7 @@ impl InlayMap {
 
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
-        let snapshot = self.snapshot.lock();
+        let snapshot = &mut self.snapshot;
         for _ in 0..rng.gen_range(1..=5) {
             if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
