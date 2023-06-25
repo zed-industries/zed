@@ -41,13 +41,7 @@ use collections::HashMap;
 use core::panic;
 use json::ToJson;
 use smallvec::SmallVec;
-use std::{
-    any::Any,
-    borrow::Cow,
-    marker::PhantomData,
-    mem,
-    ops::{Deref, DerefMut, Range},
-};
+use std::{any::Any, borrow::Cow, mem, ops::Range};
 
 pub trait Element<V: View>: 'static {
     type LayoutState;
@@ -564,90 +558,6 @@ pub struct RootElement<V: View> {
 impl<V: View> RootElement<V> {
     pub fn new(element: AnyElement<V>, view: WeakViewHandle<V>) -> Self {
         Self { element, view }
-    }
-}
-
-pub trait Component<V: View>: 'static {
-    fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
-}
-
-pub struct ComponentHost<V: View, C: Component<V>> {
-    component: C,
-    view_type: PhantomData<V>,
-}
-
-impl<V: View, C: Component<V>> ComponentHost<V, C> {
-    pub fn new(c: C) -> Self {
-        Self {
-            component: c,
-            view_type: PhantomData,
-        }
-    }
-}
-
-impl<V: View, C: Component<V>> Deref for ComponentHost<V, C> {
-    type Target = C;
-
-    fn deref(&self) -> &Self::Target {
-        &self.component
-    }
-}
-
-impl<V: View, C: Component<V>> DerefMut for ComponentHost<V, C> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.component
-    }
-}
-
-impl<V: View, C: Component<V>> Element<V> for ComponentHost<V, C> {
-    type LayoutState = AnyElement<V>;
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut LayoutContext<V>,
-    ) -> (Vector2F, AnyElement<V>) {
-        let mut element = self.component.render(view, cx);
-        let size = element.layout(constraint, view, cx);
-        (size, element)
-    }
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        visible_bounds: RectF,
-        element: &mut AnyElement<V>,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) {
-        element.paint(scene, bounds.origin(), visible_bounds, view, cx);
-    }
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        _: RectF,
-        _: RectF,
-        element: &AnyElement<V>,
-        _: &(),
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF> {
-        element.rect_for_text_range(range_utf16, view, cx)
-    }
-
-    fn debug(
-        &self,
-        _: RectF,
-        element: &AnyElement<V>,
-        _: &(),
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> serde_json::Value {
-        element.debug(view, cx)
     }
 }
 
