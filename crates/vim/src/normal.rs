@@ -1,9 +1,10 @@
 mod change;
 mod delete;
+mod scroll;
 mod substitute;
 mod yank;
 
-use std::{borrow::Cow, cmp::Ordering, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     motion::Motion,
@@ -13,14 +14,12 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint,
-    scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
-    Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
+    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, Bias, ClipboardSelection,
+    DisplayPoint,
 };
-use gpui::{actions, impl_actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use log::error;
-use serde::Deserialize;
 use workspace::Workspace;
 
 use self::{
@@ -29,9 +28,6 @@ use self::{
     substitute::substitute,
     yank::{yank_motion, yank_object},
 };
-
-#[derive(Clone, PartialEq, Deserialize)]
-struct Scroll(ScrollAmount);
 
 actions!(
     vim,
@@ -50,8 +46,6 @@ actions!(
         Substitute,
     ]
 );
-
-impl_actions!(vim, [Scroll]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_after);
@@ -90,13 +84,8 @@ pub fn init(cx: &mut AppContext) {
         })
     });
     cx.add_action(paste);
-    cx.add_action(|_: &mut Workspace, Scroll(amount): &Scroll, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |editor, cx| {
-                scroll(editor, amount, cx);
-            })
-        })
-    });
+
+    scroll::init(cx);
 }
 
 pub fn normal_motion(
@@ -391,46 +380,6 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
             });
         });
     });
-}
-
-fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
-    let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    editor.scroll_screen(amount, cx);
-    if should_move_cursor {
-        let selection_ordering = editor.newest_selection_on_screen(cx);
-        if selection_ordering.is_eq() {
-            return;
-        }
-
-        let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {
-            visible_rows as u32
-        } else {
-            return;
-        };
-
-        let scroll_margin_rows = editor.vertical_scroll_margin() as u32;
-        let top_anchor = editor.scroll_manager.anchor().anchor;
-
-        editor.change_selections(None, cx, |s| {
-            s.replace_cursors_with(|snapshot| {
-                let mut new_point = top_anchor.to_display_point(&snapshot);
-
-                match selection_ordering {
-                    Ordering::Less => {
-                        *new_point.row_mut() += scroll_margin_rows;
-                        new_point = snapshot.clip_point(new_point, Bias::Right);
-                    }
-                    Ordering::Greater => {
-                        *new_point.row_mut() += visible_rows - scroll_margin_rows as u32;
-                        new_point = snapshot.clip_point(new_point, Bias::Left);
-                    }
-                    Ordering::Equal => unreachable!(),
-                }
-
-                vec![new_point]
-            })
-        });
-    }
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
