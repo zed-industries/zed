@@ -160,7 +160,6 @@ impl InlayHintCache {
         visible_hints: Vec<Inlay>,
         cx: &mut ViewContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
-        dbg!(new_hint_settings);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
         match (self.enabled, new_hint_settings.enabled) {
             (false, false) => {
@@ -352,7 +351,6 @@ impl InlayHintCache {
         self.version += 1;
         self.update_tasks.clear();
         self.hints.clear();
-        self.allowed_hint_kinds.clear();
     }
 }
 
@@ -800,8 +798,7 @@ mod tests {
     use futures::StreamExt;
     use gpui::{TestAppContext, ViewHandle};
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        FakeLspAdapter, Language, LanguageConfig,
+        language_settings::AllLanguageSettingsContent, FakeLspAdapter, Language, LanguageConfig,
     };
     use lsp::FakeLanguageServer;
     use project::{FakeFs, Project};
@@ -814,11 +811,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
-        let (file_with_hints, editor, fake_server) =
-            prepare_test_objects(cx, &allowed_hint_kinds).await;
-
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                show_other_hints: allowed_hint_kinds.contains(&None),
+            })
+        });
+        let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         fake_server
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -931,22 +933,7 @@ mod tests {
 
     async fn prepare_test_objects(
         cx: &mut TestAppContext,
-        allowed_hint_kinds: &HashSet<Option<InlayHintKind>>,
     ) -> (&'static str, ViewHandle<Editor>, FakeLanguageServer) {
-        cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                    settings.defaults.inlay_hints = Some(InlayHintSettings {
-                        enabled: true,
-                        show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                        show_parameter_hints: allowed_hint_kinds
-                            .contains(&Some(InlayHintKind::Parameter)),
-                        show_other_hints: allowed_hint_kinds.contains(&None),
-                    })
-                });
-            });
-        });
-
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -1001,57 +988,73 @@ mod tests {
 
     #[gpui::test]
     async fn test_hint_setting_changes(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
-        let (file_with_hints, editor, fake_server) =
-            prepare_test_objects(cx, &allowed_hint_kinds).await;
-
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                show_other_hints: allowed_hint_kinds.contains(&None),
+            })
+        });
+        let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let another_lsp_request_count = Arc::clone(&lsp_request_count);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Url::from_file_path(file_with_hints).unwrap(),
-                );
-                Ok(Some(vec![
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, 1),
-                        label: lsp::InlayHintLabel::String("type hint".to_string()),
-                        kind: Some(lsp::InlayHintKind::TYPE),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, 2),
-                        label: lsp::InlayHintLabel::String("parameter hint".to_string()),
-                        kind: Some(lsp::InlayHintKind::PARAMETER),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, 3),
-                        label: lsp::InlayHintLabel::String("other hint".to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                ]))
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_lsp_request_count = Arc::clone(&another_lsp_request_count);
+                async move {
+                    Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                    );
+                    Ok(Some(vec![
+                        lsp::InlayHint {
+                            position: lsp::Position::new(0, 1),
+                            label: lsp::InlayHintLabel::String("type hint".to_string()),
+                            kind: Some(lsp::InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        },
+                        lsp::InlayHint {
+                            position: lsp::Position::new(0, 2),
+                            label: lsp::InlayHintLabel::String("parameter hint".to_string()),
+                            kind: Some(lsp::InlayHintKind::PARAMETER),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        },
+                        lsp::InlayHint {
+                            position: lsp::Position::new(0, 3),
+                            label: lsp::InlayHintLabel::String("other hint".to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        },
+                    ]))
+                }
             })
             .next()
             .await;
         cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
-        let edits_made = 1;
+        let mut edits_made = 1;
         editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                1,
+                "Should query new hints once"
+            );
             assert_eq!(
                 vec![
                     "type hint".to_string(),
@@ -1076,10 +1079,247 @@ mod tests {
             );
         });
 
-        //
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .await
+            .expect("inlay refresh request failed");
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                2,
+                "Should load new hints twice"
+            );
+            assert_eq!(
+                vec![
+                    "type hint".to_string(),
+                    "parameter hint".to_string(),
+                    "other hint".to_string()
+                ],
+                cached_hint_labels(editor),
+                "Cached hints should not change due to allowed hint kinds settings update"
+            );
+            assert_eq!(
+                vec!["type hint".to_string(), "other hint".to_string()],
+                visible_hint_labels(editor, cx)
+            );
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "Should not update cache version due to new loaded hints being the same"
+            );
+        });
+
+        for (new_allowed_hint_kinds, expected_visible_hints) in [
+            (HashSet::from_iter([None]), vec!["other hint".to_string()]),
+            (
+                HashSet::from_iter([Some(InlayHintKind::Type)]),
+                vec!["type hint".to_string()],
+            ),
+            (
+                HashSet::from_iter([Some(InlayHintKind::Parameter)]),
+                vec!["parameter hint".to_string()],
+            ),
+            (
+                HashSet::from_iter([None, Some(InlayHintKind::Type)]),
+                vec!["type hint".to_string(), "other hint".to_string()],
+            ),
+            (
+                HashSet::from_iter([None, Some(InlayHintKind::Parameter)]),
+                vec!["parameter hint".to_string(), "other hint".to_string()],
+            ),
+            (
+                HashSet::from_iter([Some(InlayHintKind::Type), Some(InlayHintKind::Parameter)]),
+                vec!["type hint".to_string(), "parameter hint".to_string()],
+            ),
+            (
+                HashSet::from_iter([
+                    None,
+                    Some(InlayHintKind::Type),
+                    Some(InlayHintKind::Parameter),
+                ]),
+                vec![
+                    "type hint".to_string(),
+                    "parameter hint".to_string(),
+                    "other hint".to_string(),
+                ],
+            ),
+        ] {
+            edits_made += 1;
+            update_test_settings(cx, |settings| {
+                settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    enabled: true,
+                    show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                    show_parameter_hints: new_allowed_hint_kinds
+                        .contains(&Some(InlayHintKind::Parameter)),
+                    show_other_hints: new_allowed_hint_kinds.contains(&None),
+                })
+            });
+            cx.foreground().run_until_parked();
+            editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should not load new hints on allowed hint kinds change for hint kinds {new_allowed_hint_kinds:?}"
+                );
+                assert_eq!(
+                    vec![
+                        "type hint".to_string(),
+                        "parameter hint".to_string(),
+                        "other hint".to_string(),
+                    ],
+                    cached_hint_labels(editor),
+                    "Should get its cached hints unchanged after the settings change for hint kinds {new_allowed_hint_kinds:?}"
+                );
+                assert_eq!(
+                    expected_visible_hints,
+                    visible_hint_labels(editor, cx),
+                    "Should get its visible hints filtered after the settings change for hint kinds {new_allowed_hint_kinds:?}"
+                );
+                let inlay_cache = editor.inlay_hint_cache();
+                assert_eq!(
+                    inlay_cache.allowed_hint_kinds, new_allowed_hint_kinds,
+                    "Cache should use editor settings to get the allowed hint kinds for hint kinds {new_allowed_hint_kinds:?}"
+                );
+                assert_eq!(
+                    inlay_cache.version, edits_made,
+                    "The editor should update the cache version after every cache/view change for hint kinds {new_allowed_hint_kinds:?} due to visible hints change"
+                );
+            });
+        }
+
+        edits_made += 1;
+        let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
+        update_test_settings(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: false,
+                show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                show_parameter_hints: another_allowed_hint_kinds
+                    .contains(&Some(InlayHintKind::Parameter)),
+                show_other_hints: another_allowed_hint_kinds.contains(&None),
+            })
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                2,
+                "Should not load new hints when hints got disabled"
+            );
+            assert!(
+                cached_hint_labels(editor).is_empty(),
+                "Should clear the cache when hints got disabled"
+            );
+            assert!(
+                visible_hint_labels(editor, cx).is_empty(),
+                "Should clear visible hints when hints got disabled"
+            );
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(
+                inlay_cache.allowed_hint_kinds, another_allowed_hint_kinds,
+                "Should update its allowed hint kinds even when hints got disabled"
+            );
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "The editor should update the cache version after hints got disabled"
+            );
+        });
+
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .await
+            .expect("inlay refresh request failed");
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                2,
+                "Should not load new hints when they got disabled"
+            );
+            assert!(cached_hint_labels(editor).is_empty());
+            assert!(visible_hint_labels(editor, cx).is_empty());
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(inlay_cache.allowed_hint_kinds, another_allowed_hint_kinds);
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "The editor should not update the cache version after /refresh query without updates"
+            );
+        });
+
+        let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
+        edits_made += 1;
+        update_test_settings(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                show_parameter_hints: final_allowed_hint_kinds
+                    .contains(&Some(InlayHintKind::Parameter)),
+                show_other_hints: final_allowed_hint_kinds.contains(&None),
+            })
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                3,
+                "Should query for new hints when they got reenabled"
+            );
+            assert_eq!(
+                vec![
+                    "type hint".to_string(),
+                    "parameter hint".to_string(),
+                    "other hint".to_string(),
+                ],
+                cached_hint_labels(editor),
+                "Should get its cached hints fully repopulated after the hints got reenabled"
+            );
+            assert_eq!(
+                vec!["parameter hint".to_string()],
+                visible_hint_labels(editor, cx),
+                "Should get its visible hints repopulated and filtered after the h"
+            );
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(
+                inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds,
+                "Cache should update editor settings when hints got reenabled"
+            );
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "Cache should update its version after hints got reenabled"
+            );
+        });
+
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .await
+            .expect("inlay refresh request failed");
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                lsp_request_count.load(Ordering::Relaxed),
+                4,
+                "Should query for new hints again"
+            );
+            assert_eq!(
+                vec![
+                    "type hint".to_string(),
+                    "parameter hint".to_string(),
+                    "other hint".to_string(),
+                ],
+                cached_hint_labels(editor),
+            );
+            assert_eq!(
+                vec!["parameter hint".to_string()],
+                visible_hint_labels(editor, cx),
+            );
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds,);
+            assert_eq!(inlay_cache.version, edits_made);
+        });
     }
 
-    pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
+    pub(crate) fn init_test(cx: &mut TestAppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
         cx.foreground().forbid_parking();
 
         cx.update(|cx| {

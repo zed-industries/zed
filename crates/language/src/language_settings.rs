@@ -172,9 +172,6 @@ fn default_true() -> bool {
 impl InlayHintSettings {
     pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
         let mut kinds = HashSet::default();
-        if !self.enabled {
-            return kinds;
-        }
         if self.show_type_hints {
             kinds.insert(Some(InlayHintKind::Type));
         }

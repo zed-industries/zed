@@ -8134,6 +8134,232 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
 }
 
+#[gpui::test]
+async fn test_inlay_hint_refresh_is_forwarded(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    cx_a.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    enabled: false,
+                    show_type_hints: true,
+                    show_parameter_hints: false,
+                    show_other_hints: true,
+                })
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    enabled: true,
+                    show_type_hints: true,
+                    show_parameter_hints: false,
+                    show_other_hints: true,
+                })
+            });
+        });
+    });
+    let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+    let language = Arc::new(language);
+    client_a.language_registry.add(Arc::clone(&language));
+    client_b.language_registry.add(language);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    cx_a.foreground().start_waiting();
+    cx_b.foreground().start_waiting();
+
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    let next_call_id = Arc::new(AtomicU32::new(0));
+    fake_language_server
+        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            let task_next_call_id = Arc::clone(&next_call_id);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                let mut current_call_id = Arc::clone(&task_next_call_id).fetch_add(1, SeqCst);
+                let mut new_hints = Vec::with_capacity(current_call_id as usize);
+                loop {
+                    new_hints.push(lsp::InlayHint {
+                        position: lsp::Position::new(0, current_call_id),
+                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    });
+                    if current_call_id == 0 {
+                        break;
+                    }
+                    current_call_id -= 1;
+                }
+                Ok(Some(new_hints))
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+    cx_a.foreground().finish_waiting();
+    cx_b.foreground().finish_waiting();
+
+    cx_a.foreground().run_until_parked();
+    editor_a.update(cx_a, |editor, _| {
+        assert!(
+            extract_hint_labels(editor).is_empty(),
+            "Host should get no hints due to them turned off"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Host should have allowed hint kinds set despite hints are off"
+        );
+        assert_eq!(
+            inlay_cache.version, 0,
+            "Host should not increment its cache version due to no changes",
+        );
+    });
+
+    let mut edits_made = 1;
+    cx_b.foreground().run_until_parked();
+    editor_b.update(cx_b, |editor, _| {
+        assert_eq!(
+            vec!["0".to_string()],
+            extract_hint_labels(editor),
+            "Client should get its first hints when opens an editor"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Cache should use editor settings to get the allowed hint kinds"
+        );
+        assert_eq!(
+            inlay_cache.version, edits_made,
+            "Guest editor update the cache version after every cache/view change"
+        );
+    });
+
+    fake_language_server
+        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .await
+        .expect("inlay refresh request failed");
+    cx_a.foreground().run_until_parked();
+    editor_a.update(cx_a, |editor, _| {
+        assert!(
+            extract_hint_labels(editor).is_empty(),
+            "Host should get nop hints due to them turned off, even after the /refresh"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
+        assert_eq!(
+            inlay_cache.version, 0,
+            "Host should not increment its cache version due to no changes",
+        );
+    });
+
+    edits_made += 1;
+    cx_b.foreground().run_until_parked();
+    editor_b.update(cx_b, |editor, _| {
+        assert_eq!(
+            vec!["0".to_string(), "1".to_string(),],
+            extract_hint_labels(editor),
+            "Guest should get a /refresh LSP request propagated by host despite host hints are off"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Inlay kinds settings never change during the test"
+        );
+        assert_eq!(
+            inlay_cache.version, edits_made,
+            "Guest should accepted all edits and bump its cache version every time"
+        );
+    });
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct RoomParticipants {
     remote: Vec<String>,
