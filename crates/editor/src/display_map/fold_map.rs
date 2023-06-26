@@ -3,15 +3,13 @@ use super::{
     TextHighlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
-use collections::BTreeMap;
 use gpui::{color::Color, fonts::HighlightStyle};
 use language::{Chunk, Edit, Point, TextSummary};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
-    iter::{self, Peekable},
+    iter,
     ops::{Add, AddAssign, Range, Sub},
-    vec,
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 
@@ -656,7 +654,6 @@ impl FoldSnapshot {
         text_highlights: Option<&'a TextHighlights>,
         inlay_highlights: Option<HighlightStyle>,
     ) -> FoldChunks<'a> {
-        let mut highlight_endpoints = Vec::new();
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
 
         let inlay_end = {
@@ -671,92 +668,18 @@ impl FoldSnapshot {
             transform_cursor.start().1 + InlayOffset(overshoot)
         };
 
-        if let Some(text_highlights) = text_highlights {
-            if !text_highlights.is_empty() {
-                while transform_cursor.start().0 < range.end {
-                    if !transform_cursor.item().unwrap().is_fold() {
-                        let transform_start = self.inlay_snapshot.buffer.anchor_after(
-                            self.inlay_snapshot.to_buffer_offset(cmp::max(
-                                inlay_start,
-                                transform_cursor.start().1,
-                            )),
-                        );
-
-                        let transform_end = {
-                            let overshoot =
-                                InlayOffset(range.end.0 - transform_cursor.start().0 .0);
-                            self.inlay_snapshot.buffer.anchor_before(
-                                self.inlay_snapshot.to_buffer_offset(cmp::min(
-                                    transform_cursor.end(&()).1,
-                                    transform_cursor.start().1 + overshoot,
-                                )),
-                            )
-                        };
-
-                        for (tag, highlights) in text_highlights.iter() {
-                            let style = highlights.0;
-                            let ranges = &highlights.1;
-
-                            let start_ix = match ranges.binary_search_by(|probe| {
-                                let cmp =
-                                    probe.end.cmp(&transform_start, &self.inlay_snapshot.buffer);
-                                if cmp.is_gt() {
-                                    Ordering::Greater
-                                } else {
-                                    Ordering::Less
-                                }
-                            }) {
-                                Ok(i) | Err(i) => i,
-                            };
-                            for range in &ranges[start_ix..] {
-                                if range
-                                    .start
-                                    .cmp(&transform_end, &self.inlay_snapshot.buffer)
-                                    .is_ge()
-                                {
-                                    break;
-                                }
-
-                                highlight_endpoints.push(HighlightEndpoint {
-                                    offset: self.inlay_snapshot.to_inlay_offset(
-                                        range.start.to_offset(&self.inlay_snapshot.buffer),
-                                    ),
-                                    is_start: true,
-                                    tag: *tag,
-                                    style,
-                                });
-                                highlight_endpoints.push(HighlightEndpoint {
-                                    offset: self.inlay_snapshot.to_inlay_offset(
-                                        range.end.to_offset(&self.inlay_snapshot.buffer),
-                                    ),
-                                    is_start: false,
-                                    tag: *tag,
-                                    style,
-                                });
-                            }
-                        }
-                    }
-
-                    transform_cursor.next(&());
-                }
-                highlight_endpoints.sort();
-                transform_cursor.seek(&range.start, Bias::Right, &());
-            }
-        }
-
         FoldChunks {
             transform_cursor,
             inlay_chunks: self.inlay_snapshot.chunks(
                 inlay_start..inlay_end,
                 language_aware,
+                text_highlights,
                 inlay_highlights,
             ),
             inlay_chunk: None,
             inlay_offset: inlay_start,
             output_offset: range.start.0,
             max_output_offset: range.end.0,
-            highlight_endpoints: highlight_endpoints.into_iter().peekable(),
-            active_highlights: Default::default(),
             ellipses_color: self.ellipses_color,
         }
     }
@@ -1034,8 +957,6 @@ pub struct FoldChunks<'a> {
     inlay_offset: InlayOffset,
     output_offset: usize,
     max_output_offset: usize,
-    highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
     ellipses_color: Option<Color>,
 }
 
@@ -1073,21 +994,6 @@ impl<'a> Iterator for FoldChunks<'a> {
             });
         }
 
-        let mut next_highlight_endpoint = InlayOffset(usize::MAX);
-        while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
-            if endpoint.offset <= self.inlay_offset {
-                if endpoint.is_start {
-                    self.active_highlights.insert(endpoint.tag, endpoint.style);
-                } else {
-                    self.active_highlights.remove(&endpoint.tag);
-                }
-                self.highlight_endpoints.next();
-            } else {
-                next_highlight_endpoint = endpoint.offset;
-                break;
-            }
-        }
-
         // Retrieve a chunk from the current location in the buffer.
         if self.inlay_chunk.is_none() {
             let chunk_offset = self.inlay_chunks.offset();
@@ -1098,20 +1004,10 @@ impl<'a> Iterator for FoldChunks<'a> {
         if let Some((buffer_chunk_start, mut chunk)) = self.inlay_chunk {
             let buffer_chunk_end = buffer_chunk_start + InlayOffset(chunk.text.len());
             let transform_end = self.transform_cursor.end(&()).1;
-            let chunk_end = buffer_chunk_end
-                .min(transform_end)
-                .min(next_highlight_endpoint);
+            let chunk_end = buffer_chunk_end.min(transform_end);
 
             chunk.text = &chunk.text
                 [(self.inlay_offset - buffer_chunk_start).0..(chunk_end - buffer_chunk_start).0];
-
-            if !self.active_highlights.is_empty() {
-                let mut highlight_style = HighlightStyle::default();
-                for active_highlight in self.active_highlights.values() {
-                    highlight_style.highlight(*active_highlight);
-                }
-                chunk.highlight_style = Some(highlight_style);
-            }
 
             if chunk_end == transform_end {
                 self.transform_cursor.next(&());

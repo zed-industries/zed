@@ -2,15 +2,20 @@ use crate::{
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
-use collections::{BTreeSet, HashMap};
+use collections::{BTreeMap, BTreeSet, HashMap};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
 use std::{
+    any::TypeId,
     cmp,
+    iter::Peekable,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    vec,
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
+
+use super::TextHighlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
@@ -160,6 +165,28 @@ pub struct InlayBufferRows<'a> {
     max_buffer_row: u32,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct HighlightEndpoint {
+    offset: InlayOffset,
+    is_start: bool,
+    tag: Option<TypeId>,
+    style: HighlightStyle,
+}
+
+impl PartialOrd for HighlightEndpoint {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HighlightEndpoint {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.offset
+            .cmp(&other.offset)
+            .then_with(|| other.is_start.cmp(&self.is_start))
+    }
+}
+
 pub struct InlayChunks<'a> {
     transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
     buffer_chunks: MultiBufferChunks<'a>,
@@ -168,6 +195,8 @@ pub struct InlayChunks<'a> {
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_style: Option<HighlightStyle>,
+    highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
+    active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
     snapshot: &'a InlaySnapshot,
 }
 
@@ -195,6 +224,21 @@ impl<'a> Iterator for InlayChunks<'a> {
             return None;
         }
 
+        let mut next_highlight_endpoint = InlayOffset(usize::MAX);
+        while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
+            if endpoint.offset <= self.output_offset {
+                if endpoint.is_start {
+                    self.active_highlights.insert(endpoint.tag, endpoint.style);
+                } else {
+                    self.active_highlights.remove(&endpoint.tag);
+                }
+                self.highlight_endpoints.next();
+            } else {
+                next_highlight_endpoint = endpoint.offset;
+                break;
+            }
+        }
+
         let chunk = match self.transforms.item()? {
             Transform::Isomorphic(_) => {
                 let chunk = self
@@ -204,17 +248,28 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(cmp::min(
-                    self.transforms.end(&()).0 .0 - self.output_offset.0,
-                    chunk.text.len(),
-                ));
+                let (prefix, suffix) = chunk.text.split_at(
+                    chunk
+                        .text
+                        .len()
+                        .min(self.transforms.end(&()).0 .0 - self.output_offset.0)
+                        .min(next_highlight_endpoint.0 - self.output_offset.0),
+                );
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                Chunk {
+                let mut prefix = Chunk {
                     text: prefix,
                     ..chunk.clone()
+                };
+                if !self.active_highlights.is_empty() {
+                    let mut highlight_style = HighlightStyle::default();
+                    for active_highlight in self.active_highlights.values() {
+                        highlight_style.highlight(*active_highlight);
+                    }
+                    prefix.highlight_style = Some(highlight_style);
                 }
+                prefix
             }
             Transform::Inlay(inlay) => {
                 let inlay_chunks = self.inlay_chunks.get_or_insert_with(|| {
@@ -871,10 +926,71 @@ impl InlaySnapshot {
         &'a self,
         range: Range<InlayOffset>,
         language_aware: bool,
+        text_highlights: Option<&'a TextHighlights>,
         inlay_highlight_style: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
+
+        let mut highlight_endpoints = Vec::new();
+        if let Some(text_highlights) = text_highlights {
+            if !text_highlights.is_empty() {
+                while cursor.start().0 < range.end {
+                    if true {
+                        let transform_start = self.buffer.anchor_after(
+                            self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
+                        );
+
+                        let transform_end = {
+                            let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
+                            self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
+                                cursor.end(&()).0,
+                                cursor.start().0 + overshoot,
+                            )))
+                        };
+
+                        for (tag, highlights) in text_highlights.iter() {
+                            let style = highlights.0;
+                            let ranges = &highlights.1;
+
+                            let start_ix = match ranges.binary_search_by(|probe| {
+                                let cmp = probe.end.cmp(&transform_start, &self.buffer);
+                                if cmp.is_gt() {
+                                    cmp::Ordering::Greater
+                                } else {
+                                    cmp::Ordering::Less
+                                }
+                            }) {
+                                Ok(i) | Err(i) => i,
+                            };
+                            for range in &ranges[start_ix..] {
+                                if range.start.cmp(&transform_end, &self.buffer).is_ge() {
+                                    break;
+                                }
+
+                                highlight_endpoints.push(HighlightEndpoint {
+                                    offset: self
+                                        .to_inlay_offset(range.start.to_offset(&self.buffer)),
+                                    is_start: true,
+                                    tag: *tag,
+                                    style,
+                                });
+                                highlight_endpoints.push(HighlightEndpoint {
+                                    offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
+                                    is_start: false,
+                                    tag: *tag,
+                                    style,
+                                });
+                            }
+                        }
+                    }
+
+                    cursor.next(&());
+                }
+                highlight_endpoints.sort();
+                cursor.seek(&range.start, Bias::Right, &());
+            }
+        }
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
         let buffer_chunks = self.buffer.chunks(buffer_range, language_aware);
@@ -887,13 +1003,15 @@ impl InlaySnapshot {
             output_offset: range.start,
             max_output_offset: range.end,
             highlight_style: inlay_highlight_style,
+            highlight_endpoints: highlight_endpoints.into_iter().peekable(),
+            active_highlights: Default::default(),
             snapshot: self,
         }
     }
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None)
+        self.chunks(Default::default()..self.len(), false, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -1371,7 +1489,7 @@ mod tests {
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let actual_text = inlay_snapshot
-                    .chunks(InlayOffset(start)..InlayOffset(end), false, None)
+                    .chunks(InlayOffset(start)..InlayOffset(end), false, None, None)
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(
