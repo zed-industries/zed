@@ -221,7 +221,9 @@
         "vim::PushOperator",
         "Replace"
       ],
-      "s": "vim::Substitute"
+      "s": "vim::Substitute",
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent"
     }
   },
   {
@@ -312,7 +314,9 @@
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent"
     }
   },
   {
