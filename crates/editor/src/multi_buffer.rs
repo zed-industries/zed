@@ -2631,7 +2631,6 @@ impl MultiBufferSnapshot {
                 };
             }
         }
-
         panic!("excerpt not found")
     }
 

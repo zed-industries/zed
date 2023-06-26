@@ -6406,7 +6406,6 @@ async fn test_basic_following(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     let client_d = server.create_client(cx_d, "user_d").await;
-
     server
         .create_room(&mut [
             (&client_a, cx_a),
@@ -7944,8 +7943,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_a.foreground().finish_waiting();
     cx_a.foreground().run_until_parked();
 
-    let mut edits_made = 0;
-    edits_made += 1;
+    let mut edits_made = 1;
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
             vec!["0".to_string()],

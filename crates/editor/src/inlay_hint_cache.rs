@@ -306,7 +306,7 @@ fn spawn_new_update_tasks(
     update_cache_version: usize,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
-    let visible_hints = Arc::new(visible_inlay_hints(editor, cx).cloned().collect::<Vec<_>>());
+    let visible_hints = Arc::new(editor.visible_inlay_hints(cx));
     for (excerpt_id, (buffer_handle, excerpt_visible_range)) in excerpts_to_query {
         if !excerpt_visible_range.is_empty() {
             let buffer = buffer_handle.read(cx);
@@ -784,17 +784,6 @@ fn hints_fetch_tasks(
             .map(|range| (range.clone(), query_task_for_range(range)))
             .collect(),
     }
-}
-
-pub fn visible_inlay_hints<'a, 'b: 'a, 'c, 'd: 'a>(
-    editor: &'a Editor,
-    cx: &'b ViewContext<'c, 'd, Editor>,
-) -> impl Iterator<Item = &'b Inlay> + 'a {
-    editor
-        .display_map
-        .read(cx)
-        .current_inlays()
-        .filter(|inlay| Some(inlay.id) != editor.copilot_state.suggestion.as_ref().map(|h| h.id))
 }
 
 fn contains_position(

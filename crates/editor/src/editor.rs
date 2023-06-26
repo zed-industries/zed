@@ -1,5 +1,4 @@
 mod blink_manager;
-
 pub mod display_map;
 mod editor_settings;
 mod element;
@@ -54,7 +53,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::{visible_inlay_hints, InlayHintCache, InlaySplice, InvalidationStrategy};
+use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -2617,7 +2616,7 @@ impl Editor {
                 let new_splice = self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
-                    visible_inlay_hints(self, cx).cloned().collect(),
+                    self.visible_inlay_hints(cx),
                     cx,
                 );
                 if let Some(InlaySplice {
@@ -2646,6 +2645,17 @@ impl Editor {
             self.inlay_hint_cache
                 .refresh_inlay_hints(excerpts_to_query, invalidate_cache, cx)
         }
+    }
+
+    fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(move |inlay| {
+                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
+            })
+            .cloned()
+            .collect()
     }
 
     fn excerpt_visible_offsets(
@@ -5660,7 +5670,6 @@ impl Editor {
             }
 
             // TODO: Handle selections that cross excerpts
-            // TODO: Handle selections that cross excerpts
             for selection in &mut selections {
                 let start_column = snapshot.indent_size_for_line(selection.start.row).len;
                 let language = if let Some(language) =
@@ -7257,37 +7266,21 @@ impl Editor {
                 buffer,
                 predecessor,
                 excerpts,
-            } => {
-                cx.emit(Event::ExcerptsAdded {
-                    buffer: buffer.clone(),
-                    predecessor: *predecessor,
-                    excerpts: excerpts.clone(),
-                });
-            }
+            } => cx.emit(Event::ExcerptsAdded {
+                buffer: buffer.clone(),
+                predecessor: *predecessor,
+                excerpts: excerpts.clone(),
+            }),
             multi_buffer::Event::ExcerptsRemoved { ids } => {
-                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
+                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => {
-                cx.emit(Event::Reparsed);
-            }
-            multi_buffer::Event::DirtyChanged => {
-                cx.emit(Event::DirtyChanged);
-            }
-            multi_buffer::Event::Saved => {
-                cx.emit(Event::Saved);
-            }
-            multi_buffer::Event::FileHandleChanged => {
-                cx.emit(Event::TitleChanged);
-            }
-            multi_buffer::Event::Reloaded => {
-                cx.emit(Event::TitleChanged);
-            }
-            multi_buffer::Event::DiffBaseChanged => {
-                cx.emit(Event::DiffBaseChanged);
-            }
-            multi_buffer::Event::Closed => {
-                cx.emit(Event::Closed);
-            }
+            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(Event::Saved),
+            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
+            multi_buffer::Event::Closed => cx.emit(Event::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
