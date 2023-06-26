@@ -271,13 +271,15 @@ fn main() {
 }
 
 async fn installation_id() -> Result<String> {
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp("device_id") {
+    let legacy_key_name = "device_id";
+
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
         Ok(installation_id)
     } else {
         let installation_id = Uuid::new_v4().to_string();
 
         KEY_VALUE_STORE
-            .write_kvp("device_id".to_string(), installation_id.clone())
+            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
             .await?;
 
         Ok(installation_id)
