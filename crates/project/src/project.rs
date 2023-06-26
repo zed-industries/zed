@@ -3057,6 +3057,14 @@ impl Project {
         installation_test_binary: Option<LanguageServerBinary>,
         cx: &mut ModelContext<Self>,
     ) {
+        if !adapter.can_be_reinstalled() {
+            log::info!(
+                "Validation check requested for {:?} but it cannot be reinstalled",
+                adapter.name.0
+            );
+            return;
+        }
+
         cx.spawn(|this, mut cx| async move {
             log::info!("About to spawn test binary");
 
@@ -3086,6 +3094,7 @@ impl Project {
 
                     _ = timeout => {
                         log::info!("test binary time-ed out, this counts as a success");
+                        _ = process.kill();
                     }
                 }
             } else {

@@ -104,28 +104,14 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let old_server_path = container_dir.join(Self::OLD_SERVER_PATH);
-            let new_server_path = container_dir.join(Self::NEW_SERVER_PATH);
-            if new_server_path.exists() {
-                Ok(LanguageServerBinary {
-                    path: self.node.binary_path().await?,
-                    arguments: typescript_server_binary_arguments(&new_server_path),
-                })
-            } else if old_server_path.exists() {
-                Ok(LanguageServerBinary {
-                    path: self.node.binary_path().await?,
-                    arguments: typescript_server_binary_arguments(&old_server_path),
-                })
-            } else {
-                Err(anyhow!(
-                    "missing executable in directory {:?}",
-                    container_dir
-                ))
-            }
-        })()
-        .await
-        .log_err()
+        get_cached_ts_server_binary(container_dir, &self.node).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -171,6 +157,34 @@ impl LspAdapter for TypeScriptLspAdapter {
             "provideFormatter": true
         }))
     }
+}
+
+async fn get_cached_ts_server_binary(
+    container_dir: PathBuf,
+    node: &NodeRuntime,
+) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
+        let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
+        if new_server_path.exists() {
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                arguments: typescript_server_binary_arguments(&new_server_path),
+            })
+        } else if old_server_path.exists() {
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                arguments: typescript_server_binary_arguments(&old_server_path),
+            })
+        } else {
+            Err(anyhow!(
+                "missing executable in directory {:?}",
+                container_dir
+            ))
+        }
+    })()
+    .await
+    .log_err()
 }
 
 pub struct EsLintLspAdapter {
@@ -268,21 +282,14 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            // This is unfortunate but we don't know what the version is to build a path directly
-            let mut dir = fs::read_dir(&container_dir).await?;
-            let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
-            if !first.file_type().await?.is_dir() {
-                return Err(anyhow!("First entry is not a directory"));
-            }
+        get_cached_eslint_server_binary(container_dir, &self.node).await
+    }
 
-            Ok(LanguageServerBinary {
-                path: first.path().join(Self::SERVER_PATH),
-                arguments: Default::default(),
-            })
-        })()
-        .await
-        .log_err()
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_eslint_server_binary(container_dir, &self.node).await
     }
 
     async fn label_for_completion(
@@ -296,6 +303,28 @@ impl LspAdapter for EsLintLspAdapter {
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
+}
+
+async fn get_cached_eslint_server_binary(
+    container_dir: PathBuf,
+    node: &NodeRuntime,
+) -> Option<LanguageServerBinary> {
+    (|| async move {
+        // This is unfortunate but we don't know what the version is to build a path directly
+        let mut dir = fs::read_dir(&container_dir).await?;
+        let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
+        if !first.file_type().await?.is_dir() {
+            return Err(anyhow!("First entry is not a directory"));
+        }
+        let server_path = first.path().join(EsLintLspAdapter::SERVER_PATH);
+
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    })()
+    .await
+    .log_err()
 }
 
 #[cfg(test)]

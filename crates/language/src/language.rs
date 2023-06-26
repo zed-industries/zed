@@ -160,6 +160,10 @@ impl CachedLspAdapter {
             .await
     }
 
+    pub fn can_be_reinstalled(&self) -> bool {
+        self.adapter.can_be_reinstalled()
+    }
+
     pub async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
@@ -249,12 +253,14 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
+    fn can_be_reinstalled(&self) -> bool {
+        true
+    }
+
     async fn installation_test_binary(
         &self,
-        _container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        unimplemented!();
-    }
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary>;
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
@@ -1664,6 +1670,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
+        unreachable!();
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         unreachable!();
     }
 

@@ -39,6 +39,14 @@ impl LspAdapter for RubyLanguageServer {
         })
     }
 
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
+    }
+
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,

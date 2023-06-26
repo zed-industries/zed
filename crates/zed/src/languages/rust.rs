@@ -79,20 +79,19 @@ impl LspAdapter for RustLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                last = Some(entry?.path());
-            }
+        get_cached_server_binary(container_dir).await
+    }
 
-            anyhow::Ok(LanguageServerBinary {
-                path: last.ok_or_else(|| anyhow!("no cached binary"))?,
-                arguments: Default::default(),
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
             })
-        })()
-        .await
-        .log_err()
     }
 
     async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -258,6 +257,22 @@ impl LspAdapter for RustLspAdapter {
             filter_range,
         })
     }
+}
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
+        }
+
+        anyhow::Ok(LanguageServerBinary {
+            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            arguments: Default::default(),
+        })
+    })()
+    .await
+    .log_err()
 }
 
 #[cfg(test)]

@@ -14,6 +14,9 @@ use std::{
 };
 use util::ResultExt;
 
+const SERVER_PATH: &'static str =
+    "node_modules/vscode-langservers-extracted/bin/vscode-html-language-server";
+
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
@@ -23,9 +26,6 @@ pub struct HtmlLspAdapter {
 }
 
 impl HtmlLspAdapter {
-    const SERVER_PATH: &'static str =
-        "node_modules/vscode-langservers-extracted/bin/vscode-html-language-server";
-
     pub fn new(node: Arc<NodeRuntime>) -> Self {
         HtmlLspAdapter { node }
     }
@@ -55,7 +55,7 @@ impl LspAdapter for HtmlLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
-        let server_path = container_dir.join(Self::SERVER_PATH);
+        let server_path = container_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
@@ -77,31 +77,14 @@ impl LspAdapter for HtmlLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last_version_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_version_dir = Some(entry.path());
-                }
-            }
-            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let server_path = last_version_dir.join(Self::SERVER_PATH);
-            if server_path.exists() {
-                Ok(LanguageServerBinary {
-                    path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&server_path),
-                })
-            } else {
-                Err(anyhow!(
-                    "missing executable in directory {:?}",
-                    last_version_dir
-                ))
-            }
-        })()
-        .await
-        .log_err()
+        get_cached_server_binary(container_dir, &self.node).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
@@ -109,4 +92,35 @@ impl LspAdapter for HtmlLspAdapter {
             "provideFormatter": true
         }))
     }
+}
+
+async fn get_cached_server_binary(
+    container_dir: PathBuf,
+    node: &NodeRuntime,
+) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last_version_dir = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_dir() {
+                last_version_dir = Some(entry.path());
+            }
+        }
+        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let server_path = last_version_dir.join(SERVER_PATH);
+        if server_path.exists() {
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                arguments: server_binary_arguments(&server_path),
+            })
+        } else {
+            Err(anyhow!(
+                "missing executable in directory {:?}",
+                last_version_dir
+            ))
+        }
+    })()
+    .await
+    .log_err()
 }
