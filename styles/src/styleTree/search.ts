@@ -1,6 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
+import { interactive, toggleable } from "../element"
 
 export default function search(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
@@ -35,36 +36,50 @@ export default function search(colorScheme: ColorScheme) {
     return {
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
         matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
-        optionButton: {
-            ...text(layer, "mono", "on"),
-            background: background(layer, "on"),
-            cornerRadius: 6,
-            border: border(layer, "on"),
-            margin: {
-                right: 4,
+        optionButton: toggleable({
+            base: interactive({
+                base: {
+                    ...text(layer, "mono", "on"),
+                    background: background(layer, "on"),
+                    cornerRadius: 6,
+                    border: border(layer, "on"),
+                    margin: {
+                        right: 4,
+                    },
+                    padding: {
+                        bottom: 2,
+                        left: 10,
+                        right: 10,
+                        top: 2,
+                    },
+                },
+                state: {
+                    hovered: {
+                        ...text(layer, "mono", "on", "hovered"),
+                        background: background(layer, "on", "hovered"),
+                        border: border(layer, "on", "hovered"),
+                    },
+                    clicked: {
+                        ...text(layer, "mono", "on", "pressed"),
+                        background: background(layer, "on", "pressed"),
+                        border: border(layer, "on", "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(layer, "mono", "accent"),
+                    },
+                    hovered: {
+                        ...text(layer, "mono", "accent", "hovered"),
+                    },
+                    clicked: {
+                        ...text(layer, "mono", "accent", "pressed"),
+                    },
+                },
             },
-            padding: {
-                bottom: 2,
-                left: 10,
-                right: 10,
-                top: 2,
-            },
-            active: {
-                ...text(layer, "mono", "on", "inverted"),
-                background: background(layer, "on", "inverted"),
-                border: border(layer, "on", "inverted"),
-            },
-            clicked: {
-                ...text(layer, "mono", "on", "pressed"),
-                background: background(layer, "on", "pressed"),
-                border: border(layer, "on", "pressed"),
-            },
-            hover: {
-                ...text(layer, "mono", "on", "hovered"),
-                background: background(layer, "on", "hovered"),
-                border: border(layer, "on", "hovered"),
-            },
-        },
+        }),
         editor,
         invalidEditor: {
             ...editor,
@@ -97,17 +112,24 @@ export default function search(colorScheme: ColorScheme) {
             ...text(layer, "mono", "on"),
             size: 18,
         },
-        dismissButton: {
-            color: foreground(layer, "variant"),
-            iconWidth: 12,
-            buttonWidth: 14,
-            padding: {
-                left: 10,
-                right: 10,
+        dismissButton: interactive({
+            base: {
+                color: foreground(layer, "variant"),
+                iconWidth: 12,
+                buttonWidth: 14,
+                padding: {
+                    left: 10,
+                    right: 10,
+                },
             },
-            hover: {
-                color: foreground(layer, "hovered"),
+            state: {
+                hovered: {
+                    color: foreground(layer, "hovered"),
+                },
+                clicked: {
+                    color: foreground(layer, "pressed"),
+                },
             },
-        },
+        }),
     }
 }

@@ -774,7 +774,8 @@ impl ContactList {
             .with_style(
                 *theme
                     .contact_row
-                    .style_for(&mut Default::default(), is_selected),
+                    .in_state(is_selected)
+                    .style_for(&mut Default::default()),
             )
             .into_any()
     }
@@ -797,7 +798,7 @@ impl ContactList {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.project_row.default;
+        let row = &theme.project_row.inactive_state().default;
         let tree_branch = theme.tree_branch;
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
@@ -810,8 +811,11 @@ impl ContactList {
         };
 
         MouseEventHandler::<JoinProject, Self>::new(project_id as usize, cx, |mouse_state, _| {
-            let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
-            let row = theme.project_row.style_for(mouse_state, is_selected);
+            let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
+            let row = theme
+                .project_row
+                .in_state(is_selected)
+                .style_for(mouse_state);
 
             Flex::row()
                 .with_child(
@@ -893,7 +897,7 @@ impl ContactList {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.project_row.default;
+        let row = &theme.project_row.inactive_state().default;
         let tree_branch = theme.tree_branch;
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
@@ -904,8 +908,11 @@ impl ContactList {
             peer_id.as_u64() as usize,
             cx,
             |mouse_state, _| {
-                let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
-                let row = theme.project_row.style_for(mouse_state, is_selected);
+                let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
+                let row = theme
+                    .project_row
+                    .in_state(is_selected)
+                    .style_for(mouse_state);
 
                 Flex::row()
                     .with_child(
@@ -989,7 +996,8 @@ impl ContactList {
 
         let header_style = theme
             .header_row
-            .style_for(&mut Default::default(), is_selected);
+            .in_state(is_selected)
+            .style_for(&mut Default::default());
         let text = match section {
             Section::ActiveCall => "Collaborators",
             Section::Requests => "Contact Requests",
@@ -999,7 +1007,7 @@ impl ContactList {
         let leave_call = if section == Section::ActiveCall {
             Some(
                 MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |state, _| {
-                    let style = theme.leave_call.style_for(state, false);
+                    let style = theme.leave_call.style_for(state);
                     Label::new("Leave Call", style.text.clone())
                         .contained()
                         .with_style(style.container)
@@ -1110,8 +1118,7 @@ impl ContactList {
                             contact.user.id as usize,
                             cx,
                             |mouse_state, _| {
-                                let button_style =
-                                    theme.contact_button.style_for(mouse_state, false);
+                                let button_style = theme.contact_button.style_for(mouse_state);
                                 render_icon_button(button_style, "icons/x_mark_8.svg")
                                     .aligned()
                                     .flex_float()
@@ -1146,7 +1153,8 @@ impl ContactList {
                     .with_style(
                         *theme
                             .contact_row
-                            .style_for(&mut Default::default(), is_selected),
+                            .in_state(is_selected)
+                            .style_for(&mut Default::default()),
                     )
             })
             .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1204,7 +1212,7 @@ impl ContactList {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state)
                     };
                     render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
                 })
@@ -1227,7 +1235,7 @@ impl ContactList {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state)
                     };
                     render_icon_button(button_style, "icons/check_8.svg")
                         .aligned()
@@ -1250,7 +1258,7 @@ impl ContactList {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state)
                     };
                     render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
@@ -1277,7 +1285,8 @@ impl ContactList {
             .with_style(
                 *theme
                     .contact_row
-                    .style_for(&mut Default::default(), is_selected),
+                    .in_state(is_selected)
+                    .style_for(&mut Default::default()),
             )
             .into_any()
     }

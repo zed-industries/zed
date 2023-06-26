@@ -6,13 +6,21 @@ export type PlayerToken = Record<"selection" | "cursor", SingleColorToken>
 
 export type PlayersToken = Record<keyof Players, PlayerToken>
 
-function buildPlayerToken(colorScheme: ColorScheme, index: number): PlayerToken {
-
+function buildPlayerToken(
+    colorScheme: ColorScheme,
+    index: number
+): PlayerToken {
     const playerNumber = index.toString() as keyof Players
 
     return {
-        selection: colorToken(`player${index}Selection`, colorScheme.players[playerNumber].selection),
-        cursor: colorToken(`player${index}Cursor`, colorScheme.players[playerNumber].cursor),
+        selection: colorToken(
+            `player${index}Selection`,
+            colorScheme.players[playerNumber].selection
+        ),
+        cursor: colorToken(
+            `player${index}Cursor`,
+            colorScheme.players[playerNumber].cursor
+        ),
     }
 }
 
@@ -24,5 +32,5 @@ export const playersToken = (colorScheme: ColorScheme): PlayersToken => ({
     "4": buildPlayerToken(colorScheme, 4),
     "5": buildPlayerToken(colorScheme, 5),
     "6": buildPlayerToken(colorScheme, 6),
-    "7": buildPlayerToken(colorScheme, 7)
+    "7": buildPlayerToken(colorScheme, 7),
 })

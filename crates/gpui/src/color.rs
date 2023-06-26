@@ -6,15 +6,16 @@ use std::{
 
 use crate::json::ToJson;
 use pathfinder_color::{ColorF, ColorU};
+use schemars::JsonSchema;
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer,
 };
 use serde_json::json;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 #[repr(transparent)]
-pub struct Color(ColorU);
+pub struct Color(#[schemars(with = "String")] ColorU);
 
 impl Color {
     pub fn transparent_black() -> Self {

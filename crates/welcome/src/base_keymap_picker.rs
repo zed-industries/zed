@@ -141,7 +141,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     ) -> gpui::AnyElement<Picker<Self>> {
         let theme = &theme::current(cx);
         let keymap_match = &self.matches[ix];
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
 
         Label::new(keymap_match.string.clone(), style.label.clone())
             .with_highlights(keymap_match.positions.clone())

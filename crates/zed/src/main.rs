@@ -156,7 +156,6 @@ fn main() {
         search::init(cx);
         vim::init(cx);
         terminal_view::init(cx);
-        theme_testbench::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
         ai::init(cx);
 

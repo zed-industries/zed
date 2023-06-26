@@ -1,0 +1,20 @@
+// Folder-specific settings
+//
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://docs.zed.dev/configuration/configuring-zed#folder-specific-settings
+{
+    "languages": {
+        "TypeScript": {
+            "tab_size": 4
+        },
+        "TSX": {
+            "tab_size": 4
+        },
+        "JavaScript": {
+            "tab_size": 4
+        },
+        "JSON": {
+            "tab_size": 4
+        }
+    }
+}

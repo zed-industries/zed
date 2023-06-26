@@ -209,8 +209,9 @@ impl Motion {
         map: &DisplaySnapshot,
         point: DisplayPoint,
         goal: SelectionGoal,
-        times: usize,
+        maybe_times: Option<usize>,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
+        let times = maybe_times.unwrap_or(1);
         use Motion::*;
         let infallible = self.infallible();
         let (new_point, goal) = match self {
@@ -236,7 +237,10 @@ impl Motion {
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
-            EndOfDocument => (end_of_document(map, point, times), SelectionGoal::None),
+            EndOfDocument => (
+                end_of_document(map, point, maybe_times),
+                SelectionGoal::None,
+            ),
             Matching => (matching(map, point), SelectionGoal::None),
             FindForward { before, text } => (
                 find_forward(map, point, *before, text.clone(), times),
@@ -257,7 +261,7 @@ impl Motion {
         &self,
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
-        times: usize,
+        times: Option<usize>,
         expand_to_surrounding_newline: bool,
     ) -> bool {
         if let Some((new_head, goal)) =
@@ -473,14 +477,19 @@ fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) ->
     map.clip_point(new_point, Bias::Left)
 }
 
-fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
-    let mut new_point = if line == 1 {
-        map.max_point()
+fn end_of_document(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    line: Option<usize>,
+) -> DisplayPoint {
+    let new_row = if let Some(line) = line {
+        (line - 1) as u32
     } else {
-        Point::new((line - 1) as u32, 0).to_display_point(map)
+        map.max_buffer_row()
     };
-    *new_point.column_mut() = point.column();
-    map.clip_point(new_point, Bias::Left)
+
+    let new_point = Point::new(new_row, point.column());
+    map.clip_point(new_point.to_display_point(map), Bias::Left)
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {

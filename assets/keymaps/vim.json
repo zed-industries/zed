@@ -25,11 +25,15 @@
         }
       ],
       "h": "vim::Left",
+      "left": "vim::Left",
       "backspace": "vim::Backspace",
       "j": "vim::Down",
+      "down": "vim::Down",
       "enter": "vim::NextLineStart",
       "k": "vim::Up",
+      "up": "vim::Up",
       "l": "vim::Right",
+      "right": "vim::Right",
       "$": "vim::EndOfLine",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
@@ -90,6 +94,8 @@
           }
         }
       ],
+      "ctrl-o": "pane::GoBack",
+      "ctrl-]": "editor::GoToDefinition",
       "escape": "editor::Cancel",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
@@ -131,7 +137,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
       "c": [
         "vim::PushOperator",
@@ -143,6 +149,7 @@
         "Delete"
       ],
       "shift-d": "vim::DeleteToEndOfLine",
+      "shift-j": "editor::JoinLines",
       "y": [
         "vim::PushOperator",
         "Yank"
@@ -184,7 +191,6 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "ctrl-o": "pane::GoBack",
       "/": [
         "buffer_search::Deploy",
         {
@@ -214,7 +220,8 @@
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "s": "vim::Substitute"
     }
   },
   {
@@ -301,6 +308,7 @@
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
+      "s": "vim::Substitute",
       "r": [
         "vim::PushOperator",
         "Replace"

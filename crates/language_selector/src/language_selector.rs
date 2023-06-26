@@ -180,7 +180,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> AnyElement<Picker<Self>> {
         let theme = theme::current(cx);
         let mat = &self.matches[ix];
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
         let mut label = mat.string.clone();
         if buffer_language_name.as_deref() == Some(mat.string.as_str()) {

@@ -565,7 +565,7 @@ impl SyntaxTreeToolbarItemView {
     ) -> impl Element<Self> {
         enum ToggleMenu {}
         MouseEventHandler::<ToggleMenu, Self>::new(0, cx, move |state, _| {
-            let style = theme.toolbar_dropdown_menu.header.style_for(state, false);
+            let style = theme.toolbar_dropdown_menu.header.style_for(state);
             Flex::row()
                 .with_child(
                     Label::new(active_layer.language.name().to_string(), style.text.clone())
@@ -601,7 +601,8 @@ impl SyntaxTreeToolbarItemView {
             let style = theme
                 .toolbar_dropdown_menu
                 .item
-                .style_for(state, is_selected);
+                .in_state(is_selected)
+                .style_for(state);
             Flex::row()
                 .with_child(
                     Label::new(layer.language.name().to_string(), style.text.clone())
