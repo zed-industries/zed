@@ -7,9 +7,8 @@ use rusqlite::{
     types::{FromSql, FromSqlResult, ValueRef},
     Connection,
 };
-use util::ResultExt;
 
-use crate::{Document, IndexedFile};
+use crate::IndexedFile;
 
 // This is saving to a local database store within the users dev zed path
 // Where do we want this to sit?
@@ -19,14 +18,22 @@ const VECTOR_DB_URL: &str = "embeddings_db";
 // Note this is not an appropriate document
 #[derive(Debug)]
 pub struct DocumentRecord {
-    id: usize,
-    offset: usize,
-    name: String,
-    embedding: Embedding,
+    pub id: usize,
+    pub file_id: usize,
+    pub offset: usize,
+    pub name: String,
+    pub embedding: Embedding,
 }
 
 #[derive(Debug)]
-struct Embedding(Vec<f32>);
+pub struct FileRecord {
+    pub id: usize,
+    pub path: String,
+    pub sha1: String,
+}
+
+#[derive(Debug)]
+pub struct Embedding(pub Vec<f32>);
 
 impl FromSql for Embedding {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
@@ -101,21 +108,16 @@ impl VectorDatabase {
         Ok(())
     }
 
-    pub fn get_documents(&self) -> Result<HashMap<usize, Document>> {
-        // Should return a HashMap in which the key is the id, and the value is the finished document
-
-        // Get Data from Database
+    pub fn get_files(&self) -> Result<HashMap<usize, FileRecord>> {
         let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
 
-        fn query(db: Connection) -> rusqlite::Result<Vec<DocumentRecord>> {
-            let mut query_statement =
-                db.prepare("SELECT id, offset, name, embedding FROM documents LIMIT 10")?;
+        fn query(db: Connection) -> rusqlite::Result<Vec<FileRecord>> {
+            let mut query_statement = db.prepare("SELECT id, path, sha1 FROM files")?;
             let result_iter = query_statement.query_map([], |row| {
-                Ok(DocumentRecord {
+                Ok(FileRecord {
                     id: row.get(0)?,
-                    offset: row.get(1)?,
-                    name: row.get(2)?,
-                    embedding: row.get(3)?,
+                    path: row.get(1)?,
+                    sha1: row.get(2)?,
                 })
             })?;
 
@@ -127,18 +129,49 @@ impl VectorDatabase {
             return Ok(results);
         }
 
-        let mut documents: HashMap<usize, Document> = HashMap::new();
+        let mut pages: HashMap<usize, FileRecord> = HashMap::new();
         let result_iter = query(db);
         if result_iter.is_ok() {
             for result in result_iter.unwrap() {
-                documents.insert(
-                    result.id,
-                    Document {
-                        offset: result.offset,
-                        name: result.name,
-                        embedding: result.embedding.0,
-                    },
-                );
+                pages.insert(result.id, result);
+            }
+        }
+
+        return Ok(pages);
+    }
+
+    pub fn get_documents(&self) -> Result<HashMap<usize, DocumentRecord>> {
+        // Should return a HashMap in which the key is the id, and the value is the finished document
+
+        // Get Data from Database
+        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
+
+        fn query(db: Connection) -> rusqlite::Result<Vec<DocumentRecord>> {
+            let mut query_statement =
+                db.prepare("SELECT id, file_id, offset, name, embedding FROM documents")?;
+            let result_iter = query_statement.query_map([], |row| {
+                Ok(DocumentRecord {
+                    id: row.get(0)?,
+                    file_id: row.get(1)?,
+                    offset: row.get(2)?,
+                    name: row.get(3)?,
+                    embedding: row.get(4)?,
+                })
+            })?;
+
+            let mut results = vec![];
+            for result in result_iter {
+                results.push(result?);
+            }
+
+            return Ok(results);
+        }
+
+        let mut documents: HashMap<usize, DocumentRecord> = HashMap::new();
+        let result_iter = query(db);
+        if result_iter.is_ok() {
+            for result in result_iter.unwrap() {
+                documents.insert(result.id, result);
             }
         }
 
