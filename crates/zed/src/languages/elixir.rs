@@ -62,16 +62,23 @@ impl LspAdapter for ElixirLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("elixir-lsp/elixir-ls", false, delegate.http_client()).await?;
-        let asset_name = "elixir-ls.zip";
+        let http = delegate.http_client();
+        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
+        let version_name = release
+            .name
+            .strip_prefix("Release ")
+            .context("Elixir-ls release name does not start with prefix")?
+            .to_owned();
+
+        let asset_name = format!("elixir-ls-{}.zip", &version_name);
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: version_name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
@@ -116,7 +123,7 @@ impl LspAdapter for ElixirLspAdapter {
                 .await?
                 .status;
             if !unzip_status.success() {
-                Err(anyhow!("failed to unzip clangd archive"))?;
+                Err(anyhow!("failed to unzip elixir-ls archive"))?;
             }
 
             remove_matching(&container_dir, |entry| entry != version_dir).await;
