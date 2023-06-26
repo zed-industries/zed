@@ -85,7 +85,7 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ConversationEditor::save);
     cx.add_action(ConversationEditor::quote_selection);
     cx.capture_action(ConversationEditor::copy);
-    cx.capture_action(ConversationEditor::split);
+    cx.add_action(ConversationEditor::split);
     cx.capture_action(ConversationEditor::cycle_message_role);
     cx.add_action(AssistantPanel::save_api_key);
     cx.add_action(AssistantPanel::reset_api_key);
@@ -356,33 +356,44 @@ impl AssistantPanel {
             })
     }
 
-    fn render_editor_tools(&self, style: &AssistantStyle) -> Vec<AnyElement<Self>> {
+    fn render_editor_tools(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<AnyElement<Self>> {
         if self.active_editor().is_some() {
             vec![
-                Self::render_split_button(&style.split_button).into_any(),
-                Self::render_assist_button(&style.assist_button).into_any(),
+                Self::render_split_button(&style.split_button, cx).into_any(),
+                Self::render_assist_button(&style.assist_button, cx).into_any(),
             ]
         } else {
             Default::default()
         }
     }
 
-    fn render_split_button(style: &IconStyle) -> impl Element<Self> {
-        enum SplitMessage {}
+    fn render_split_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
         Svg::for_style(style.icon.clone())
             .contained()
             .with_style(style.container)
-            .mouse::<SplitMessage>(0)
+            .mouse::<Split>(0)
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
                 }
             })
+            .with_tooltip::<Split>(
+                1,
+                "Split Message".into(),
+                Some(Box::new(Split)),
+                tooltip_style,
+                cx,
+            )
     }
 
-    fn render_assist_button(style: &IconStyle) -> impl Element<Self> {
-        enum Assist {}
+    fn render_assist_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
         Svg::for_style(style.icon.clone())
             .contained()
             .with_style(style.container)
@@ -393,6 +404,13 @@ impl AssistantPanel {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
                 }
             })
+            .with_tooltip::<Assist>(
+                1,
+                "Assist".into(),
+                Some(Box::new(Assist)),
+                tooltip_style,
+                cx,
+            )
     }
 
     fn render_plus_button(style: &IconStyle) -> impl Element<Self> {
@@ -563,7 +581,7 @@ impl View for AssistantPanel {
                         )
                         .with_children(title)
                         .with_children(
-                            self.render_editor_tools(&style)
+                            self.render_editor_tools(&style, cx)
                                 .into_iter()
                                 .map(|tool| tool.aligned().flex_float()),
                         )
