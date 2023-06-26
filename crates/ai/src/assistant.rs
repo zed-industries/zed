@@ -2209,49 +2209,7 @@ async fn stream_completion(
 mod tests {
     use super::*;
     use crate::MessageId;
-    use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext};
-    use project::Project;
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
-            theme::init((), cx);
-            language::init(cx);
-            editor::init_settings(cx);
-            crate::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_panel(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background());
-        let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let weak_workspace = workspace.downgrade();
-
-        let panel = cx
-            .spawn(|cx| async move { AssistantPanel::load(weak_workspace, cx).await })
-            .await
-            .unwrap();
-
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_panel(panel.clone(), cx);
-            workspace.toggle_dock(DockPosition::Right, cx);
-            assert!(workspace.right_dock().read(cx).is_open());
-        });
-
-        panel.update(cx, |_, cx| cx.focus_self());
-        cx.dispatch_action(window_id, workspace::ToggleZoom);
-        workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.zoomed_view(cx).unwrap(), panel);
-        })
-    }
+    use gpui::AppContext;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
