@@ -1392,7 +1392,7 @@ impl EditorElement {
         } else {
             let style = &self.style;
             let chunks = snapshot
-                .chunks(rows.clone(), true, Some(style.theme.suggestion))
+                .chunks(rows.clone(), true, Some(style.theme.hint))
                 .map(|chunk| {
                     let mut highlight_style = chunk
                         .syntax_highlight_id

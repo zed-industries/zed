@@ -17,6 +17,7 @@ export interface Syntax {
     "comment.doc": SyntaxHighlightStyle
     primary: SyntaxHighlightStyle
     predictive: SyntaxHighlightStyle
+    hint: SyntaxHighlightStyle
 
     // === Formatted Text ====== /
     emphasis: SyntaxHighlightStyle
@@ -146,12 +147,23 @@ function build_default_syntax(color_scheme: ColorScheme): Syntax {
             "lch"
         )
         .hex()
+    // Mix the neutral and green colors to get a
+    // hint color distinct from any other color in the theme
+    const hint = chroma
+        .mix(
+            color_scheme.ramps.neutral(0.6).hex(),
+            color_scheme.ramps.blue(0.4).hex(),
+            0.45,
+            "lch"
+        )
+        .hex()
 
     const color = {
         primary: color_scheme.ramps.neutral(1).hex(),
         comment: color_scheme.ramps.neutral(0.71).hex(),
         punctuation: color_scheme.ramps.neutral(0.86).hex(),
         predictive: predictive,
+        hint: hint,
         emphasis: color_scheme.ramps.blue(0.5).hex(),
         string: color_scheme.ramps.orange(0.5).hex(),
         function: color_scheme.ramps.yellow(0.5).hex(),
@@ -182,6 +194,11 @@ function build_default_syntax(color_scheme: ColorScheme): Syntax {
         predictive: {
             color: color.predictive,
             italic: true,
+        },
+        hint: {
+            color: color.hint,
+            weight: font_weights.bold,
+            // italic: true,
         },
         emphasis: {
             color: color.emphasis,
