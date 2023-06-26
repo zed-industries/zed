@@ -27,9 +27,14 @@ serde_json.workspace = true
 async-trait.workspace = true
 bincode = "1.3.3"
 ndarray = "0.15.6"
+sha-1 = "0.10.1"
+matrixmultiply = "0.3.7"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+tree-sitter-rust = "*"
+rand.workspace = true
+unindent.workspace = true

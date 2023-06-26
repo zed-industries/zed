@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, path::PathBuf};
 
 use async_trait::async_trait;
 use ndarray::{Array1, Array2};
@@ -20,7 +20,6 @@ pub struct BruteForceSearch {
 
 impl BruteForceSearch {
     pub fn load(db: &VectorDatabase) -> Result<Self> {
-        // let db = VectorDatabase {};
         let documents = db.get_documents()?;
         let embeddings: Vec<&DocumentRecord> = documents.values().into_iter().collect();
         let mut document_ids = vec![];
@@ -63,20 +62,5 @@ impl VectorSearch for BruteForceSearch {
         with_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
         with_indices.truncate(limit);
         with_indices
-
-        // // extract the sorted indices from the sorted tuple vector
-        // let stored_indices = with_indices
-        //     .into_iter()
-        //     .map(|(index, value)| index)
-        //     .collect::<Vec<>>();
-
-        // let sorted_indices: Vec<usize> = stored_indices.into_iter().rev().collect();
-
-        // let mut results = vec![];
-        // for idx in sorted_indices[0..limit].to_vec() {
-        //     results.push((self.document_ids[idx], 1.0 - similarities[idx]));
-        // }
-
-        // return results;
     }
 }

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Result};
 
@@ -13,7 +16,7 @@ use crate::IndexedFile;
 // This is saving to a local database store within the users dev zed path
 // Where do we want this to sit?
 // Assuming near where the workspace DB sits.
-const VECTOR_DB_URL: &str = "embeddings_db";
+pub const VECTOR_DB_URL: &str = "embeddings_db";
 
 // Note this is not an appropriate document
 #[derive(Debug)]
@@ -28,7 +31,7 @@ pub struct DocumentRecord {
 #[derive(Debug)]
 pub struct FileRecord {
     pub id: usize,
-    pub path: String,
+    pub relative_path: String,
     pub sha1: String,
 }
 
@@ -51,9 +54,9 @@ pub struct VectorDatabase {
 }
 
 impl VectorDatabase {
-    pub fn new() -> Result<Self> {
+    pub fn new(path: &str) -> Result<Self> {
         let this = Self {
-            db: rusqlite::Connection::open(VECTOR_DB_URL)?,
+            db: rusqlite::Connection::open(path)?,
         };
         this.initialize_database()?;
         Ok(this)
@@ -63,21 +66,23 @@ impl VectorDatabase {
         // This will create the database if it doesnt exist
 
         // Initialize Vector Databasing Tables
-        // self.db.execute(
-        //     "
-        //     CREATE TABLE IF NOT EXISTS projects (
-        //         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        //         path NVARCHAR(100) NOT NULL
-        //     )
-        //     ",
-        //     [],
-        // )?;
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS worktrees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_path VARCHAR NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS worktrees_absolute_path ON worktrees (absolute_path);
+            ",
+            [],
+        )?;
 
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path NVARCHAR(100) NOT NULL,
-                sha1 NVARCHAR(40) NOT NULL
+                worktree_id INTEGER NOT NULL,
+                relative_path VARCHAR NOT NULL,
+                sha1 NVARCHAR(40) NOT NULL,
+                FOREIGN KEY(worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE
             )",
             [],
         )?;
@@ -87,7 +92,7 @@ impl VectorDatabase {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER NOT NULL,
                 offset INTEGER NOT NULL,
-                name NVARCHAR(100) NOT NULL,
+                name VARCHAR NOT NULL,
                 embedding BLOB NOT NULL,
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             )",
@@ -116,7 +121,7 @@ impl VectorDatabase {
     pub fn insert_file(&self, indexed_file: IndexedFile) -> Result<()> {
         // Write to files table, and return generated id.
         let files_insert = self.db.execute(
-            "INSERT INTO files (path, sha1) VALUES (?1, ?2)",
+            "INSERT INTO files (relative_path, sha1) VALUES (?1, ?2)",
             params![indexed_file.path.to_str(), indexed_file.sha1],
         )?;
 
@@ -141,12 +146,38 @@ impl VectorDatabase {
         Ok(())
     }
 
+    pub fn find_or_create_worktree(&self, worktree_root_path: &Path) -> Result<i64> {
+        self.db.execute(
+            "
+            INSERT into worktrees (absolute_path) VALUES (?1)
+            ON CONFLICT DO NOTHING
+            ",
+            params![worktree_root_path.to_string_lossy()],
+        )?;
+        Ok(self.db.last_insert_rowid())
+    }
+
+    pub fn get_file_hashes(&self, worktree_id: i64) -> Result<Vec<(PathBuf, String)>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT relative_path, sha1 FROM files ORDER BY relative_path")?;
+        let mut result = Vec::new();
+        for row in
+            statement.query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
+        {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
     pub fn get_files(&self) -> Result<HashMap<usize, FileRecord>> {
-        let mut query_statement = self.db.prepare("SELECT id, path, sha1 FROM files")?;
+        let mut query_statement = self
+            .db
+            .prepare("SELECT id, relative_path, sha1 FROM files")?;
         let result_iter = query_statement.query_map([], |row| {
             Ok(FileRecord {
                 id: row.get(0)?,
-                path: row.get(1)?,
+                relative_path: row.get(1)?,
                 sha1: row.get(2)?,
             })
         })?;
@@ -158,6 +189,19 @@ impl VectorDatabase {
         }
 
         Ok(pages)
+    }
+
+    pub fn for_each_document(
+        &self,
+        worktree_id: i64,
+        mut f: impl FnMut(i64, Embedding),
+    ) -> Result<()> {
+        let mut query_statement = self.db.prepare("SELECT id, embedding FROM documents")?;
+        query_statement
+            .query_map(params![], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|row| row.ok())
+            .for_each(|row| f(row.0, row.1));
+        Ok(())
     }
 
     pub fn get_documents(&self) -> Result<HashMap<usize, DocumentRecord>> {

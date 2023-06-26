@@ -44,7 +44,7 @@ struct OpenAIEmbeddingUsage {
 }
 
 #[async_trait]
-pub trait EmbeddingProvider: Sync {
+pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>>;
 }
 
