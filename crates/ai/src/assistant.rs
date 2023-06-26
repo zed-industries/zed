@@ -119,6 +119,7 @@ pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
     active_editor_index: Option<usize>,
+    prev_active_editor_index: Option<usize>,
     editors: Vec<ViewHandle<ConversationEditor>>,
     saved_conversations: Vec<SavedConversationMetadata>,
     saved_conversations_list_state: UniformListState,
@@ -176,6 +177,7 @@ impl AssistantPanel {
                     });
                     let mut this = Self {
                         active_editor_index: Default::default(),
+                        prev_active_editor_index: Default::default(),
                         editors: Default::default(),
                         saved_conversations,
                         saved_conversations_list_state: Default::default(),
@@ -240,6 +242,7 @@ impl AssistantPanel {
     }
 
     fn set_active_editor_index(&mut self, index: Option<usize>, cx: &mut ViewContext<Self>) {
+        self.prev_active_editor_index = self.active_editor_index;
         self.active_editor_index = index;
         if let Some(editor) = self.active_editor() {
             let editor = editor.read(cx).editor.clone();
@@ -350,7 +353,11 @@ impl AssistantPanel {
             .mouse::<ListConversations>(0)
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                this.set_active_editor_index(None, cx);
+                if this.active_editor().is_some() {
+                    this.set_active_editor_index(None, cx);
+                } else {
+                    this.set_active_editor_index(this.prev_active_editor_index, cx);
+                }
             })
     }
 
