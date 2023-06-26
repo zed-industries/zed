@@ -4,7 +4,7 @@ pub mod ui;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     platform, AppContext, AssetSource, Border, MouseState,
 };
@@ -13,7 +13,7 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
+use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
 pub use theme_settings::*;
@@ -993,18 +993,33 @@ pub struct TerminalStyle {
 #[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct AssistantStyle {
     pub container: ContainerStyle,
-    pub header: ContainerStyle,
+    pub hamburger_button: Interactive<IconStyle>,
+    pub split_button: Interactive<IconStyle>,
+    pub assist_button: Interactive<IconStyle>,
+    pub quote_button: Interactive<IconStyle>,
+    pub zoom_in_button: Interactive<IconStyle>,
+    pub zoom_out_button: Interactive<IconStyle>,
+    pub plus_button: Interactive<IconStyle>,
+    pub title: ContainedText,
+    pub message_header: ContainerStyle,
     pub sent_at: ContainedText,
     pub user_sender: Interactive<ContainedText>,
     pub assistant_sender: Interactive<ContainedText>,
     pub system_sender: Interactive<ContainedText>,
-    pub model_info_container: ContainerStyle,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
+    pub saved_conversation: SavedConversation,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct SavedConversation {
+    pub container: Interactive<ContainerStyle>,
+    pub saved_at: ContainedText,
+    pub title: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

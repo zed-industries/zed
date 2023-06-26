@@ -249,7 +249,7 @@ impl Dock {
         }
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub(crate) fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.subscribe(&panel, |this, panel, event, cx| {
@@ -605,6 +605,7 @@ pub mod test {
     use super::*;
     use gpui::{ViewContext, WindowContext};
 
+    #[derive(Debug)]
     pub enum TestPanelEvent {
         PositionChanged,
         Activated,
