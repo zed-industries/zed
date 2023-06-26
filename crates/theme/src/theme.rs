@@ -994,6 +994,8 @@ pub struct TerminalStyle {
 pub struct AssistantStyle {
     pub container: ContainerStyle,
     pub hamburger_button: IconStyle,
+    pub split_button: IconStyle,
+    pub assist_button: IconStyle,
     pub zoom_in_button: IconStyle,
     pub zoom_out_button: IconStyle,
     pub plus_button: IconStyle,
@@ -1003,7 +1005,6 @@ pub struct AssistantStyle {
     pub user_sender: Interactive<ContainedText>,
     pub assistant_sender: Interactive<ContainedText>,
     pub system_sender: Interactive<ContainedText>,
-    pub model_info_container: ContainerStyle,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,

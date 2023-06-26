@@ -28,6 +28,32 @@ export default function assistant(colorScheme: ColorScheme) {
                 margin: { left: 12 },
             }
         },
+        splitButton: {
+            icon: {
+                color: text(layer, "sans", "default", { size: "sm" }).color,
+                asset: "icons/split_message_15.svg",
+                dimensions: {
+                    width: 15,
+                    height: 15,
+                },
+            },
+            container: {
+                margin: { left: 12 },
+            }
+        },
+        assistButton: {
+            icon: {
+                color: text(layer, "sans", "default", { size: "sm" }).color,
+                asset: "icons/assist_15.svg",
+                dimensions: {
+                    width: 15,
+                    height: 15,
+                },
+            },
+            container: {
+                margin: { left: 12, right: 12 },
+            }
+        },
         zoomInButton: {
             icon: {
                 color: text(layer, "sans", "default", { size: "sm" }).color,
@@ -120,13 +146,10 @@ export default function assistant(colorScheme: ColorScheme) {
             margin: { top: 2, left: 8 },
             ...text(layer, "sans", "default", { size: "2xs" }),
         },
-        modelInfoContainer: {
-            margin: { right: 16, top: 4 },
-        },
         model: interactive({
             base: {
                 background: background(layer, "on"),
-                margin: { right: 8 },
+                margin: { left: 12, right: 12, top: 12 },
                 padding: 4,
                 cornerRadius: 4,
                 ...text(layer, "sans", "default", { size: "xs" }),
@@ -139,11 +162,17 @@ export default function assistant(colorScheme: ColorScheme) {
             },
         }),
         remainingTokens: {
-            margin: { right: 12 },
+            background: background(layer, "on"),
+            margin: { top: 12, right: 12 },
+            padding: 4,
+            cornerRadius: 4,
             ...text(layer, "sans", "positive", { size: "xs" }),
         },
         noRemainingTokens: {
-            margin: { right: 12 },
+            background: background(layer, "on"),
+            margin: { top: 12, right: 12 },
+            padding: 4,
+            cornerRadius: 4,
             ...text(layer, "sans", "negative", { size: "xs" }),
         },
         errorIcon: {

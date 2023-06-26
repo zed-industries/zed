@@ -28,7 +28,6 @@ use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::SettingsStore;
 use std::{
-    borrow::Cow,
     cell::RefCell,
     cmp, env,
     fmt::Write,
@@ -40,13 +39,9 @@ use std::{
     time::Duration,
 };
 use theme::{ui::IconStyle, AssistantStyle};
-use util::{
-    channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, truncate_and_trailoff, ResultExt,
-    TryFutureExt,
-};
+use util::{channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
-    item::Item,
     searchable::Direction,
     Save, ToggleZoom, Toolbar, Workspace,
 };
@@ -361,64 +356,43 @@ impl AssistantPanel {
             })
     }
 
-    fn render_current_model(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<impl Element<Self>> {
-        enum Model {}
-
-        let model = self
-            .active_editor()?
-            .read(cx)
-            .conversation
-            .read(cx)
-            .model
-            .clone();
-
-        Some(
-            MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
-                let style = style.model.style_for(state);
-                Label::new(model, style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this, cx| {
-                if let Some(editor) = this.active_editor() {
-                    editor.update(cx, |editor, cx| {
-                        editor.cycle_model(cx);
-                    });
-                }
-            }),
-        )
+    fn render_editor_tools(&self, style: &AssistantStyle) -> Vec<AnyElement<Self>> {
+        if self.active_editor().is_some() {
+            vec![
+                Self::render_split_button(&style.split_button).into_any(),
+                Self::render_assist_button(&style.assist_button).into_any(),
+            ]
+        } else {
+            Default::default()
+        }
     }
 
-    fn render_remaining_tokens(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<impl Element<Self>> {
-        self.active_editor().and_then(|editor| {
-            editor
-                .read(cx)
-                .conversation
-                .read(cx)
-                .remaining_tokens()
-                .map(|remaining_tokens| {
-                    let remaining_tokens_style = if remaining_tokens <= 0 {
-                        &style.no_remaining_tokens
-                    } else {
-                        &style.remaining_tokens
-                    };
-                    Label::new(
-                        remaining_tokens.to_string(),
-                        remaining_tokens_style.text.clone(),
-                    )
-                    .contained()
-                    .with_style(remaining_tokens_style.container)
-                })
-        })
+    fn render_split_button(style: &IconStyle) -> impl Element<Self> {
+        enum SplitMessage {}
+        Svg::for_style(style.icon.clone())
+            .contained()
+            .with_style(style.container)
+            .mouse::<SplitMessage>(0)
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+                if let Some(active_editor) = this.active_editor() {
+                    active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
+                }
+            })
+    }
+
+    fn render_assist_button(style: &IconStyle) -> impl Element<Self> {
+        enum Assist {}
+        Svg::for_style(style.icon.clone())
+            .contained()
+            .with_style(style.container)
+            .mouse::<Assist>(0)
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+                if let Some(active_editor) = this.active_editor() {
+                    active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
+                }
+            })
     }
 
     fn render_plus_button(style: &IconStyle) -> impl Element<Self> {
@@ -589,19 +563,16 @@ impl View for AssistantPanel {
                         )
                         .with_children(title)
                         .with_children(
-                            self.render_current_model(&style, cx)
-                                .map(|current_model| current_model.aligned().flex_float()),
-                        )
-                        .with_children(
-                            self.render_remaining_tokens(&style, cx)
-                                .map(|remaining_tokens| remaining_tokens.aligned().flex_float()),
+                            self.render_editor_tools(&style)
+                                .into_iter()
+                                .map(|tool| tool.aligned().flex_float()),
                         )
                         .with_child(
                             Self::render_plus_button(&style.plus_button)
                                 .aligned()
                                 .flex_float(),
                         )
-                        .with_child(self.render_zoom_button(&style, cx).aligned().flex_float())
+                        .with_child(self.render_zoom_button(&style, cx).aligned())
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .expanded()
@@ -1995,6 +1966,44 @@ impl ConversationEditor {
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Conversation".into())
     }
+
+    fn render_current_model(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element<Self> {
+        enum Model {}
+
+        MouseEventHandler::<Model, _>::new(0, cx, |state, cx| {
+            let style = style.model.style_for(state);
+            Label::new(self.conversation.read(cx).model.clone(), style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this, cx| this.cycle_model(cx))
+    }
+
+    fn render_remaining_tokens(
+        &self,
+        style: &AssistantStyle,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl Element<Self>> {
+        let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
+        let remaining_tokens_style = if remaining_tokens <= 0 {
+            &style.no_remaining_tokens
+        } else {
+            &style.remaining_tokens
+        };
+        Some(
+            Label::new(
+                remaining_tokens.to_string(),
+                remaining_tokens_style.text.clone(),
+            )
+            .contained()
+            .with_style(remaining_tokens_style.container),
+        )
+    }
 }
 
 impl Entity for ConversationEditor {
@@ -2008,9 +2017,20 @@ impl View for ConversationEditor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &theme::current(cx).assistant;
-        ChildView::new(&self.editor, cx)
-            .contained()
-            .with_style(theme.container)
+        Stack::new()
+            .with_child(
+                ChildView::new(&self.editor, cx)
+                    .contained()
+                    .with_style(theme.container),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_current_model(theme, cx))
+                    .with_children(self.render_remaining_tokens(theme, cx))
+                    .aligned()
+                    .top()
+                    .right(),
+            )
             .into_any()
     }
 
@@ -2018,29 +2038,6 @@ impl View for ConversationEditor {
         if cx.is_self_focused() {
             cx.focus(&self.editor);
         }
-    }
-}
-
-impl Item for ConversationEditor {
-    fn tab_content<V: View>(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        cx: &gpui::AppContext,
-    ) -> AnyElement<V> {
-        let title = truncate_and_trailoff(&self.title(cx), editor::MAX_TAB_TITLE_LEN);
-        Label::new(title, style.label.clone()).into_any()
-    }
-
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
-        Some(self.title(cx).into())
-    }
-
-    fn as_searchable(
-        &self,
-        _: &ViewHandle<Self>,
-    ) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
-        Some(Box::new(self.editor.clone()))
     }
 }
 
