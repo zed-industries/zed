@@ -3,8 +3,8 @@ use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, FnArg, ItemFn, Lit, Meta,
-    NestedMeta, Type,
+    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, DeriveInput, FnArg,
+    ItemFn, Lit, Meta, NestedMeta, Type,
 };
 
 #[proc_macro_attribute]
@@ -274,4 +274,69 @@ fn parse_bool(literal: &Lit) -> Result<bool, TokenStream> {
     };
 
     result.map_err(|err| TokenStream::from(err.into_compile_error()))
+}
+
+#[proc_macro_derive(Element)]
+pub fn element_derive(input: TokenStream) -> TokenStream {
+    // Parse the input tokens into a syntax tree
+    let input = parse_macro_input!(input as DeriveInput);
+
+    // The name of the struct/enum
+    let name = input.ident;
+
+    let expanded = quote! {
+        impl<V: gpui::View> gpui::elements::Element<V> for #name {
+            type LayoutState = gpui::elements::AnyElement<V>;
+            type PaintState = ();
+
+            fn layout(
+                &mut self,
+                constraint: gpui::SizeConstraint,
+                view: &mut V,
+                cx: &mut gpui::LayoutContext<V>,
+            ) -> (gpui::geometry::vector::Vector2F, gpui::elements::AnyElement<V>) {
+                let mut element = self.render(view, cx);
+                let size = element.layout(constraint, view, cx);
+                (size, element)
+            }
+
+            fn paint(
+                &mut self,
+                scene: &mut gpui::SceneBuilder,
+                bounds: gpui::geometry::rect::RectF,
+                visible_bounds: gpui::geometry::rect::RectF,
+                element: &mut gpui::elements::AnyElement<V>,
+                view: &mut V,
+                cx: &mut gpui::ViewContext<V>,
+            ) {
+                element.paint(scene, bounds.origin(), visible_bounds, view, cx);
+            }
+
+            fn rect_for_text_range(
+                &self,
+                range_utf16: std::ops::Range<usize>,
+                _: gpui::geometry::rect::RectF,
+                _: gpui::geometry::rect::RectF,
+                element: &gpui::elements::AnyElement<V>,
+                _: &(),
+                view: &V,
+                cx: &gpui::ViewContext<V>,
+            ) -> Option<gpui::geometry::rect::RectF> {
+                element.rect_for_text_range(range_utf16, view, cx)
+            }
+
+            fn debug(
+                &self,
+                _: gpui::geometry::rect::RectF,
+                element: &gpui::elements::AnyElement<V>,
+                _: &(),
+                view: &V,
+                cx: &gpui::ViewContext<V>,
+            ) -> serde_json::Value {
+                element.debug(view, cx)
+            }
+        }
+    };
+    // Return generated code
+    TokenStream::from(expanded)
 }

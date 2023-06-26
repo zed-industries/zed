@@ -137,7 +137,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
       "c": [
         "vim::PushOperator",
@@ -220,7 +220,8 @@
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "s": "vim::Substitute"
     }
   },
   {
@@ -307,6 +308,7 @@
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
+      "s": "vim::Substitute",
       "r": [
         "vim::PushOperator",
         "Replace"

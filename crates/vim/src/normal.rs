@@ -1,5 +1,6 @@
 mod change;
 mod delete;
+mod substitute;
 mod yank;
 
 use std::{borrow::Cow, cmp::Ordering, sync::Arc};
@@ -25,6 +26,7 @@ use workspace::Workspace;
 use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    substitute::substitute,
     yank::{yank_motion, yank_object},
 };
 
@@ -45,6 +47,7 @@ actions!(
         DeleteToEndOfLine,
         Paste,
         Yank,
+        Substitute,
     ]
 );
 
@@ -56,6 +59,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_end_of_line);
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
+    cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
+        Vim::update(cx, |vim, cx| {
+            let times = vim.pop_number_operator(cx);
+            substitute(vim, times, cx);
+        })
+    });
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
@@ -93,7 +102,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn normal_motion(
     motion: Motion,
     operator: Option<Operator>,
-    times: usize,
+    times: Option<usize>,
     cx: &mut WindowContext,
 ) {
     Vim::update(cx, |vim, cx| {
@@ -129,7 +138,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
+fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -147,7 +156,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::Right.move_point(map, cursor, goal, 1)
+                    Motion::Right.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -164,7 +173,7 @@ fn insert_first_non_whitespace(
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, 1)
+                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -177,7 +186,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::EndOfLine.move_point(map, cursor, goal, 1)
+                    Motion::EndOfLine.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -237,7 +246,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
-                        Motion::EndOfLine.move_point(map, cursor, goal, 1)
+                        Motion::EndOfLine.move_point(map, cursor, goal, None)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);

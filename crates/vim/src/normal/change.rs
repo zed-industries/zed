@@ -6,7 +6,7 @@ use editor::{
 use gpui::WindowContext;
 use language::Selection;
 
-pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
+pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     // Some motions ignore failure when switching to normal mode
     let mut motion_succeeded = matches!(
         motion,
@@ -78,10 +78,10 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
-    times: usize,
+    times: Option<usize>,
     ignore_punctuation: bool,
 ) -> bool {
-    if times == 1 {
+    if times.is_none() || times.unwrap() == 1 {
         let in_word = map
             .chars_at(selection.head())
             .next()
@@ -97,7 +97,8 @@ fn expand_changed_word_selection(
             });
             true
         } else {
-            Motion::NextWordStart { ignore_punctuation }.expand_selection(map, selection, 1, false)
+            Motion::NextWordStart { ignore_punctuation }
+                .expand_selection(map, selection, None, false)
         }
     } else {
         Motion::NextWordStart { ignore_punctuation }.expand_selection(map, selection, times, false)
