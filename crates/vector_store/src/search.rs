@@ -19,8 +19,8 @@ pub struct BruteForceSearch {
 }
 
 impl BruteForceSearch {
-    pub fn load() -> Result<Self> {
-        let db = VectorDatabase {};
+    pub fn load(db: &VectorDatabase) -> Result<Self> {
+        // let db = VectorDatabase {};
         let documents = db.get_documents()?;
         let embeddings: Vec<&DocumentRecord> = documents.values().into_iter().collect();
         let mut document_ids = vec![];
@@ -47,39 +47,36 @@ impl VectorSearch for BruteForceSearch {
     async fn top_k_search(&mut self, vec: &Vec<f32>, limit: usize) -> Vec<(usize, f32)> {
         let target = Array1::from_vec(vec.to_owned());
 
-        let distances = self.candidate_array.dot(&target);
+        let similarities = self.candidate_array.dot(&target);
 
-        let distances = distances.to_vec();
+        let similarities = similarities.to_vec();
 
         // construct a tuple vector from the floats, the tuple being (index,float)
-        let mut with_indices = distances
-            .clone()
-            .into_iter()
+        let mut with_indices = similarities
+            .iter()
+            .copied()
             .enumerate()
-            .map(|(index, value)| (index, value))
+            .map(|(index, value)| (self.document_ids[index], value))
             .collect::<Vec<(usize, f32)>>();
 
         // sort the tuple vector by float
-        with_indices.sort_by(|&a, &b| match (a.1.is_nan(), b.1.is_nan()) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            (false, false) => a.1.partial_cmp(&b.1).unwrap(),
-        });
+        with_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        with_indices.truncate(limit);
+        with_indices
 
-        // extract the sorted indices from the sorted tuple vector
-        let stored_indices = with_indices
-            .into_iter()
-            .map(|(index, value)| index)
-            .collect::<Vec<usize>>();
+        // // extract the sorted indices from the sorted tuple vector
+        // let stored_indices = with_indices
+        //     .into_iter()
+        //     .map(|(index, value)| index)
+        //     .collect::<Vec<>>();
 
-        let sorted_indices: Vec<usize> = stored_indices.into_iter().rev().collect();
+        // let sorted_indices: Vec<usize> = stored_indices.into_iter().rev().collect();
 
-        let mut results = vec![];
-        for idx in sorted_indices[0..limit].to_vec() {
-            results.push((self.document_ids[idx], 1.0 - distances[idx]));
-        }
+        // let mut results = vec![];
+        // for idx in sorted_indices[0..limit].to_vec() {
+        //     results.push((self.document_ids[idx], 1.0 - similarities[idx]));
+        // }
 
-        return results;
+        // return results;
     }
 }

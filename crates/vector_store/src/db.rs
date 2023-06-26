@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::{anyhow, Result};
 
@@ -46,31 +46,50 @@ impl FromSql for Embedding {
     }
 }
 
-pub struct VectorDatabase {}
+pub struct VectorDatabase {
+    db: rusqlite::Connection,
+}
 
 impl VectorDatabase {
-    pub async fn initialize_database() -> Result<()> {
+    pub fn new() -> Result<Self> {
+        let this = Self {
+            db: rusqlite::Connection::open(VECTOR_DB_URL)?,
+        };
+        this.initialize_database()?;
+        Ok(this)
+    }
+
+    fn initialize_database(&self) -> Result<()> {
         // This will create the database if it doesnt exist
-        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
 
         // Initialize Vector Databasing Tables
-        db.execute(
+        // self.db.execute(
+        //     "
+        //     CREATE TABLE IF NOT EXISTS projects (
+        //         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        //         path NVARCHAR(100) NOT NULL
+        //     )
+        //     ",
+        //     [],
+        // )?;
+
+        self.db.execute(
             "CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        path NVARCHAR(100) NOT NULL,
-        sha1 NVARCHAR(40) NOT NULL
-        )",
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path NVARCHAR(100) NOT NULL,
+                sha1 NVARCHAR(40) NOT NULL
+            )",
             [],
         )?;
 
-        db.execute(
+        self.db.execute(
             "CREATE TABLE IF NOT EXISTS documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            offset INTEGER NOT NULL,
-            name NVARCHAR(100) NOT NULL,
-            embedding BLOB NOT NULL,
-            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                offset INTEGER NOT NULL,
+                name NVARCHAR(100) NOT NULL,
+                embedding BLOB NOT NULL,
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             )",
             [],
         )?;
@@ -78,23 +97,37 @@ impl VectorDatabase {
         Ok(())
     }
 
-    pub async fn insert_file(indexed_file: IndexedFile) -> Result<()> {
-        // Write to files table, and return generated id.
-        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
+    // pub async fn get_or_create_project(project_path: PathBuf) -> Result<usize> {
+    //     // Check if we have the project, if we do, return the ID
+    //     // If we do not have the project, insert the project and return the ID
 
-        let files_insert = db.execute(
+    //     let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
+
+    //     let projects_query = db.prepare(&format!(
+    //         "SELECT id FROM projects WHERE path = {}",
+    //         project_path.to_str().unwrap() // This is unsafe
+    //     ))?;
+
+    //     let project_id = db.last_insert_rowid();
+
+    //     return Ok(project_id as usize);
+    // }
+
+    pub fn insert_file(&self, indexed_file: IndexedFile) -> Result<()> {
+        // Write to files table, and return generated id.
+        let files_insert = self.db.execute(
             "INSERT INTO files (path, sha1) VALUES (?1, ?2)",
             params![indexed_file.path.to_str(), indexed_file.sha1],
         )?;
 
-        let inserted_id = db.last_insert_rowid();
+        let inserted_id = self.db.last_insert_rowid();
 
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.
         for document in indexed_file.documents {
             let embedding_blob = bincode::serialize(&document.embedding)?;
 
-            db.execute(
+            self.db.execute(
                 "INSERT INTO documents (file_id, offset, name, embedding) VALUES (?1, ?2, ?3, ?4)",
                 params![
                     inserted_id,
@@ -109,70 +142,42 @@ impl VectorDatabase {
     }
 
     pub fn get_files(&self) -> Result<HashMap<usize, FileRecord>> {
-        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
-
-        fn query(db: Connection) -> rusqlite::Result<Vec<FileRecord>> {
-            let mut query_statement = db.prepare("SELECT id, path, sha1 FROM files")?;
-            let result_iter = query_statement.query_map([], |row| {
-                Ok(FileRecord {
-                    id: row.get(0)?,
-                    path: row.get(1)?,
-                    sha1: row.get(2)?,
-                })
-            })?;
-
-            let mut results = vec![];
-            for result in result_iter {
-                results.push(result?);
-            }
-
-            return Ok(results);
-        }
+        let mut query_statement = self.db.prepare("SELECT id, path, sha1 FROM files")?;
+        let result_iter = query_statement.query_map([], |row| {
+            Ok(FileRecord {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                sha1: row.get(2)?,
+            })
+        })?;
 
         let mut pages: HashMap<usize, FileRecord> = HashMap::new();
-        let result_iter = query(db);
-        if result_iter.is_ok() {
-            for result in result_iter.unwrap() {
-                pages.insert(result.id, result);
-            }
+        for result in result_iter {
+            let result = result?;
+            pages.insert(result.id, result);
         }
 
-        return Ok(pages);
+        Ok(pages)
     }
 
     pub fn get_documents(&self) -> Result<HashMap<usize, DocumentRecord>> {
-        // Should return a HashMap in which the key is the id, and the value is the finished document
-
-        // Get Data from Database
-        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
-
-        fn query(db: Connection) -> rusqlite::Result<Vec<DocumentRecord>> {
-            let mut query_statement =
-                db.prepare("SELECT id, file_id, offset, name, embedding FROM documents")?;
-            let result_iter = query_statement.query_map([], |row| {
-                Ok(DocumentRecord {
-                    id: row.get(0)?,
-                    file_id: row.get(1)?,
-                    offset: row.get(2)?,
-                    name: row.get(3)?,
-                    embedding: row.get(4)?,
-                })
-            })?;
-
-            let mut results = vec![];
-            for result in result_iter {
-                results.push(result?);
-            }
-
-            return Ok(results);
-        }
+        let mut query_statement = self
+            .db
+            .prepare("SELECT id, file_id, offset, name, embedding FROM documents")?;
+        let result_iter = query_statement.query_map([], |row| {
+            Ok(DocumentRecord {
+                id: row.get(0)?,
+                file_id: row.get(1)?,
+                offset: row.get(2)?,
+                name: row.get(3)?,
+                embedding: row.get(4)?,
+            })
+        })?;
 
         let mut documents: HashMap<usize, DocumentRecord> = HashMap::new();
-        let result_iter = query(db);
-        if result_iter.is_ok() {
-            for result in result_iter.unwrap() {
-                documents.insert(result.id, result);
-            }
+        for result in result_iter {
+            let result = result?;
+            documents.insert(result.id, result);
         }
 
         return Ok(documents);

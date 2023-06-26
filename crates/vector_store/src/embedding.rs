@@ -94,16 +94,6 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             response.usage.total_tokens
         );
 
-        // do we need to re-order these based on the `index` field?
-        eprintln!(
-            "indices: {:?}",
-            response
-                .data
-                .iter()
-                .map(|embedding| embedding.index)
-                .collect::<Vec<_>>()
-        );
-
         Ok(response
             .data
             .into_iter()
