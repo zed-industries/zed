@@ -38,7 +38,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::{ui::IconStyle, AssistantStyle};
+use theme::AssistantStyle;
 use util::{channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -343,131 +343,140 @@ impl AssistantPanel {
         self.editors.get(self.active_editor_index?)
     }
 
-    fn render_hamburger_button(style: &IconStyle) -> impl Element<Self> {
+    fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         enum ListConversations {}
-        Svg::for_style(style.icon.clone())
-            .contained()
-            .with_style(style.container)
-            .mouse::<ListConversations>(0)
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                if this.active_editor().is_some() {
-                    this.set_active_editor_index(None, cx);
-                } else {
-                    this.set_active_editor_index(this.prev_active_editor_index, cx);
-                }
-            })
+        let theme = theme::current(cx);
+        MouseEventHandler::<ListConversations, _>::new(0, cx, |state, _| {
+            let style = theme.assistant.hamburger_button.style_for(state);
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+            if this.active_editor().is_some() {
+                this.set_active_editor_index(None, cx);
+            } else {
+                this.set_active_editor_index(this.prev_active_editor_index, cx);
+            }
+        })
     }
 
-    fn render_editor_tools(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> Vec<AnyElement<Self>> {
+    fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement<Self>> {
         if self.active_editor().is_some() {
             vec![
-                Self::render_split_button(&style.split_button, cx).into_any(),
-                Self::render_quote_button(&style.quote_button, cx).into_any(),
-                Self::render_assist_button(&style.assist_button, cx).into_any(),
+                Self::render_split_button(cx).into_any(),
+                Self::render_quote_button(cx).into_any(),
+                Self::render_assist_button(cx).into_any(),
             ]
         } else {
             Default::default()
         }
     }
 
-    fn render_split_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+    fn render_split_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        Svg::for_style(style.icon.clone())
-            .contained()
-            .with_style(style.container)
-            .mouse::<Split>(0)
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                if let Some(active_editor) = this.active_editor() {
-                    active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
-                }
-            })
-            .with_tooltip::<Split>(
-                1,
-                "Split Message".into(),
-                Some(Box::new(Split)),
-                tooltip_style,
-                cx,
-            )
+        MouseEventHandler::<Split, _>::new(0, cx, |state, _| {
+            let style = theme.assistant.split_button.style_for(state);
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+            if let Some(active_editor) = this.active_editor() {
+                active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
+            }
+        })
+        .with_tooltip::<Split>(
+            1,
+            "Split Message".into(),
+            Some(Box::new(Split)),
+            tooltip_style,
+            cx,
+        )
     }
 
-    fn render_assist_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+    fn render_assist_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        Svg::for_style(style.icon.clone())
-            .contained()
-            .with_style(style.container)
-            .mouse::<Assist>(0)
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                if let Some(active_editor) = this.active_editor() {
-                    active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
-                }
-            })
-            .with_tooltip::<Assist>(
-                1,
-                "Assist".into(),
-                Some(Box::new(Assist)),
-                tooltip_style,
-                cx,
-            )
+        MouseEventHandler::<Assist, _>::new(0, cx, |state, _| {
+            let style = theme.assistant.assist_button.style_for(state);
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+            if let Some(active_editor) = this.active_editor() {
+                active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
+            }
+        })
+        .with_tooltip::<Assist>(
+            1,
+            "Assist".into(),
+            Some(Box::new(Assist)),
+            tooltip_style,
+            cx,
+        )
     }
 
-    fn render_quote_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+    fn render_quote_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        Svg::for_style(style.icon.clone())
-            .contained()
-            .with_style(style.container)
-            .mouse::<QuoteSelection>(0)
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    cx.window_context().defer(move |cx| {
-                        workspace.update(cx, |workspace, cx| {
-                            ConversationEditor::quote_selection(workspace, &Default::default(), cx)
-                        });
+        MouseEventHandler::<QuoteSelection, _>::new(0, cx, |state, _| {
+            let style = theme.assistant.quote_button.style_for(state);
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+            if let Some(workspace) = this.workspace.upgrade(cx) {
+                cx.window_context().defer(move |cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        ConversationEditor::quote_selection(workspace, &Default::default(), cx)
                     });
-                }
-            })
-            .with_tooltip::<QuoteSelection>(
-                1,
-                "Assist".into(),
-                Some(Box::new(QuoteSelection)),
-                tooltip_style,
-                cx,
-            )
+                });
+            }
+        })
+        .with_tooltip::<QuoteSelection>(
+            1,
+            "Assist".into(),
+            Some(Box::new(QuoteSelection)),
+            tooltip_style,
+            cx,
+        )
     }
 
-    fn render_plus_button(style: &IconStyle) -> impl Element<Self> {
+    fn render_plus_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         enum AddConversation {}
-        Svg::for_style(style.icon.clone())
-            .contained()
-            .with_style(style.container)
-            .mouse::<AddConversation>(0)
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-                this.new_conversation(cx);
-            })
+        let theme = theme::current(cx);
+        MouseEventHandler::<AddConversation, _>::new(0, cx, |state, _| {
+            let style = theme.assistant.plus_button.style_for(state);
+            Svg::for_style(style.icon.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+            this.new_conversation(cx);
+        })
     }
 
-    fn render_zoom_button(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
+    fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
         enum ToggleZoomButton {}
 
+        let theme = theme::current(cx);
         let style = if self.zoomed {
-            &style.zoom_out_button
+            &theme.assistant.zoom_out_button
         } else {
-            &style.zoom_in_button
+            &theme.assistant.zoom_in_button
         };
 
-        MouseEventHandler::<ToggleZoomButton, _>::new(0, cx, |_, _| {
+        MouseEventHandler::<ToggleZoomButton, _>::new(0, cx, |state, _| {
+            let style = style.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
                 .with_style(style.container)
@@ -605,21 +614,15 @@ impl View for AssistantPanel {
             Flex::column()
                 .with_child(
                     Flex::row()
-                        .with_child(
-                            Self::render_hamburger_button(&style.hamburger_button).aligned(),
-                        )
+                        .with_child(Self::render_hamburger_button(cx).aligned())
                         .with_children(title)
                         .with_children(
-                            self.render_editor_tools(&style, cx)
+                            self.render_editor_tools(cx)
                                 .into_iter()
                                 .map(|tool| tool.aligned().flex_float()),
                         )
-                        .with_child(
-                            Self::render_plus_button(&style.plus_button)
-                                .aligned()
-                                .flex_float(),
-                        )
-                        .with_child(self.render_zoom_button(&style, cx).aligned())
+                        .with_child(Self::render_plus_button(cx).aligned().flex_float())
+                        .with_child(self.render_zoom_button(cx).aligned())
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .expanded()

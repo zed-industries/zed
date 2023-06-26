@@ -15,97 +15,160 @@ export default function assistant(colorScheme: ColorScheme) {
             margin: { bottom: 6, top: 6 },
             background: editor(colorScheme).background,
         },
-        hamburgerButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/hamburger_15.svg",
-                dimensions: {
-                    width: 15,
-                    height: 15,
+        hamburgerButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/hamburger_15.svg",
+                    dimensions: {
+                        width: 15,
+                        height: 15,
+                    },
                 },
+                container: {
+                    margin: { left: 12 },
+                }
             },
-            container: {
-                margin: { left: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        splitButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/split_message_15.svg",
-                dimensions: {
-                    width: 15,
-                    height: 15,
+        }),
+        splitButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/split_message_15.svg",
+                    dimensions: {
+                        width: 15,
+                        height: 15,
+                    },
                 },
+                container: {
+                    margin: { left: 12 },
+                }
             },
-            container: {
-                margin: { left: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        quoteButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/quote_15.svg",
-                dimensions: {
-                    width: 15,
-                    height: 15,
+        }),
+        quoteButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/quote_15.svg",
+                    dimensions: {
+                        width: 15,
+                        height: 15,
+                    },
                 },
+                container: {
+                    margin: { left: 12 },
+                }
             },
-            container: {
-                margin: { left: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        assistButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/assist_15.svg",
-                dimensions: {
-                    width: 15,
-                    height: 15,
+        }),
+        assistButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/assist_15.svg",
+                    dimensions: {
+                        width: 15,
+                        height: 15,
+                    },
                 },
+                container: {
+                    margin: { left: 12, right: 24 },
+                }
             },
-            container: {
-                margin: { left: 12, right: 24 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        zoomInButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/maximize_8.svg",
-                dimensions: {
-                    width: 12,
-                    height: 12,
+        }),
+        zoomInButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/maximize_8.svg",
+                    dimensions: {
+                        width: 12,
+                        height: 12,
+                    },
                 },
+                container: {
+                    margin: { right: 12 },
+                }
             },
-            container: {
-                margin: { right: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        zoomOutButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/minimize_8.svg",
-                dimensions: {
-                    width: 12,
-                    height: 12,
+        }),
+        zoomOutButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/minimize_8.svg",
+                    dimensions: {
+                        width: 12,
+                        height: 12,
+                    },
                 },
+                container: {
+                    margin: { right: 12 },
+                }
             },
-            container: {
-                margin: { right: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
-        plusButton: {
-            icon: {
-                color: text(layer, "sans", "default", { size: "sm" }).color,
-                asset: "icons/plus_12.svg",
-                dimensions: {
-                    width: 12,
-                    height: 12,
+        }),
+        plusButton: interactive({
+            base: {
+                icon: {
+                    color: foreground(layer, "variant"),
+                    asset: "icons/plus_12.svg",
+                    dimensions: {
+                        width: 12,
+                        height: 12,
+                    },
                 },
+                container: {
+                    margin: { right: 12 },
+                }
             },
-            container: {
-                margin: { right: 12 },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered")
+                    }
+                }
             }
-        },
+        }),
         title: {
             margin: { left: 12 },
             ...text(layer, "sans", "default", { size: "sm" })
