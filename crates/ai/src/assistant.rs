@@ -111,6 +111,7 @@ pub enum AssistantPanelEvent {
 }
 
 pub struct AssistantPanel {
+    workspace: WeakViewHandle<Workspace>,
     width: Option<f32>,
     height: Option<f32>,
     active_editor_index: Option<usize>,
@@ -143,6 +144,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             // TODO: deserialize state.
+            let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
                 cx.add_view::<Self, _>(|cx| {
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
@@ -171,6 +173,7 @@ impl AssistantPanel {
                         toolbar
                     });
                     let mut this = Self {
+                        workspace: workspace_handle,
                         active_editor_index: Default::default(),
                         prev_active_editor_index: Default::default(),
                         editors: Default::default(),
@@ -364,6 +367,7 @@ impl AssistantPanel {
         if self.active_editor().is_some() {
             vec![
                 Self::render_split_button(&style.split_button, cx).into_any(),
+                Self::render_quote_button(&style.quote_button, cx).into_any(),
                 Self::render_assist_button(&style.assist_button, cx).into_any(),
             ]
         } else {
@@ -408,6 +412,31 @@ impl AssistantPanel {
                 1,
                 "Assist".into(),
                 Some(Box::new(Assist)),
+                tooltip_style,
+                cx,
+            )
+    }
+
+    fn render_quote_button(style: &IconStyle, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        Svg::for_style(style.icon.clone())
+            .contained()
+            .with_style(style.container)
+            .mouse::<QuoteSelection>(0)
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    cx.window_context().defer(move |cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            ConversationEditor::quote_selection(workspace, &Default::default(), cx)
+                        });
+                    });
+                }
+            })
+            .with_tooltip::<QuoteSelection>(
+                1,
+                "Assist".into(),
+                Some(Box::new(QuoteSelection)),
                 tooltip_style,
                 cx,
             )

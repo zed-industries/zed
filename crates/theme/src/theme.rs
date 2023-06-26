@@ -996,6 +996,7 @@ pub struct AssistantStyle {
     pub hamburger_button: IconStyle,
     pub split_button: IconStyle,
     pub assist_button: IconStyle,
+    pub quote_button: IconStyle,
     pub zoom_in_button: IconStyle,
     pub zoom_out_button: IconStyle,
     pub plus_button: IconStyle,

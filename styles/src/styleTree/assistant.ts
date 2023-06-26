@@ -41,6 +41,19 @@ export default function assistant(colorScheme: ColorScheme) {
                 margin: { left: 12 },
             }
         },
+        quoteButton: {
+            icon: {
+                color: text(layer, "sans", "default", { size: "sm" }).color,
+                asset: "icons/quote_15.svg",
+                dimensions: {
+                    width: 15,
+                    height: 15,
+                },
+            },
+            container: {
+                margin: { left: 12 },
+            }
+        },
         assistButton: {
             icon: {
                 color: text(layer, "sans", "default", { size: "sm" }).color,
@@ -51,7 +64,7 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
             },
             container: {
-                margin: { left: 12, right: 12 },
+                margin: { left: 12, right: 24 },
             }
         },
         zoomInButton: {
