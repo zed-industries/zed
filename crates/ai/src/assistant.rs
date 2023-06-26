@@ -2244,11 +2244,10 @@ mod tests {
             workspace.add_panel(panel.clone(), cx);
             workspace.toggle_dock(DockPosition::Right, cx);
             assert!(workspace.right_dock().read(cx).is_open());
-            cx.focus(&panel);
         });
 
+        panel.update(cx, |_, cx| cx.focus_self());
         cx.dispatch_action(window_id, workspace::ToggleZoom);
-
         workspace.read_with(cx, |workspace, cx| {
             assert_eq!(workspace.zoomed_view(cx).unwrap(), panel);
         })
