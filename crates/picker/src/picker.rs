@@ -45,6 +45,12 @@ pub trait PickerDelegate: Sized + 'static {
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
+    fn render_header(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+        None
+    }
+    fn render_footer(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+        None
+    }
 }
 
 impl<D: PickerDelegate> Entity for Picker<D> {
@@ -77,6 +83,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .contained()
                     .with_style(editor_style),
             )
+            .with_children(self.delegate.render_header(cx))
             .with_children(if match_count == 0 {
                 if query.is_empty() {
                     None
@@ -118,6 +125,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .into_any(),
                 )
             })
+            .with_children(self.delegate.render_footer(cx))
             .contained()
             .with_style(container_style)
             .constrained()
