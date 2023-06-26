@@ -1023,6 +1023,14 @@ impl Conversation {
     ) -> Vec<MessageAnchor> {
         let mut user_messages = Vec::new();
         let mut tasks = Vec::new();
+
+        let last_message_id = self.message_anchors.iter().rev().find_map(|message| {
+            message
+                .start
+                .is_valid(self.buffer.read(cx))
+                .then_some(message.id)
+        });
+
         for selected_message_id in selected_messages {
             let selected_message_role =
                 if let Some(metadata) = self.messages_metadata.get(&selected_message_id) {
@@ -1084,6 +1092,19 @@ impl Conversation {
                         cx,
                     )
                     .unwrap();
+
+                // Queue up the user's next reply
+                if Some(selected_message_id) == last_message_id {
+                    let user_message = self
+                        .insert_message_after(
+                            assistant_message.id,
+                            Role::User,
+                            MessageStatus::Done,
+                            cx,
+                        )
+                        .unwrap();
+                    user_messages.push(user_message);
+                }
 
                 tasks.push(cx.spawn_weak({
                     |this, mut cx| async move {
