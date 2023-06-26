@@ -1,12 +1,43 @@
-use anyhow::Result;
-use rusqlite::params;
+use std::collections::HashMap;
 
-use crate::IndexedFile;
+use anyhow::{anyhow, Result};
+
+use rusqlite::{
+    params,
+    types::{FromSql, FromSqlResult, ValueRef},
+    Connection,
+};
+use util::ResultExt;
+
+use crate::{Document, IndexedFile};
 
 // This is saving to a local database store within the users dev zed path
 // Where do we want this to sit?
 // Assuming near where the workspace DB sits.
 const VECTOR_DB_URL: &str = "embeddings_db";
+
+// Note this is not an appropriate document
+#[derive(Debug)]
+pub struct DocumentRecord {
+    id: usize,
+    offset: usize,
+    name: String,
+    embedding: Embedding,
+}
+
+#[derive(Debug)]
+struct Embedding(Vec<f32>);
+
+impl FromSql for Embedding {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        let bytes = value.as_blob()?;
+        let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
+        if embedding.is_err() {
+            return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
+        }
+        return Ok(Embedding(embedding.unwrap()));
+    }
+}
 
 pub struct VectorDatabase {}
 
@@ -51,37 +82,66 @@ impl VectorDatabase {
 
         let inserted_id = db.last_insert_rowid();
 
-        // I stole this from https://stackoverflow.com/questions/71829931/how-do-i-convert-a-negative-f32-value-to-binary-string-and-back-again
-        // I imagine there is a better way to serialize to/from blob
-        fn get_binary_from_values(values: Vec<f32>) -> String {
-            let bits: Vec<_> = values.iter().map(|v| v.to_bits().to_string()).collect();
-            bits.join(";")
-        }
-
-        fn get_values_from_binary(bin: &str) -> Vec<f32> {
-            (0..bin.len() / 32)
-                .map(|i| {
-                    let start = i * 32;
-                    let end = start + 32;
-                    f32::from_bits(u32::from_str_radix(&bin[start..end], 2).unwrap())
-                })
-                .collect()
-        }
-
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.
         for document in indexed_file.documents {
+            let embedding_blob = bincode::serialize(&document.embedding)?;
+
             db.execute(
                 "INSERT INTO documents (file_id, offset, name, embedding) VALUES (?1, ?2, ?3, ?4)",
                 params![
                     inserted_id,
                     document.offset.to_string(),
                     document.name,
-                    get_binary_from_values(document.embedding)
+                    embedding_blob
                 ],
             )?;
         }
 
         Ok(())
+    }
+
+    pub fn get_documents(&self) -> Result<HashMap<usize, Document>> {
+        // Should return a HashMap in which the key is the id, and the value is the finished document
+
+        // Get Data from Database
+        let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
+
+        fn query(db: Connection) -> rusqlite::Result<Vec<DocumentRecord>> {
+            let mut query_statement =
+                db.prepare("SELECT id, offset, name, embedding FROM documents LIMIT 10")?;
+            let result_iter = query_statement.query_map([], |row| {
+                Ok(DocumentRecord {
+                    id: row.get(0)?,
+                    offset: row.get(1)?,
+                    name: row.get(2)?,
+                    embedding: row.get(3)?,
+                })
+            })?;
+
+            let mut results = vec![];
+            for result in result_iter {
+                results.push(result?);
+            }
+
+            return Ok(results);
+        }
+
+        let mut documents: HashMap<usize, Document> = HashMap::new();
+        let result_iter = query(db);
+        if result_iter.is_ok() {
+            for result in result_iter.unwrap() {
+                documents.insert(
+                    result.id,
+                    Document {
+                        offset: result.offset,
+                        name: result.name,
+                        embedding: result.embedding.0,
+                    },
+                );
+            }
+        }
+
+        return Ok(documents);
     }
 }

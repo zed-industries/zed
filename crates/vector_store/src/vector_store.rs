@@ -1,5 +1,6 @@
 mod db;
 mod embedding;
+mod search;
 
 use anyhow::{anyhow, Result};
 use db::VectorDatabase;
@@ -39,10 +40,10 @@ pub fn init(
 }
 
 #[derive(Debug)]
-struct Document {
-    offset: usize,
-    name: String,
-    embedding: Vec<f32>,
+pub struct Document {
+    pub offset: usize,
+    pub name: String,
+    pub embedding: Vec<f32>,
 }
 
 #[derive(Debug)]
@@ -185,13 +186,12 @@ impl VectorStore {
                     while let Ok(indexed_file) = indexed_files_rx.recv().await {
                         VectorDatabase::insert_file(indexed_file).await.log_err();
                     }
+
+                    anyhow::Ok(())
                 })
                 .detach();
 
-            // let provider = OpenAIEmbeddings { client };
             let provider = DummyEmbeddings {};
-
-            let t0 = Instant::now();
 
             cx.background()
                 .scoped(|scope| {
@@ -218,9 +218,6 @@ impl VectorStore {
                     }
                 })
                 .await;
-
-            let duration = t0.elapsed();
-            log::info!("indexed project in {duration:?}");
         })
         .detach();
     }

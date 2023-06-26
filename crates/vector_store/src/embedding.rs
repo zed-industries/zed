@@ -13,6 +13,7 @@ lazy_static! {
     static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
 }
 
+#[derive(Clone)]
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
 }
@@ -54,7 +55,7 @@ impl EmbeddingProvider for DummyEmbeddings {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
         // 1024 is the OpenAI Embeddings size for ada models.
         // the model we will likely be starting with.
-        let dummy_vec = vec![0.32 as f32; 1024];
+        let dummy_vec = vec![0.32 as f32; 1536];
         return Ok(vec![dummy_vec; spans.len()]);
     }
 }
