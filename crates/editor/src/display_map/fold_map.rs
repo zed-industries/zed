@@ -475,7 +475,7 @@ pub struct FoldSnapshot {
 impl FoldSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), false, None, None)
+        self.chunks(FoldOffset(0)..self.len(), false, None, None, None)
             .map(|c| c.text)
             .collect()
     }
@@ -652,7 +652,8 @@ impl FoldSnapshot {
         range: Range<FoldOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlights: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
 
@@ -674,7 +675,8 @@ impl FoldSnapshot {
                 inlay_start..inlay_end,
                 language_aware,
                 text_highlights,
-                inlay_highlights,
+                hint_highlights,
+                suggestion_highlights,
             ),
             inlay_chunk: None,
             inlay_offset: inlay_start,
@@ -685,7 +687,7 @@ impl FoldSnapshot {
     }
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
-        self.chunks(start.to_offset(self)..self.len(), false, None, None)
+        self.chunks(start.to_offset(self)..self.len(), false, None, None, None)
             .flat_map(|chunk| chunk.text.chars())
     }
 
@@ -1514,7 +1516,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false, Some(&highlights), None)
+                        .chunks(start..end, false, Some(&highlights), None, None)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

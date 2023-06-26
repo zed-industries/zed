@@ -392,7 +392,13 @@ impl DisplaySnapshot {
     /// Returns text chunks starting at the given display row until the end of the file
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.block_snapshot
-            .chunks(display_row..self.max_point().row() + 1, false, None, None)
+            .chunks(
+                display_row..self.max_point().row() + 1,
+                false,
+                None,
+                None,
+                None,
+            )
             .map(|h| h.text)
     }
 
@@ -400,7 +406,7 @@ impl DisplaySnapshot {
     pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         (0..=display_row).into_iter().rev().flat_map(|row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, None, None)
+                .chunks(row..row + 1, false, None, None, None)
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -412,13 +418,15 @@ impl DisplaySnapshot {
         &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_highlights: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
             Some(&self.text_highlights),
-            inlay_highlights,
+            hint_highlights,
+            suggestion_highlights,
         )
     }
 
@@ -1711,7 +1719,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None) {
+        for chunk in snapshot.chunks(rows, true, None, None) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);

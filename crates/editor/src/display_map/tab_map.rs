@@ -70,6 +70,7 @@ impl TabMap {
                     false,
                     None,
                     None,
+                    None,
                 ) {
                     for (ix, _) in chunk.text.match_indices('\t') {
                         let offset_from_edit = offset_from_edit + (ix as u32);
@@ -182,7 +183,7 @@ impl TabSnapshot {
             self.max_point()
         };
         for c in self
-            .chunks(range.start..line_end, false, None, None)
+            .chunks(range.start..line_end, false, None, None, None)
             .flat_map(|chunk| chunk.text.chars())
         {
             if c == '\n' {
@@ -199,6 +200,7 @@ impl TabSnapshot {
                 .chunks(
                     TabPoint::new(range.end.row(), 0)..range.end,
                     false,
+                    None,
                     None,
                     None,
                 )
@@ -222,7 +224,8 @@ impl TabSnapshot {
         range: Range<TabPoint>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlights: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
@@ -243,7 +246,8 @@ impl TabSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                inlay_highlights,
+                hint_highlights,
+                suggestion_highlights,
             ),
             input_column,
             column: expanded_char_column,
@@ -266,7 +270,7 @@ impl TabSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(TabPoint::zero()..self.max_point(), false, None, None)
+        self.chunks(TabPoint::zero()..self.max_point(), false, None, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -595,6 +599,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     )
                     .map(|c| c.text)
                     .collect::<String>(),
@@ -669,7 +674,7 @@ mod tests {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
-            for chunk in snapshot.chunks(start..snapshot.max_point(), false, None, None) {
+            for chunk in snapshot.chunks(start..snapshot.max_point(), false, None, None, None) {
                 if chunk.is_tab != was_tab {
                     if !text.is_empty() {
                         chunks.push((mem::take(&mut text), was_tab));
@@ -738,7 +743,7 @@ mod tests {
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
                 tabs_snapshot
-                    .chunks(start..end, false, None, None)
+                    .chunks(start..end, false, None, None, None)
                     .map(|c| c.text)
                     .collect::<String>(),
                 expected_text,

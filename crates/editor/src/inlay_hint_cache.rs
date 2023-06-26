@@ -616,7 +616,7 @@ async fn fetch_and_update_hints(
                 for new_hint in new_update.add_to_cache {
                     let new_hint_position = multi_buffer_snapshot
                         .anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                    let new_inlay_id = InlayId(post_inc(&mut editor.next_inlay_id));
+                    let new_inlay_id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
                     if editor
                         .inlay_hint_cache
                         .allowed_hint_kinds

@@ -194,7 +194,8 @@ pub struct InlayChunks<'a> {
     inlay_chunks: Option<text::Chunks<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
-    highlight_style: Option<HighlightStyle>,
+    hint_highlight_style: Option<HighlightStyle>,
+    suggestion_highlight_style: Option<HighlightStyle>,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
     snapshot: &'a InlaySnapshot,
@@ -281,9 +282,13 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let chunk = inlay_chunks.next().unwrap();
                 self.output_offset.0 += chunk.len();
+                let highlight_style = match inlay.id {
+                    InlayId::Suggestion(_) => self.suggestion_highlight_style,
+                    InlayId::Hint(_) => self.hint_highlight_style,
+                };
                 Chunk {
                     text: chunk,
-                    highlight_style: self.highlight_style,
+                    highlight_style,
                     ..Default::default()
                 }
             }
@@ -576,7 +581,7 @@ impl InlayMap {
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
-        for _ in 0..rng.gen_range(1..=5) {
+        for i in 0..rng.gen_range(1..=5) {
             if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
@@ -595,8 +600,14 @@ impl InlayMap {
                     bias,
                     text
                 );
+
+                let inlay_id = if i % 2 == 0 {
+                    InlayId::Hint(post_inc(next_inlay_id))
+                } else {
+                    InlayId::Suggestion(post_inc(next_inlay_id))
+                };
                 to_insert.push((
-                    InlayId(post_inc(next_inlay_id)),
+                    inlay_id,
                     InlayProperties {
                         position: snapshot.buffer.anchor_at(position, bias),
                         text,
@@ -927,7 +938,8 @@ impl InlaySnapshot {
         range: Range<InlayOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
@@ -1002,7 +1014,8 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            highlight_style: inlay_highlight_style,
+            hint_highlight_style: hint_highlights,
+            suggestion_highlight_style: suggestion_highlights,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             snapshot: self,
@@ -1011,7 +1024,7 @@ impl InlaySnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None, None)
+        self.chunks(Default::default()..self.len(), false, None, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -1078,7 +1091,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![(
-                InlayId(post_inc(&mut next_inlay_id)),
+                InlayId::Hint(post_inc(&mut next_inlay_id)),
                 InlayProperties {
                     position: buffer.read(cx).snapshot(cx).anchor_after(3),
                     text: "|123|",
@@ -1157,14 +1170,14 @@ mod tests {
             Vec::new(),
             vec![
                 (
-                    InlayId(post_inc(&mut next_inlay_id)),
+                    InlayId::Hint(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(3),
                         text: "|123|",
                     },
                 ),
                 (
-                    InlayId(post_inc(&mut next_inlay_id)),
+                    InlayId::Suggestion(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_after(3),
                         text: "|456|",
@@ -1370,21 +1383,21 @@ mod tests {
             Vec::new(),
             vec![
                 (
-                    InlayId(post_inc(&mut next_inlay_id)),
+                    InlayId::Hint(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(0),
                         text: "|123|\n",
                     },
                 ),
                 (
-                    InlayId(post_inc(&mut next_inlay_id)),
+                    InlayId::Hint(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(4),
                         text: "|456|",
                     },
                 ),
                 (
-                    InlayId(post_inc(&mut next_inlay_id)),
+                    InlayId::Suggestion(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(7),
                         text: "\n|567|\n",
@@ -1489,7 +1502,13 @@ mod tests {
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let actual_text = inlay_snapshot
-                    .chunks(InlayOffset(start)..InlayOffset(end), false, None, None)
+                    .chunks(
+                        InlayOffset(start)..InlayOffset(end),
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(

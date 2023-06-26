@@ -184,8 +184,11 @@ pub struct GutterHover {
     pub hovered: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InlayId(usize);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InlayId {
+    Suggestion(usize),
+    Hint(usize),
+}
 
 actions!(
     editor,
@@ -3449,7 +3452,7 @@ impl Editor {
                 to_remove.push(suggestion.id);
             }
 
-            let suggestion_inlay_id = self.next_inlay_id();
+            let suggestion_inlay_id = InlayId::Suggestion(post_inc(&mut self.next_inlay_id));
             let to_insert = vec![(
                 suggestion_inlay_id,
                 InlayProperties {
@@ -7586,10 +7589,6 @@ impl Editor {
 
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else { return; };
         cx.write_to_clipboard(ClipboardItem::new(lines));
-    }
-
-    pub fn next_inlay_id(&mut self) -> InlayId {
-        InlayId(post_inc(&mut self.next_inlay_id))
     }
 
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
