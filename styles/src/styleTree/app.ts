@@ -23,6 +23,7 @@ import feedback from "./feedback"
 import welcome from "./welcome"
 import copilot from "./copilot"
 import assistant from "./assistant"
+import { titlebar } from "./titlebar"
 
 export default function app(colorScheme: ColorScheme): Object {
     return {
@@ -36,6 +37,7 @@ export default function app(colorScheme: ColorScheme): Object {
         incomingCallNotification: incomingCallNotification(colorScheme),
         picker: picker(colorScheme),
         workspace: workspace(colorScheme),
+        titlebar: titlebar(colorScheme),
         copilot: copilot(colorScheme),
         welcome: welcome(colorScheme),
         contextMenu: contextMenu(colorScheme),

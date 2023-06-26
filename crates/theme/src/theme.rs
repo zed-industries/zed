@@ -65,6 +65,7 @@ pub struct Theme {
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
+    pub titlebar: UserMenu,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -140,6 +141,16 @@ pub struct Titlebar {
     pub toggle_contacts_badge: ContainerStyle,
 }
 
+#[derive(Clone, Deserialize, Default)]
+pub struct UserMenu {
+    pub user_menu_button: UserMenuButton,
+}
+#[derive(Clone, Deserialize, Default)]
+pub struct UserMenuButton {
+    pub user_menu: Toggleable<Interactive<Icon>>,
+    pub avatar: AvatarStyle,
+    pub icon: Icon,
+}
 #[derive(Copy, Clone, Deserialize, Default)]
 pub struct AvatarStyle {
     #[serde(flatten)]

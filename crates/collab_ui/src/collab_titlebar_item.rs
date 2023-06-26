@@ -639,12 +639,17 @@ impl CollabTitlebarItem {
         avatar: Option<Arc<ImageData>>,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let titlebar = &theme.workspace.titlebar;
-        let avatar_style = &theme.workspace.titlebar.follower_avatar;
+        let tooltip = theme.tooltip.clone();
+        let user_menu_button = &theme.titlebar;
+        let avatar_style = &user_menu_button.user_menu_button.avatar;
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
-                    let style = titlebar.call_control.style_for(state);
+                    let style = user_menu_button
+                        .user_menu_button
+                        .user_menu
+                        .inactive_state()
+                        .style_for(state);
 
                     let mut dropdown = Flex::row().align_children_center();
 
@@ -658,15 +663,15 @@ impl CollabTitlebarItem {
                     dropdown
                         .with_child(
                             Svg::new("icons/caret_down_8.svg")
-                                .with_color(style.color)
+                                .with_color(theme.titlebar.user_menu_button.icon.color)
                                 .constrained()
-                                .with_width(style.icon_width)
+                                .with_width(theme.titlebar.user_menu_button.icon.width)
                                 .contained()
                                 .into_any(),
                         )
                         .aligned()
                         .constrained()
-                        .with_height(style.button_width)
+                        .with_height(style.width)
                         .contained()
                         .with_style(style.container)
                         .into_any()
@@ -679,11 +684,10 @@ impl CollabTitlebarItem {
                     0,
                     "Toggle user menu".to_owned(),
                     Some(Box::new(ToggleUserMenu)),
-                    theme.tooltip.clone(),
+                    tooltip,
                     cx,
                 )
-                .contained()
-                .with_margin_left(theme.workspace.titlebar.item_spacing),
+                .contained(),
             )
             .with_child(
                 ChildView::new(&self.user_menu, cx)
