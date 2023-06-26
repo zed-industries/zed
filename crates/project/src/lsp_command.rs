@@ -1,5 +1,5 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintKind, InlayHintLabel,
+    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
     InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
     MarkupContent, Project, ProjectTransaction,
 };
@@ -9,7 +9,7 @@ use client::proto::{self, PeerId};
 use fs::LineEnding;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
-    language_settings::language_settings,
+    language_settings::{language_settings, InlayHintKind},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,

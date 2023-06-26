@@ -31,7 +31,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter},
+    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -337,29 +337,6 @@ pub struct InlayHint {
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InlayHintKind {
-    Type,
-    Parameter,
-}
-
-impl InlayHintKind {
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "type" => Some(InlayHintKind::Type),
-            "parameter" => Some(InlayHintKind::Parameter),
-            _ => None,
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            InlayHintKind::Type => "type",
-            InlayHintKind::Parameter => "parameter",
-        }
-    }
 }
 
 impl InlayHint {

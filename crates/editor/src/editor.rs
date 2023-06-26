@@ -31,7 +31,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
-pub use editor_settings::{EditorSettings, InlayHints, InlayHintsContent};
+pub use editor_settings::EditorSettings;
 pub use element::{
     Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
 };
@@ -58,7 +58,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
-    language_settings::{self, all_language_settings},
+    language_settings::{self, all_language_settings, InlayHintSettings},
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
@@ -88,7 +88,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -1197,7 +1197,7 @@ enum GotoDefinitionKind {
 
 #[derive(Debug, Copy, Clone)]
 enum InlayRefreshReason {
-    SettingsChange(editor_settings::InlayHints),
+    SettingsChange(InlayHintSettings),
     NewLinesShown,
     ExcerptEdited,
     RefreshRequested,
@@ -1320,6 +1320,12 @@ impl Editor {
             }
         }
 
+        let inlay_hint_settings = inlay_hint_settings(
+            selections.newest_anchor().head(),
+            &buffer.read(cx).snapshot(cx),
+            cx,
+        );
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1370,7 +1376,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
+            inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2607,34 +2613,37 @@ impl Editor {
     }
 
     fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
-        if self.project.is_none()
-            || self.mode != EditorMode::Full
-            || !settings::get::<EditorSettings>(cx).inlay_hints.enabled
-        {
+        if self.project.is_none() || self.mode != EditorMode::Full {
             return;
         }
 
         let invalidate_cache = match reason {
             InlayRefreshReason::SettingsChange(new_settings) => {
-                let new_splice = self.inlay_hint_cache.update_settings(
+                match self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
                     self.visible_inlay_hints(cx),
                     cx,
-                );
-                if let Some(InlaySplice {
-                    to_remove,
-                    to_insert,
-                }) = new_splice
-                {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                ) {
+                    ControlFlow::Break(Some(InlaySplice {
+                        to_remove,
+                        to_insert,
+                    })) => {
+                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        return;
+                    }
+                    ControlFlow::Break(None) => return,
+                    ControlFlow::Continue(()) => InvalidationStrategy::Forced,
                 }
-                return;
             }
             InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayRefreshReason::ExcerptEdited => InvalidationStrategy::OnConflict,
             InlayRefreshReason::RefreshRequested => InvalidationStrategy::Forced,
         };
+
+        if !self.inlay_hint_cache.enabled {
+            return;
+        }
 
         let excerpts_to_query = self
             .excerpt_visible_offsets(cx)
@@ -7298,7 +7307,11 @@ impl Editor {
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(true, cx);
         self.refresh_inlays(
-            InlayRefreshReason::SettingsChange(settings::get::<EditorSettings>(cx).inlay_hints),
+            InlayRefreshReason::SettingsChange(inlay_hint_settings(
+                self.selections.newest_anchor().head(),
+                &self.buffer.read(cx).snapshot(cx),
+                cx,
+            )),
             cx,
         );
     }
@@ -7594,6 +7607,19 @@ impl Editor {
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
     }
+}
+
+fn inlay_hint_settings(
+    location: Anchor,
+    snapshot: &MultiBufferSnapshot,
+    cx: &mut ViewContext<'_, '_, Editor>,
+) -> InlayHintSettings {
+    let file = snapshot.file_at(location);
+    let language = snapshot.language_at(location);
+    let settings = all_language_settings(file, cx);
+    settings
+        .language(language.map(|l| l.name()).as_deref())
+        .inlay_hints
 }
 
 fn consume_contiguous_rows(

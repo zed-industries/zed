@@ -7,8 +7,8 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::HashSet;
 use editor::{
     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
-    ConfirmRename, Editor, EditorSettings, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset,
-    ToggleCodeActions, Undo,
+    ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
+    Undo,
 };
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
@@ -18,15 +18,13 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, Formatter},
+    language_settings::{AllLanguageSettings, Formatter, InlayHintKind, InlayHintSettings},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
-use project::{
-    search::SearchQuery, DiagnosticSummary, HoverBlockKind, InlayHintKind, Project, ProjectPath,
-};
+use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -7823,24 +7821,24 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     cx_a.update(|cx| {
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.inlay_hints = Some(editor::InlayHintsContent {
-                    enabled: Some(true),
-                    show_type_hints: Some(true),
-                    show_parameter_hints: Some(false),
-                    show_other_hints: Some(true),
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    enabled: true,
+                    show_type_hints: true,
+                    show_parameter_hints: false,
+                    show_other_hints: true,
                 })
             });
         });
     });
     cx_b.update(|cx| {
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.inlay_hints = Some(editor::InlayHintsContent {
-                    enabled: Some(true),
-                    show_type_hints: Some(true),
-                    show_parameter_hints: Some(false),
-                    show_other_hints: Some(true),
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    enabled: true,
+                    show_type_hints: true,
+                    show_parameter_hints: false,
+                    show_other_hints: true,
                 })
             });
         });

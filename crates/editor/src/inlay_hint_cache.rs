@@ -1,24 +1,29 @@
-use std::{cmp, ops::Range, sync::Arc};
+use std::{
+    cmp,
+    ops::{ControlFlow, Range},
+    sync::Arc,
+};
 
 use crate::{
-    display_map::Inlay, editor_settings, Anchor, Editor, ExcerptId, InlayId, MultiBuffer,
-    MultiBufferSnapshot,
+    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
 };
 use anyhow::Context;
 use clock::Global;
 use gpui::{ModelHandle, Task, ViewContext};
-use language::{Buffer, BufferSnapshot};
+use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
 use parking_lot::RwLock;
-use project::{InlayHint, InlayHintKind};
+use project::InlayHint;
 
 use collections::{hash_map, HashMap, HashSet};
+use language::language_settings::InlayHintSettings;
 use util::post_inc;
 
 pub struct InlayHintCache {
     pub hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
     pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     pub version: usize,
+    pub enabled: bool,
     update_tasks: HashMap<ExcerptId, UpdateTask>,
 }
 
@@ -138,9 +143,10 @@ struct ExcerptHintsUpdate {
 }
 
 impl InlayHintCache {
-    pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
+    pub fn new(inlay_hint_settings: InlayHintSettings) -> Self {
         Self {
-            allowed_hint_kinds: allowed_hint_types(inlay_hint_settings),
+            allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
+            enabled: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             version: 0,
@@ -150,38 +156,53 @@ impl InlayHintCache {
     pub fn update_settings(
         &mut self,
         multi_buffer: &ModelHandle<MultiBuffer>,
-        inlay_hint_settings: editor_settings::InlayHints,
+        new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<InlaySplice> {
-        let new_allowed_hint_kinds = allowed_hint_types(inlay_hint_settings);
-        if !inlay_hint_settings.enabled {
-            if self.hints.is_empty() {
+    ) -> ControlFlow<Option<InlaySplice>> {
+        dbg!(new_hint_settings);
+        let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
+        match (self.enabled, new_hint_settings.enabled) {
+            (false, false) => {
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
-                None
-            } else {
-                self.clear();
-                self.allowed_hint_kinds = new_allowed_hint_kinds;
-                Some(InlaySplice {
-                    to_remove: visible_hints.iter().map(|inlay| inlay.id).collect(),
-                    to_insert: Vec::new(),
-                })
+                ControlFlow::Break(None)
             }
-        } else if new_allowed_hint_kinds == self.allowed_hint_kinds {
-            None
-        } else {
-            let new_splice = self.new_allowed_hint_kinds_splice(
-                multi_buffer,
-                &visible_hints,
-                &new_allowed_hint_kinds,
-                cx,
-            );
-            if new_splice.is_some() {
-                self.version += 1;
-                self.update_tasks.clear();
-                self.allowed_hint_kinds = new_allowed_hint_kinds;
+            (true, true) => {
+                if new_allowed_hint_kinds == self.allowed_hint_kinds {
+                    ControlFlow::Break(None)
+                } else {
+                    let new_splice = self.new_allowed_hint_kinds_splice(
+                        multi_buffer,
+                        &visible_hints,
+                        &new_allowed_hint_kinds,
+                        cx,
+                    );
+                    if new_splice.is_some() {
+                        self.version += 1;
+                        self.update_tasks.clear();
+                        self.allowed_hint_kinds = new_allowed_hint_kinds;
+                    }
+                    ControlFlow::Break(new_splice)
+                }
             }
-            new_splice
+            (true, false) => {
+                self.enabled = new_hint_settings.enabled;
+                self.allowed_hint_kinds = new_allowed_hint_kinds;
+                if self.hints.is_empty() {
+                    ControlFlow::Break(None)
+                } else {
+                    self.clear();
+                    ControlFlow::Break(Some(InlaySplice {
+                        to_remove: visible_hints.iter().map(|inlay| inlay.id).collect(),
+                        to_insert: Vec::new(),
+                    }))
+                }
+            }
+            (false, true) => {
+                self.enabled = new_hint_settings.enabled;
+                self.allowed_hint_kinds = new_allowed_hint_kinds;
+                ControlFlow::Continue(())
+            }
         }
     }
 
@@ -191,6 +212,9 @@ impl InlayHintCache {
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
     ) {
+        if !self.enabled {
+            return;
+        }
         let update_tasks = &mut self.update_tasks;
         let invalidate_cache = matches!(
             invalidate,
@@ -754,22 +778,6 @@ fn calculate_hint_updates(
     }
 }
 
-fn allowed_hint_types(
-    inlay_hint_settings: editor_settings::InlayHints,
-) -> HashSet<Option<InlayHintKind>> {
-    let mut new_allowed_hint_types = HashSet::default();
-    if inlay_hint_settings.show_type_hints {
-        new_allowed_hint_types.insert(Some(InlayHintKind::Type));
-    }
-    if inlay_hint_settings.show_parameter_hints {
-        new_allowed_hint_types.insert(Some(InlayHintKind::Parameter));
-    }
-    if inlay_hint_settings.show_other_hints {
-        new_allowed_hint_types.insert(None);
-    }
-    new_allowed_hint_types
-}
-
 struct HintFetchRanges {
     visible_range: Range<language::Anchor>,
     other_ranges: Vec<Range<language::Anchor>>,
@@ -788,18 +796,19 @@ fn contains_position(
 mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use crate::serde_json::json;
+    use crate::{serde_json::json, InlayHintSettings};
     use futures::StreamExt;
     use gpui::{TestAppContext, ViewHandle};
     use language::{
-        language_settings::AllLanguageSettingsContent, FakeLspAdapter, Language, LanguageConfig,
+        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
+        FakeLspAdapter, Language, LanguageConfig,
     };
     use lsp::FakeLanguageServer;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
     use workspace::Workspace;
 
-    use crate::{editor_tests::update_test_settings, EditorSettings};
+    use crate::editor_tests::update_test_settings;
 
     use super::*;
 
@@ -926,16 +935,13 @@ mod tests {
     ) -> (&'static str, ViewHandle<Editor>, FakeLanguageServer) {
         cx.update(|cx| {
             cx.update_global(|store: &mut SettingsStore, cx| {
-                store.update_user_settings::<EditorSettings>(cx, |settings| {
-                    settings.inlay_hints = Some(crate::InlayHintsContent {
-                        enabled: Some(true),
-                        show_type_hints: Some(
-                            allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                        ),
-                        show_parameter_hints: Some(
-                            allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                        ),
-                        show_other_hints: Some(allowed_hint_kinds.contains(&None)),
+                store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.inlay_hints = Some(InlayHintSettings {
+                        enabled: true,
+                        show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                        show_parameter_hints: allowed_hint_kinds
+                            .contains(&Some(InlayHintKind::Parameter)),
+                        show_other_hints: allowed_hint_kinds.contains(&None),
                     })
                 });
             });
