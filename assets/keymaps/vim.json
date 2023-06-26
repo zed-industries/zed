@@ -221,7 +221,9 @@
         "vim::PushOperator",
         "Replace"
       ],
-      "s": "vim::Substitute"
+      "s": "vim::Substitute",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-pageup": "pane::ActivatePrevItem"
     }
   },
   {
@@ -238,6 +240,8 @@
     "bindings": {
       "g": "vim::StartOfDocument",
       "h": "editor::Hover",
+      "t": "pane::ActivateNextItem",
+      "shift-t": "pane::ActivatePrevItem",
       "escape": [
         "vim::SwitchMode",
         "Normal"
