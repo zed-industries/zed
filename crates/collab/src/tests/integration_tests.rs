@@ -7957,7 +7957,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         assert_eq!(
             inlay_cache.version, edits_made,
-            "Host editor should track its own inlay cache history, which should be incremented after every cache/view change"
+            "Host editor update the cache version after every cache/view change",
         );
     });
     let workspace_b = client_b.build_workspace(&project_b, cx_b);
@@ -7984,7 +7984,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         assert_eq!(
             inlay_cache.version, edits_made,
-            "Client editor should track its own inlay cache history, which should be incremented after every cache/view change"
+            "Guest editor update the cache version after every cache/view change"
         );
     });
 
@@ -8011,16 +8011,21 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string()],
+            vec![
+                "0".to_string(),
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string()
+            ],
             extract_hint_labels(editor),
             "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
         assert_eq!(
-            inlay_cache.version, edits_made,
-            "Each editor should track its own inlay cache history, which should be incremented after every cache/view change"
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Inlay kinds settings never change during the test"
         );
+        assert_eq!(inlay_cache.version, edits_made);
     });
 
     editor_a.update(cx_a, |editor, cx| {
@@ -8033,17 +8038,23 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.foreground().run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
+            vec![
+                "0".to_string(),
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "4".to_string()
+            ],
             extract_hint_labels(editor),
             "Host should get hints from 3rd edit, 5th LSP query: \
 4th query was made by guest (but not applied) due to cache invalidation logic"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds, "Inlay kinds settings never change during the test");
         assert_eq!(
-            inlay_cache.version, edits_made,
-            "Each editor should track its own inlay cache history, which should be incremented after every cache/view change"
+            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
+            "Inlay kinds settings never change during the test"
         );
+        assert_eq!(inlay_cache.version, edits_made);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
@@ -8063,10 +8074,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
             "Inlay kinds settings never change during the test"
         );
-        assert_eq!(
-            inlay_cache.version, edits_made,
-            "Guest should have a version increment"
-        );
+        assert_eq!(inlay_cache.version, edits_made);
     });
 
     fake_language_server
