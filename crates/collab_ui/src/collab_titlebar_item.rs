@@ -381,18 +381,20 @@ impl CollabTitlebarItem {
     }
     pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
-            let view = cx.add_view(|cx| build_branch_list(self.project.clone(), cx));
-            cx.subscribe(&view, |this, _, event, cx| {
-                match event {
-                    PickerEvent::Dismiss => {
-                        this.contacts_popover = None;
+            if let Some(workspace) = self.workspace.upgrade(cx) {
+                let view = cx.add_view(|cx| build_branch_list(workspace, cx));
+                cx.subscribe(&view, |this, _, event, cx| {
+                    match event {
+                        PickerEvent::Dismiss => {
+                            this.contacts_popover = None;
+                        }
                     }
-                }
 
-                cx.notify();
-            })
-            .detach();
-            self.branch_popover = Some(view);
+                    cx.notify();
+                })
+                .detach();
+                self.branch_popover = Some(view);
+            }
         }
 
         cx.notify();

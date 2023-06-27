@@ -1,9 +1,10 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
+use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, ViewHandle};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Project;
 use std::{cmp::Ordering, sync::Arc};
 use util::{ResultExt, TryFutureExt};
+use workspace::{Toast, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     Picker::<BranchListDelegate>::init(cx);
@@ -12,13 +13,13 @@ pub fn init(cx: &mut AppContext) {
 pub type BranchList = Picker<BranchListDelegate>;
 
 pub fn build_branch_list(
-    project: ModelHandle<Project>,
+    workspace: ViewHandle<Workspace>,
     cx: &mut ViewContext<BranchList>,
 ) -> BranchList {
     Picker::new(
         BranchListDelegate {
             matches: vec![],
-            project,
+            workspace,
             selected_index: 0,
             last_query: String::default(),
         },
@@ -29,7 +30,7 @@ pub fn build_branch_list(
 
 pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
-    project: ModelHandle<Project>,
+    workspace: ViewHandle<Workspace>,
     selected_index: usize,
     last_query: String,
 }
@@ -56,7 +57,7 @@ impl PickerDelegate for BranchListDelegate {
             let candidates = picker
                 .read_with(&mut cx, |view, cx| {
                     let delegate = view.delegate();
-                    let project = delegate.project.read(&cx);
+                    let project = delegate.workspace.read(cx).project().read(&cx);
                     let mut cwd = project
                         .visible_worktrees(cx)
                         .next()
@@ -136,7 +137,7 @@ impl PickerDelegate for BranchListDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         let current_pick = self.selected_index();
         let current_pick = self.matches[current_pick].string.clone();
-        let project = self.project.read(cx);
+        let project = self.workspace.read(cx).project().read(cx);
         let mut cwd = project
             .visible_worktrees(cx)
             .next()
@@ -147,13 +148,25 @@ impl PickerDelegate for BranchListDelegate {
             .path
             .to_path_buf();
         cwd.push(".git");
-        project
+        let status = project
             .fs()
             .open_repo(&cwd)
             .unwrap()
             .lock()
-            .change_branch(&current_pick)
-            .log_err();
+            .change_branch(&current_pick);
+        if let Err(err) = &status {
+            const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
+            self.workspace.update(cx, |model, ctx| {
+                model.show_toast(
+                    Toast::new(
+                        GIT_CHECKOUT_FAILURE_ID,
+                        format!("Failed to check out branch `{current_pick}`, error: `{err}`"),
+                    ),
+                    ctx,
+                )
+            });
+        }
+        status.log_err();
         cx.emit(PickerEvent::Dismiss);
     }
 
