@@ -124,9 +124,16 @@ impl GitRepository for LibGitRepository {
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
                     let name = branch.name().ok().flatten().map(Box::from)?;
+                    let timestamp = branch.get().peel_to_commit().ok()?.time();
+                    let unix_timestamp = timestamp.seconds();
+                    let timezone_offset = timestamp.offset_minutes();
+                    let utc_offset =
+                        time::UtcOffset::from_whole_seconds(timezone_offset * 60).ok()?;
+                    let unix_timestamp =
+                        time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
                     Some(Branch {
                         name,
-                        unix_timestamp: None,
+                        unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
                     })
                 })
             })

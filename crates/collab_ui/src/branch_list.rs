@@ -2,7 +2,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Project;
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 pub fn init(cx: &mut AppContext) {
@@ -67,9 +67,23 @@ impl PickerDelegate for BranchListDelegate {
                         .path
                         .to_path_buf();
                     cwd.push(".git");
-                    let branches = project.fs().open_repo(&cwd).unwrap().lock().branches();
-                    branches
+                    let mut branches = project
+                        .fs()
+                        .open_repo(&cwd)
                         .unwrap()
+                        .lock()
+                        .branches()
+                        .unwrap();
+                    if query.is_empty() {
+                        const RECENT_BRANCHES_COUNT: usize = 10;
+                        // Do a partial sort to show recent-ish branches first.
+                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT, |lhs, rhs| {
+                            rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
+                        });
+                        branches.truncate(RECENT_BRANCHES_COUNT);
+                        branches.sort_unstable_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
+                    }
+                    branches
                         .iter()
                         .cloned()
                         .enumerate()
@@ -106,15 +120,14 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = picker.delegate_mut();
-                    //delegate.branches = actions;
                     delegate.matches = matches;
-                    delegate.last_query = query;
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
                             core::cmp::min(delegate.selected_index, delegate.matches.len() - 1);
                     }
+                    delegate.last_query = query;
                 })
                 .log_err();
         })
