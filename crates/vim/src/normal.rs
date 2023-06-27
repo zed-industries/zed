@@ -1,3 +1,4 @@
+mod case;
 mod change;
 mod delete;
 mod scroll;
@@ -23,6 +24,7 @@ use log::error;
 use workspace::Workspace;
 
 use self::{
+    case::change_case,
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
     substitute::substitute,
@@ -44,6 +46,7 @@ actions!(
         Paste,
         Yank,
         Substitute,
+        ChangeCase,
     ]
 );
 
@@ -53,6 +56,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_end_of_line);
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
+    cx.add_action(change_case);
     cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);

@@ -6,14 +6,14 @@ use crate::{motion::Motion, Mode, Vim};
 pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
-        editor.change_selections(None, cx, |s| {
-            s.move_with(|map, selection| {
-                if selection.start == selection.end {
-                    Motion::Right.expand_selection(map, selection, count, true);
-                }
-            })
-        });
         editor.transact(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.start == selection.end {
+                        Motion::Right.expand_selection(map, selection, count, true);
+                    }
+                })
+            });
             let selections = editor.selections.all::<Point>(cx);
             for selection in selections.into_iter().rev() {
                 editor.buffer().update(cx, |buffer, cx| {
@@ -63,7 +63,11 @@ mod test {
 
         // it handles multibyte characters
         cx.set_state(indoc! {"ˇcàfé\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["4", "s", "x"]);
-        cx.assert_editor_state("xˇ\n");
+        cx.simulate_keystrokes(["4", "s"]);
+        cx.assert_editor_state("ˇ\n");
+
+        // should transactionally undo selection changes
+        cx.simulate_keystrokes(["escape", "u"]);
+        cx.assert_editor_state("ˇcàfé\n");
     }
 }
