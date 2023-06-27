@@ -703,31 +703,33 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     assert_eq!(read_dir_count_3 - read_dir_count_2, 2);
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
-    // .gitignores are handled explicitly by Zed and do not use the git
-    // machinery that the git_tests module checks
-    let parent_dir = temp_tree(json!({
-        ".gitignore": "ancestor-ignored-file1\nancestor-ignored-file2\n",
-        "tree": {
-            ".git": {},
-            ".gitignore": "ignored-dir\n",
-            "tracked-dir": {
-                "tracked-file1": "",
-                "ancestor-ignored-file1": "",
-            },
-            "ignored-dir": {
-                "ignored-file1": ""
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ancestor-ignored-file1\nancestor-ignored-file2\n",
+            "tree": {
+                ".git": {},
+                ".gitignore": "ignored-dir\n",
+                "tracked-dir": {
+                    "tracked-file1": "",
+                    "ancestor-ignored-file1": "",
+                },
+                "ignored-dir": {
+                    "ignored-file1": ""
+                }
             }
-        }
-    }));
-    let dir = parent_dir.path().join("tree");
+        }),
+    )
+    .await;
 
     let tree = Worktree::local(
         build_client(cx),
-        dir.as_path(),
+        "/root/tree".as_ref(),
         true,
-        Arc::new(RealFs),
+        fs.clone(),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -764,10 +766,26 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         );
     });
 
-    std::fs::write(dir.join("tracked-dir/tracked-file2"), "").unwrap();
-    std::fs::write(dir.join("tracked-dir/ancestor-ignored-file2"), "").unwrap();
-    std::fs::write(dir.join("ignored-dir/ignored-file2"), "").unwrap();
-    tree.flush_fs_events(cx).await;
+    fs.create_file(
+        "/root/tree/tracked-dir/tracked-file2".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        "/root/tree/tracked-dir/ancestor-ignored-file2".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        "/root/tree/ignored-dir/ignored-file2".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    cx.foreground().run_until_parked();
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert!(
