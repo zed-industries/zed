@@ -314,8 +314,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
-      "> >": "editor::Indent",
-      "< <": "editor::Outdent"
+      ">": "editor::Indent",
+      "<": "editor::Outdent"
     }
   },
   {
