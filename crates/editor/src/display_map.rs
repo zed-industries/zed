@@ -321,7 +321,9 @@ impl DisplaySnapshot {
     pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
-            inlay_point.0.column = 0;
+            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
+            fold_point.0.column = 0;
+            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
             point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Left);
@@ -337,7 +339,9 @@ impl DisplaySnapshot {
     pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
-            inlay_point.0.column = self.inlay_snapshot.line_len(inlay_point.row());
+            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
+            fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
+            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
             point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Right);
