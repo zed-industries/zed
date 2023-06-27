@@ -1,6 +1,6 @@
 [
   {
-    "context": "Editor && VimControl && !VimWaiting",
+    "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "g": [
         "vim::PushOperator",
