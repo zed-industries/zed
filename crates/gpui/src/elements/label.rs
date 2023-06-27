@@ -165,6 +165,7 @@ impl<V: View> Element<V> for Label {
         _: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         line.paint(
             scene,
             bounds.origin(),

@@ -25,6 +25,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalPanel::new_terminal);
 }
 
+#[derive(Debug)]
 pub enum Event {
     Close,
     DockPositionChanged,
