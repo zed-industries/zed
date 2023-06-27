@@ -1,4 +1,4 @@
-import { interactive } from "./interactive"
+import { interactive, Interactive } from "./interactive"
 import { toggleable } from "./toggle"
 
-export { interactive, toggleable }
+export { interactive, Interactive, toggleable }

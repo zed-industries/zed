@@ -13,6 +13,7 @@ import statusBar from "./statusBar"
 import tabBar from "./tabBar"
 import { interactive } from "../element"
 import merge from "ts-deepmerge"
+import { icon_button } from "../component/icon_button"
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest
     const isLight = colorScheme.isLight
@@ -252,7 +253,7 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             avatarRibbon: {
                 height: 3,
-                width: 12,
+                width: 11,
                 // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
             },
 
@@ -407,22 +408,9 @@ export default function workspace(colorScheme: ColorScheme) {
                     },
                 },
             }),
-            leaveCallButton: interactive({
-                base: {
-                    margin: { left: itemSpacing },
-                    cornerRadius: 6,
-                    color: foreground(layer, "variant"),
-                    iconWidth: 14,
-                    buttonWidth: 20,
-                },
-                state: {
-                    clicked: {
-                        background: background(layer, "variant", "pressed"),
-                    },
-                    hovered: {
-                        background: background(layer, "variant", "hovered"),
-                    },
-                },
+
+            leaveCallButton: icon_button(colorScheme, {
+                margin: { left: itemSpacing },
             }),
 
             userMenuButton: merge(titlebarButton, {

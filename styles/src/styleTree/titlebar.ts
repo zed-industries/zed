@@ -58,11 +58,13 @@ const titlebarButton = (theme: ColorScheme) => toggleable({
 */
 function userMenuButton(theme: ColorScheme) {
     return {
-        userMenu: titlebarButton(theme),
+        user_menu: titlebarButton(theme),
         avatar: {
             icon_width: 16,
             icon_height: 16,
             cornerRadius: 4,
+            outer_corner_radius: 0,
+            outer_width: 0,
             outerWidth: 10,
             outerCornerRadius: 10
         },

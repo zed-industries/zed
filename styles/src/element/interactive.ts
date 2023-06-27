@@ -8,7 +8,7 @@ type InteractiveState =
     | "selected"
     | "disabled"
 
-type Interactive<T> = {
+export type Interactive<T> = {
     default: T
     hovered?: T
     clicked?: T
