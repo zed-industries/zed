@@ -144,7 +144,8 @@ pub struct Titlebar {
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct UserMenu {
-    pub user_menu_button: UserMenuButton,
+    pub user_menu_button_online: UserMenuButton,
+    pub user_menu_button_offline: UserMenuButton,
 }
 #[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct UserMenuButton {

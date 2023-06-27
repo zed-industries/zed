@@ -98,13 +98,7 @@ impl View for CollabTitlebarItem {
         let status = &*status.borrow();
         if matches!(status, client::Status::Connected { .. }) {
             right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
-            let avatar = ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .is_none()
-                .then(|| user.as_ref())
-                .flatten()
-                .and_then(|user| user.avatar.clone());
+            let avatar = user.as_ref().and_then(|user| user.avatar.clone());
             right_container.add_child(self.render_user_menu_button(&theme, avatar, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
@@ -645,13 +639,17 @@ impl CollabTitlebarItem {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip = theme.tooltip.clone();
-        let user_menu_button = &theme.titlebar;
-        let avatar_style = &user_menu_button.user_menu_button.avatar;
+        let user_menu_button_style = if avatar.is_some() {
+            &theme.titlebar.user_menu_button_online
+        } else {
+            &theme.titlebar.user_menu_button_offline
+        };
+
+        let avatar_style = &user_menu_button_style.avatar;
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
-                    let style = user_menu_button
-                        .user_menu_button
+                    let style = user_menu_button_style
                         .user_menu
                         .inactive_state()
                         .style_for(state);
@@ -665,12 +663,13 @@ impl CollabTitlebarItem {
                             Color::transparent_black(),
                         ));
                     };
+
                     dropdown
                         .with_child(
                             Svg::new("icons/caret_down_8.svg")
-                                .with_color(theme.titlebar.user_menu_button.icon.color)
+                                .with_color(user_menu_button_style.icon.color)
                                 .constrained()
-                                .with_width(theme.titlebar.user_menu_button.icon.width)
+                                .with_width(user_menu_button_style.icon.width)
                                 .contained()
                                 .into_any(),
                         )

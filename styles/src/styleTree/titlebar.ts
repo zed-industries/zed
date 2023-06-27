@@ -56,7 +56,7 @@ const titlebarButton = (theme: ColorScheme) => toggleable({
 * When logged in shows the user's avatar and a chevron,
 * When logged out only shows a chevron.
 */
-function userMenuButton(theme: ColorScheme) {
+function userMenuButton(theme: ColorScheme, online: boolean) {
     return {
         user_menu: titlebarButton(theme),
         avatar: {
@@ -71,13 +71,15 @@ function userMenuButton(theme: ColorScheme) {
         icon: {
             width: 11,
             height: 11,
-            color: foreground(theme.lowest)
+            color: online ? foreground(theme.lowest) : background(theme.lowest)
         }
     }
 }
 
 export function titlebar(theme: ColorScheme) {
     return {
-        userMenuButton: userMenuButton(theme)
+        userMenuButtonOnline: userMenuButton(theme, true),
+        userMenuButtonOffline: userMenuButton(theme, false)
+
     }
 }
