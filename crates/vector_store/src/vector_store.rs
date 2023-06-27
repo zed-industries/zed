@@ -9,7 +9,7 @@ mod vector_store_tests;
 use anyhow::{anyhow, Result};
 use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
 use parsing::Document;
 use project::{Fs, Project};
@@ -17,7 +17,9 @@ use smol::channel;
 use std::{cmp::Ordering, collections::HashMap, path::PathBuf, sync::Arc};
 use tree_sitter::{Parser, QueryCursor};
 use util::{http::HttpClient, ResultExt, TryFutureExt};
-use workspace::WorkspaceCreated;
+use workspace::{Workspace, WorkspaceCreated};
+
+actions!(semantic_search, [TestSearch]);
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -51,6 +53,26 @@ pub fn init(
         }
     })
     .detach();
+
+    cx.add_action({
+        let vector_store = vector_store.clone();
+        move |workspace: &mut Workspace, _: &TestSearch, cx: &mut ViewContext<Workspace>| {
+            let t0 = std::time::Instant::now();
+            let task = vector_store.update(cx, |store, cx| {
+                store.search("compute embeddings for all of the symbols in the codebase and write them to a database".to_string(), 10, cx)
+            });
+
+            cx.spawn(|this, cx| async move {
+                let results = task.await?;
+                let duration = t0.elapsed();
+
+                println!("search took {:?}", duration);
+                println!("results {:?}", results);
+
+                anyhow::Ok(())
+            }).detach()
+        }
+    });
 }
 
 #[derive(Debug)]
@@ -67,6 +89,7 @@ struct VectorStore {
     language_registry: Arc<LanguageRegistry>,
 }
 
+#[derive(Debug)]
 pub struct SearchResult {
     pub name: String,
     pub offset: usize,
