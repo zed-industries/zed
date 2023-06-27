@@ -1125,8 +1125,7 @@ mod tests {
     use collections::HashSet;
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{cmp::Reverse, env, mem, sync::Arc};
-    use sum_tree::TreeMap;
+    use std::{env, mem};
     use text::Patch;
     use util::test::sample_text;
     use util::RandomCharIter;
@@ -1354,25 +1353,6 @@ mod tests {
         let (mut initial_snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         let mut snapshot_edits = Vec::new();
 
-        let mut highlights = TreeMap::default();
-        let highlight_count = rng.gen_range(0_usize..10);
-        let mut highlight_ranges = (0..highlight_count)
-            .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
-            .collect::<Vec<_>>();
-        highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-        log::info!("highlighting ranges {:?}", highlight_ranges);
-        let highlight_ranges = highlight_ranges
-            .into_iter()
-            .map(|range| {
-                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
-            })
-            .collect::<Vec<_>>();
-
-        highlights.insert(
-            Some(TypeId::of::<()>()),
-            Arc::new((HighlightStyle::default(), highlight_ranges)),
-        );
-
         let mut next_inlay_id = 0;
         for _ in 0..operations {
             log::info!("text: {:?}", buffer_snapshot.text());
@@ -1516,7 +1496,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false, Some(&highlights), None, None)
+                        .chunks(start..end, false, None, None, None)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

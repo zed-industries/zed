@@ -1076,7 +1076,8 @@ mod tests {
     use gpui::AppContext;
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::env;
+    use std::{cmp::Reverse, env, sync::Arc};
+    use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
 
@@ -1433,6 +1434,25 @@ mod tests {
         let mut next_inlay_id = 0;
         log::info!("buffer text: {:?}", buffer_snapshot.text());
 
+        let mut highlights = TreeMap::default();
+        let highlight_count = rng.gen_range(0_usize..10);
+        let mut highlight_ranges = (0..highlight_count)
+            .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+            .collect::<Vec<_>>();
+        highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+        log::info!("highlighting ranges {:?}", highlight_ranges);
+        let highlight_ranges = highlight_ranges
+            .into_iter()
+            .map(|range| {
+                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
+            })
+            .collect::<Vec<_>>();
+
+        highlights.insert(
+            Some(TypeId::of::<()>()),
+            Arc::new((HighlightStyle::default(), highlight_ranges)),
+        );
+
         let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         for _ in 0..operations {
             let mut inlay_edits = Patch::default();
@@ -1505,7 +1525,7 @@ mod tests {
                     .chunks(
                         InlayOffset(start)..InlayOffset(end),
                         false,
-                        None,
+                        Some(&highlights),
                         None,
                         None,
                     )
