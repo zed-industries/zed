@@ -113,7 +113,6 @@ impl View for CollabTitlebarItem {
                     .with_child(
                         right_container.contained().with_background_color(
                             theme
-                                .workspace
                                 .titlebar
                                 .container
                                 .background_color
@@ -200,11 +199,11 @@ impl CollabTitlebarItem {
             .as_ref()
             .and_then(RepositoryEntry::branch)
             .map(|branch| format!("/{branch}"));
-        let text_style = theme.workspace.titlebar.title.clone();
-        let item_spacing = theme.workspace.titlebar.item_spacing;
+        let text_style = theme.titlebar.title.clone();
+        let item_spacing = theme.titlebar.item_spacing;
 
         let mut highlight = text_style.clone();
-        highlight.color = theme.workspace.titlebar.highlight_color;
+        highlight.color = theme.titlebar.highlight_color;
 
         let style = LabelStyle {
             text: text_style,
@@ -325,7 +324,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
 
         let badge = if self
             .user_store
@@ -410,7 +409,7 @@ impl CollabTitlebarItem {
         }
 
         let active = room.read(cx).is_screen_sharing();
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
         MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
             let style = titlebar
                 .screen_share_button
@@ -459,7 +458,7 @@ impl CollabTitlebarItem {
             tooltip = "Mute microphone\nRight click for options";
         }
 
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
         MouseEventHandler::<ToggleMute, Self>::new(0, cx, |state, _| {
             let style = titlebar
                 .toggle_microphone_button
@@ -512,7 +511,7 @@ impl CollabTitlebarItem {
             tooltip = "Mute speakers\nRight click for options";
         }
 
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
         MouseEventHandler::<ToggleDeafen, Self>::new(0, cx, |state, _| {
             let style = titlebar
                 .toggle_speakers_button
@@ -547,7 +546,7 @@ impl CollabTitlebarItem {
         let icon = "icons/radix/exit.svg";
         let tooltip = "Leave call";
 
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
         MouseEventHandler::<LeaveCall, Self>::new(0, cx, |state, _| {
             let style = titlebar.leave_call_button.style_for(state);
             Svg::new(icon)
@@ -596,7 +595,7 @@ impl CollabTitlebarItem {
             "Share project with call participants"
         };
 
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
 
         enum ShareUnshare {}
         Some(
@@ -627,7 +626,7 @@ impl CollabTitlebarItem {
                 )
                 .aligned()
                 .contained()
-                .with_margin_left(theme.workspace.titlebar.item_spacing)
+                .with_margin_left(theme.titlebar.item_spacing)
                 .into_any(),
         )
     }
@@ -640,9 +639,9 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let tooltip = theme.tooltip.clone();
         let user_menu_button_style = if avatar.is_some() {
-            &theme.titlebar.user_menu_button_online
+            &theme.titlebar.user_menu.user_menu_button_online
         } else {
-            &theme.titlebar.user_menu_button_offline
+            &theme.titlebar.user_menu.user_menu_button_offline
         };
 
         let avatar_style = &user_menu_button_style.avatar;
@@ -703,7 +702,7 @@ impl CollabTitlebarItem {
     }
 
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let titlebar = &theme.workspace.titlebar;
+        let titlebar = &theme.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_button.inactive_state().style_for(state);
             Label::new("Sign In", style.text.clone())
@@ -771,7 +770,7 @@ impl CollabTitlebarItem {
                         theme,
                         cx,
                     ))
-                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing),
+                    .with_margin_right(theme.titlebar.face_pile_spacing),
                 )
             })
             .collect()
@@ -795,7 +794,7 @@ impl CollabTitlebarItem {
             theme,
             cx,
         ))
-        .with_margin_right(theme.workspace.titlebar.item_spacing)
+        .with_margin_right(theme.titlebar.item_spacing)
         .into_any()
     }
 
@@ -827,11 +826,10 @@ impl CollabTitlebarItem {
             })
             .unwrap_or(false);
 
-        let leader_style = theme.workspace.titlebar.leader_avatar;
-        let follower_style = theme.workspace.titlebar.follower_avatar;
+        let leader_style = theme.titlebar.leader_avatar;
+        let follower_style = theme.titlebar.follower_avatar;
 
         let mut background_color = theme
-            .workspace
             .titlebar
             .container
             .background_color
@@ -846,7 +844,7 @@ impl CollabTitlebarItem {
 
         let mut content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
-                let face_pile = FacePile::new(theme.workspace.titlebar.follower_avatar_overlap)
+                let face_pile = FacePile::new(theme.titlebar.follower_avatar_overlap)
                     .with_child(Self::render_face(
                         avatar.clone(),
                         Self::location_style(workspace, location, leader_style, cx),
@@ -891,7 +889,7 @@ impl CollabTitlebarItem {
 
                 let mut container = face_pile
                     .contained()
-                    .with_style(theme.workspace.titlebar.leader_selection);
+                    .with_style(theme.titlebar.leader_selection);
 
                 if let Some(replica_id) = replica_id {
                     if followed_by_self {
@@ -908,8 +906,8 @@ impl CollabTitlebarItem {
                 Some(
                     AvatarRibbon::new(color)
                         .constrained()
-                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                        .with_width(theme.titlebar.avatar_ribbon.width)
+                        .with_height(theme.titlebar.avatar_ribbon.height)
                         .aligned()
                         .bottom(),
                 )
@@ -1029,22 +1027,22 @@ impl CollabTitlebarItem {
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
                 Svg::new("icons/cloud_slash_12.svg")
-                    .with_color(theme.workspace.titlebar.offline_icon.color)
+                    .with_color(theme.titlebar.offline_icon.color)
                     .constrained()
-                    .with_width(theme.workspace.titlebar.offline_icon.width)
+                    .with_width(theme.titlebar.offline_icon.width)
                     .aligned()
                     .contained()
-                    .with_style(theme.workspace.titlebar.offline_icon.container)
+                    .with_style(theme.titlebar.offline_icon.container)
                     .into_any(),
             ),
             client::Status::UpgradeRequired => Some(
                 MouseEventHandler::<ConnectionStatusButton, Self>::new(0, cx, |_, _| {
                     Label::new(
                         "Please update Zed to collaborate",
-                        theme.workspace.titlebar.outdated_warning.text.clone(),
+                        theme.titlebar.outdated_warning.text.clone(),
                     )
                     .contained()
-                    .with_style(theme.workspace.titlebar.outdated_warning.container)
+                    .with_style(theme.titlebar.outdated_warning.container)
                     .aligned()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)

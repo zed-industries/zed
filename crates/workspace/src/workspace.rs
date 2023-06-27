@@ -2296,11 +2296,11 @@ impl Workspace {
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen();
         let container_theme = if is_fullscreen {
-            let mut container_theme = theme.workspace.titlebar.container;
+            let mut container_theme = theme.titlebar.container;
             container_theme.padding.left = container_theme.padding.right;
             container_theme
         } else {
-            theme.workspace.titlebar.container
+            theme.titlebar.container
         };
 
         enum TitleBar {}
@@ -2320,7 +2320,7 @@ impl Workspace {
             }
         })
         .constrained()
-        .with_height(theme.workspace.titlebar.height)
+        .with_height(theme.titlebar.height)
         .into_any_named("titlebar")
     }
 
