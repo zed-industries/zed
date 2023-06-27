@@ -6,11 +6,7 @@ import { withOpacity } from "../theme/color";
 import { background, border, foreground, text } from "./components";
 
 const ITEM_SPACING = 8
-
-interface SpacingProps {
-    container_height: number;
-    spacing: number;
-}
+const TITLEBAR_HEIGHT = 32
 
 function build_spacing(
     container_height: number,
@@ -18,80 +14,44 @@ function build_spacing(
     spacing: number
 ) {
     return {
-        group: spacing * 2,
+        group: spacing,
         item: spacing / 2,
+        half_item: spacing / 4,
         marginY: (container_height - element_height) / 2,
         marginX: (container_height - element_height) / 2,
     }
 }
 
-function mac_os_controls(theme: ColorScheme, { container_height, spacing }: SpacingProps) {
-    return {}
-}
+function call_controls(theme: ColorScheme) {
+    const button_height = 19
 
-function project_info(theme: ColorScheme, { container_height, spacing }: SpacingProps) {
-    return {}
-}
+    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
 
-function collaboration_stacks(theme: ColorScheme, { container_height, spacing }: SpacingProps) {
-    return {}
-}
+    return {
+        toggle_microphone_button: toggleable_icon_button(theme, {
+            margin: {
+                left: space.group,
+                right: space.half_item,
+            },
+            active_color: 'negative'
+        }),
 
-function sharing_controls(theme: ColorScheme, { container_height, spacing }: SpacingProps) {
-    return {}
-}
+        toggle_speakers_button: toggleable_icon_button(theme, {
+            margin: {
+                left: space.half_item,
+                right: space.half_item
+            },
+        }),
 
-function call_controls(theme: ColorScheme, { container_height, spacing }: SpacingProps) {
-    return {}
-}
-
-const titlebarButton = (theme: ColorScheme) => toggleable({
-    base: interactive({
-        base: {
-            cornerRadius: 6,
-            height: 24,
-            width: 24,
-            padding: {
-                top: 4,
-                bottom: 4,
-                left: 4,
-                right: 4,
+        screen_share_button: toggleable_icon_button(theme, {
+            margin: {
+                left: space.half_item,
+                right: space.group
             },
-            ...text(theme.lowest, "sans", { size: "xs" }),
-            background: background(theme.lowest),
-        },
-        state: {
-            hovered: {
-                ...text(theme.lowest, "sans", "hovered", {
-                    size: "xs",
-                }),
-                background: background(theme.lowest, "hovered"),
-            },
-            clicked: {
-                ...text(theme.lowest, "sans", "pressed", {
-                    size: "xs",
-                }),
-                background: background(theme.lowest, "pressed"),
-            },
-        },
-    }),
-    state: {
-        active: {
-            default: {
-                ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                background: background(theme.middle),
-            },
-            hovered: {
-                ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                background: background(theme.middle, "hovered"),
-            },
-            clicked: {
-                ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                background: background(theme.middle, "pressed"),
-            },
-        },
+            active_color: 'accent'
+        }),
     }
-});
+}
 
 /**
 * Opens the User Menu when toggled
@@ -99,74 +59,89 @@ const titlebarButton = (theme: ColorScheme) => toggleable({
 * When logged in shows the user's avatar and a chevron,
 * When logged out only shows a chevron.
 */
-function userMenuButton(theme: ColorScheme, online: boolean) {
-    const button = toggleable({
-        base: interactive({
-            base: {
-                cornerRadius: 6,
-                height: 19,
-                width: online ? 36 : 23,
-                padding: {
-                    top: 2,
-                    bottom: 2,
-                    left: 6,
-                    right: 6,
-                },
-                ...text(theme.lowest, "sans", { size: "xs" }),
-                background: background(theme.lowest),
-            },
-            state: {
-                hovered: {
-                    ...text(theme.lowest, "sans", "hovered", {
-                        size: "xs",
-                    }),
-                    background: background(theme.lowest, "hovered"),
-                },
-                clicked: {
-                    ...text(theme.lowest, "sans", "pressed", {
-                        size: "xs",
-                    }),
-                    background: background(theme.lowest, "pressed"),
-                },
-            },
-        }),
-        state: {
-            active: {
-                default: {
-                    ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                    background: background(theme.middle),
-                },
-                hovered: {
-                    ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                    background: background(theme.middle, "hovered"),
-                },
-                clicked: {
-                    ...text(theme.lowest, "sans", "active", { size: "xs" }),
-                    background: background(theme.middle, "pressed"),
-                },
-            },
-        }
-    });
+function user_menu(theme: ColorScheme) {
+    const button_height = 19
 
-    return {
-        user_menu: button,
-        avatar: {
-            icon_width: 16,
-            icon_height: 16,
-            cornerRadius: 4,
-            outer_corner_radius: 0,
-            outer_width: 0,
-            outerWidth: 16,
-            outerCornerRadius: 16
-        },
-        icon: {
-            margin: {
-                left: online ? 2 : 0,
+    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
+
+    const build_button = ({ online }: { online: boolean }) => {
+        const button = toggleable({
+            base: interactive({
+                base: {
+                    cornerRadius: 6,
+                    height: button_height,
+                    width: online ? 36 : 23,
+                    padding: {
+                        top: 2,
+                        bottom: 2,
+                        left: 6,
+                        right: 6,
+                    },
+                    margin: {
+                        left: space.item,
+                        right: space.item,
+                    },
+                    ...text(theme.lowest, "sans", { size: "xs" }),
+                    background: background(theme.lowest),
+                },
+                state: {
+                    hovered: {
+                        ...text(theme.lowest, "sans", "hovered", {
+                            size: "xs",
+                        }),
+                        background: background(theme.lowest, "hovered"),
+                    },
+                    clicked: {
+                        ...text(theme.lowest, "sans", "pressed", {
+                            size: "xs",
+                        }),
+                        background: background(theme.lowest, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(theme.lowest, "sans", "active", { size: "xs" }),
+                        background: background(theme.middle),
+                    },
+                    hovered: {
+                        ...text(theme.lowest, "sans", "active", { size: "xs" }),
+                        background: background(theme.middle, "hovered"),
+                    },
+                    clicked: {
+                        ...text(theme.lowest, "sans", "active", { size: "xs" }),
+                        background: background(theme.middle, "pressed"),
+                    },
+                },
+            }
+        });
+
+        return {
+            user_menu: button,
+            avatar: {
+                icon_width: 15,
+                icon_height: 15,
+                corner_radius: 4,
+                outer_width: 15,
+                outer_corner_radius: 15
             },
-            width: 11,
-            height: 11,
-            color: foreground(theme.lowest)
+            icon: {
+                margin: {
+                    top: 2,
+                    left: online ? space.item : 0,
+                    right: space.group,
+                    bottom: 2,
+                },
+                width: 11,
+                height: 11,
+                color: foreground(theme.lowest)
+            }
         }
+    }
+    return {
+        userMenuButtonOnline: build_button({ online: true }),
+        userMenuButtonOffline: build_button({ online: false }),
     }
 }
 
@@ -177,14 +152,14 @@ export function titlebar(theme: ColorScheme) {
     const followerAvatarOuterWidth = followerAvatarWidth + 4
 
     return {
-        ITEM_SPACING,
+        item_spacing: ITEM_SPACING,
         facePileSpacing: 2,
-        height: 33, // 32px + 1px border. It's important the content area of the titlebar is evenly sized to vertically center avatar images.
+        height: TITLEBAR_HEIGHT,
         background: background(theme.lowest),
         border: border(theme.lowest, { bottom: true }),
         padding: {
             left: 80,
-            right: ITEM_SPACING,
+            right: 0,
         },
 
         // Project
@@ -262,28 +237,7 @@ export function titlebar(theme: ColorScheme) {
             },
         }),
 
-        toggle_microphone_button: toggleable_icon_button(theme, {
-            margin: {
-                left: ITEM_SPACING,
-                right: ITEM_SPACING / 2
-            },
-            active_color: 'negative'
-        }),
-
-        toggle_speakers_button: toggleable_icon_button(theme, {
-            margin: {
-                left: ITEM_SPACING / 2,
-                right: ITEM_SPACING / 2
-            },
-        }),
-
-        screen_share_button: toggleable_icon_button(theme, {
-            margin: {
-                left: ITEM_SPACING / 2,
-                right: ITEM_SPACING
-            },
-            active_color: 'accent'
-        }),
+        ...call_controls(theme),
 
         toggle_contacts_button: toggleable_icon_button(theme, {
             margin: {
@@ -301,9 +255,6 @@ export function titlebar(theme: ColorScheme) {
             background: foreground(theme.lowest, "accent"),
         },
         shareButton: toggleable_text_button(theme, {}),
-        user_menu: {
-            userMenuButtonOnline: userMenuButton(theme, true),
-            userMenuButtonOffline: userMenuButton(theme, false),
-        }
+        user_menu: user_menu(theme)
     }
 }
