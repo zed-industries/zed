@@ -130,7 +130,7 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
+    pub sign_in_button: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
     pub share_button: Toggleable<Interactive<ContainedText>>,
     pub screen_share_button: Toggleable<Interactive<IconButton>>,

@@ -1,7 +1,13 @@
 import { ColorScheme } from "../common";
 import { interactive, toggleable } from "../element";
 import { background, foreground } from "../styleTree/components";
-import { Margin } from "../types/zed";
+
+export type Margin = {
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+}
 
 interface IconButtonOptions {
     layer?: ColorScheme['lowest'] | ColorScheme['middle'] | ColorScheme['highest'];
@@ -34,8 +40,8 @@ export function icon_button(theme: ColorScheme, { color, margin, layer }: IconBu
             margin: m,
             icon_width: 15,
             icon_height: 15,
-            button_width: 23,
-            button_height: 19,
+            button_width: 21,
+            button_height: 17,
         },
         state: {
             default: {

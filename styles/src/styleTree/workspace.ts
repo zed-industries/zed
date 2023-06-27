@@ -260,7 +260,7 @@ export default function workspace(colorScheme: ColorScheme) {
 
             // Sign in buttom
             // FlatButton, Variant
-            signInPrompt: merge(titlebarButton, {
+            sign_in_button: merge(titlebarButton, {
                 inactive: {
                     default: {
                         margin: {
@@ -300,25 +300,41 @@ export default function workspace(colorScheme: ColorScheme) {
                 cornerRadius: 6,
             },
 
-            screen_share_button: icon_button(colorScheme, {
-                margin: { left: itemSpacing / 2 },
-            }),
-
-            toggle_contacts_button: toggleable_icon_button(colorScheme, {
-                margin: { left: itemSpacing }
+            leave_call_button: icon_button(colorScheme, {
+                margin: {
+                    left: itemSpacing / 2,
+                    right: itemSpacing
+                },
             }),
 
             toggle_microphone_button: toggleable_icon_button(colorScheme, {
-                margin: { left: itemSpacing },
+                margin: {
+                    left: itemSpacing,
+                    right: itemSpacing / 2
+                },
                 active_color: 'negative'
             }),
 
             toggle_speakers_button: toggleable_icon_button(colorScheme, {
-                margin: { left: itemSpacing / 2 },
+                margin: {
+                    left: itemSpacing / 2,
+                    right: itemSpacing / 2
+                },
             }),
 
-            leave_call_button: icon_button(colorScheme, {
-                margin: { left: itemSpacing },
+            screen_share_button: toggleable_icon_button(colorScheme, {
+                margin: {
+                    left: itemSpacing / 2,
+                    right: itemSpacing
+                },
+                active_color: 'accent'
+            }),
+
+            toggle_contacts_button: toggleable_icon_button(colorScheme, {
+                margin: {
+                    left: itemSpacing,
+                    right: itemSpacing / 2
+                },
             }),
 
             user_menu_button:
@@ -339,6 +355,7 @@ export default function workspace(colorScheme: ColorScheme) {
                     },
                 }),
 
+            // Jewel that notifies you that there are new contact requests
             toggleContactsBadge: {
                 cornerRadius: 3,
                 padding: 2,

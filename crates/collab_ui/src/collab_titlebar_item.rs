@@ -408,16 +408,21 @@ impl CollabTitlebarItem {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
-            icon = "icons/radix/desktop-mute.svg";
+            icon = "icons/radix/desktop.svg";
             tooltip = "Stop Sharing Screen"
         } else {
             icon = "icons/radix/desktop.svg";
             tooltip = "Share Screen";
         }
 
+        let active = room.read(cx).is_screen_sharing();
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
-            let style = titlebar.screen_share_button.style_for(state);
+            let style = titlebar
+                .screen_share_button
+                .in_state(active)
+                .style_for(state);
+
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
@@ -701,7 +706,7 @@ impl CollabTitlebarItem {
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
-            let style = titlebar.sign_in_prompt.inactive_state().style_for(state);
+            let style = titlebar.sign_in_button.inactive_state().style_for(state);
             Label::new("Sign In", style.text.clone())
                 .contained()
                 .with_style(style.container)

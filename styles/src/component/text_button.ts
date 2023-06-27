@@ -1,7 +1,7 @@
 import { ColorScheme } from "../common";
 import { interactive, toggleable } from "../element";
 import { TextProperties, background, foreground, text } from "../styleTree/components";
-import { Margin } from "../types/zed";
+import { Margin } from "./icon_button";
 
 interface TextButtonOptions {
     layer?: ColorScheme['lowest'] | ColorScheme['middle'] | ColorScheme['highest'];
