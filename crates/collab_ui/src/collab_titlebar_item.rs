@@ -1,5 +1,8 @@
 use crate::{
-    contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
+    branch_list::{build_branch_list, BranchList},
+    contact_notification::ContactNotification,
+    contacts_popover,
+    face_pile::FacePile,
     toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute,
     ToggleScreenSharing,
 };
@@ -12,12 +15,14 @@ use gpui::{
     actions,
     color::Color,
     elements::*,
+    fonts::TextStyle,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
     AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
+use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
@@ -31,6 +36,8 @@ actions!(
     [
         ToggleContactsMenu,
         ToggleUserMenu,
+        ToggleVcsMenu,
+        SwitchBranch,
         ShareProject,
         UnshareProject,
     ]
@@ -41,6 +48,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
     cx.add_action(CollabTitlebarItem::toggle_user_menu);
+    cx.add_action(CollabTitlebarItem::toggle_vcs_menu);
 }
 
 pub struct CollabTitlebarItem {
@@ -49,6 +57,7 @@ pub struct CollabTitlebarItem {
     client: Arc<Client>,
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
+    branch_popover: Option<ViewHandle<BranchList>>,
     user_menu: ViewHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
@@ -69,12 +78,11 @@ impl View for CollabTitlebarItem {
             return Empty::new().into_any();
         };
 
-        let project = self.project.read(cx);
         let theme = theme::current(cx).clone();
         let mut left_container = Flex::row();
         let mut right_container = Flex::row().align_children_center();
 
-        left_container.add_child(self.collect_title_root_names(&project, theme.clone(), cx));
+        left_container.add_child(self.collect_title_root_names(theme.clone(), cx));
 
         let user = self.user_store.read(cx).current_user();
         let peer_id = self.client.peer_id();
@@ -182,22 +190,28 @@ impl CollabTitlebarItem {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
+            branch_popover: None,
             _subscriptions: subscriptions,
         }
     }
 
     fn collect_title_root_names(
         &self,
-        project: &Project,
         theme: Arc<Theme>,
-        cx: &ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let mut names_and_branches = project.visible_worktrees(cx).map(|worktree| {
-            let worktree = worktree.read(cx);
-            (worktree.root_name(), worktree.root_git_entry())
-        });
+        let project = self.project.read(cx);
 
-        let (name, entry) = names_and_branches.next().unwrap_or(("", None));
+        let (name, entry) = {
+            let mut names_and_branches = project.visible_worktrees(cx).map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.root_name(), worktree.root_git_entry())
+            });
+
+            names_and_branches.next().unwrap_or(("", None))
+        };
+
+        let name = name.to_owned();
         let branch_prepended = entry
             .as_ref()
             .and_then(RepositoryEntry::branch)
@@ -212,22 +226,37 @@ impl CollabTitlebarItem {
             text: text_style,
             highlight_text: Some(highlight),
         };
+        let highlights = (0..name.len()).into_iter().collect();
         let mut ret = Flex::row().with_child(
-            Label::new(name.to_owned(), style.clone())
-                .with_highlights((0..name.len()).into_iter().collect())
-                .contained()
-                .aligned()
-                .left()
-                .into_any_named("title-project-name"),
+            Stack::new().with_child(
+                Label::new(name, style.clone())
+                    .with_highlights(highlights)
+                    .contained()
+                    .aligned()
+                    .left()
+                    .into_any_named("title-project-name"),
+            ),
         );
         if let Some(git_branch) = branch_prepended {
             ret = ret.with_child(
-                Label::new(git_branch, style)
-                    .contained()
-                    .with_margin_right(item_spacing)
-                    .aligned()
-                    .left()
-                    .into_any_named("title-project-branch"),
+                Stack::new()
+                    .with_child(
+                        MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |state, _| {
+                            Label::new(git_branch, style)
+                                .contained()
+                                .with_margin_right(item_spacing)
+                                .aligned()
+                                .left()
+                                .into_any_named("title-project-branch")
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, move |_, this, cx| {
+                            this.toggle_vcs_menu(&Default::default(), cx)
+                        }),
+                    )
+                    .with_children(
+                        self.render_branches_popover_host(&theme.workspace.titlebar, cx),
+                    ),
             )
         }
         ret.into_any()
@@ -320,7 +349,55 @@ impl CollabTitlebarItem {
             user_menu.toggle(Default::default(), AnchorCorner::TopRight, items, cx);
         });
     }
+    fn render_branches_popover_host<'a>(
+        &'a self,
+        _theme: &'a theme::Titlebar,
+        cx: &'a mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
+        self.branch_popover.as_ref().map(|child| {
+            let theme = theme::current(cx).clone();
+            let child = ChildView::new(child, cx);
+            let child = MouseEventHandler::<BranchList, Self>::new(0, cx, |_, _| {
+                Flex::column()
+                    .with_child(child.flex(1., true))
+                    .contained()
+                    .with_style(theme.contacts_popover.container)
+                    .constrained()
+                    .with_width(theme.contacts_popover.width)
+                    .with_height(theme.contacts_popover.height)
+            })
+            .on_click(MouseButton::Left, |_, _, _| {})
+            .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(()))
+            .into_any();
 
+            Overlay::new(child)
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::TopLeft)
+                .with_z_index(999)
+                .aligned()
+                .bottom()
+                .left()
+                .into_any()
+        })
+    }
+    pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
+        if self.branch_popover.take().is_none() {
+            let view = cx.add_view(|cx| build_branch_list(self.project.clone(), cx));
+            cx.subscribe(&view, |this, _, event, cx| {
+                match event {
+                    PickerEvent::Dismiss => {
+                        this.contacts_popover = None;
+                    }
+                }
+
+                cx.notify();
+            })
+            .detach();
+            self.branch_popover = Some(view);
+        }
+
+        cx.notify();
+    }
     fn render_toggle_contacts_button(
         &self,
         theme: &Theme,
@@ -733,7 +810,7 @@ impl CollabTitlebarItem {
         self.contacts_popover.as_ref().map(|popover| {
             Overlay::new(ChildView::new(popover, cx))
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                .with_anchor_corner(AnchorCorner::TopRight)
+                .with_anchor_corner(AnchorCorner::TopLeft)
                 .with_z_index(999)
                 .aligned()
                 .bottom()

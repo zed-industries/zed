@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
-use git2::ErrorCode;
+use git2::{BranchType, ErrorCode};
 use parking_lot::Mutex;
 use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
@@ -27,6 +27,12 @@ pub trait GitRepository: Send {
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+    fn branches(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    fn change_branch(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -105,6 +111,30 @@ impl GitRepository for LibGitRepository {
                 }
             }
         }
+    }
+    fn branches(&self) -> Result<Vec<String>> {
+        let local_branches = self.branches(Some(BranchType::Local))?;
+        let valid_branches = local_branches
+            .filter_map(|branch| {
+                branch
+                    .ok()
+                    .map(|(branch, _)| branch.name().ok().flatten().map(String::from))
+                    .flatten()
+            })
+            .collect();
+        Ok(valid_branches)
+    }
+    fn change_branch(&self, name: &str) -> Result<()> {
+        let revision = self.find_branch(name, BranchType::Local)?;
+        let revision = revision.get();
+        let as_tree = revision.peel_to_tree()?;
+        self.checkout_tree(as_tree.as_object(), None)?;
+        self.set_head(
+            revision
+                .name()
+                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+        )?;
+        Ok(())
     }
 }
 
