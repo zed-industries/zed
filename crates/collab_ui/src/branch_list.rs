@@ -17,7 +17,6 @@ pub fn build_branch_list(
 ) -> BranchList {
     Picker::new(
         BranchListDelegate {
-            branches: vec!["Foo".into(), "bar/baz".into()],
             matches: vec![],
             project,
             selected_index: 0,
@@ -29,7 +28,6 @@ pub fn build_branch_list(
 }
 
 pub struct BranchListDelegate {
-    branches: Vec<String>,
     matches: Vec<StringMatch>,
     project: ModelHandle<Project>,
     selected_index: usize,
@@ -77,8 +75,8 @@ impl PickerDelegate for BranchListDelegate {
                         .enumerate()
                         .map(|(ix, command)| StringMatchCandidate {
                             id: ix,
-                            string: command.clone(),
-                            char_bag: command.chars().collect(),
+                            char_bag: command.name.chars().collect(),
+                            string: command.name.into(),
                         })
                         .collect::<Vec<_>>()
                 })

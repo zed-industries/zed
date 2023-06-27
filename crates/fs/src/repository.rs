@@ -16,6 +16,12 @@ use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
 
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct Branch {
+    pub name: Box<str>,
+    /// Timestamp of most recent commit, normalized to Unix Epoch format.
+    pub unix_timestamp: Option<i64>,
+}
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
@@ -27,7 +33,7 @@ pub trait GitRepository: Send {
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
-    fn branches(&self) -> Result<Vec<String>> {
+    fn branches(&self) -> Result<Vec<Branch>> {
         Ok(vec![])
     }
     fn change_branch(&self, _: &str) -> Result<()> {
@@ -112,14 +118,17 @@ impl GitRepository for LibGitRepository {
             }
         }
     }
-    fn branches(&self) -> Result<Vec<String>> {
+    fn branches(&self) -> Result<Vec<Branch>> {
         let local_branches = self.branches(Some(BranchType::Local))?;
         let valid_branches = local_branches
             .filter_map(|branch| {
-                branch
-                    .ok()
-                    .map(|(branch, _)| branch.name().ok().flatten().map(String::from))
-                    .flatten()
+                branch.ok().and_then(|(branch, _)| {
+                    let name = branch.name().ok().flatten().map(Box::from)?;
+                    Some(Branch {
+                        name,
+                        unix_timestamp: None,
+                    })
+                })
             })
             .collect();
         Ok(valid_branches)
