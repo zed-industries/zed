@@ -3895,7 +3895,7 @@ impl Project {
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
-        let lsp_edits = if !matches!(formatting_provider, Some(OneOf::Left(false))) {
+        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
@@ -3903,7 +3903,7 @@ impl Project {
                     work_done_progress_params: Default::default(),
                 })
                 .await?
-        } else if !matches!(range_formatting_provider, Some(OneOf::Left(false))) {
+        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
 
