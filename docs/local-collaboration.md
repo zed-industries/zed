@@ -4,14 +4,15 @@
 
 ### Setting up for the first time?
 
-Install [Postgres](https://postgresapp.com) and run it.
-
-Then, from the root of the repo, run `script/bootstrap`.
+1. Make sure you have livekit installed (`brew install livekit`)
+1. Install [Postgres](https://postgresapp.com) and run it.
+1. Then, from the root of the repo, run `script/bootstrap`.
 
 ### Have a db that is out of date? / Need to migrate?
 
+1. Make sure you have livekit installed (`brew install livekit`)
 1. Try `cd crates/collab && cargo run -- migrate` from the root of the repo.
-2. Run `script/seed-db`
+1. Run `script/seed-db`
 
 ## Testing collab locally
 
