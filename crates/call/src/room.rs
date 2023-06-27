@@ -1213,7 +1213,11 @@ impl Room {
 
             let mut tasks = Vec::with_capacity(self.remote_participants.len());
             // Context notification is sent within set_mute itself.
-            let _ = Self::set_mute(live_kit, live_kit.deafened, cx)?; // todo (osiewicz): we probably want to schedule it on fg/bg?
+            if live_kit.deafened {
+                // Unmute microphone only if we're going from unmuted -> muted state.
+                // We don't want to unmute user automatically.
+                let _ = Self::set_mute(live_kit, live_kit.deafened, cx)?; // todo (osiewicz): we probably want to schedule it on fg/bg?
+            }
             for participant in self.remote_participants.values() {
                 for track in live_kit
                     .room
