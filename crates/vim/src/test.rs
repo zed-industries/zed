@@ -123,3 +123,19 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes(["1", "shift-g"]);
     cx.assert_editor_state("aˇa\nbb\ncc");
 }
+
+#[gpui::test]
+async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // works in normal mode
+    cx.set_state(indoc! {"aa\nbˇb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes([">", ">"]);
+    cx.assert_editor_state("aa\n    bˇb\ncc");
+    cx.simulate_keystrokes(["<", "<"]);
+    cx.assert_editor_state("aa\nbˇb\ncc");
+
+    // works in visuial mode
+    cx.simulate_keystrokes(["shift-v", "down", ">", ">"]);
+    cx.assert_editor_state("aa\n    b«b\n    cˇ»c");
+}

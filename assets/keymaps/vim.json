@@ -207,6 +207,8 @@
         "Replace"
       ],
       "s": "vim::Substitute",
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
@@ -302,7 +304,9 @@
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent"
     }
   },
   {
