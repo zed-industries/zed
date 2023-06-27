@@ -300,7 +300,7 @@ export default function workspace(colorScheme: ColorScheme) {
                 cornerRadius: 6,
             },
 
-            call_control: icon_button(colorScheme, {
+            screen_share_button: icon_button(colorScheme, {
                 margin: { left: itemSpacing / 2 },
             }),
 

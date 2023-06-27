@@ -417,7 +417,7 @@ impl CollabTitlebarItem {
 
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state);
+            let style = titlebar.screen_share_button.style_for(state);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()

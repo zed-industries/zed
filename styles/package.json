@@ -7,7 +7,7 @@
         "build": "ts-node ./src/buildThemes.ts",
         "build-licenses": "ts-node ./src/buildLicenses.ts",
         "build-tokens": "ts-node ./src/buildTokens.ts",
-        "build-types": "cd ../crates/theme && cargo test && cd ../../styles && ts-node ./src/buildTypes.ts",
+        "build-types": "ts-node ./src/buildTypes.ts",
         "test": "vitest"
     },
     "author": "",

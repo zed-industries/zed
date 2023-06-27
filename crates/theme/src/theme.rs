@@ -133,7 +133,7 @@ pub struct Titlebar {
     pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
     pub share_button: Toggleable<Interactive<ContainedText>>,
-    pub call_control: Interactive<IconButton>,
+    pub screen_share_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
     pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
     pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
