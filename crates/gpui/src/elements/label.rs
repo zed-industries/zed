@@ -10,6 +10,7 @@ use crate::{
     text_layout::{Line, RunStyle},
     Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use smallvec::{smallvec, SmallVec};
@@ -20,7 +21,7 @@ pub struct Label {
     highlight_indices: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct LabelStyle {
     pub text: TextStyle,
     pub highlight_text: Option<TextStyle>,
@@ -164,6 +165,7 @@ impl<V: View> Element<V> for Label {
         _: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         line.paint(
             scene,
             bounds.origin(),

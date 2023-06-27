@@ -861,7 +861,10 @@ impl Workspace {
         &self.right_dock
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    where
+        T::Event: std::fmt::Debug,
+    {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -904,10 +907,11 @@ impl Workspace {
                     });
                 } else if T::should_zoom_in_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-                    if panel.has_focus(cx) {
-                        this.zoomed = Some(panel.downgrade().into_any());
-                        this.zoomed_position = Some(panel.read(cx).position(cx));
+                    if !panel.has_focus(cx) {
+                        cx.focus(&panel);
                     }
+                    this.zoomed = Some(panel.downgrade().into_any());
+                    this.zoomed_position = Some(panel.read(cx).position(cx));
                 } else if T::should_zoom_out_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
                     if this.zoomed_position == Some(prev_position) {
@@ -1700,6 +1704,11 @@ impl Workspace {
         self.zoomed_position = None;
 
         cx.notify();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.zoomed.and_then(|view| view.upgrade(cx))
     }
 
     fn dismiss_zoomed_items_to_reveal(

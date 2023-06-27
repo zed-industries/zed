@@ -16,7 +16,7 @@ use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
@@ -59,20 +59,44 @@ pub struct Features {
     pub zero: Option<bool>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, JsonSchema)]
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
     pub font_family_id: FamilyId,
     pub font_id: FontId,
     pub font_size: f32,
+    #[schemars(with = "PropertiesDef")]
     pub font_properties: Properties,
     pub underline: Underline,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(JsonSchema)]
+#[serde(remote = "Properties")]
+pub struct PropertiesDef {
+    /// The font style, as defined in CSS.
+    pub style: StyleDef,
+    /// The font weight, as defined in CSS.
+    pub weight: f32,
+    /// The font stretchiness, as defined in CSS.
+    pub stretch: f32,
+}
+
+#[derive(JsonSchema)]
+#[schemars(remote = "Style")]
+pub enum StyleDef {
+    /// A face that is neither italic not obliqued.
+    Normal,
+    /// A form that is generally cursive in nature.
+    Italic,
+    /// A typically-sloped version of the regular face.
+    Oblique,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, JsonSchema)]
 pub struct HighlightStyle {
     pub color: Option<Color>,
+    #[schemars(with = "Option::<f32>")]
     pub weight: Option<Weight>,
     pub italic: Option<bool>,
     pub underline: Option<Underline>,
@@ -81,9 +105,10 @@ pub struct HighlightStyle {
 
 impl Eq for HighlightStyle {}
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
 pub struct Underline {
     pub color: Option<Color>,
+    #[schemars(with = "f32")]
     pub thickness: OrderedFloat<f32>,
     pub squiggly: bool,
 }

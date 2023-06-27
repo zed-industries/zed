@@ -7641,8 +7641,14 @@ impl View for Editor {
             keymap.add_identifier("renaming");
         }
         match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => keymap.add_identifier("showing_completions"),
-            Some(ContextMenu::CodeActions(_)) => keymap.add_identifier("showing_code_actions"),
+            Some(ContextMenu::Completions(_)) => {
+                keymap.add_identifier("menu");
+                keymap.add_identifier("showing_completions")
+            }
+            Some(ContextMenu::CodeActions(_)) => {
+                keymap.add_identifier("menu");
+                keymap.add_identifier("showing_code_actions")
+            }
             None => {}
         }
         for layer in self.keymap_context_layers.values() {

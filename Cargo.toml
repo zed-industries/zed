@@ -65,6 +65,7 @@ members = [
     "crates/vim",
     "crates/workspace",
     "crates/welcome",
+    "crates/xtask",
     "crates/zed",
     "crates/zed-actions"
 ]
@@ -118,3 +119,4 @@ split-debuginfo = "unpacked"
 [profile.release]
 debug = true
 lto = "thin"
+codegen-units = 1
