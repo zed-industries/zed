@@ -7,15 +7,14 @@ mod search;
 mod vector_store_tests;
 
 use anyhow::{anyhow, Result};
-use db::{VectorDatabase, VECTOR_DB_URL};
-use embedding::{DummyEmbeddings, EmbeddingProvider, OpenAIEmbeddings};
+use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
+use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use language::LanguageRegistry;
+use language::{Language, LanguageRegistry};
 use parsing::Document;
 use project::{Fs, Project};
-use search::{BruteForceSearch, VectorSearch};
 use smol::channel;
-use std::{cmp::Ordering, path::PathBuf, sync::Arc, time::Instant};
+use std::{cmp::Ordering, collections::HashMap, path::PathBuf, sync::Arc};
 use tree_sitter::{Parser, QueryCursor};
 use util::{http::HttpClient, ResultExt, TryFutureExt};
 use workspace::WorkspaceCreated;
@@ -45,7 +44,7 @@ pub fn init(
                 let project = workspace.read(cx).project().clone();
                 if project.read(cx).is_local() {
                     vector_store.update(cx, |store, cx| {
-                        store.add_project(project, cx);
+                        store.add_project(project, cx).detach();
                     });
                 }
             }
@@ -57,16 +56,10 @@ pub fn init(
 #[derive(Debug)]
 pub struct IndexedFile {
     path: PathBuf,
-    sha1: String,
+    sha1: FileSha1,
     documents: Vec<Document>,
 }
 
-// struct SearchResult {
-//     path: PathBuf,
-//     offset: usize,
-//     name: String,
-//     distance: f32,
-// }
 struct VectorStore {
     fs: Arc<dyn Fs>,
     database_url: Arc<str>,
@@ -99,20 +92,10 @@ impl VectorStore {
         cursor: &mut QueryCursor,
         parser: &mut Parser,
         embedding_provider: &dyn EmbeddingProvider,
-        language_registry: &Arc<LanguageRegistry>,
+        language: Arc<Language>,
         file_path: PathBuf,
         content: String,
     ) -> Result<IndexedFile> {
-        dbg!(&file_path, &content);
-
-        let language = language_registry
-            .language_for_file(&file_path, None)
-            .await?;
-
-        if language.name().as_ref() != "Rust" {
-            Err(anyhow!("unsupported language"))?;
-        }
-
         let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
         let outline_config = grammar
             .outline_config
@@ -156,9 +139,11 @@ impl VectorStore {
             document.embedding = embedding;
         }
 
+        let sha1 = FileSha1::from_str(content);
+
         return Ok(IndexedFile {
             path: file_path,
-            sha1: String::new(),
+            sha1,
             documents,
         });
     }
@@ -171,7 +156,13 @@ impl VectorStore {
         let worktree_scans_complete = project
             .read(cx)
             .worktrees(cx)
-            .map(|worktree| worktree.read(cx).as_local().unwrap().scan_complete())
+            .map(|worktree| {
+                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
+                async move {
+                    scan_complete.await;
+                    log::info!("worktree scan completed");
+                }
+            })
             .collect::<Vec<_>>();
 
         let fs = self.fs.clone();
@@ -182,6 +173,13 @@ impl VectorStore {
         cx.spawn(|_, cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
+            // TODO: remove this after fixing the bug in scan_complete
+            cx.background()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+
+            let db = VectorDatabase::new(&database_url)?;
+
             let worktrees = project.read_with(&cx, |project, cx| {
                 project
                     .worktrees(cx)
@@ -189,37 +187,74 @@ impl VectorStore {
                     .collect::<Vec<_>>()
             });
 
-            let db = VectorDatabase::new(&database_url)?;
             let worktree_root_paths = worktrees
                 .iter()
                 .map(|worktree| worktree.abs_path().clone())
                 .collect::<Vec<_>>();
-            let (db, file_hashes) = cx
+
+            // Here we query the worktree ids, and yet we dont have them elsewhere
+            // We likely want to clean up these datastructures
+            let (db, worktree_hashes, worktree_ids) = cx
                 .background()
                 .spawn(async move {
-                    let mut hashes = Vec::new();
+                    let mut worktree_ids: HashMap<PathBuf, i64> = HashMap::new();
+                    let mut hashes: HashMap<i64, HashMap<PathBuf, FileSha1>> = HashMap::new();
                     for worktree_root_path in worktree_root_paths {
                         let worktree_id =
                             db.find_or_create_worktree(worktree_root_path.as_ref())?;
-                        hashes.push((worktree_id, db.get_file_hashes(worktree_id)?));
+                        worktree_ids.insert(worktree_root_path.to_path_buf(), worktree_id);
+                        hashes.insert(worktree_id, db.get_file_hashes(worktree_id)?);
                     }
-                    anyhow::Ok((db, hashes))
+                    anyhow::Ok((db, hashes, worktree_ids))
                 })
                 .await?;
 
-            let (paths_tx, paths_rx) = channel::unbounded::<(i64, PathBuf, String)>();
-            let (indexed_files_tx, indexed_files_rx) = channel::unbounded::<IndexedFile>();
+            let (paths_tx, paths_rx) =
+                channel::unbounded::<(i64, PathBuf, String, Arc<Language>)>();
+            let (indexed_files_tx, indexed_files_rx) = channel::unbounded::<(i64, IndexedFile)>();
             cx.background()
                 .spawn({
                     let fs = fs.clone();
                     async move {
                         for worktree in worktrees.into_iter() {
+                            let worktree_id = worktree_ids[&worktree.abs_path().to_path_buf()];
+                            let file_hashes = &worktree_hashes[&worktree_id];
                             for file in worktree.files(false, 0) {
                                 let absolute_path = worktree.absolutize(&file.path);
-                                dbg!(&absolute_path);
-                                if let Some(content) = fs.load(&absolute_path).await.log_err() {
-                                    dbg!(&content);
-                                    paths_tx.try_send((0, absolute_path, content)).unwrap();
+
+                                if let Ok(language) = language_registry
+                                    .language_for_file(&absolute_path, None)
+                                    .await
+                                {
+                                    if language.name().as_ref() != "Rust" {
+                                        continue;
+                                    }
+
+                                    if let Some(content) = fs.load(&absolute_path).await.log_err() {
+                                        log::info!("loaded file: {absolute_path:?}");
+
+                                        let path_buf = file.path.to_path_buf();
+                                        let already_stored = file_hashes
+                                            .get(&path_buf)
+                                            .map_or(false, |existing_hash| {
+                                                existing_hash.equals(&content)
+                                            });
+
+                                        if !already_stored {
+                                            log::info!(
+                                                "File Changed (Sending to Parse): {:?}",
+                                                &path_buf
+                                            );
+                                            paths_tx
+                                                .try_send((
+                                                    worktree_id,
+                                                    path_buf,
+                                                    content,
+                                                    language,
+                                                ))
+                                                .unwrap();
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -230,8 +265,8 @@ impl VectorStore {
             let db_write_task = cx.background().spawn(
                 async move {
                     // Initialize Database, creates database and tables if not exists
-                    while let Ok(indexed_file) = indexed_files_rx.recv().await {
-                        db.insert_file(indexed_file).log_err();
+                    while let Ok((worktree_id, indexed_file)) = indexed_files_rx.recv().await {
+                        db.insert_file(worktree_id, indexed_file).log_err();
                     }
 
                     // ALL OF THE BELOW IS FOR TESTING,
@@ -271,29 +306,29 @@ impl VectorStore {
                 .log_err(),
             );
 
-            let provider = DummyEmbeddings {};
-            // let provider = OpenAIEmbeddings { client };
-
             cx.background()
                 .scoped(|scope| {
                     for _ in 0..cx.background().num_cpus() {
                         scope.spawn(async {
                             let mut parser = Parser::new();
                             let mut cursor = QueryCursor::new();
-                            while let Ok((worktree_id, file_path, content)) = paths_rx.recv().await
+                            while let Ok((worktree_id, file_path, content, language)) =
+                                paths_rx.recv().await
                             {
                                 if let Some(indexed_file) = Self::index_file(
                                     &mut cursor,
                                     &mut parser,
-                                    &provider,
-                                    &language_registry,
+                                    embedding_provider.as_ref(),
+                                    language,
                                     file_path,
                                     content,
                                 )
                                 .await
                                 .log_err()
                                 {
-                                    indexed_files_tx.try_send(indexed_file).unwrap();
+                                    indexed_files_tx
+                                        .try_send((worktree_id, indexed_file))
+                                        .unwrap();
                                 }
                             }
                         });
@@ -315,41 +350,42 @@ impl VectorStore {
     ) -> Task<Result<Vec<SearchResult>>> {
         let embedding_provider = self.embedding_provider.clone();
         let database_url = self.database_url.clone();
-        cx.spawn(|this, cx| async move {
+        cx.background().spawn(async move {
             let database = VectorDatabase::new(database_url.as_ref())?;
 
-            // let embedding = embedding_provider.embed_batch(vec![&phrase]).await?;
-            //
+            let phrase_embedding = embedding_provider
+                .embed_batch(vec![&phrase])
+                .await?
+                .into_iter()
+                .next()
+                .unwrap();
+
             let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-
             database.for_each_document(0, |id, embedding| {
-                dbg!(id, &embedding);
-
-                let similarity = dot(&embedding.0, &embedding.0);
+                let similarity = dot(&embedding.0, &phrase_embedding);
                 let ix = match results.binary_search_by(|(_, s)| {
-                    s.partial_cmp(&similarity).unwrap_or(Ordering::Equal)
+                    similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
                 }) {
                     Ok(ix) => ix,
                     Err(ix) => ix,
                 };
-
                 results.insert(ix, (id, similarity));
                 results.truncate(limit);
             })?;
 
-            dbg!(&results);
-
             let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
-            // let documents = database.get_documents_by_ids(ids)?;
+            let documents = database.get_documents_by_ids(&ids)?;
 
-            // let search_provider = cx
-            //     .background()
-            //     .spawn(async move { BruteForceSearch::load(&database) })
-            //     .await?;
-
-            // let results = search_provider.top_k_search(&embedding, limit))
-
-            anyhow::Ok(vec![])
+            anyhow::Ok(
+                documents
+                    .into_iter()
+                    .map(|(file_path, offset, name)| SearchResult {
+                        name,
+                        offset,
+                        file_path,
+                    })
+                    .collect(),
+            )
         })
     }
 }

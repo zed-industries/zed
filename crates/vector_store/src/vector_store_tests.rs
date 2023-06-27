@@ -57,20 +57,26 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     );
     languages.add(rust_language);
 
+    let db_dir = tempdir::TempDir::new("vector-store").unwrap();
+    let db_path = db_dir.path().join("db.sqlite");
+
     let store = cx.add_model(|_| {
         VectorStore::new(
             fs.clone(),
-            "foo".to_string(),
+            db_path.to_string_lossy().to_string(),
             Arc::new(FakeEmbeddingProvider),
             languages,
         )
     });
 
     let project = Project::test(fs, ["/the-root".as_ref()], cx).await;
-    store
-        .update(cx, |store, cx| store.add_project(project, cx))
-        .await
-        .unwrap();
+    let add_project = store.update(cx, |store, cx| store.add_project(project, cx));
+
+    // TODO - remove
+    cx.foreground()
+        .advance_clock(std::time::Duration::from_secs(3));
+
+    add_project.await.unwrap();
 
     let search_results = store
         .update(cx, |store, cx| store.search("aaaa".to_string(), 5, cx))
@@ -78,7 +84,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
         .unwrap();
 
     assert_eq!(search_results[0].offset, 0);
-    assert_eq!(search_results[1].name, "aaa");
+    assert_eq!(search_results[0].name, "aaa");
 }
 
 #[test]
@@ -114,9 +120,10 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         Ok(spans
             .iter()
             .map(|span| {
-                let mut result = vec![0.0; 26];
+                let mut result = vec![1.0; 26];
                 for letter in span.chars() {
-                    if letter as u32 > 'a' as u32 {
+                    let letter = letter.to_ascii_lowercase();
+                    if letter as u32 >= 'a' as u32 {
                         let ix = (letter as u32) - ('a' as u32);
                         if ix < 26 {
                             result[ix as usize] += 1.0;

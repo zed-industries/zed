@@ -7967,6 +7967,7 @@ dependencies = [
  "serde_json",
  "sha-1 0.10.1",
  "smol",
+ "tempdir",
  "tree-sitter",
  "tree-sitter-rust",
  "unindent",

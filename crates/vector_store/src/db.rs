@@ -7,9 +7,10 @@ use anyhow::{anyhow, Result};
 
 use rusqlite::{
     params,
-    types::{FromSql, FromSqlResult, ValueRef},
-    Connection,
+    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
+    ToSql,
 };
+use sha1::{Digest, Sha1};
 
 use crate::IndexedFile;
 
@@ -32,7 +33,60 @@ pub struct DocumentRecord {
 pub struct FileRecord {
     pub id: usize,
     pub relative_path: String,
-    pub sha1: String,
+    pub sha1: FileSha1,
+}
+
+#[derive(Debug)]
+pub struct FileSha1(pub Vec<u8>);
+
+impl FileSha1 {
+    pub fn from_str(content: String) -> Self {
+        let mut hasher = Sha1::new();
+        hasher.update(content);
+        let sha1 = hasher.finalize()[..]
+            .into_iter()
+            .map(|val| val.to_owned())
+            .collect::<Vec<u8>>();
+        return FileSha1(sha1);
+    }
+
+    pub fn equals(&self, content: &String) -> bool {
+        let mut hasher = Sha1::new();
+        hasher.update(content);
+        let sha1 = hasher.finalize()[..]
+            .into_iter()
+            .map(|val| val.to_owned())
+            .collect::<Vec<u8>>();
+
+        let equal = self
+            .0
+            .clone()
+            .into_iter()
+            .zip(sha1)
+            .filter(|&(a, b)| a == b)
+            .count()
+            == self.0.len();
+
+        equal
+    }
+}
+
+impl ToSql for FileSha1 {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        return self.0.to_sql();
+    }
+}
+
+impl FromSql for FileSha1 {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        let bytes = value.as_blob()?;
+        Ok(FileSha1(
+            bytes
+                .into_iter()
+                .map(|val| val.to_owned())
+                .collect::<Vec<u8>>(),
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -63,6 +117,8 @@ impl VectorDatabase {
     }
 
     fn initialize_database(&self) -> Result<()> {
+        rusqlite::vtab::array::load_module(&self.db)?;
+
         // This will create the database if it doesnt exist
 
         // Initialize Vector Databasing Tables
@@ -81,7 +137,7 @@ impl VectorDatabase {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worktree_id INTEGER NOT NULL,
                 relative_path VARCHAR NOT NULL,
-                sha1 NVARCHAR(40) NOT NULL,
+                sha1 BLOB NOT NULL,
                 FOREIGN KEY(worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE
             )",
             [],
@@ -102,30 +158,23 @@ impl VectorDatabase {
         Ok(())
     }
 
-    // pub async fn get_or_create_project(project_path: PathBuf) -> Result<usize> {
-    //     // Check if we have the project, if we do, return the ID
-    //     // If we do not have the project, insert the project and return the ID
-
-    //     let db = rusqlite::Connection::open(VECTOR_DB_URL)?;
-
-    //     let projects_query = db.prepare(&format!(
-    //         "SELECT id FROM projects WHERE path = {}",
-    //         project_path.to_str().unwrap() // This is unsafe
-    //     ))?;
-
-    //     let project_id = db.last_insert_rowid();
-
-    //     return Ok(project_id as usize);
-    // }
-
-    pub fn insert_file(&self, indexed_file: IndexedFile) -> Result<()> {
+    pub fn insert_file(&self, worktree_id: i64, indexed_file: IndexedFile) -> Result<()> {
         // Write to files table, and return generated id.
-        let files_insert = self.db.execute(
-            "INSERT INTO files (relative_path, sha1) VALUES (?1, ?2)",
-            params![indexed_file.path.to_str(), indexed_file.sha1],
+        log::info!("Inserting File!");
+        self.db.execute(
+            "
+            DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2;
+            ",
+            params![worktree_id, indexed_file.path.to_str()],
+        )?;
+        self.db.execute(
+            "
+            INSERT INTO files (worktree_id, relative_path, sha1) VALUES (?1, ?2, $3);
+            ",
+            params![worktree_id, indexed_file.path.to_str(), indexed_file.sha1],
         )?;
 
-        let inserted_id = self.db.last_insert_rowid();
+        let file_id = self.db.last_insert_rowid();
 
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.
@@ -135,7 +184,7 @@ impl VectorDatabase {
             self.db.execute(
                 "INSERT INTO documents (file_id, offset, name, embedding) VALUES (?1, ?2, ?3, ?4)",
                 params![
-                    inserted_id,
+                    file_id,
                     document.offset.to_string(),
                     document.name,
                     embedding_blob
@@ -147,25 +196,41 @@ impl VectorDatabase {
     }
 
     pub fn find_or_create_worktree(&self, worktree_root_path: &Path) -> Result<i64> {
+        // Check that the absolute path doesnt exist
+        let mut worktree_query = self
+            .db
+            .prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
+
+        let worktree_id = worktree_query
+            .query_row(params![worktree_root_path.to_string_lossy()], |row| {
+                Ok(row.get::<_, i64>(0)?)
+            })
+            .map_err(|err| anyhow!(err));
+
+        if worktree_id.is_ok() {
+            return worktree_id;
+        }
+
+        // If worktree_id is Err, insert new worktree
         self.db.execute(
             "
             INSERT into worktrees (absolute_path) VALUES (?1)
-            ON CONFLICT DO NOTHING
             ",
             params![worktree_root_path.to_string_lossy()],
         )?;
         Ok(self.db.last_insert_rowid())
     }
 
-    pub fn get_file_hashes(&self, worktree_id: i64) -> Result<Vec<(PathBuf, String)>> {
-        let mut statement = self
-            .db
-            .prepare("SELECT relative_path, sha1 FROM files ORDER BY relative_path")?;
-        let mut result = Vec::new();
-        for row in
-            statement.query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
-        {
-            result.push(row?);
+    pub fn get_file_hashes(&self, worktree_id: i64) -> Result<HashMap<PathBuf, FileSha1>> {
+        let mut statement = self.db.prepare(
+            "SELECT relative_path, sha1 FROM files WHERE worktree_id = ?1 ORDER BY relative_path",
+        )?;
+        let mut result: HashMap<PathBuf, FileSha1> = HashMap::new();
+        for row in statement.query_map(params![worktree_id], |row| {
+            Ok((row.get::<_, String>(0)?.into(), row.get(1)?))
+        })? {
+            let row = row?;
+            result.insert(row.0, row.1);
         }
         Ok(result)
     }
@@ -202,6 +267,53 @@ impl VectorDatabase {
             .filter_map(|row| row.ok())
             .for_each(|row| f(row.0, row.1));
         Ok(())
+    }
+
+    pub fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(PathBuf, usize, String)>> {
+        let mut statement = self.db.prepare(
+            "
+                SELECT
+                    documents.id, files.relative_path, documents.offset, documents.name
+                FROM
+                    documents, files
+                WHERE
+                    documents.file_id = files.id AND
+                    documents.id in rarray(?)
+            ",
+        )?;
+
+        let result_iter = statement.query_map(
+            params![std::rc::Rc::new(
+                ids.iter()
+                    .copied()
+                    .map(|v| rusqlite::types::Value::from(v))
+                    .collect::<Vec<_>>()
+            )],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?.into(),
+                    row.get(2)?,
+                    row.get(3)?,
+                ))
+            },
+        )?;
+
+        let mut values_by_id = HashMap::<i64, (PathBuf, usize, String)>::default();
+        for row in result_iter {
+            let (id, path, offset, name) = row?;
+            values_by_id.insert(id, (path, offset, name));
+        }
+
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let (path, offset, name) = values_by_id
+                .remove(id)
+                .ok_or(anyhow!("missing document id {}", id))?;
+            results.push((path, offset, name));
+        }
+
+        Ok(results)
     }
 
     pub fn get_documents(&self) -> Result<HashMap<usize, DocumentRecord>> {
