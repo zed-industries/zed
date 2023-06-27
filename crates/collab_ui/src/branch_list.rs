@@ -22,6 +22,7 @@ pub fn build_branch_list(
             matches: vec![],
             project,
             selected_index: 0,
+            last_query: String::default(),
         },
         cx,
     )
@@ -33,6 +34,7 @@ pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
     project: ModelHandle<Project>,
     selected_index: usize,
+    last_query: String,
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -109,6 +111,7 @@ impl PickerDelegate for BranchListDelegate {
                     let delegate = picker.delegate_mut();
                     //delegate.branches = actions;
                     delegate.matches = matches;
+                    delegate.last_query = query;
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
                     } else {
@@ -174,5 +177,35 @@ impl PickerDelegate for BranchListDelegate {
             .constrained()
             .with_height(theme.contact_finder.row_height)
             .into_any()
+    }
+    fn render_header(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+        let theme = &theme::current(cx);
+        let style = theme.picker.no_matches.label.clone();
+        if self.last_query.is_empty() {
+            Some(
+                Flex::row()
+                    .with_child(Label::new("Recent branches", style))
+                    .into_any(),
+            )
+        } else {
+            Some(
+                Flex::row()
+                    .with_child(Label::new("Branches", style))
+                    .into_any(),
+            )
+        }
+    }
+    fn render_footer(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+        if !self.last_query.is_empty() && !self.matches.is_empty() {
+            let theme = &theme::current(cx);
+            let style = theme.picker.no_matches.label.clone();
+            Some(
+                Flex::row()
+                    .with_child(Label::new(format!("{} matches", self.matches.len()), style))
+                    .into_any(),
+            )
+        } else {
+            None
+        }
     }
 }
