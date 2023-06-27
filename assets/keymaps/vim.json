@@ -172,6 +172,7 @@
       "^": "vim::FirstNonWhitespace",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
+      "~": "vim::ChangeCase",
       "v": [
         "vim::SwitchMode",
         {
@@ -309,6 +310,7 @@
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
       "s": "vim::Substitute",
+      "~": "vim::ChangeCase",
       "r": [
         "vim::PushOperator",
         "Replace"
