@@ -10,7 +10,8 @@ Then, from the root of the repo, run `script/bootstrap`.
 
 ### Have a db that is out of date? / Need to migrate?
 
-Try `cd crates/collab && cargo run -- migrate` from the root of the repo.
+1. Try `cd crates/collab && cargo run -- migrate` from the root of the repo.
+2. Run `script/seed-db`
 
 ## Testing collab locally
 
