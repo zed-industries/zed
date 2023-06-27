@@ -1,4 +1,3 @@
-use client::{ContactRequestStatus, User, UserStore};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
@@ -124,10 +123,8 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        log::error!("confirm {}", self.selected_index());
         let current_pick = self.selected_index();
         let current_pick = self.matches[current_pick].string.clone();
-        log::error!("Hi? {current_pick}");
         let project = self.project.read(cx);
         let mut cwd = project
             .visible_worktrees(cx)
@@ -139,7 +136,6 @@ impl PickerDelegate for BranchListDelegate {
             .path
             .to_path_buf();
         cwd.push(".git");
-        log::error!("{current_pick}");
         project
             .fs()
             .open_repo(&cwd)
@@ -161,13 +157,21 @@ impl PickerDelegate for BranchListDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
+        const DISPLAYED_MATCH_LEN: usize = 29;
         let theme = &theme::current(cx);
-        let user = &self.matches[ix];
+        let hit = &self.matches[ix];
+        let shortened_branch_name = util::truncate_and_trailoff(&hit.string, DISPLAYED_MATCH_LEN);
+        let highlights = hit
+            .positions
+            .iter()
+            .copied()
+            .filter(|index| index < &DISPLAYED_MATCH_LEN)
+            .collect();
         let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         Flex::row()
             .with_child(
-                Label::new(user.string.clone(), style.label.clone())
-                    .with_highlights(user.positions.clone())
+                Label::new(shortened_branch_name.clone(), style.label.clone())
+                    .with_highlights(highlights)
                     .contained()
                     .aligned()
                     .left(),
@@ -199,9 +203,14 @@ impl PickerDelegate for BranchListDelegate {
         if !self.last_query.is_empty() && !self.matches.is_empty() {
             let theme = &theme::current(cx);
             let style = theme.picker.no_matches.label.clone();
+            // Render "1 match" and "0 matches", "42 matches"etc.
+            let suffix = if self.matches.len() == 1 { "" } else { "es" };
             Some(
                 Flex::row()
-                    .with_child(Label::new(format!("{} matches", self.matches.len()), style))
+                    .with_child(Label::new(
+                        format!("{} match{}", self.matches.len(), suffix),
+                        style,
+                    ))
                     .into_any(),
             )
         } else {

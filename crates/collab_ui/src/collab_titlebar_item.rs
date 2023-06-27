@@ -361,7 +361,6 @@ impl CollabTitlebarItem {
                 Flex::column()
                     .with_child(child.flex(1., true))
                     .contained()
-                    .with_style(theme.contacts_popover.container)
                     .constrained()
                     .with_width(theme.contacts_popover.width)
                     .with_height(theme.contacts_popover.height)
