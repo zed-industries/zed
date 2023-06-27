@@ -580,6 +580,7 @@ pub enum RemoteVideoTrackUpdate {
 
 #[derive(Clone)]
 pub enum RemoteAudioTrackUpdate {
+    MuteChanged { track_id: Sid, muted: bool},
     Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }

@@ -647,6 +647,7 @@ impl Room {
                                     peer_id,
                                     projects: participant.projects,
                                     location,
+                                    muted: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
                                 },
@@ -781,6 +782,21 @@ impl Room {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match change {
+            RemoteAudioTrackUpdate::MuteChanged { track_id, muted } => {
+                for participant in &mut self.remote_participants.values_mut() {
+                    let mut found = false;
+                    for track in participant.audio_tracks.values() {
+                        if track.sid() == track_id {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if found {
+                        participant.muted = muted;
+                        break;
+                    }
+                }
+            }
             RemoteAudioTrackUpdate::Subscribed(track) => {
                 let user_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
@@ -1213,11 +1229,12 @@ impl Room {
 
             let mut tasks = Vec::with_capacity(self.remote_participants.len());
             // Context notification is sent within set_mute itself.
+            let mut mute_task = None;
             if live_kit.deafened {
                 // Unmute microphone only if we're going from unmuted -> muted state.
                 // We don't want to unmute user automatically.
-                let _ = Self::set_mute(live_kit, live_kit.deafened, cx)?; // todo (osiewicz): we probably want to schedule it on fg/bg?
-            }
+                mute_task = Some(Self::set_mute(live_kit, live_kit.deafened, cx)?);
+            };
             for participant in self.remote_participants.values() {
                 for track in live_kit
                     .room
@@ -1226,7 +1243,11 @@ impl Room {
                     tasks.push(cx.foreground().spawn(track.set_enabled(!live_kit.deafened)));
                 }
             }
+
             Ok(cx.foreground().spawn(async move {
+                if let Some(mute_task) = mute_task {
+                    mute_task.await?;
+                }
                 for task in tasks {
                     task.await?;
                 }
