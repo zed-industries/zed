@@ -707,13 +707,34 @@ impl InlaySnapshot {
     pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
         let mut cursor = self.transforms.cursor::<(usize, InlayOffset)>();
         cursor.seek(&offset, Bias::Left, &());
-        match cursor.item() {
-            Some(Transform::Isomorphic(_)) => {
-                let overshoot = offset - cursor.start().0;
-                InlayOffset(cursor.start().1 .0 + overshoot)
+        loop {
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    if offset == cursor.end(&()).0 {
+                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                            if inlay.position.bias() == Bias::Right {
+                                break;
+                            } else {
+                                cursor.next(&());
+                            }
+                        }
+                        return cursor.end(&()).1;
+                    } else {
+                        let overshoot = offset - cursor.start().0;
+                        return InlayOffset(cursor.start().1 .0 + overshoot);
+                    }
+                }
+                Some(Transform::Inlay(inlay)) => {
+                    if inlay.position.bias() == Bias::Left {
+                        cursor.next(&());
+                    } else {
+                        return cursor.start().1;
+                    }
+                }
+                None => {
+                    return self.len();
+                }
             }
-            Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.len(),
         }
     }
 
@@ -1559,6 +1580,14 @@ mod tests {
             let mut inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
             let mut buffer_chars = buffer_snapshot.chars_at(0);
             loop {
+                // Ensure conversion from buffer coordinates to inlay coordinates
+                // is consistent.
+                let buffer_offset = buffer_snapshot.point_to_offset(buffer_point);
+                assert_eq!(
+                    inlay_snapshot.to_point(inlay_snapshot.to_inlay_offset(buffer_offset)),
+                    inlay_point
+                );
+
                 // No matter which bias we clip an inlay point with, it doesn't move
                 // because it was constructed from a buffer point.
                 assert_eq!(
