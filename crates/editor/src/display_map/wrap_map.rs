@@ -760,25 +760,18 @@ impl WrapSnapshot {
             }
 
             let text = language::Rope::from(self.text().as_str());
-            let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
+            let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
             let mut expected_buffer_rows = Vec::new();
-            let mut prev_fold_row = 0;
+            let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
-                if fold_point.row() == prev_fold_row && display_row != 0 {
+                if tab_point.row() == prev_tab_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    let inlay_point = fold_point.to_inlay_point(&self.tab_snapshot.fold_snapshot);
-                    let buffer_point = self
-                        .tab_snapshot
-                        .fold_snapshot
-                        .inlay_snapshot
-                        .to_buffer_point(inlay_point);
-                    expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
-                    prev_fold_row = fold_point.row();
+                    expected_buffer_rows.push(input_buffer_rows.next().unwrap());
                 }
 
+                prev_tab_row = tab_point.row();
                 assert_eq!(self.line_len(display_row), text.line_len(display_row));
             }
 
