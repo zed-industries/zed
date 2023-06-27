@@ -6,12 +6,10 @@ use crate::Editor;
 
 #[derive(Clone, PartialEq, Deserialize)]
 pub enum ScrollAmount {
-    LineUp,
-    LineDown,
-    HalfPageUp,
-    HalfPageDown,
-    PageUp,
-    PageDown,
+    // Scroll N lines (positive is towards the end of the document)
+    Line(f32),
+    // Scroll N pages (positive is towards the end of the document)
+    Page(f32),
 }
 
 impl ScrollAmount {
@@ -24,10 +22,10 @@ impl ScrollAmount {
             let context_menu = editor.context_menu.as_mut()?;
 
             match self {
-                Self::LineDown | Self::HalfPageDown => context_menu.select_next(cx),
-                Self::LineUp | Self::HalfPageUp => context_menu.select_prev(cx),
-                Self::PageDown => context_menu.select_last(cx),
-                Self::PageUp => context_menu.select_first(cx),
+                Self::Line(c) if *c > 0. => context_menu.select_next(cx),
+                Self::Line(_) => context_menu.select_prev(cx),
+                Self::Page(c) if *c > 0. => context_menu.select_last(cx),
+                Self::Page(_) => context_menu.select_first(cx),
             }
             .then_some(())
         })
@@ -36,13 +34,13 @@ impl ScrollAmount {
 
     pub fn lines(&self, editor: &mut Editor) -> f32 {
         match self {
-            Self::LineDown => 1.,
-            Self::LineUp => -1.,
-            Self::HalfPageDown => editor.visible_line_count().map(|l| l / 2.).unwrap_or(1.),
-            Self::HalfPageUp => -editor.visible_line_count().map(|l| l / 2.).unwrap_or(1.),
-            // Minus 1. here so that there is a pivot line that stays on the screen
-            Self::PageDown => editor.visible_line_count().unwrap_or(1.) - 1.,
-            Self::PageUp => -editor.visible_line_count().unwrap_or(1.) - 1.,
+            Self::Line(count) => *count,
+            Self::Page(count) => editor
+                .visible_line_count()
+                // subtract one to leave an anchor line
+                // round towards zero (so page-up and page-down are symmetric)
+                .map(|l| ((l - 1.) * count).trunc())
+                .unwrap_or(0.),
         }
     }
 }

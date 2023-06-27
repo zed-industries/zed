@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext, select_ranges,
@@ -1357,6 +1358,43 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
         six"#
             .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+    cx.simulate_window_resize(cx.window_id, vec2f(1000., 4. * line_height + 0.5));
+
+    cx.set_state(
+        &r#"ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#,
+    );
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.));
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 6.));
+        editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+
+        editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.));
+        editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+    });
 }
 
 #[gpui::test]
