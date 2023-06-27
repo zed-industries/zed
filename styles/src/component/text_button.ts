@@ -1,19 +1,26 @@
 import { ColorScheme } from "../common";
 import { interactive, toggleable } from "../element";
-import { background, foreground } from "../styleTree/components";
+import { TextProperties, background, foreground, text } from "../styleTree/components";
 import { Margin } from "../types/zed";
 
-interface IconButtonOptions {
+interface TextButtonOptions {
     layer?: ColorScheme['lowest'] | ColorScheme['middle'] | ColorScheme['highest'];
     color?: keyof ColorScheme['lowest'];
     margin?: Partial<Margin>;
+    text_properties?: TextProperties;
 }
 
-type ToggleableIconButtonOptions = IconButtonOptions & { active_color?: keyof ColorScheme['lowest'] };
+type ToggleableTextButtonOptions = TextButtonOptions & { active_color?: keyof ColorScheme['lowest'] };
 
-export function icon_button(theme: ColorScheme, { color, margin, layer }: IconButtonOptions) {
+export function text_button(theme: ColorScheme, { color, layer, margin, text_properties }: TextButtonOptions) {
     if (!color)
         color = "base";
+
+    const text_options: TextProperties = {
+        size: "xs",
+        weight: "normal",
+        ...text_properties
+    }
 
     const m = {
         top: margin?.top ?? 0,
@@ -26,16 +33,14 @@ export function icon_button(theme: ColorScheme, { color, margin, layer }: IconBu
         base: {
             corner_radius: 6,
             padding: {
-                top: 2,
-                bottom: 2,
-                left: 4,
-                right: 4,
+                top: 1,
+                bottom: 1,
+                left: 6,
+                right: 6,
             },
             margin: m,
-            icon_width: 15,
-            icon_height: 15,
-            button_width: 23,
-            button_height: 19,
+            button_height: 22,
+            ...text(layer ?? theme.lowest, "sans", color, text_options)
         },
         state: {
             default: {
@@ -56,14 +61,14 @@ export function icon_button(theme: ColorScheme, { color, margin, layer }: IconBu
     });
 }
 
-export function toggleable_icon_button(theme: ColorScheme, { color, active_color, margin }: ToggleableIconButtonOptions) {
+export function toggleable_text_button(theme: ColorScheme, { color, active_color, margin }: ToggleableTextButtonOptions) {
     if (!color)
         color = "base";
 
     return toggleable({
         state: {
-            inactive: icon_button(theme, { color, margin }),
-            active: icon_button(theme, { color: active_color ? active_color : color, margin, layer: theme.middle }),
+            inactive: text_button(theme, { color, margin }),
+            active: text_button(theme, { color: active_color ? active_color : color, margin, layer: theme.middle }),
         }
     })
 }

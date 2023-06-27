@@ -13,7 +13,8 @@ import statusBar from "./statusBar"
 import tabBar from "./tabBar"
 import { interactive } from "../element"
 import merge from "ts-deepmerge"
-import { icon_button } from "../component/icon_button"
+import { icon_button, toggleable_icon_button } from "../component/icon_button"
+import { text_button, toggleable_text_button } from "../component/text_button"
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest
     const isLight = colorScheme.isLight
@@ -298,137 +299,45 @@ export default function workspace(colorScheme: ColorScheme) {
                 },
                 cornerRadius: 6,
             },
-            callControl: interactive({
-                base: {
-                    cornerRadius: 6,
-                    color: foreground(layer, "variant"),
-                    iconWidth: 12,
-                    buttonWidth: 20,
-                },
-                state: {
-                    hovered: {
-                        background: background(layer, "variant", "hovered"),
-                        color: foreground(layer, "variant", "hovered"),
-                    },
-                },
-            }),
-            toggleContactsButton: toggleable({
-                base: interactive({
-                    base: {
-                        margin: { left: itemSpacing },
-                        cornerRadius: 6,
-                        color: foreground(layer, "variant"),
-                        iconWidth: 14,
-                        buttonWidth: 20,
-                    },
-                    state: {
-                        clicked: {
-                            background: background(layer, "variant", "pressed"),
-                        },
-                        hovered: {
-                            background: background(layer, "variant", "hovered"),
-                        },
-                    },
-                }),
-                state: {
-                    active: {
-                        default: {
-                            background: background(layer, "on", "default"),
-                        },
-                        hovered: {
-                            background: background(layer, "on", "hovered"),
-                        },
-                        clicked: {
-                            background: background(layer, "on", "pressed"),
-                        },
-                    },
-                },
-            }),
-            toggleMicrophoneButton: toggleable({
-                base: interactive({
-                    base: {
-                        margin: { left: itemSpacing },
-                        cornerRadius: 6,
-                        color: foreground(layer, "variant"),
-                        iconWidth: 14,
-                        buttonWidth: 20,
-                    },
-                    state: {
-                        clicked: {
-                            background: background(layer, "variant", "pressed"),
-                        },
-                        hovered: {
-                            background: background(layer, "variant", "hovered"),
-                        },
-                    },
-                }),
-                state: {
-                    active: {
-                        default: {
-                            background: background(layer, "on", "default"),
-                        },
-                        hovered: {
-                            background: background(layer, "on", "hovered"),
-                        },
-                        clicked: {
-                            background: background(layer, "on", "pressed"),
-                        },
-                    },
-                },
-            }),
-            toggleSpeakersButton: toggleable({
-                base: interactive({
-                    base: {
-                        margin: { left: itemSpacing },
-                        cornerRadius: 6,
-                        color: foreground(layer, "variant"),
-                        iconWidth: 14,
-                        buttonWidth: 20,
-                    },
-                    state: {
-                        clicked: {
-                            background: background(layer, "variant", "pressed"),
-                        },
-                        hovered: {
-                            background: background(layer, "variant", "hovered"),
-                        },
-                    },
-                }),
-                state: {
-                    active: {
-                        default: {
-                            background: background(layer, "on", "default"),
-                        },
-                        hovered: {
-                            background: background(layer, "on", "hovered"),
-                        },
-                        clicked: {
-                            background: background(layer, "on", "pressed"),
-                        },
-                    },
-                },
+
+            call_control: icon_button(colorScheme, {
+                margin: { left: itemSpacing / 2 },
             }),
 
-            leaveCallButton: icon_button(colorScheme, {
+            toggle_contacts_button: toggleable_icon_button(colorScheme, {
+                margin: { left: itemSpacing }
+            }),
+
+            toggle_microphone_button: toggleable_icon_button(colorScheme, {
+                margin: { left: itemSpacing },
+                active_color: 'negative'
+            }),
+
+            toggle_speakers_button: toggleable_icon_button(colorScheme, {
+                margin: { left: itemSpacing / 2 },
+            }),
+
+            leave_call_button: icon_button(colorScheme, {
                 margin: { left: itemSpacing },
             }),
 
-            userMenuButton: merge(titlebarButton, {
-                inactive: {
-                    default: {
-                        buttonWidth: 20,
-                        iconWidth: 12,
+            user_menu_button:
+                merge(titlebarButton, {
+                    inactive: {
+                        default: {
+                            buttonWidth: 20,
+                            iconWidth: 12,
+                        },
                     },
-                },
-                active: {
-                    default: {
-                        iconWidth: 12,
-                        button_width: 20,
-                        background: background(layer, "variant", "active"),
-                        color: foreground(layer, "variant", "active"),
-                    }
-                },
-            }),
+                    active: {
+                        default: {
+                            iconWidth: 12,
+                            button_width: 20,
+                            background: background(layer, "variant", "active"),
+                            color: foreground(layer, "variant", "active"),
+                        }
+                    },
+                }),
 
             toggleContactsBadge: {
                 cornerRadius: 3,
@@ -437,9 +346,7 @@ export default function workspace(colorScheme: ColorScheme) {
                 border: border(layer),
                 background: foreground(layer, "accent"),
             },
-            shareButton: {
-                ...titlebarButton,
-            },
+            shareButton: toggleable_text_button(colorScheme, {}),
         },
 
         toolbar: {
