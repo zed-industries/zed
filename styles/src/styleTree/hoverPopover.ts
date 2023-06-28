@@ -1,9 +1,9 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, text } from "./components"
 
-export default function HoverPopover(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
-    let baseContainer = {
+export default function HoverPopover(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
+    const baseContainer = {
         background: background(layer),
         cornerRadius: 8,
         padding: {

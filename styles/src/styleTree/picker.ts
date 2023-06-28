@@ -4,7 +4,7 @@ import { background, border, text } from "./components"
 import { interactive, toggleable } from "../element"
 
 export default function picker(colorScheme: ColorScheme): any {
-    let layer = colorScheme.lowest
+    const layer = colorScheme.lowest
     const container = {
         background: background(layer),
         border: border(layer),

@@ -7,9 +7,9 @@ const ACCEPTED_LICENSES_FILE = `${__dirname}/../../script/licenses/zed-licenses.
 
 // Use the cargo-about configuration file as the source of truth for supported licenses.
 function parseAcceptedToml(file: string): string[] {
-    let buffer = fs.readFileSync(file).toString()
+    const buffer = fs.readFileSync(file).toString()
 
-    let obj = toml.parse(buffer)
+    const obj = toml.parse(buffer)
 
     if (!Array.isArray(obj.accepted)) {
         throw Error("Accepted license source is malformed")

@@ -10,7 +10,7 @@ import {
 } from "./components"
 import { interactive } from "../element"
 
-export default function welcome(colorScheme: ColorScheme) {
+export default function welcome(colorScheme: ColorScheme): any {
     const layer = colorScheme.highest
 
     const checkboxBase = {

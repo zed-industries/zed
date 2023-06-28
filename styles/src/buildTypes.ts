@@ -9,22 +9,22 @@ const BANNER = `/*
 const dirname = __dirname
 
 async function main() {
-    let schemasPath = path.join(dirname, "../../", "crates/theme/schemas")
-    let schemaFiles = (await fs.readdir(schemasPath)).filter((x) =>
+    const schemasPath = path.join(dirname, "../../", "crates/theme/schemas")
+    const schemaFiles = (await fs.readdir(schemasPath)).filter((x) =>
         x.endsWith(".json")
     )
 
-    let compiledTypes = new Set()
+    const compiledTypes = new Set()
 
-    for (let filename of schemaFiles) {
-        let filePath = path.join(schemasPath, filename)
+    for (const filename of schemaFiles) {
+        const filePath = path.join(schemasPath, filename)
         const fileContents = await fs.readFile(filePath)
-        let schema = JSON.parse(fileContents.toString())
-        let compiled = await compile(schema, schema.title, {
+        const schema = JSON.parse(fileContents.toString())
+        const compiled = await compile(schema, schema.title, {
             bannerComment: "",
         })
-        let eachType = compiled.split("export")
-        for (let type of eachType) {
+        const eachType = compiled.split("export")
+        for (const type of eachType) {
             if (!type) {
                 continue
             }
@@ -32,19 +32,18 @@ async function main() {
         }
     }
 
-    let output = BANNER + Array.from(compiledTypes).join("\n\n")
-    let outputPath = path.join(dirname, "../../styles/src/types/zed.ts")
+    const output = BANNER + Array.from(compiledTypes).join("\n\n")
+    const outputPath = path.join(dirname, "../../styles/src/types/zed.ts")
 
     try {
-        let existing = await fs.readFile(outputPath)
+        const existing = await fs.readFile(outputPath)
         if (existing.toString() == output) {
             // Skip writing if it hasn't changed
             console.log("Schemas are up to date")
             return
         }
     } catch (e) {
-        // It's fine if there's no output from a previous run.
-        // @ts-ignore
+        // @ts-expect-error - It's fine if there's no output from a previous run.
         if (e.code !== "ENOENT") {
             throw e
         }

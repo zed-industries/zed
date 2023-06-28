@@ -1,12 +1,12 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, svg, text } from "./components"
 import { interactive } from "../element"
-export default function copilot(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
+export default function copilot(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
 
-    let content_width = 264
+    const content_width = 264
 
-    let ctaButton =
+    const ctaButton =
         // Copied from welcome screen. FIXME: Move this into a ZDS component
         interactive({
             base: {

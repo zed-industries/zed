@@ -4,8 +4,8 @@ import { interactive } from "../element"
 const avatarSize = 12
 const headerPadding = 8
 
-export default function contactNotification(colorScheme: ColorScheme): Object {
-    let layer = colorScheme.lowest
+export default function contactNotification(colorScheme: ColorScheme): any {
+    const layer = colorScheme.lowest
     return {
         headerAvatar: {
             height: avatarSize,

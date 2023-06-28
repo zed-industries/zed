@@ -3,8 +3,8 @@ import { background, border, text } from "./components"
 
 export default function incomingCallNotification(
     colorScheme: ColorScheme
-): Object {
-    let layer = colorScheme.middle
+): unknown {
+    const layer = colorScheme.middle
     const avatarSize = 48
     return {
         windowHeight: 74,

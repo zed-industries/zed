@@ -6,10 +6,10 @@ import hoverPopover from "./hoverPopover"
 import { buildSyntax } from "../theme/syntax"
 import { interactive, toggleable } from "../element"
 
-export default function editor(colorScheme: ColorScheme) {
+export default function editor(colorScheme: ColorScheme): any {
     const { isLight } = colorScheme
 
-    let layer = colorScheme.highest
+    const layer = colorScheme.highest
 
     const autocompleteItem = {
         cornerRadius: 6,

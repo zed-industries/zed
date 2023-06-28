@@ -56,7 +56,7 @@ export interface Syntax {
 
     // == Types ====== /
     // We allow Function here because all JS objects literals have this property
-    constructor: SyntaxHighlightStyle | Function
+    constructor: SyntaxHighlightStyle | Function // eslint-disable-line  @typescript-eslint/ban-types
     variant: SyntaxHighlightStyle
     type: SyntaxHighlightStyle
     // js: predefined_type

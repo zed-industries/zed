@@ -3,7 +3,7 @@ import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 
-export default function search(colorScheme: ColorScheme): unknown {
+export default function search(colorScheme: ColorScheme): any {
     const layer = colorScheme.highest
 
     // Search input

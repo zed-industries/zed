@@ -37,7 +37,7 @@ interface InteractiveProps<T> {
  * @param state Object containing optional modified fields to be included in the resulting object for each state.
  * @returns Interactive<T> object with fields from `base` and `state`.
  */
-export function interactive<T extends Object>({
+export function interactive<T extends object>({
     base,
     state,
 }: InteractiveProps<T>): Interactive<T> {
@@ -51,7 +51,7 @@ export function interactive<T extends Object>({
         defaultState = base ? base : (state.default as T)
     }
 
-    let interactiveObj: Interactive<T> = {
+    const interactiveObj: Interactive<T> = {
         default: defaultState,
     }
 

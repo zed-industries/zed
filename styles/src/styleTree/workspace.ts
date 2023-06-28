@@ -13,7 +13,7 @@ import tabBar from "./tabBar"
 import { interactive } from "../element"
 
 import { titlebar } from "./titlebar"
-export default function workspace(colorScheme: ColorScheme) {
+export default function workspace(colorScheme: ColorScheme): any {
     const layer = colorScheme.lowest
     const isLight = colorScheme.isLight
 

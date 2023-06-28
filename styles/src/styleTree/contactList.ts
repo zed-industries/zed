@@ -1,11 +1,11 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
-export default function contactsPanel(colorScheme: ColorScheme) {
+export default function contactsPanel(colorScheme: ColorScheme): any {
     const nameMargin = 8
     const sidePadding = 12
 
-    let layer = colorScheme.middle
+    const layer = colorScheme.middle
 
     const contactButton = {
         background: background(layer, "on"),

@@ -177,30 +177,29 @@ const buildVariant = (variant: Variant): ThemeConfig => {
     let neutral: string[] = []
 
     switch (variant.name) {
-        case "Dark Hard": {
+        case "Dark Hard":
             neutral = darkHardNeutral
             break
-        }
-        case "Dark": {
+
+        case "Dark":
             neutral = darkNeutral
             break
-        }
-        case "Dark Soft": {
+
+        case "Dark Soft":
             neutral = darkSoftNeutral
             break
-        }
-        case "Light Hard": {
+
+        case "Light Hard":
             neutral = lightHardNeutral
             break
-        }
-        case "Light": {
+
+        case "Light":
             neutral = lightNeutral
             break
-        }
-        case "Light Soft": {
+
+        case "Light Soft":
             neutral = lightSoftNeutral
             break
-        }
     }
 
     const ramps = {

@@ -4,8 +4,8 @@ import { interactive } from "../element"
 
 const headerPadding = 8
 
-export default function updateNotification(colorScheme: ColorScheme): Object {
-    let layer = colorScheme.middle
+export default function updateNotification(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
     return {
         message: {
             ...text(layer, "sans", { size: "xs" }),

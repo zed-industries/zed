@@ -2,8 +2,8 @@ import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, text } from "./components"
 import { interactive, toggleable } from "../element"
 
-export default function contextMenu(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
+export default function contextMenu(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
     return {
         background: background(layer),
         cornerRadius: 10,

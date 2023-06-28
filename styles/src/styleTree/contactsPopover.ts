@@ -1,9 +1,8 @@
 import { ColorScheme } from "../theme/colorScheme"
-import { background, border, text } from "./components"
+import { background, border } from "./components"
 
-export default function contactsPopover(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
-    const sidePadding = 12
+export default function contactsPopover(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
     return {
         background: background(layer),
         cornerRadius: 6,

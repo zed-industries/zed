@@ -5,8 +5,8 @@ import { snakeCase } from "case-anything"
 // Typescript magic to convert any string from camelCase to snake_case at compile time
 type SnakeCase<S> = S extends string
     ? S extends `${infer T}${infer U}`
-        ? `${T extends Capitalize<T> ? "_" : ""}${Lowercase<T>}${SnakeCase<U>}`
-        : S
+    ? `${T extends Capitalize<T> ? "_" : ""}${Lowercase<T>}${SnakeCase<U>}`
+    : S
     : S
 
 type SnakeCased<Type> = {
@@ -14,7 +14,7 @@ type SnakeCased<Type> = {
 }
 
 export default function snakeCaseTree<T>(object: T): SnakeCased<T> {
-    const snakeObject: any = {}
+    const snakeObject: any = {} // eslint-disable-line @typescript-eslint/no-explicit-any
     for (const key in object) {
         snakeObject[snakeCase(key, { keepSpecialCharacters: true })] =
             snakeCaseValue(object[key])
@@ -22,6 +22,7 @@ export default function snakeCaseTree<T>(object: T): SnakeCased<T> {
     return snakeObject
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function snakeCaseValue(value: any): any {
     if (typeof value === "object") {
         if (Array.isArray(value)) {

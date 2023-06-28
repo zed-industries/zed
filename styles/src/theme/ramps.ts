@@ -6,8 +6,8 @@ import {
 } from "./themeConfig"
 
 export function colorRamp(color: Color): Scale {
-    let endColor = color.desaturate(1).brighten(5)
-    let startColor = color.desaturate(1).darken(4)
+    const endColor = color.desaturate(1).brighten(5)
+    const startColor = color.desaturate(1).darken(4)
     return chroma.scale([startColor, color, endColor]).mode("lab")
 }
 
@@ -18,15 +18,15 @@ export function colorRamp(color: Color): Scale {
     theme so that we don't modify the passed in ramps.
     This combined with an error in the type definitions for chroma js means we have to cast the colors
     function to any in order to get the colors back out from the original ramps.
- * @param isLight 
- * @param colorRamps 
- * @returns 
+ * @param isLight
+ * @param colorRamps
+ * @returns
  */
 export function getRamps(
     isLight: boolean,
     colorRamps: ThemeConfigInputColors
 ): RampSet {
-    const ramps: RampSet = {} as any
+    const ramps: RampSet = {} as any // eslint-disable-line @typescript-eslint/no-explicit-any
     const colorsKeys = Object.keys(colorRamps) as ThemeConfigInputColorsKeys[]
 
     if (isLight) {

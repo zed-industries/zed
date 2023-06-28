@@ -25,7 +25,7 @@ import copilot from "./copilot"
 import assistant from "./assistant"
 import { titlebar } from "./titlebar"
 
-export default function app(colorScheme: ColorScheme): Object {
+export default function app(colorScheme: ColorScheme): any {
     return {
         meta: {
             name: colorScheme.name,

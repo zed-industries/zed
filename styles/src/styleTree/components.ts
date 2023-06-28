@@ -211,7 +211,7 @@ export function text(
     styleOrProperties?: Styles | TextProperties,
     properties?: TextProperties
 ) {
-    let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
+    const style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
 
     if (typeof styleSetStyleOrProperties === "object") {
         properties = styleSetStyleOrProperties
@@ -220,8 +220,8 @@ export function text(
         properties = styleOrProperties
     }
 
-    let size = fontSizes[properties?.size || "sm"]
-    let color = properties?.color || style.foreground
+    const size = fontSizes[properties?.size || "sm"]
+    const color = properties?.color || style.foreground
 
     return {
         family: fontFamilies[fontFamily],
@@ -273,7 +273,7 @@ export function border(
     styleOrProperties?: Styles | BorderProperties,
     properties?: BorderProperties
 ): Border {
-    let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
+    const style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
 
     if (typeof styleSetStyleOrProperties === "object") {
         properties = styleSetStyleOrProperties
@@ -291,9 +291,9 @@ export function border(
 
 export function svg(
     color: string,
-    asset: String,
-    width: Number,
-    height: Number
+    asset: string,
+    width: number,
+    height: number
 ) {
     return {
         color,

@@ -3,8 +3,8 @@ import { withOpacity } from "../theme/color"
 import { text, background } from "./components"
 import { toggleable } from "../element"
 
-export default function commandPalette(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest
+export default function commandPalette(colorScheme: ColorScheme): any {
+    const layer = colorScheme.highest
 
     const key = toggleable({
         base: {

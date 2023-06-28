@@ -6,8 +6,8 @@ const headerPadding = 8
 
 export default function simpleMessageNotification(
     colorScheme: ColorScheme
-): Object {
-    let layer = colorScheme.middle
+): unknown {
+    const layer = colorScheme.middle
     return {
         message: {
             ...text(layer, "sans", { size: "xs" }),

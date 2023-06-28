@@ -1,8 +1,8 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, text } from "./components"
 
-export default function projectDiagnostics(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest
+export default function projectDiagnostics(colorScheme: ColorScheme): any {
+    const layer = colorScheme.highest
     return {
         background: background(layer),
         tabIconSpacing: 4,

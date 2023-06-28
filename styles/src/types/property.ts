@@ -1,5 +1,5 @@
-import { Clean } from './util'
-import * as zed from './zed'
+import { Clean } from "./util"
+import * as zed from "./zed"
 
 export type Color = zed.Color
 export type CursorStyle = zed.CursorStyle

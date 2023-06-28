@@ -155,7 +155,7 @@ function user_menu(theme: ColorScheme) {
     }
 }
 
-export function titlebar(theme: ColorScheme) {
+export function titlebar(theme: ColorScheme): any {
     const avatarWidth = 15
     const avatarOuterWidth = avatarWidth + 4
     const followerAvatarWidth = 14

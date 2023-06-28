@@ -1,8 +1,8 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, text } from "./components"
 import { interactive, toggleable } from "../element"
-export default function dropdownMenu(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
+export default function dropdownMenu(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
 
     return {
         rowHeight: 30,

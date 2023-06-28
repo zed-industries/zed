@@ -10,10 +10,10 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 import merge from "ts-deepmerge"
-export default function projectPanel(colorScheme: ColorScheme) {
+export default function projectPanel(colorScheme: ColorScheme): any {
     const { isLight } = colorScheme
 
-    let layer = colorScheme.middle
+    const layer = colorScheme.middle
 
     type EntryStateProps = {
         background?: string

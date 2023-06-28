@@ -2,8 +2,8 @@ import { ColorScheme } from "../theme/colorScheme"
 import { background, border, text } from "./components"
 import { interactive } from "../element"
 
-export default function feedback(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest
+export default function feedback(colorScheme: ColorScheme): any {
+    const layer = colorScheme.highest
 
     return {
         submit_button: interactive({

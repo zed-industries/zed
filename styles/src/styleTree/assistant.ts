@@ -3,7 +3,7 @@ import { text, border, background, foreground } from "./components"
 import editor from "./editor"
 import { interactive } from "../element"
 
-export default function assistant(colorScheme: ColorScheme) {
+export default function assistant(colorScheme: ColorScheme): any {
     const layer = colorScheme.highest
     return {
         container: {

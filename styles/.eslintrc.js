@@ -1,58 +1,57 @@
 module.exports = {
-    'env': {
-        "node": true
+    env: {
+        node: true,
     },
-    'extends': [
-        'eslint:recommended',
-        'plugin:@typescript-eslint/recommended'
+    extends: [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/recommended",
+        "plugin:import/typescript",
     ],
-    'parser': '@typescript-eslint/parser',
-    'parserOptions': {
-        'ecmaVersion': 'latest',
-        'sourceType': 'module'
+    parser: "@typescript-eslint/parser",
+    parserOptions: {
+        ecmaVersion: "latest",
+        sourceType: "module",
     },
-    'plugins': [
-        '@typescript-eslint', 'import'
-    ],
+    plugins: ["@typescript-eslint", "import"],
     globals: {
-        module: true
+        module: true,
     },
-    "settings": {
+    settings: {
         "import/parsers": {
-            "@typescript-eslint/parser": [".ts"]
+            "@typescript-eslint/parser": [".ts"],
         },
         "import/resolver": {
-            "typescript": {
-                "alwaysTryTypes": true,
-            }
-        }
+            typescript: true,
+            node: true,
+        },
+        "import/extensions": [".ts"],
     },
-    'rules': {
-        'indent': [
-            'error',
-            4
-        ],
-        'linebreak-style': [
-            'error',
-            'unix'
-        ],
-        'semi': [
-            'error',
-            'never'
-        ],
+    rules: {
+        "linebreak-style": ["error", "unix"],
+        semi: ["error", "never"],
         "import/no-restricted-paths": [
-            'error',
+            "error",
             {
-                'zones': [
+                zones: [
                     {
-                        "target": "./src/types/*",
-                        "from": "./src",
-                        "except": [
-                            "./src/types/index.ts"
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
+                        target: [
+                            "./src/component/*",
+                            "./src/element/*",
+                            "./src/styleTree/*",
+                            "./src/system/*",
+                            "./src/theme/*",
+                            "./src/themes/*",
+                            "./src/utils/*",
+                        ],
+                        from: [
+                            "./src/types/styleTree.ts",
+                            "./src/types/element.ts",
+                            "./src/types/property.ts",
+                        ],
+                        message: "Import from `@types` instead",
+                    },
+                ],
+            },
+        ],
+    },
 }

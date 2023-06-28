@@ -1,8 +1,8 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, text } from "./components"
 
-export default function tooltip(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
+export default function tooltip(colorScheme: ColorScheme): any {
+    const layer = colorScheme.middle
     return {
         background: background(layer),
         border: border(layer),

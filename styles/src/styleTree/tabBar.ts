@@ -3,11 +3,11 @@ import { withOpacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
 import { interactive, toggleable } from "../element"
 
-export default function tabBar(colorScheme: ColorScheme) {
+export default function tabBar(colorScheme: ColorScheme): any {
     const height = 32
 
-    let activeLayer = colorScheme.highest
-    let layer = colorScheme.middle
+    const activeLayer = colorScheme.highest
+    const layer = colorScheme.middle
 
     const tab = {
         height,

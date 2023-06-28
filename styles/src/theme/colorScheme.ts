@@ -218,9 +218,9 @@ function buildStyleSet(
     ramp: Scale,
     backgroundBase: number,
     foregroundBase: number,
-    step: number = 0.08
+    step = 0.08
 ): StyleSet {
-    let styleDefinitions = buildStyleDefinition(
+    const styleDefinitions = buildStyleDefinition(
         backgroundBase,
         foregroundBase,
         step
@@ -255,7 +255,7 @@ function buildStyleSet(
 function buildStyleDefinition(
     bgBase: number,
     fgBase: number,
-    step: number = 0.08
+    step = 0.08
 ) {
     return {
         background: {
