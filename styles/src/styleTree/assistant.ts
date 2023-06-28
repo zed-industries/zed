@@ -26,15 +26,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 12, right: 8.5 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         splitButton: interactive({
             base: {
@@ -48,15 +48,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 8.5, right: 8.5 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         quoteButton: interactive({
             base: {
@@ -70,15 +70,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 8.5, right: 8.5 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         assistButton: interactive({
             base: {
@@ -92,15 +92,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 8.5, right: 8.5 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         zoomInButton: interactive({
             base: {
@@ -114,15 +114,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 10, right: 10 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         zoomOutButton: interactive({
             base: {
@@ -136,15 +136,15 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 10, right: 10 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         plusButton: interactive({
             base: {
@@ -158,29 +158,29 @@ export default function assistant(colorScheme: ColorScheme) {
                 },
                 container: {
                     padding: { left: 10, right: 10 },
-                }
+                },
             },
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered")
-                    }
-                }
-            }
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
         }),
         title: {
-            ...text(layer, "sans", "default", { size: "sm" })
+            ...text(layer, "sans", "default", { size: "sm" }),
         },
         savedConversation: {
             container: interactive({
                 base: {
                     background: background(layer, "on"),
-                    padding: { top: 4, bottom: 4 }
+                    padding: { top: 4, bottom: 4 },
                 },
                 state: {
                     hovered: {
                         background: background(layer, "on", "hovered"),
-                    }
+                    },
                 },
             }),
             savedAt: {
@@ -189,8 +189,11 @@ export default function assistant(colorScheme: ColorScheme) {
             },
             title: {
                 margin: { left: 16 },
-                ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
-            }
+                ...text(layer, "sans", "default", {
+                    size: "sm",
+                    weight: "bold",
+                }),
+            },
         },
         userSender: {
             default: {
