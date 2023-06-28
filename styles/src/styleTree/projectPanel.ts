@@ -1,63 +1,28 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
-import { Border, TextProperties, background, border, foreground, text } from "./components"
+import { Border, TextStyle, background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
-import { InteractiveState } from "../element/interactive"
+import merge from "ts-deepmerge"
 export default function projectPanel(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
 
     let layer = colorScheme.middle
 
-    const default_entry = interactive({
-        base: {
-            ...baseEntry,
-            status,
-        },
-        state: {
-            default: {
-                background: background(layer),
-            },
-            hovered: {
-                background: background(layer, "variant", "hovered"),
-            },
-            clicked: {
-                background: background(layer, "variant", "pressed"),
-            },
-        },
-    })
-
-    let base_entry = toggleable({
-        base: default_entry,
-        state: {
-            active: interactive({
-                base: {
-                    ...default_entry,
-                },
-                state: {
-                    default: {
-                        background: background(colorScheme.lowest),
-                    },
-                    hovered: {
-                        background: background(colorScheme.lowest, "hovered"),
-                    },
-                    clicked: {
-                        background: background(colorScheme.lowest, "pressed"),
-                    },
-                },
-            }),
-        },
-    })
-
     type EntryStateProps = {
         background?: string,
-        border: Border,
-        text: TextProperties,
-        iconColor: string,
+        border?: Border,
+        text?: TextStyle,
+        iconColor?: string,
     }
 
-    type EntryState = Record<Partial<InteractiveState>, EntryStateProps>
+    type EntryState = {
+        default: EntryStateProps,
+        hovered?: EntryStateProps,
+        clicked?: EntryStateProps,
+    }
 
-    const entry = (base: object, unselected: EntryState, selected: EntryState) => {
+    const entry = (unselected?: EntryState, selected?: EntryState) => {
+
         const git_status = {
             git: {
                 modified: isLight
@@ -74,6 +39,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
 
         const base_properties = {
             height: 22,
+            background: background(layer),
             iconColor: foreground(layer, "variant"),
             iconSize: 7,
             iconSpacing: 5,
@@ -83,50 +49,37 @@ export default function projectPanel(colorScheme: ColorScheme) {
             }
         }
 
-        const unselected_i = interactive({
-            base: base_properties,
-            state: {
-                default: {
-                    background: background(layer),
-                    ...unselected.default ?? {},
-                },
-                hovered: {
-                    background: background(layer, "variant", "hovered"),
-                    ...unselected.hovered ?? {},
-                },
-                clicked: {
-                    background: background(layer, "variant", "pressed"),
-                    ...unselected.clicked ?? {},
-                },
-            },
-        })
+        const selectedStyle: EntryState | undefined = selected ? selected : unselected
 
-        const selected_i = interactive({
-            base: base,
-            state: {
-                default: {
-                    ...base_entry,
-                    ...(selected.default ?? {}),
-            },
-            hovered: {
-                ...base_entry,
-                ...selected.hovered ?? {},
-            },
-            clicked: {
-                ...base_entry,
-                ...selected.clicked ?? {},
-            },
-            }
-        })
+        const unselected_default_style = merge(base_properties, unselected?.default ?? {}, {})
+        const unselected_hovered_style = merge(base_properties, unselected?.hovered ?? {}, { background: background(layer, "variant", "hovered") })
+        const unselected_clicked_style = merge(base_properties, unselected?.clicked ?? {}, { background: background(layer, "variant", "pressed") })
+        const selected_default_style = merge(base_properties, selectedStyle?.default ?? {}, { background: background(layer) })
+        const selected_hovered_style = merge(base_properties, selectedStyle?.hovered ?? {}, { background: background(layer, "variant", "hovered") })
+        const selected_clicked_style = merge(base_properties, selectedStyle?.clicked ?? {}, { background: background(layer, "variant", "pressed") })
 
         return toggleable({
             state: {
-            inactive: unselected_i,
-            active: selected_i,
+                inactive: interactive({
+                    state: {
+                        default: unselected_default_style,
+                        hovered: unselected_hovered_style,
+                        clicked: unselected_clicked_style,
+                    },
+                }),
+                active: interactive({
+                    state: {
+                        default: selected_default_style,
+                        hovered: selected_hovered_style,
+                        clicked: selected_clicked_style,
+                    },
+                }),
             }
         })
 
     }
+
+    const defaultEntry = entry()
 
     return {
         openProjectButton: interactive({
@@ -163,35 +116,33 @@ export default function projectPanel(colorScheme: ColorScheme) {
         background: background(layer),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
         indentWidth: 12,
-        entry,
-        draggedEntry: {
-            ...baseEntry,
-            text: text(layer, "mono", "on", { size: "sm" }),
-            background: withOpacity(background(layer, "on"), 0.9),
-            border: border(layer),
-            status,
-        },
-        ignoredEntry: {
-            ...entry,
-            iconColor: foreground(layer, "disabled"),
-            text: text(layer, "mono", "disabled"),
-            active: {
-                ...entry.active,
+        defaultEntry,
+        draggedEntry: entry({
+            default: {
+                text: text(layer, "mono", "on", { size: "sm" }),
+                background: withOpacity(background(layer, "on"), 0.9),
+                border: border(layer),
+            }
+        }),
+        ignoredEntry: entry({
+            default: {
+                text: text(layer, "mono", "disabled"),
+            },
+        }, {
+            default: {
                 iconColor: foreground(layer, "variant"),
+            }
+        }),
+        cutEntry: entry({
+            default: {
+                text: text(layer, "mono", "disabled"),
             },
-        },
-        cutEntry: {
-            ...entry,
-            text: text(layer, "mono", "disabled"),
-            active: {
-                ...entry.active,
-                default: {
-                    ...entry.active.default,
-                    background: background(layer, "active"),
-                    text: text(layer, "mono", "disabled", { size: "sm" }),
-                },
-            },
-        },
+        }, {
+            default: {
+                background: background(layer, "active"),
+                text: text(layer, "mono", "disabled", { size: "sm" }),
+            }
+        }),
         filenameEditor: {
             background: background(layer, "on"),
             text: text(layer, "mono", "on", { size: "sm" }),
