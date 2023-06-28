@@ -23,13 +23,18 @@ function build_spacing(
 }
 
 function call_controls(theme: ColorScheme) {
-    const button_height = 19
+    const button_height = 18
 
     const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
+    const marginY = {
+        top: space.marginY,
+        bottom: space.marginY,
+    }
 
     return {
         toggle_microphone_button: toggleable_icon_button(theme, {
             margin: {
+                ...marginY,
                 left: space.group,
                 right: space.half_item,
             },
@@ -38,6 +43,7 @@ function call_controls(theme: ColorScheme) {
 
         toggle_speakers_button: toggleable_icon_button(theme, {
             margin: {
+                ...marginY,
                 left: space.half_item,
                 right: space.half_item
             },
@@ -45,6 +51,7 @@ function call_controls(theme: ColorScheme) {
 
         screen_share_button: toggleable_icon_button(theme, {
             margin: {
+                ...marginY,
                 left: space.half_item,
                 right: space.group
             },
@@ -60,7 +67,7 @@ function call_controls(theme: ColorScheme) {
 * When logged out only shows a chevron.
 */
 function user_menu(theme: ColorScheme) {
-    const button_height = 19
+    const button_height = 18
 
     const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
 
@@ -70,7 +77,7 @@ function user_menu(theme: ColorScheme) {
                 base: {
                     cornerRadius: 6,
                     height: button_height,
-                    width: online ? 36 : 23,
+                    width: online ? 37 : 24,
                     padding: {
                         top: 2,
                         bottom: 2,
@@ -120,11 +127,11 @@ function user_menu(theme: ColorScheme) {
         return {
             user_menu: button,
             avatar: {
-                icon_width: 15,
-                icon_height: 15,
+                icon_width: 16,
+                icon_height: 16,
                 corner_radius: 4,
-                outer_width: 15,
-                outer_corner_radius: 15
+                outer_width: 16,
+                outer_corner_radius: 16
             },
             icon: {
                 margin: {
@@ -196,7 +203,7 @@ export function titlebar(theme: ColorScheme) {
         },
         avatarRibbon: {
             height: 3,
-            width: 11,
+            width: 14,
             // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
         },
 

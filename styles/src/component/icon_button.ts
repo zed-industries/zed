@@ -38,10 +38,10 @@ export function icon_button(theme: ColorScheme, { color, margin, layer }: IconBu
                 right: 4,
             },
             margin: m,
-            icon_width: 15,
-            icon_height: 15,
-            button_width: 21,
-            button_height: 17,
+            icon_width: 14,
+            icon_height: 14,
+            button_width: 20,
+            button_height: 16,
         },
         state: {
             default: {
