@@ -39,7 +39,7 @@ use std::{
     time::Duration,
 };
 use theme::AssistantStyle;
-use util::{channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
+use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     searchable::Direction,
@@ -62,12 +62,6 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
-        cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
-            filter.filtered_namespaces.insert("assistant");
-        });
-    }
-
     settings::register::<AssistantSettings>(cx);
     cx.add_action(
         |this: &mut AssistantPanel,
