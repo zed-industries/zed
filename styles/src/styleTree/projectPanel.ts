@@ -116,14 +116,13 @@ export default function projectPanel(colorScheme: ColorScheme) {
         background: background(layer),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
         indentWidth: 12,
-        defaultEntry,
-        draggedEntry: entry({
-            default: {
-                text: text(layer, "mono", "on", { size: "sm" }),
-                background: withOpacity(background(layer, "on"), 0.9),
-                border: border(layer),
-            }
-        }),
+        entry: defaultEntry,
+        draggedEntry: {
+            ...defaultEntry.inactive.default,
+            text: text(layer, "mono", "on", { size: "sm" }),
+            background: withOpacity(background(layer, "on"), 0.9),
+            border: border(layer),
+        },
         ignoredEntry: entry({
             default: {
                 text: text(layer, "mono", "disabled"),
