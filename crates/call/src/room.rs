@@ -163,6 +163,7 @@ impl Room {
                 screen_track: LocalTrack::None,
                 microphone_track: LocalTrack::None,
                 next_publish_id: 0,
+                muted_by_user: false,
                 deafened: false,
                 speaking: false,
                 _maintain_room,
@@ -1231,6 +1232,10 @@ impl Room {
         should_mute: bool,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
+        if !should_mute {
+            // clear user muting state.
+            live_kit.muted_by_user = false;
+        }
         match &mut live_kit.microphone_track {
             LocalTrack::None => Err(anyhow!("microphone was not shared")),
             LocalTrack::Pending { muted, .. } => {
@@ -1249,9 +1254,11 @@ impl Room {
         }
     }
     pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
-        let should_mute = self.is_muted();
+        let should_mute = !self.is_muted();
         if let Some(live_kit) = self.live_kit.as_mut() {
-            Self::set_mute(live_kit, !should_mute, cx)
+            let ret = Self::set_mute(live_kit, should_mute, cx);
+            live_kit.muted_by_user = should_mute;
+            ret
         } else {
             Err(anyhow!("LiveKit not started"))
         }
@@ -1264,9 +1271,9 @@ impl Room {
             let mut tasks = Vec::with_capacity(self.remote_participants.len());
             // Context notification is sent within set_mute itself.
             let mut mute_task = None;
-            if live_kit.deafened {
-                // Unmute microphone only if we're going from unmuted -> muted state.
-                // We don't want to unmute user automatically.
+            // When deafening, mute user's mic as well.
+            // When undeafening, unmute user's mic unless it was manually muted prior to deafening.
+            if live_kit.deafened || !live_kit.muted_by_user {
                 mute_task = Some(Self::set_mute(live_kit, live_kit.deafened, cx)?);
             };
             for participant in self.remote_participants.values() {
@@ -1331,6 +1338,8 @@ struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
+    /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
+    muted_by_user: bool,
     deafened: bool,
     speaking: bool,
     next_publish_id: usize,
