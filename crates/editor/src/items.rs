@@ -936,9 +936,8 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.unfold_ranges([matches[index].clone()], false, true, cx);
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select_ranges([matches[index].clone()])
-        });
+        let range = self.range_for_match(&matches[index]);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| s.select_ranges([range]));
     }
 
     fn match_index_for_direction(

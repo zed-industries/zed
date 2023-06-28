@@ -544,6 +544,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    collapse_matches: bool,
     workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
@@ -1376,6 +1377,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            collapse_matches: false,
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
@@ -1513,6 +1515,17 @@ impl Editor {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
+    }
+
+    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+        self.collapse_matches = collapse_matches;
+    }
+
+    fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+        if self.collapse_matches {
+            return range.start..range.start;
+        }
+        range.clone()
     }
 
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
@@ -6233,6 +6246,7 @@ impl Editor {
                 .to_offset(definition.target.buffer.read(cx));
 
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
+                let range = self.range_for_match(&range);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
@@ -6245,6 +6259,7 @@ impl Editor {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
                         pane.update(cx, |pane, _| pane.disable_history());
+                        let range = target_editor.range_for_match(&range);
                         target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
