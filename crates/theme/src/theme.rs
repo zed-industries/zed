@@ -132,6 +132,8 @@ pub struct Titlebar {
     pub sign_in_button: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
     pub share_button: Toggleable<Interactive<ContainedText>>,
+    pub muted: Color,
+    pub speaking: Color,
     pub screen_share_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
     pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
@@ -146,6 +148,7 @@ pub struct UserMenu {
     pub user_menu_button_online: UserMenuButton,
     pub user_menu_button_offline: UserMenuButton,
 }
+
 #[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct UserMenuButton {
     pub user_menu: Toggleable<Interactive<Icon>>,

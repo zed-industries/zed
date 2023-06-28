@@ -668,6 +668,7 @@ impl CollabTitlebarItem {
                             avatar_img,
                             *avatar_style,
                             Color::transparent_black(),
+                            None
                         ));
                     };
 
@@ -846,17 +847,20 @@ impl CollabTitlebarItem {
         let leader_style = theme.titlebar.leader_avatar;
         let follower_style = theme.titlebar.follower_avatar;
 
-        let mut background_color = if muted {
-            gpui::color::Color::red()
+        let microphone_state = if muted {
+            Some(theme.titlebar.muted)
         } else if speaking {
-            gpui::color::Color::green()
+            Some(theme.titlebar.speaking)
         } else {
-            theme
-                .titlebar
-                .container
-                .background_color
-                .unwrap_or_default()
+            None
         };
+
+        let mut background_color = theme
+            .titlebar
+            .container
+            .background_color
+            .unwrap_or_default();
+
         if let Some(replica_id) = replica_id {
             if followed_by_self {
                 let selection = theme.editor.replica_selection_style(replica_id).selection;
@@ -872,6 +876,7 @@ impl CollabTitlebarItem {
                         avatar.clone(),
                         Self::location_style(workspace, location, leader_style, cx),
                         background_color,
+                        microphone_state
                     ))
                     .with_children(
                         (|| {
@@ -903,6 +908,7 @@ impl CollabTitlebarItem {
                                     avatar.clone(),
                                     follower_style,
                                     background_color,
+                                    None
                                 ))
                             }))
                         })()
@@ -1021,12 +1027,13 @@ impl CollabTitlebarItem {
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,
+        microphone_state: Option<Color>
     ) -> AnyElement<V> {
         Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
             .contained()
-            .with_background_color(background_color)
+            .with_background_color(microphone_state.unwrap_or(background_color))
             .with_corner_radius(avatar_style.outer_corner_radius)
             .constrained()
             .with_width(avatar_style.outer_width)

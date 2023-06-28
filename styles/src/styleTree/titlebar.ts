@@ -57,6 +57,9 @@ function call_controls(theme: ColorScheme) {
             },
             active_color: 'accent'
         }),
+
+        muted: foreground(theme.lowest, "negative"),
+        speaking: foreground(theme.lowest, "accent"),
     }
 }
 
@@ -153,7 +156,7 @@ function user_menu(theme: ColorScheme) {
 }
 
 export function titlebar(theme: ColorScheme) {
-    const avatarWidth = 18
+    const avatarWidth = 15
     const avatarOuterWidth = avatarWidth + 4
     const followerAvatarWidth = 14
     const followerAvatarOuterWidth = followerAvatarWidth + 4
