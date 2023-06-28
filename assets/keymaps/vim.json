@@ -101,6 +101,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "*": "vim::MoveToNext",
+      "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
         "vim::Number",
@@ -240,7 +242,19 @@
         "vim::SwitchMode",
         "Normal"
       ],
-      "d": "editor::GoToDefinition"
+      "d": "editor::GoToDefinition",
+      "*": [
+        "vim::MoveToNext",
+        {
+          "partialWord": true
+        }
+      ],
+      "#": [
+        "vim::MoveToPrev",
+        {
+          "partialWord": true
+        }
+      ]
     }
   },
   {

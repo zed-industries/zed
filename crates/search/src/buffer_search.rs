@@ -65,6 +65,7 @@ pub struct BufferSearchBar {
     pub query_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
+    pending_match_direction: Option<Direction>,
     active_searchable_item_subscription: Option<Subscription>,
     seachable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
@@ -252,6 +253,7 @@ impl BufferSearchBar {
             default_options: SearchOptions::NONE,
             search_options: SearchOptions::NONE,
             pending_search: None,
+            pending_match_direction: None,
             query_contains_error: false,
             dismissed: true,
         }
@@ -285,10 +287,10 @@ impl BufferSearchBar {
         &mut self,
         focus: bool,
         suggest_query: bool,
-        search_option: SearchOptions,
+        search_options: SearchOptions,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        self.search_options = search_option;
+        self.search_options = search_options;
         let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
             SearchableItemHandle::boxed_clone(searchable_item.as_ref())
         } else {
@@ -486,6 +488,17 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, cx);
     }
 
+    pub fn select_word_under_cursor(
+        &mut self,
+        direction: Direction,
+        options: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.active_match_index = None;
+        self.pending_match_direction = Some(direction);
+        self.show_with_options(false, true, options, cx);
+    }
+
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
@@ -567,6 +580,7 @@ impl BufferSearchBar {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
+                self.pending_match_direction.take();
                 active_searchable_item.clear_matches(cx);
             } else {
                 let query = if self.search_options.contains(SearchOptions::REGEX) {
@@ -614,7 +628,15 @@ impl BufferSearchBar {
                                     .unwrap();
                                 active_searchable_item.update_matches(matches, cx);
                                 if select_closest_match {
-                                    if let Some(match_ix) = this.active_match_index {
+                                    if let Some(mut match_ix) = this.active_match_index {
+                                        if let Some(direction) = this.pending_match_direction.take()
+                                        {
+                                            match_ix += match direction {
+                                                Direction::Next => 1,
+                                                Direction::Prev => matches.len() - 1,
+                                            };
+                                            match_ix = match_ix % matches.len();
+                                        }
                                         active_searchable_item
                                             .activate_match(match_ix, matches, cx);
                                     }
