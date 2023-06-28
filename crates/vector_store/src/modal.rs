@@ -48,7 +48,9 @@ impl PickerDelegate for SemanticSearchDelegate {
     }
 
     fn confirm(&mut self, cx: &mut ViewContext<SemanticSearch>) {
-        todo!()
+        if let Some(search_result) = self.matches.get(self.selected_match_index) {
+            // search_result.file_path
+        }
     }
 
     fn dismissed(&mut self, _cx: &mut ViewContext<SemanticSearch>) {}
@@ -66,9 +68,9 @@ impl PickerDelegate for SemanticSearchDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<SemanticSearch>) -> Task<()> {
-        let task = self
-            .vector_store
-            .update(cx, |store, cx| store.search(query.to_string(), 10, cx));
+        let task = self.vector_store.update(cx, |store, cx| {
+            store.search(&self.project, query.to_string(), 10, cx)
+        });
 
         cx.spawn(|this, mut cx| async move {
             let results = task.await.log_err();
@@ -90,7 +92,7 @@ impl PickerDelegate for SemanticSearchDelegate {
     ) -> AnyElement<Picker<Self>> {
         let theme = theme::current(cx);
         let style = &theme.picker.item;
-        let current_style = style.style_for(mouse_state, selected);
+        let current_style = style.in_state(selected).style_for(mouse_state);
 
         let search_result = &self.matches[ix];
 
@@ -99,7 +101,10 @@ impl PickerDelegate for SemanticSearchDelegate {
 
         Flex::column()
             .with_child(Text::new(name, current_style.label.text.clone()).with_soft_wrap(false))
-            .with_child(Label::new(path.to_string(), style.default.label.clone()))
+            .with_child(Label::new(
+                path.to_string(),
+                style.inactive_state().default.label.clone(),
+            ))
             .contained()
             .with_style(current_style.container)
             .into_any()

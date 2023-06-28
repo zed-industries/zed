@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use anyhow::{anyhow, Result};
@@ -258,22 +259,34 @@ impl VectorDatabase {
 
     pub fn for_each_document(
         &self,
-        worktree_id: i64,
+        worktree_ids: &[i64],
         mut f: impl FnMut(i64, Embedding),
     ) -> Result<()> {
-        let mut query_statement = self.db.prepare("SELECT id, embedding FROM documents")?;
+        let mut query_statement = self.db.prepare(
+            "
+            SELECT
+                documents.id, documents.embedding
+            FROM
+                documents, files
+            WHERE
+                documents.file_id = files.id AND
+                files.worktree_id IN rarray(?)
+            ",
+        )?;
         query_statement
-            .query_map(params![], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(params![ids_to_sql(worktree_ids)], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
             .filter_map(|row| row.ok())
             .for_each(|row| f(row.0, row.1));
         Ok(())
     }
 
-    pub fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(PathBuf, usize, String)>> {
+    pub fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, usize, String)>> {
         let mut statement = self.db.prepare(
             "
                 SELECT
-                    documents.id, files.relative_path, documents.offset, documents.name
+                    documents.id, files.worktree_id, files.relative_path, documents.offset, documents.name
                 FROM
                     documents, files
                 WHERE
@@ -282,35 +295,28 @@ impl VectorDatabase {
             ",
         )?;
 
-        let result_iter = statement.query_map(
-            params![std::rc::Rc::new(
-                ids.iter()
-                    .copied()
-                    .map(|v| rusqlite::types::Value::from(v))
-                    .collect::<Vec<_>>()
-            )],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?.into(),
-                    row.get(2)?,
-                    row.get(3)?,
-                ))
-            },
-        )?;
+        let result_iter = statement.query_map(params![ids_to_sql(ids)], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?.into(),
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?;
 
-        let mut values_by_id = HashMap::<i64, (PathBuf, usize, String)>::default();
+        let mut values_by_id = HashMap::<i64, (i64, PathBuf, usize, String)>::default();
         for row in result_iter {
-            let (id, path, offset, name) = row?;
-            values_by_id.insert(id, (path, offset, name));
+            let (id, worktree_id, path, offset, name) = row?;
+            values_by_id.insert(id, (worktree_id, path, offset, name));
         }
 
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            let (path, offset, name) = values_by_id
+            let value = values_by_id
                 .remove(id)
                 .ok_or(anyhow!("missing document id {}", id))?;
-            results.push((path, offset, name));
+            results.push(value);
         }
 
         Ok(results)
@@ -338,4 +344,13 @@ impl VectorDatabase {
 
         return Ok(documents);
     }
+}
+
+fn ids_to_sql(ids: &[i64]) -> Rc<Vec<rusqlite::types::Value>> {
+    Rc::new(
+        ids.iter()
+            .copied()
+            .map(|v| rusqlite::types::Value::from(v))
+            .collect::<Vec<_>>(),
+    )
 }

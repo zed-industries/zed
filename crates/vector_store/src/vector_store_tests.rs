@@ -70,7 +70,10 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     });
 
     let project = Project::test(fs, ["/the-root".as_ref()], cx).await;
-    let add_project = store.update(cx, |store, cx| store.add_project(project, cx));
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let add_project = store.update(cx, |store, cx| store.add_project(project.clone(), cx));
 
     // TODO - remove
     cx.foreground()
@@ -79,12 +82,15 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     add_project.await.unwrap();
 
     let search_results = store
-        .update(cx, |store, cx| store.search("aaaa".to_string(), 5, cx))
+        .update(cx, |store, cx| {
+            store.search(&project, "aaaa".to_string(), 5, cx)
+        })
         .await
         .unwrap();
 
     assert_eq!(search_results[0].offset, 0);
     assert_eq!(search_results[0].name, "aaa");
+    assert_eq!(search_results[0].worktree_id, worktree_id);
 }
 
 #[test]
