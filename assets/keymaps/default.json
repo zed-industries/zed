@@ -200,8 +200,8 @@
   {
     "context": "AssistantPanel",
     "bindings": {
-        "cmd-g": "search::SelectNextMatch",
-        "cmd-shift-g": "search::SelectPrevMatch"
+      "cmd-g": "search::SelectNextMatch",
+      "cmd-shift-g": "search::SelectPrevMatch"
     }
   },
   {
@@ -408,6 +408,7 @@
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle"
     }

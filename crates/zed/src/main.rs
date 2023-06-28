@@ -70,8 +70,6 @@ fn main() {
 
     init_panic_hook(&app);
 
-    app.background();
-
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
