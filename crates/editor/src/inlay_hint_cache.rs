@@ -28,6 +28,27 @@ pub struct InlayHintCache {
     update_tasks: HashMap<ExcerptId, UpdateTask>,
 }
 
+#[derive(Debug)]
+pub struct CachedExcerptHints {
+    version: usize,
+    buffer_version: Global,
+    buffer_id: u64,
+    pub hints: Vec<(InlayId, InlayHint)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InvalidationStrategy {
+    RefreshRequested,
+    ExcerptEdited,
+    None,
+}
+
+#[derive(Debug, Default)]
+pub struct InlaySplice {
+    pub to_remove: Vec<InlayId>,
+    pub to_insert: Vec<(Anchor, InlayId, InlayHint)>,
+}
+
 struct UpdateTask {
     invalidation_strategy: InvalidationStrategy,
     cache_version: usize,
@@ -36,11 +57,11 @@ struct UpdateTask {
 }
 
 #[derive(Debug)]
-pub struct CachedExcerptHints {
-    version: usize,
-    buffer_version: Global,
-    buffer_id: u64,
-    pub hints: Vec<(InlayId, InlayHint)>,
+struct ExcerptHintsUpdate {
+    excerpt_id: ExcerptId,
+    remove_from_visible: Vec<InlayId>,
+    remove_from_cache: HashSet<InlayId>,
+    add_to_cache: HashSet<InlayHint>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,14 +81,16 @@ struct ExcerptDimensions {
     excerpt_visible_range_end: language::Anchor,
 }
 
-impl ExcerptQuery {
+impl InvalidationStrategy {
     fn should_invalidate(&self) -> bool {
         matches!(
-            self.invalidate,
+            self,
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
         )
     }
+}
 
+impl ExcerptQuery {
     fn hints_fetch_ranges(&self, buffer: &BufferSnapshot) -> HintFetchRanges {
         let visible_range =
             self.dimensions.excerpt_visible_range_start..self.dimensions.excerpt_visible_range_end;
@@ -98,28 +121,6 @@ impl ExcerptQuery {
             other_ranges: other_ranges.into_iter().map(|range| range).collect(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum InvalidationStrategy {
-    RefreshRequested,
-    ExcerptEdited,
-    None,
-}
-
-#[derive(Debug, Default)]
-pub struct InlaySplice {
-    pub to_remove: Vec<InlayId>,
-    pub to_insert: Vec<(Anchor, InlayId, InlayHint)>,
-}
-
-#[derive(Debug)]
-struct ExcerptHintsUpdate {
-    excerpt_id: ExcerptId,
-    cache_version: usize,
-    remove_from_visible: Vec<InlayId>,
-    remove_from_cache: HashSet<InlayId>,
-    add_to_cache: HashSet<InlayHint>,
 }
 
 impl InlayHintCache {
@@ -191,15 +192,11 @@ impl InlayHintCache {
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
     ) {
-        if !self.enabled {
+        if !self.enabled || excerpts_to_query.is_empty() {
             return;
         }
         let update_tasks = &mut self.update_tasks;
-        let invalidate_cache = matches!(
-            invalidate,
-            InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
-        );
-        if invalidate_cache {
+        if invalidate.should_invalidate() {
             update_tasks
                 .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
         }
@@ -208,7 +205,7 @@ impl InlayHintCache {
             match update_tasks.entry(*visible_excerpt_id) {
                 hash_map::Entry::Occupied(o) => match o.get().cache_version.cmp(&cache_version) {
                     cmp::Ordering::Less => true,
-                    cmp::Ordering::Equal => invalidate_cache,
+                    cmp::Ordering::Equal => invalidate.should_invalidate(),
                     cmp::Ordering::Greater => false,
                 },
                 hash_map::Entry::Vacant(_) => true,
@@ -337,7 +334,7 @@ impl InlayHintCache {
 fn spawn_new_update_tasks(
     editor: &mut Editor,
     excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)>,
-    invalidation_strategy: InvalidationStrategy,
+    invalidate: InvalidationStrategy,
     update_cache_version: usize,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
@@ -357,10 +354,7 @@ fn spawn_new_update_tasks(
                     return;
                 }
                 if !new_task_buffer_version.changed_since(&cached_buffer_version)
-                    && !matches!(
-                        invalidation_strategy,
-                        InvalidationStrategy::RefreshRequested
-                    )
+                    && !matches!(invalidate, InvalidationStrategy::RefreshRequested)
                 {
                     return;
                 }
@@ -394,7 +388,7 @@ fn spawn_new_update_tasks(
                         excerpt_visible_range_end,
                     },
                     cache_version: update_cache_version,
-                    invalidate: invalidation_strategy,
+                    invalidate,
                 };
 
                 let new_update_task = |is_refresh_after_regular_task| {
@@ -411,7 +405,7 @@ fn spawn_new_update_tasks(
                 match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
                     hash_map::Entry::Occupied(mut o) => {
                         let update_task = o.get_mut();
-                        match (update_task.invalidation_strategy, invalidation_strategy) {
+                        match (update_task.invalidation_strategy, invalidate) {
                             (_, InvalidationStrategy::None) => {}
                             (InvalidationStrategy::RefreshRequested, _)
                             | (_, InvalidationStrategy::ExcerptEdited)
@@ -420,7 +414,7 @@ fn spawn_new_update_tasks(
                                 InvalidationStrategy::RefreshRequested,
                             ) => {
                                 o.insert(UpdateTask {
-                                    invalidation_strategy,
+                                    invalidation_strategy: invalidate,
                                     cache_version: query.cache_version,
                                     _task: new_update_task(false).shared(),
                                     pending_refresh: None,
@@ -439,7 +433,7 @@ fn spawn_new_update_tasks(
                     }
                     hash_map::Entry::Vacant(v) => {
                         v.insert(UpdateTask {
-                            invalidation_strategy,
+                            invalidation_strategy: invalidate,
                             cache_version: query.cache_version,
                             _task: new_update_task(false).shared(),
                             pending_refresh: None,
@@ -460,7 +454,7 @@ fn new_update_task(
     is_refresh_after_regular_task: bool,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
-    let hints_fetch_tasks = query.hints_fetch_ranges(&buffer_snapshot);
+    let hints_fetch_ranges = query.hints_fetch_ranges(&buffer_snapshot);
     cx.spawn(|editor, cx| async move {
         let create_update_task = |range| {
             fetch_and_update_hints(
@@ -477,7 +471,7 @@ fn new_update_task(
 
         if is_refresh_after_regular_task {
             let visible_range_has_updates =
-                match create_update_task(hints_fetch_tasks.visible_range).await {
+                match create_update_task(hints_fetch_ranges.visible_range).await {
                     Ok(updated) => updated,
                     Err(e) => {
                         error!("inlay hint visible range update task failed: {e:#}");
@@ -487,7 +481,7 @@ fn new_update_task(
 
             if visible_range_has_updates {
                 let other_update_results = futures::future::join_all(
-                    hints_fetch_tasks
+                    hints_fetch_ranges
                         .other_ranges
                         .into_iter()
                         .map(create_update_task),
@@ -497,14 +491,13 @@ fn new_update_task(
                 for result in other_update_results {
                     if let Err(e) = result {
                         error!("inlay hint update task failed: {e:#}");
-                        return;
                     }
                 }
             }
         } else {
             let task_update_results = futures::future::join_all(
-                std::iter::once(hints_fetch_tasks.visible_range)
-                    .chain(hints_fetch_tasks.other_ranges.into_iter())
+                std::iter::once(hints_fetch_ranges.visible_range)
+                    .chain(hints_fetch_ranges.other_ranges.into_iter())
                     .map(create_update_task),
             )
             .await;
@@ -576,17 +569,17 @@ async fn fetch_and_update_hints(
                     .entry(new_update.excerpt_id)
                     .or_insert_with(|| {
                         Arc::new(RwLock::new(CachedExcerptHints {
-                            version: new_update.cache_version,
+                            version: query.cache_version,
                             buffer_version: buffer_snapshot.version().clone(),
                             buffer_id: query.buffer_id,
                             hints: Vec::new(),
                         }))
                     });
                 let mut cached_excerpt_hints = cached_excerpt_hints.write();
-                match new_update.cache_version.cmp(&cached_excerpt_hints.version) {
+                match query.cache_version.cmp(&cached_excerpt_hints.version) {
                     cmp::Ordering::Less => return,
                     cmp::Ordering::Greater | cmp::Ordering::Equal => {
-                        cached_excerpt_hints.version = new_update.cache_version;
+                        cached_excerpt_hints.version = query.cache_version;
                     }
                 }
                 cached_excerpt_hints
@@ -624,7 +617,7 @@ async fn fetch_and_update_hints(
                     });
                 drop(cached_excerpt_hints);
 
-                if query.should_invalidate() {
+                if query.invalidate.should_invalidate() {
                     let mut outdated_excerpt_caches = HashSet::default();
                     for (excerpt_id, excerpt_hints) in editor.inlay_hint_cache().hints.iter() {
                         let excerpt_hints = excerpt_hints.read();
@@ -701,7 +694,7 @@ fn calculate_hint_updates(
 
     let mut remove_from_visible = Vec::new();
     let mut remove_from_cache = HashSet::default();
-    if query.should_invalidate() {
+    if query.invalidate.should_invalidate() {
         remove_from_visible.extend(
             visible_hints
                 .iter()
@@ -751,7 +744,6 @@ fn calculate_hint_updates(
         None
     } else {
         Some(ExcerptHintsUpdate {
-            cache_version: query.cache_version,
             excerpt_id: query.excerpt_id,
             remove_from_visible,
             remove_from_cache,
@@ -1506,8 +1498,8 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 13);
-            let expected_hints = vec!["13".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 12);
+            let expected_hints = vec!["12".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),

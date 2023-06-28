@@ -2641,22 +2641,11 @@ impl Editor {
             InlayRefreshReason::RefreshRequested => InvalidationStrategy::RefreshRequested,
         };
 
-        if !self.inlay_hint_cache.enabled {
-            return;
-        }
-
-        let excerpts_to_query = self
-            .excerpt_visible_offsets(cx)
-            .into_iter()
-            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
-            .map(|(buffer, excerpt_visible_range, excerpt_id)| {
-                (excerpt_id, (buffer, excerpt_visible_range))
-            })
-            .collect::<HashMap<_, _>>();
-        if !excerpts_to_query.is_empty() {
-            self.inlay_hint_cache
-                .refresh_inlay_hints(excerpts_to_query, invalidate_cache, cx)
-        }
+        self.inlay_hint_cache.refresh_inlay_hints(
+            self.excerpt_visible_offsets(cx),
+            invalidate_cache,
+            cx,
+        )
     }
 
     fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
@@ -2673,7 +2662,7 @@ impl Editor {
     fn excerpt_visible_offsets(
         &self,
         cx: &mut ViewContext<'_, '_, Editor>,
-    ) -> Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)> {
+    ) -> HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)> {
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -2687,7 +2676,14 @@ impl Editor {
             Bias::Left,
         );
         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
-        multi_buffer.range_to_buffer_ranges(multi_buffer_visible_range, cx)
+        multi_buffer
+            .range_to_buffer_ranges(multi_buffer_visible_range, cx)
+            .into_iter()
+            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer, excerpt_visible_range, excerpt_id)| {
+                (excerpt_id, (buffer, excerpt_visible_range))
+            })
+            .collect()
     }
 
     fn splice_inlay_hints(
