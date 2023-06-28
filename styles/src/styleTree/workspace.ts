@@ -1,6 +1,5 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
-import { toggleable } from "../element"
 import {
     background,
     border,
@@ -12,56 +11,11 @@ import {
 import statusBar from "./statusBar"
 import tabBar from "./tabBar"
 import { interactive } from "../element"
-import merge from "ts-deepmerge"
+
+import { titlebar } from "./titlebar"
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest
     const isLight = colorScheme.isLight
-    const itemSpacing = 8
-    const titlebarButton = toggleable({
-        base: interactive({
-            base: {
-                cornerRadius: 6,
-                padding: {
-                    top: 1,
-                    bottom: 1,
-                    left: 8,
-                    right: 8,
-                },
-                ...text(layer, "sans", "variant", { size: "xs" }),
-                background: background(layer, "variant"),
-                border: border(layer),
-            },
-            state: {
-                hovered: {
-                    ...text(layer, "sans", "variant", "hovered", {
-                        size: "xs",
-                    }),
-                    background: background(layer, "variant", "hovered"),
-                    border: border(layer, "variant", "hovered"),
-                },
-                clicked: {
-                    ...text(layer, "sans", "variant", "pressed", {
-                        size: "xs",
-                    }),
-                    background: background(layer, "variant", "pressed"),
-                    border: border(layer, "variant", "pressed"),
-                },
-            },
-        }),
-        state: {
-            active: {
-                default: {
-                    ...text(layer, "sans", "variant", "active", { size: "xs" }),
-                    background: background(layer, "variant", "active"),
-                    border: border(layer, "variant", "active"),
-                },
-            },
-        },
-    })
-    const avatarWidth = 18
-    const avatarOuterWidth = avatarWidth + 4
-    const followerAvatarWidth = 14
-    const followerAvatarOuterWidth = followerAvatarWidth + 4
 
     return {
         background: background(colorScheme.lowest),
@@ -171,167 +125,7 @@ export default function workspace(colorScheme: ColorScheme) {
             width: 1,
         },
         statusBar: statusBar(colorScheme),
-        titlebar: {
-            itemSpacing,
-            facePileSpacing: 2,
-            height: 33, // 32px + 1px border. It's important the content area of the titlebar is evenly sized to vertically center avatar images.
-            background: background(layer),
-            border: border(layer, { bottom: true }),
-            padding: {
-                left: 80,
-                right: itemSpacing,
-            },
-
-            // Project
-            title: text(layer, "sans", "variant"),
-            highlight_color: text(layer, "sans", "active").color,
-
-            // Collaborators
-            leaderAvatar: {
-                width: avatarWidth,
-                outerWidth: avatarOuterWidth,
-                cornerRadius: avatarWidth / 2,
-                outerCornerRadius: avatarOuterWidth / 2,
-            },
-            followerAvatar: {
-                width: followerAvatarWidth,
-                outerWidth: followerAvatarOuterWidth,
-                cornerRadius: followerAvatarWidth / 2,
-                outerCornerRadius: followerAvatarOuterWidth / 2,
-            },
-            inactiveAvatarGrayscale: true,
-            followerAvatarOverlap: 8,
-            leaderSelection: {
-                margin: {
-                    top: 4,
-                    bottom: 4,
-                },
-                padding: {
-                    left: 2,
-                    right: 2,
-                    top: 2,
-                    bottom: 2,
-                },
-                cornerRadius: 6,
-            },
-            avatarRibbon: {
-                height: 3,
-                width: 12,
-                // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
-            },
-
-            // Sign in buttom
-            // FlatButton, Variant
-            signInPrompt: merge(titlebarButton, {
-                inactive: {
-                    default: {
-                        margin: {
-                            left: itemSpacing,
-                        },
-                    },
-                },
-            }),
-
-            // Offline Indicator
-            offlineIcon: {
-                color: foreground(layer, "variant"),
-                width: 16,
-                margin: {
-                    left: itemSpacing,
-                },
-                padding: {
-                    right: 4,
-                },
-            },
-
-            // Notice that the collaboration server is out of date
-            outdatedWarning: {
-                ...text(layer, "sans", "warning", { size: "xs" }),
-                background: withOpacity(background(layer, "warning"), 0.3),
-                border: border(layer, "warning"),
-                margin: {
-                    left: itemSpacing,
-                },
-                padding: {
-                    left: 8,
-                    right: 8,
-                },
-                cornerRadius: 6,
-            },
-            callControl: interactive({
-                base: {
-                    cornerRadius: 6,
-                    color: foreground(layer, "variant"),
-                    iconWidth: 12,
-                    buttonWidth: 20,
-                },
-                state: {
-                    hovered: {
-                        background: background(layer, "variant", "hovered"),
-                        color: foreground(layer, "variant", "hovered"),
-                    },
-                },
-            }),
-            toggleContactsButton: toggleable({
-                base: interactive({
-                    base: {
-                        margin: { left: itemSpacing },
-                        cornerRadius: 6,
-                        color: foreground(layer, "variant"),
-                        iconWidth: 14,
-                        buttonWidth: 20,
-                    },
-                    state: {
-                        clicked: {
-                            background: background(layer, "variant", "pressed"),
-                        },
-                        hovered: {
-                            background: background(layer, "variant", "hovered"),
-                        },
-                    },
-                }),
-                state: {
-                    active: {
-                        default: {
-                            background: background(layer, "on", "default"),
-                        },
-                        hovered: {
-                            background: background(layer, "on", "hovered"),
-                        },
-                        clicked: {
-                            background: background(layer, "on", "pressed"),
-                        },
-                    },
-                },
-            }),
-            userMenuButton: merge(titlebarButton, {
-                inactive: {
-                    default: {
-                        buttonWidth: 20,
-                        iconWidth: 12,
-                    },
-                },
-                active: {
-                    // posiewic: these properties are not currently set on main
-                    default: {
-                        iconWidth: 12,
-                        button_width: 20,
-                    },
-                },
-            }),
-
-            toggleContactsBadge: {
-                cornerRadius: 3,
-                padding: 2,
-                margin: { top: 3, left: 3 },
-                border: border(layer),
-                background: foreground(layer, "accent"),
-            },
-            shareButton: {
-                ...titlebarButton,
-            },
-        },
-
+        titlebar: titlebar(colorScheme),
         toolbar: {
             height: 34,
             background: background(colorScheme.highest),

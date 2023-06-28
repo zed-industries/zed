@@ -66,6 +66,7 @@ pub struct Theme {
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
+    pub titlebar: Titlebar,
 }
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
@@ -80,7 +81,6 @@ pub struct ThemeMeta {
 pub struct Workspace {
     pub background: Color,
     pub blank_pane: BlankPaneStyle,
-    pub titlebar: Titlebar,
     pub tab_bar: TabBar,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
@@ -129,13 +129,31 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
+    pub sign_in_button: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
     pub share_button: Toggleable<Interactive<ContainedText>>,
-    pub call_control: Interactive<IconButton>,
+    pub muted: Color,
+    pub speaking: Color,
+    pub screen_share_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
-    pub user_menu_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
+    pub leave_call_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
+    pub user_menu: UserMenu,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenu {
+    pub user_menu_button_online: UserMenuButton,
+    pub user_menu_button_offline: UserMenuButton,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenuButton {
+    pub user_menu: Toggleable<Interactive<Icon>>,
+    pub avatar: AvatarStyle,
+    pub icon: Icon,
 }
 
 #[derive(Copy, Clone, Deserialize, Default, JsonSchema)]

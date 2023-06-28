@@ -889,6 +889,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
         ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &zed::OpenSettings),
+        ("Change your settings", &zed_actions::OpenSettings),
     ]
 }

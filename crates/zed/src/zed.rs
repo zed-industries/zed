@@ -20,7 +20,6 @@ use feedback::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions,
     anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
@@ -50,6 +49,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
     NewWindow, Workspace, WorkspaceSettings,
 };
+use zed_actions::*;
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -57,33 +57,6 @@ pub struct OpenBrowser {
 }
 
 impl_actions!(zed, [OpenBrowser]);
-
-actions!(
-    zed,
-    [
-        About,
-        Hide,
-        HideOthers,
-        ShowAll,
-        Minimize,
-        Zoom,
-        ToggleFullScreen,
-        Quit,
-        DebugElements,
-        OpenLog,
-        OpenLicenses,
-        OpenTelemetryLog,
-        OpenKeymap,
-        OpenSettings,
-        OpenLocalSettings,
-        OpenDefaultSettings,
-        OpenDefaultKeymap,
-        IncreaseBufferFontSize,
-        DecreaseBufferFontSize,
-        ResetBufferFontSize,
-        ResetDatabase,
-    ]
-);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(about);
@@ -735,8 +708,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        elements::Empty, executor::Deterministic, Action, AnyElement, AppContext, AssetSource,
-        Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
+        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;

@@ -8,14 +8,18 @@ class LKRoomDelegate: RoomDelegate {
     var onDidDisconnect: @convention(c) (UnsafeRawPointer) -> Void
     var onDidSubscribeToRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
+    var onMuteChangedFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void
+    var onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void
     var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
-    
+
     init(
         data: UnsafeRawPointer,
         onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
         onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
         onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+        onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
+        onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void,
         onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
         onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void)
     {
@@ -25,6 +29,8 @@ class LKRoomDelegate: RoomDelegate {
         self.onDidUnsubscribeFromRemoteAudioTrack = onDidUnsubscribeFromRemoteAudioTrack
         self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
         self.onDidUnsubscribeFromRemoteVideoTrack = onDidUnsubscribeFromRemoteVideoTrack
+        self.onMuteChangedFromRemoteAudioTrack = onMuteChangedFromRemoteAudioTrack
+        self.onActiveSpeakersChanged = onActiveSpeakersChanged
     }
 
     func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
@@ -39,6 +45,17 @@ class LKRoomDelegate: RoomDelegate {
         } else if track.kind == .audio {
             self.onDidSubscribeToRemoteAudioTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque())
         }
+    }
+
+    func room(_ room: Room, participant: Participant, didUpdate publication: TrackPublication, muted: Bool) {
+        if publication.kind == .audio {
+            self.onMuteChangedFromRemoteAudioTrack(self.data, publication.sid as CFString, muted)
+        }
+    }
+    
+    func room(_ room: Room, didUpdate speakers: [Participant]) {
+        guard let speaker_ids = speakers.compactMap({ $0.identity as CFString }) as CFArray? else { return }
+        self.onActiveSpeakersChanged(self.data, speaker_ids)
     }
     
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
@@ -89,6 +106,8 @@ public func LKRoomDelegateCreate(
     onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
     onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
     onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+    onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
+    onActiveSpeakerChanged: @escaping @convention(c) (UnsafeRawPointer, CFArray) -> Void,
     onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
     onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
 ) -> UnsafeMutableRawPointer {
@@ -97,6 +116,8 @@ public func LKRoomDelegateCreate(
         onDidDisconnect: onDidDisconnect,
         onDidSubscribeToRemoteAudioTrack: onDidSubscribeToRemoteAudioTrack,
         onDidUnsubscribeFromRemoteAudioTrack: onDidUnsubscribeFromRemoteAudioTrack,
+        onMuteChangedFromRemoteAudioTrack: onMuteChangedFromRemoteAudioTrack,
+        onActiveSpeakersChanged: onActiveSpeakerChanged,
         onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack,
         onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack
     )
@@ -169,6 +190,18 @@ public func LKRoomAudioTracksForRemoteParticipant(room: UnsafeRawPointer, partic
     return nil;
 }
 
+@_cdecl("LKRoomAudioTrackPublicationsForRemoteParticipant")
+public func LKRoomAudioTrackPublicationsForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
+    
+    for (_, participant) in room.remoteParticipants {
+        if participant.identity == participantId as String {
+            return participant.audioTracks.compactMap { $0 as? RemoteTrackPublication } as CFArray?
+        }
+    }
+    
+    return nil;
+}
 
 @_cdecl("LKRoomVideoTracksForRemoteParticipant")
 public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
@@ -201,19 +234,6 @@ public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer)
     return Unmanaged.passRetained(track).toOpaque()
 }
 
-@_cdecl("LKRemoteAudioTrackStart")
-public func LKRemoteAudioTrackStart(track: UnsafeRawPointer, onStart: @escaping @convention(c) (UnsafeRawPointer, Bool) -> Void, callbackData: UnsafeRawPointer) {
-    let track = Unmanaged<Track>.fromOpaque(track).takeUnretainedValue() as! RemoteAudioTrack
-
-    track.start().then { success in
-        onStart(callbackData, success)
-    }
-    .catch { _ in
-        onStart(callbackData, false)
-    }
-}
-
-
 @_cdecl("LKVideoRendererCreate")
 public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(LKVideoRenderer(data: data, onFrame: onFrame, onDrop: onDrop)).toOpaque()
@@ -245,5 +265,45 @@ public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @conven
         callback(data, displaySources as CFArray, nil)
     }.catch { error in
         callback(data, nil, error.localizedDescription as CFString)
+    }
+}
+
+@_cdecl("LKLocalTrackPublicationSetMute")
+public func LKLocalTrackPublicationSetMute(
+    publication: UnsafeRawPointer,
+    muted: Bool,
+    on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
+    callback_data: UnsafeRawPointer
+) {
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    
+    if muted {
+        publication.mute().then {
+            on_complete(callback_data, nil)
+        }.catch { error in
+            on_complete(callback_data, error.localizedDescription as CFString)
+        }
+    } else {
+        publication.unmute().then {
+            on_complete(callback_data, nil)
+        }.catch { error in
+            on_complete(callback_data, error.localizedDescription as CFString)
+        }
+    }
+}
+
+@_cdecl("LKRemoteTrackPublicationSetEnabled")
+public func LKRemoteTrackPublicationSetEnabled(
+    publication: UnsafeRawPointer,
+    enabled: Bool,
+    on_complete: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void,
+    callback_data: UnsafeRawPointer
+) {
+    let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+
+    publication.set(enabled: enabled).then {
+        on_complete(callback_data, nil)
+    }.catch { error in
+        on_complete(callback_data, error.localizedDescription as CFString)
     }
 }

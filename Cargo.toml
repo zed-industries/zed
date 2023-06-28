@@ -67,6 +67,7 @@ members = [
     "crates/welcome",
     "crates/xtask",
     "crates/zed",
+    "crates/zed-actions"
 ]
 default-members = ["crates/zed"]
 resolver = "2"

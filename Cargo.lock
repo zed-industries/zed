@@ -1419,8 +1419,10 @@ dependencies = [
  "serde_derive",
  "settings",
  "theme",
+ "theme_selector",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -9017,6 +9019,14 @@ dependencies = [
  "vim",
  "welcome",
  "workspace",
+ "zed-actions",
+]
+
+[[package]]
+name = "zed-actions"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]

@@ -2296,11 +2296,11 @@ impl Workspace {
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen();
         let container_theme = if is_fullscreen {
-            let mut container_theme = theme.workspace.titlebar.container;
+            let mut container_theme = theme.titlebar.container;
             container_theme.padding.left = container_theme.padding.right;
             container_theme
         } else {
-            theme.workspace.titlebar.container
+            theme.titlebar.container
         };
 
         enum TitleBar {}
@@ -2320,7 +2320,7 @@ impl Workspace {
             }
         })
         .constrained()
-        .with_height(theme.workspace.titlebar.height)
+        .with_height(theme.titlebar.height)
         .into_any_named("titlebar")
     }
 
@@ -2765,7 +2765,7 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let track = participant.tracks.values().next()?.clone();
+        let track = participant.video_tracks.values().next()?.clone();
         let user = participant.user.clone();
 
         for item in pane.read(cx).items_of_type::<SharedScreen>() {
