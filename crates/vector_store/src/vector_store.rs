@@ -1,7 +1,6 @@
 mod db;
 mod embedding;
 mod modal;
-mod search;
 
 #[cfg(test)]
 mod vector_store_tests;

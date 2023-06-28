@@ -236,27 +236,6 @@ impl VectorDatabase {
         Ok(result)
     }
 
-    pub fn get_files(&self) -> Result<HashMap<usize, FileRecord>> {
-        let mut query_statement = self
-            .db
-            .prepare("SELECT id, relative_path, sha1 FROM files")?;
-        let result_iter = query_statement.query_map([], |row| {
-            Ok(FileRecord {
-                id: row.get(0)?,
-                relative_path: row.get(1)?,
-                sha1: row.get(2)?,
-            })
-        })?;
-
-        let mut pages: HashMap<usize, FileRecord> = HashMap::new();
-        for result in result_iter {
-            let result = result?;
-            pages.insert(result.id, result);
-        }
-
-        Ok(pages)
-    }
-
     pub fn for_each_document(
         &self,
         worktree_ids: &[i64],
@@ -320,29 +299,6 @@ impl VectorDatabase {
         }
 
         Ok(results)
-    }
-
-    pub fn get_documents(&self) -> Result<HashMap<usize, DocumentRecord>> {
-        let mut query_statement = self
-            .db
-            .prepare("SELECT id, file_id, offset, name, embedding FROM documents")?;
-        let result_iter = query_statement.query_map([], |row| {
-            Ok(DocumentRecord {
-                id: row.get(0)?,
-                file_id: row.get(1)?,
-                offset: row.get(2)?,
-                name: row.get(3)?,
-                embedding: row.get(4)?,
-            })
-        })?;
-
-        let mut documents: HashMap<usize, DocumentRecord> = HashMap::new();
-        for result in result_iter {
-            let result = result?;
-            documents.insert(result.id, result);
-        }
-
-        return Ok(documents);
     }
 }
 
