@@ -200,10 +200,7 @@ export function titlebar(theme: ColorScheme) {
             // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
         },
 
-        // Sign in buttom
         sign_in_button: toggleable_text_button(theme, {}),
-
-        // Offline Indicator
         offlineIcon: {
             color: foreground(theme.lowest, "variant"),
             width: 16,
@@ -215,7 +212,7 @@ export function titlebar(theme: ColorScheme) {
             },
         },
 
-        // Notice that the collaboration server is out of date
+        // When the collaboration server is out of date, show a warning
         outdatedWarning: {
             ...text(theme.lowest, "sans", "warning", { size: "xs" }),
             background: withOpacity(background(theme.lowest, "warning"), 0.3),
@@ -242,7 +239,6 @@ export function titlebar(theme: ColorScheme) {
         toggle_contacts_button: toggleable_icon_button(theme, {
             margin: {
                 left: ITEM_SPACING,
-                right: ITEM_SPACING / 2
             },
         }),
 
