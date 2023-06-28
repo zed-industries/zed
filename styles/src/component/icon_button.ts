@@ -1,6 +1,6 @@
-import { ColorScheme } from "../common"
 import { interactive, toggleable } from "../element"
-import { background, foreground } from "../styleTree/components"
+import { background, foreground } from "../style_tree/components"
+import { ColorScheme } from "../theme/color_scheme"
 
 export type Margin = {
     top: number
@@ -11,9 +11,9 @@ export type Margin = {
 
 interface IconButtonOptions {
     layer?:
-        | ColorScheme["lowest"]
-        | ColorScheme["middle"]
-        | ColorScheme["highest"]
+    | ColorScheme["lowest"]
+    | ColorScheme["middle"]
+    | ColorScheme["highest"]
     color?: keyof ColorScheme["lowest"]
     margin?: Partial<Margin>
 }

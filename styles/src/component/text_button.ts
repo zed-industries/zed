@@ -1,18 +1,18 @@
-import { ColorScheme } from "../common"
 import { interactive, toggleable } from "../element"
 import {
     TextProperties,
     background,
     foreground,
     text,
-} from "../styleTree/components"
+} from "../style_tree/components"
+import { ColorScheme } from "../theme/color_scheme"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
     layer?:
-        | ColorScheme["lowest"]
-        | ColorScheme["middle"]
-        | ColorScheme["highest"]
+    | ColorScheme["lowest"]
+    | ColorScheme["middle"]
+    | ColorScheme["highest"]
     color?: keyof ColorScheme["lowest"]
     margin?: Partial<Margin>
     text_properties?: TextProperties

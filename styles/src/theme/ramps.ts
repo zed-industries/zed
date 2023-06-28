@@ -1,9 +1,9 @@
 import chroma, { Color, Scale } from "chroma-js"
-import { RampSet } from "./colorScheme"
+import { RampSet } from "./color_scheme"
 import {
     ThemeConfigInputColors,
     ThemeConfigInputColorsKeys,
-} from "./themeConfig"
+} from "./theme_config"
 
 export function colorRamp(color: Color): Scale {
     const endColor = color.desaturate(1).brighten(5)

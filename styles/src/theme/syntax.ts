@@ -1,6 +1,6 @@
 import deepmerge from "deepmerge"
 import { FontWeight, fontWeights } from "../common"
-import { ColorScheme } from "./colorScheme"
+import { ColorScheme } from "./color_scheme"
 import chroma from "chroma-js"
 
 export interface SyntaxHighlightStyle {

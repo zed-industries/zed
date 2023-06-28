@@ -4,10 +4,10 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts",
-        "build-types": "ts-node ./src/buildTypes.ts",
+        "build": "ts-node ./src/build_themes.ts",
+        "build-licenses": "ts-node ./src/build_licenses.ts",
+        "build-tokens": "ts-node ./src/build_tokens.ts",
+        "build-types": "ts-node ./src/build_types.ts",
         "test": "vitest"
     },
     "author": "",

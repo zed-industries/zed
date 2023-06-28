@@ -1,6 +1,6 @@
 import { SingleColorToken } from "@tokens-studio/types"
-import { ColorScheme, Players } from "../../common"
 import { colorToken } from "./token"
+import { ColorScheme, Players } from "../color_scheme"
 
 export type PlayerToken = Record<"selection" | "cursor", SingleColorToken>
 
