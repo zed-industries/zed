@@ -8,7 +8,7 @@ use crate::{
     platform::MouseButton,
     scene::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
-        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
+        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, MouseClickOut,
     },
     AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, SceneBuilder,
     SizeConstraint, View, ViewContext,
@@ -135,6 +135,16 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
         self.handlers = self.handlers.on_click(button, handler);
         self
     }
+
+    pub fn on_click_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_click_out(button, handler);
+        self
+    }
+
 
     pub fn on_down_out(
         mut self,

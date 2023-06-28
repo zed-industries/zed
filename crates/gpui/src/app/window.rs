@@ -716,7 +716,7 @@ impl<'a> WindowContext<'a> {
                     }
                 }
 
-                MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
+                MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) | MouseEvent::ClickOut(_) => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
                         if !mouse_region

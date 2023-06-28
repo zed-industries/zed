@@ -94,7 +94,7 @@ impl MouseRegion {
         V: View,
         F: Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
     {
-        self.handlers = self.handlers.on_click(button, handler);
+        self.handlers = self.handlers.on_click_out(button, handler);
         self
     }
 
@@ -253,6 +253,10 @@ impl HandlerSet {
             );
             set.insert(
                 HandlerKey::new(MouseEvent::click_disc(), Some(button)),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
+            );
+            set.insert(
+                HandlerKey::new(MouseEvent::click_out_disc(), Some(button)),
                 SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
