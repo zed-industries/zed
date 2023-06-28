@@ -14,7 +14,7 @@ use super::{
         MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover, MouseMove, MouseUp,
         MouseUpOut,
     },
-    MouseMoveOut, MouseScrollWheel,
+    MouseMoveOut, MouseScrollWheel, MouseClickOut,
 };
 
 #[derive(Clone)]
@@ -84,6 +84,15 @@ impl MouseRegion {
     where
         V: View,
         F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
+    {
+        self.handlers = self.handlers.on_click(button, handler);
+        self
+    }
+
+    pub fn on_click_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
+    where
+        V: View,
+        F: Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -399,6 +408,28 @@ impl HandlerSet {
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Click, found {:?}",
+                        region_event);
+                }
+            }));
+        self
+    }
+
+    pub fn on_click_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
+    where
+        V: View,
+        F: Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
+    {
+        self.insert(MouseEvent::click_out_disc(), Some(button),
+            Rc::new(move |region_event, view, cx, view_id| {
+                if let MouseEvent::ClickOut(e) = region_event {
+                    let view = view.downcast_mut().unwrap();
+                    let mut cx = ViewContext::mutable(cx, view_id);
+                    let mut cx = EventContext::new(&mut cx);
+                    handler(e, view, &mut cx);
+                    cx.handled
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::ClickOut, found {:?}",
                         region_event);
                 }
             }));

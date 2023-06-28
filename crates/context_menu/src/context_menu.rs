@@ -301,18 +301,23 @@ impl ContextMenu {
         cx: &mut ViewContext<Self>,
     ) {
         let mut items = items.into_iter().peekable();
-        if items.peek().is_some() {
-            self.items = items.collect();
-            self.anchor_position = anchor_position;
-            self.anchor_corner = anchor_corner;
-            self.visible = true;
-            self.show_count += 1;
-            if !cx.is_self_focused() {
-                self.previously_focused_view_id = cx.focused_view_id();
-            }
-            cx.focus_self();
-        } else {
+        dbg!(self.visible);
+        if (self.visible) {
             self.visible = false;
+        } else {
+            if items.peek().is_some() {
+                self.items = items.collect();
+                self.anchor_position = anchor_position;
+                self.anchor_corner = anchor_corner;
+                self.visible = true;
+                self.show_count += 1;
+                if !cx.is_self_focused() {
+                    self.previously_focused_view_id = cx.focused_view_id();
+                }
+                cx.focus_self();
+            } else {
+                self.visible = false;
+            }
         }
         cx.notify();
     }

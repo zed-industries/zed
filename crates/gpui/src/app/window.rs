@@ -9,7 +9,7 @@ use crate::{
     },
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
-        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
+        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene, MouseClickOut,
     },
     text_layout::TextLayoutCache,
     util::post_inc,
@@ -521,6 +521,10 @@ impl<'a> WindowContext<'a> {
                     platform_event: e.clone(),
                 }));
                 mouse_events.push(MouseEvent::Click(MouseClick {
+                    region: Default::default(),
+                    platform_event: e.clone(),
+                }));
+                mouse_events.push(MouseEvent::ClickOut(MouseClickOut {
                     region: Default::default(),
                     platform_event: e.clone(),
                 }));
