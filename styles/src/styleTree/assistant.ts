@@ -26,7 +26,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    padding: { left: 8.5, right: 8.5 },
+                    padding: { left: 12, right: 8.5 },
                 }
             },
             state: {
@@ -170,7 +170,6 @@ export default function assistant(colorScheme: ColorScheme) {
             }
         }),
         title: {
-            margin: { left: 12 },
             ...text(layer, "sans", "default", { size: "sm" })
         },
         savedConversation: {

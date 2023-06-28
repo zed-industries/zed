@@ -286,19 +286,27 @@ impl Pane {
                         pane.tab_bar_context_menu
                             .handle_if_kind(TabBarContextMenuKind::Split),
                     ))
-                    .with_child(Pane::render_tab_bar_button(
-                        2,
+                    .with_child({
+                        let icon_path;
+                        let tooltip_label;
                         if pane.is_zoomed() {
-                            "icons/minimize_8.svg"
+                            icon_path = "icons/minimize_8.svg";
+                            tooltip_label = "Zoom In".into();
                         } else {
-                            "icons/maximize_8.svg"
-                        },
-                        pane.is_zoomed(),
-                        Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
-                        cx,
-                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-                        None,
-                    ))
+                            icon_path = "icons/maximize_8.svg";
+                            tooltip_label = "Zoom In".into();
+                        }
+
+                        Pane::render_tab_bar_button(
+                            2,
+                            icon_path,
+                            pane.is_zoomed(),
+                            Some((tooltip_label, Some(Box::new(ToggleZoom)))),
+                            cx,
+                            move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                            None,
+                        )
+                    })
                     .into_any()
             }),
         }

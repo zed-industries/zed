@@ -200,8 +200,8 @@
   {
     "context": "AssistantPanel",
     "bindings": {
-        "cmd-g": "search::SelectNextMatch",
-        "cmd-shift-g": "search::SelectPrevMatch"
+      "cmd-g": "search::SelectNextMatch",
+      "cmd-shift-g": "search::SelectPrevMatch"
     }
   },
   {
