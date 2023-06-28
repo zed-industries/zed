@@ -130,6 +130,14 @@ impl LspAdapter for PluginLspAdapter {
             .await
     }
 
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
+    }
+
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         let string: String = self
             .runtime
