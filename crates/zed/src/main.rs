@@ -48,6 +48,7 @@ use util::{
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };
+use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
@@ -68,9 +69,8 @@ fn main() {
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
 
-    init_panic_hook(&app);
-
-    app.background();
+    let installation_id = app.background().block(installation_id()).ok();
+    init_panic_hook(&app, installation_id.clone());
 
     load_embedded_fonts(&app);
 
@@ -154,7 +154,6 @@ fn main() {
         search::init(cx);
         vim::init(cx);
         terminal_view::init(cx);
-        theme_testbench::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
         ai::init(cx);
 
@@ -169,7 +168,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start();
+        client.telemetry().start(installation_id);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -267,6 +266,22 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
+}
+
+async fn installation_id() -> Result<String> {
+    let legacy_key_name = "device_id";
+
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
+        Ok(installation_id)
+    } else {
+        let installation_id = Uuid::new_v4().to_string();
+
+        KEY_VALUE_STORE
+            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
+            .await?;
+
+        Ok(installation_id)
+    }
 }
 
 fn open_urls(
@@ -372,6 +387,8 @@ struct Panic {
     os_version: Option<String>,
     architecture: String,
     panicked_on: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    installation_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -380,7 +397,7 @@ struct PanicRequest {
     token: String,
 }
 
-fn init_panic_hook(app: &App) {
+fn init_panic_hook(app: &App, installation_id: Option<String>) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
@@ -433,6 +450,7 @@ fn init_panic_hook(app: &App) {
                 .unwrap()
                 .as_millis(),
             backtrace,
+            installation_id: installation_id.clone(),
         };
 
         if is_pty {
@@ -871,6 +889,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
         ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &zed::OpenSettings),
+        ("Change your settings", &zed_actions::OpenSettings),
     ]
 }

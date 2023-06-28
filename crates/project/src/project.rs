@@ -64,7 +64,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::Range,
-    path::{Component, Path, PathBuf},
+    path::{self, Component, Path, PathBuf},
     process::Stdio,
     rc::Rc,
     str,
@@ -481,6 +481,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
+        client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
@@ -1071,6 +1072,40 @@ impl Project {
                         )
                     })
                     .await
+            }))
+        }
+    }
+
+    pub fn expand_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        if self.is_local() {
+            worktree.update(cx, |worktree, cx| {
+                worktree.as_local_mut().unwrap().expand_entry(entry_id, cx)
+            })
+        } else {
+            let worktree = worktree.downgrade();
+            let request = self.client.request(proto::ExpandProjectEntry {
+                project_id: self.remote_id().unwrap(),
+                entry_id: entry_id.to_proto(),
+            });
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let response = request.await?;
+                if let Some(worktree) = worktree.upgrade(&cx) {
+                    worktree
+                        .update(&mut cx, |worktree, _| {
+                            worktree
+                                .as_remote_mut()
+                                .unwrap()
+                                .wait_for_snapshot(response.worktree_scan_id as usize)
+                        })
+                        .await?;
+                }
+                Ok(())
             }))
         }
     }
@@ -3305,23 +3340,44 @@ impl Project {
             for watcher in params.watchers {
                 for worktree in &self.worktrees {
                     if let Some(worktree) = worktree.upgrade(cx) {
-                        let worktree = worktree.read(cx);
-                        if let Some(abs_path) = worktree.abs_path().to_str() {
-                            if let Some(suffix) = match &watcher.glob_pattern {
-                                lsp::GlobPattern::String(s) => s,
-                                lsp::GlobPattern::Relative(rp) => &rp.pattern,
-                            }
-                            .strip_prefix(abs_path)
-                            .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
-                            {
-                                if let Some(glob) = Glob::new(suffix).log_err() {
-                                    builders
-                                        .entry(worktree.id())
-                                        .or_insert_with(|| GlobSetBuilder::new())
-                                        .add(glob);
+                        let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
+                            if let Some(abs_path) = tree.abs_path().to_str() {
+                                let relative_glob_pattern = match &watcher.glob_pattern {
+                                    lsp::GlobPattern::String(s) => s
+                                        .strip_prefix(abs_path)
+                                        .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR)),
+                                    lsp::GlobPattern::Relative(rp) => {
+                                        let base_uri = match &rp.base_uri {
+                                            lsp::OneOf::Left(workspace_folder) => {
+                                                &workspace_folder.uri
+                                            }
+                                            lsp::OneOf::Right(base_uri) => base_uri,
+                                        };
+                                        base_uri.to_file_path().ok().and_then(|file_path| {
+                                            (file_path.to_str() == Some(abs_path))
+                                                .then_some(rp.pattern.as_str())
+                                        })
+                                    }
+                                };
+                                if let Some(relative_glob_pattern) = relative_glob_pattern {
+                                    let literal_prefix =
+                                        glob_literal_prefix(&relative_glob_pattern);
+                                    tree.as_local_mut()
+                                        .unwrap()
+                                        .add_path_prefix_to_scan(Path::new(literal_prefix).into());
+                                    if let Some(glob) = Glob::new(relative_glob_pattern).log_err() {
+                                        builders
+                                            .entry(tree.id())
+                                            .or_insert_with(|| GlobSetBuilder::new())
+                                            .add(glob);
+                                    }
+                                    return true;
                                 }
-                                break;
                             }
+                            false
+                        });
+                        if glob_is_inside_worktree {
+                            break;
                         }
                     }
                 }
@@ -5947,6 +6003,29 @@ impl Project {
         })
     }
 
+    async fn handle_expand_project_entry(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ExpandProjectEntry>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ExpandProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this
+            .read_with(&cx, |this, cx| this.worktree_for_entry(entry_id, cx))
+            .ok_or_else(|| anyhow!("invalid request"))?;
+        worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .expand_entry(entry_id, cx)
+                    .ok_or_else(|| anyhow!("invalid entry"))
+            })?
+            .await?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id()) as u64;
+        Ok(proto::ExpandProjectEntryResponse { worktree_scan_id })
+    }
+
     async fn handle_update_diagnostic_summary(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
@@ -7287,6 +7366,22 @@ impl Project {
             Vec::new()
         }
     }
+}
+
+fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
+    let mut literal_end = 0;
+    for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
+        if part.contains(&['*', '?', '{', '}']) {
+            break;
+        } else {
+            if i > 0 {
+                // Acount for separator prior to this part
+                literal_end += path::MAIN_SEPARATOR.len_utf8();
+            }
+            literal_end += part.len();
+        }
+    }
+    &glob[..literal_end]
 }
 
 impl WorktreeHandle {

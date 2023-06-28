@@ -18,6 +18,7 @@ pub struct Model {
     pub git_status: Option<i64>,
     pub is_symlink: bool,
     pub is_ignored: bool,
+    pub is_external: bool,
     pub is_deleted: bool,
     pub scan_id: i64,
 }

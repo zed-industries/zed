@@ -22,9 +22,10 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 
 anyhow.workspace = true
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 futures.workspace = true
 isahc.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -33,3 +34,4 @@ tiktoken-rs = "0.4"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }

@@ -27,22 +27,22 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::scroll_cursor_center);
     cx.add_action(Editor::scroll_cursor_bottom);
     cx.add_action(|this: &mut Editor, _: &LineDown, cx| {
-        this.scroll_screen(&ScrollAmount::LineDown, cx)
+        this.scroll_screen(&ScrollAmount::Line(1.), cx)
     });
     cx.add_action(|this: &mut Editor, _: &LineUp, cx| {
-        this.scroll_screen(&ScrollAmount::LineUp, cx)
+        this.scroll_screen(&ScrollAmount::Line(-1.), cx)
     });
     cx.add_action(|this: &mut Editor, _: &HalfPageDown, cx| {
-        this.scroll_screen(&ScrollAmount::HalfPageDown, cx)
+        this.scroll_screen(&ScrollAmount::Page(0.5), cx)
     });
     cx.add_action(|this: &mut Editor, _: &HalfPageUp, cx| {
-        this.scroll_screen(&ScrollAmount::HalfPageUp, cx)
+        this.scroll_screen(&ScrollAmount::Page(-0.5), cx)
     });
     cx.add_action(|this: &mut Editor, _: &PageDown, cx| {
-        this.scroll_screen(&ScrollAmount::PageDown, cx)
+        this.scroll_screen(&ScrollAmount::Page(1.), cx)
     });
     cx.add_action(|this: &mut Editor, _: &PageUp, cx| {
-        this.scroll_screen(&ScrollAmount::PageUp, cx)
+        this.scroll_screen(&ScrollAmount::Page(-1.), cx)
     });
 }
 

@@ -85,7 +85,15 @@ export function foreground(
     return getStyle(layer, styleSetOrStyles, style).foreground
 }
 
-interface Text {
+interface Text extends Object {
+    family: keyof typeof fontFamilies
+    color: string
+    size: number
+    weight?: FontWeight
+    underline?: boolean
+}
+
+export interface TextStyle extends Object {
     family: keyof typeof fontFamilies
     color: string
     size: number

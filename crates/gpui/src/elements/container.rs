@@ -12,10 +12,11 @@ use crate::{
     scene::{self, Border, CursorRegion, Quad},
     AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct ContainerStyle {
     #[serde(default)]
     pub margin: Margin,
@@ -332,7 +333,7 @@ impl ToJson for ContainerStyle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, JsonSchema)]
 pub struct Margin {
     pub top: f32,
     pub left: f32,
@@ -359,7 +360,7 @@ impl ToJson for Margin {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, JsonSchema)]
 pub struct Padding {
     pub top: f32,
     pub left: f32,
@@ -486,9 +487,10 @@ impl ToJson for Padding {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct Shadow {
     #[serde(default, deserialize_with = "deserialize_vec2f")]
+    #[schemars(with = "Vec::<f32>")]
     offset: Vector2F,
     #[serde(default)]
     blur: f32,

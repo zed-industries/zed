@@ -98,3 +98,44 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
         assert_eq!(bar.query_editor.read(cx).text(cx), "jumps");
     })
 }
+
+#[gpui::test]
+async fn test_count_down(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(indoc! {"aˇa\nbb\ncc\ndd\nee"}, Mode::Normal);
+    cx.simulate_keystrokes(["2", "down"]);
+    cx.assert_editor_state("aa\nbb\ncˇc\ndd\nee");
+    cx.simulate_keystrokes(["9", "down"]);
+    cx.assert_editor_state("aa\nbb\ncc\ndd\neˇe");
+}
+
+#[gpui::test]
+async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // goes to end by default
+    cx.set_state(indoc! {"aˇa\nbb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes(["shift-g"]);
+    cx.assert_editor_state("aa\nbb\ncˇc");
+
+    // can go to line 1 (https://github.com/zed-industries/community/issues/710)
+    cx.simulate_keystrokes(["1", "shift-g"]);
+    cx.assert_editor_state("aˇa\nbb\ncc");
+}
+
+#[gpui::test]
+async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // works in normal mode
+    cx.set_state(indoc! {"aa\nbˇb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes([">", ">"]);
+    cx.assert_editor_state("aa\n    bˇb\ncc");
+    cx.simulate_keystrokes(["<", "<"]);
+    cx.assert_editor_state("aa\nbˇb\ncc");
+
+    // works in visuial mode
+    cx.simulate_keystrokes(["shift-v", "down", ">", ">"]);
+    cx.assert_editor_state("aa\n    b«b\n    cˇ»c");
+}

@@ -61,12 +61,13 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_selector",
-    "crates/theme_testbench",
     "crates/util",
     "crates/vim",
     "crates/workspace",
     "crates/welcome",
+    "crates/xtask",
     "crates/zed",
+    "crates/zed-actions"
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -118,3 +119,4 @@ split-debuginfo = "unpacked"
 [profile.release]
 debug = true
 lto = "thin"
+codegen-units = 1

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+echo "running xtask"
+(cd crates/theme && cargo xtask build-theme-types)
+
+echo "updating theme packages"
+(cd styles && npm install)
+
+echo "building theme types"
+(cd styles && npm run build-types)

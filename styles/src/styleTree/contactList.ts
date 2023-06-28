@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
-
+import { interactive, toggleable } from "../element"
 export default function contactsPanel(colorScheme: ColorScheme) {
     const nameMargin = 8
     const sidePadding = 12
@@ -71,47 +71,85 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         },
         rowHeight: 28,
         sectionIconSize: 8,
-        headerRow: {
-            ...text(layer, "mono", { size: "sm" }),
-            margin: { top: 14 },
-            padding: {
-                left: sidePadding,
-                right: sidePadding,
+        headerRow: toggleable({
+            base: interactive({
+                base: {
+                    ...text(layer, "mono", { size: "sm" }),
+                    margin: { top: 14 },
+                    padding: {
+                        left: sidePadding,
+                        right: sidePadding,
+                    },
+                    background: background(layer, "default"), // posiewic: breaking change
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                }, // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(layer, "mono", "active", { size: "sm" }),
+                        background: background(layer, "active"),
+                    },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
             },
-            active: {
-                ...text(layer, "mono", "active", { size: "sm" }),
-                background: background(layer, "active"),
+        }),
+        leaveCall: interactive({
+            base: {
+                background: background(layer),
+                border: border(layer),
+                cornerRadius: 6,
+                margin: {
+                    top: 1,
+                },
+                padding: {
+                    top: 1,
+                    bottom: 1,
+                    left: 7,
+                    right: 7,
+                },
+                ...text(layer, "sans", "variant", { size: "xs" }),
             },
-        },
-        leaveCall: {
-            background: background(layer),
-            border: border(layer),
-            cornerRadius: 6,
-            margin: {
-                top: 1,
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "hovered", { size: "xs" }),
+                    background: background(layer, "hovered"),
+                    border: border(layer, "hovered"),
+                },
             },
-            padding: {
-                top: 1,
-                bottom: 1,
-                left: 7,
-                right: 7,
-            },
-            ...text(layer, "sans", "variant", { size: "xs" }),
-            hover: {
-                ...text(layer, "sans", "hovered", { size: "xs" }),
-                background: background(layer, "hovered"),
-                border: border(layer, "hovered"),
-            },
-        },
+        }),
         contactRow: {
-            padding: {
-                left: sidePadding,
-                right: sidePadding,
+            inactive: {
+                default: {
+                    padding: {
+                        left: sidePadding,
+                        right: sidePadding,
+                    },
+                },
             },
             active: {
-                background: background(layer, "active"),
+                default: {
+                    background: background(layer, "active"),
+                    padding: {
+                        left: sidePadding,
+                        right: sidePadding,
+                    },
+                },
             },
         },
+
         contactAvatar: {
             cornerRadius: 10,
             width: 18,
@@ -135,12 +173,14 @@ export default function contactsPanel(colorScheme: ColorScheme) {
             },
         },
         contactButtonSpacing: nameMargin,
-        contactButton: {
-            ...contactButton,
-            hover: {
-                background: background(layer, "hovered"),
+        contactButton: interactive({
+            base: { ...contactButton },
+            state: {
+                hovered: {
+                    background: background(layer, "hovered"),
+                },
             },
-        },
+        }),
         disabledButton: {
             ...contactButton,
             background: background(layer, "on"),
@@ -149,34 +189,52 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         callingIndicator: {
             ...text(layer, "mono", "variant", { size: "xs" }),
         },
-        treeBranch: {
-            color: borderColor(layer),
-            width: 1,
-            hover: {
-                color: borderColor(layer),
+        treeBranch: toggleable({
+            base: interactive({
+                base: {
+                    color: borderColor(layer),
+                    width: 1,
+                },
+                state: {
+                    hovered: {
+                        color: borderColor(layer),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        color: borderColor(layer),
+                    },
+                },
             },
-            active: {
-                color: borderColor(layer),
+        }),
+        projectRow: toggleable({
+            base: interactive({
+                base: {
+                    ...projectRow,
+                    background: background(layer),
+                    icon: {
+                        margin: { left: nameMargin },
+                        color: foreground(layer, "variant"),
+                        width: 12,
+                    },
+                    name: {
+                        ...projectRow.name,
+                        ...text(layer, "mono", { size: "sm" }),
+                    },
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: { background: background(layer, "active") },
+                },
             },
-        },
-        projectRow: {
-            ...projectRow,
-            background: background(layer),
-            icon: {
-                margin: { left: nameMargin },
-                color: foreground(layer, "variant"),
-                width: 12,
-            },
-            name: {
-                ...projectRow.name,
-                ...text(layer, "mono", { size: "sm" }),
-            },
-            hover: {
-                background: background(layer, "hovered"),
-            },
-            active: {
-                background: background(layer, "active"),
-            },
-        },
+        }),
     }
 }

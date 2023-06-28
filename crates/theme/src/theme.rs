@@ -4,15 +4,16 @@ pub mod ui;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     platform, AppContext, AssetSource, Border, MouseState,
 };
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
+use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
 pub use theme_settings::*;
@@ -36,7 +37,7 @@ pub fn init(source: impl AssetSource, cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct Theme {
     #[serde(default)]
     pub meta: ThemeMeta,
@@ -65,9 +66,10 @@ pub struct Theme {
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
+    pub titlebar: Titlebar,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct ThemeMeta {
     #[serde(skip_deserializing)]
     pub id: usize,
@@ -75,11 +77,10 @@ pub struct ThemeMeta {
     pub is_light: bool,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct Workspace {
     pub background: Color,
     pub blank_pane: BlankPaneStyle,
-    pub titlebar: Titlebar,
     pub tab_bar: TabBar,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
@@ -102,7 +103,7 @@ pub struct Workspace {
     pub drop_target_overlay_color: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct BlankPaneStyle {
     pub logo: SvgStyle,
     pub logo_shadow: SvgStyle,
@@ -112,7 +113,7 @@ pub struct BlankPaneStyle {
     pub keyboard_hint_width: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -128,16 +129,34 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Interactive<ContainedText>,
+    pub sign_in_button: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
-    pub share_button: Interactive<ContainedText>,
-    pub call_control: Interactive<IconButton>,
-    pub toggle_contacts_button: Interactive<IconButton>,
-    pub user_menu_button: Interactive<IconButton>,
+    pub share_button: Toggleable<Interactive<ContainedText>>,
+    pub muted: Color,
+    pub speaking: Color,
+    pub screen_share_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
+    pub leave_call_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
+    pub user_menu: UserMenu,
 }
 
-#[derive(Copy, Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenu {
+    pub user_menu_button_online: UserMenuButton,
+    pub user_menu_button_offline: UserMenuButton,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenuButton {
+    pub user_menu: Toggleable<Interactive<Icon>>,
+    pub avatar: AvatarStyle,
+    pub icon: Icon,
+}
+
+#[derive(Copy, Clone, Deserialize, Default, JsonSchema)]
 pub struct AvatarStyle {
     #[serde(flatten)]
     pub image: ImageStyle,
@@ -145,14 +164,14 @@ pub struct AvatarStyle {
     pub outer_corner_radius: f32,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct Copilot {
     pub out_link_icon: Interactive<IconStyle>,
     pub modal: ModalStyle,
     pub auth: CopilotAuth,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct CopilotAuth {
     pub content_width: f32,
     pub prompting: CopilotAuthPrompting,
@@ -162,14 +181,14 @@ pub struct CopilotAuth {
     pub header: IconStyle,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct CopilotAuthPrompting {
     pub subheading: ContainedText,
     pub hint: ContainedText,
     pub device_code: DeviceCode,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct DeviceCode {
     pub text: TextStyle,
     pub cta: ButtonStyle,
@@ -179,19 +198,19 @@ pub struct DeviceCode {
     pub right_container: Interactive<ContainerStyle>,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct CopilotAuthNotAuthorized {
     pub subheading: ContainedText,
     pub warning: ContainedText,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct CopilotAuthAuthorized {
     pub subheading: ContainedText,
     pub hint: ContainedText,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactsPopover {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -199,17 +218,17 @@ pub struct ContactsPopover {
     pub width: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactList {
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,
-    pub header_row: Interactive<ContainedText>,
+    pub header_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
-    pub contact_row: Interactive<ContainerStyle>,
+    pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub row_height: f32,
-    pub project_row: Interactive<ProjectRow>,
-    pub tree_branch: Interactive<TreeBranch>,
+    pub project_row: Toggleable<Interactive<ProjectRow>>,
+    pub tree_branch: Toggleable<Interactive<TreeBranch>>,
     pub contact_avatar: ImageStyle,
     pub contact_status_free: ContainerStyle,
     pub contact_status_busy: ContainerStyle,
@@ -221,7 +240,7 @@ pub struct ContactList {
     pub calling_indicator: ContainedText,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -229,13 +248,13 @@ pub struct ProjectRow {
     pub name: ContainedText,
 }
 
-#[derive(Deserialize, Default, Clone, Copy)]
+#[derive(Deserialize, Default, Clone, Copy, JsonSchema)]
 pub struct TreeBranch {
     pub width: f32,
     pub color: Color,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactFinder {
     pub picker: Picker,
     pub row_height: f32,
@@ -245,17 +264,17 @@ pub struct ContactFinder {
     pub disabled_contact_button: IconButton,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct DropdownMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub header: Interactive<DropdownMenuItem>,
     pub section_header: ContainedText,
-    pub item: Interactive<DropdownMenuItem>,
+    pub item: Toggleable<Interactive<DropdownMenuItem>>,
     pub row_height: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct DropdownMenuItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -266,11 +285,11 @@ pub struct DropdownMenuItem {
     pub secondary_text_spacing: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct TabBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub pane_button: Interactive<IconButton>,
+    pub pane_button: Toggleable<Interactive<IconButton>>,
     pub pane_button_container: ContainerStyle,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
@@ -294,13 +313,13 @@ impl TabBar {
     }
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct TabStyles {
     pub active_tab: Tab,
     pub inactive_tab: Tab,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct AvatarRibbon {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -308,7 +327,7 @@ pub struct AvatarRibbon {
     pub height: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct OfflineIcon {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -316,7 +335,7 @@ pub struct OfflineIcon {
     pub color: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Tab {
     pub height: f32,
     #[serde(flatten)]
@@ -333,7 +352,7 @@ pub struct Tab {
     pub icon_conflict: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Toolbar {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -342,14 +361,14 @@ pub struct Toolbar {
     pub nav_button: Interactive<IconButton>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Notifications {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -359,14 +378,14 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Interactive<ContainedText>,
+    pub option_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
     pub dismiss_button: Interactive<IconButton>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct FindEditor {
     #[serde(flatten)]
     pub input: FieldEditor,
@@ -374,7 +393,7 @@ pub struct FindEditor {
     pub max_width: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct StatusBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -390,15 +409,15 @@ pub struct StatusBar {
     pub diagnostic_message: Interactive<ContainedText>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct StatusBarPanelButtons {
     pub group_left: ContainerStyle,
     pub group_bottom: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub button: Interactive<PanelButton>,
+    pub button: Toggleable<Interactive<PanelButton>>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct StatusBarDiagnosticSummary {
     pub container_ok: ContainerStyle,
     pub container_warning: ContainerStyle,
@@ -413,7 +432,7 @@ pub struct StatusBarDiagnosticSummary {
     pub summary_spacing: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct StatusBarLspStatus {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -424,14 +443,14 @@ pub struct StatusBarLspStatus {
     pub message: TextStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct Dock {
     pub left: ContainerStyle,
     pub bottom: ContainerStyle,
     pub right: ContainerStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct PanelButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -440,20 +459,20 @@ pub struct PanelButton {
     pub label: ContainedText,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub entry: Interactive<ProjectPanelEntry>,
+    pub entry: Toggleable<Interactive<ProjectPanelEntry>>,
     pub dragged_entry: ProjectPanelEntry,
-    pub ignored_entry: Interactive<ProjectPanelEntry>,
-    pub cut_entry: Interactive<ProjectPanelEntry>,
+    pub ignored_entry: Toggleable<Interactive<ProjectPanelEntry>>,
+    pub cut_entry: Toggleable<Interactive<ProjectPanelEntry>>,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
     pub open_project_button: Interactive<ContainedText>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct ProjectPanelEntry {
     pub height: f32,
     #[serde(flatten)]
@@ -465,28 +484,28 @@ pub struct ProjectPanelEntry {
     pub status: EntryStatus,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct EntryStatus {
     pub git: GitProjectStatus,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct GitProjectStatus {
     pub modified: Color,
     pub inserted: Color,
     pub conflict: Color,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct ContextMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub item: Interactive<ContextMenuItem>,
+    pub item: Toggleable<Interactive<ContextMenuItem>>,
     pub keystroke_margin: f32,
     pub separator: ContainerStyle,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct ContextMenuItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -496,13 +515,13 @@ pub struct ContextMenuItem {
     pub icon_spacing: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, JsonSchema)]
 pub struct CommandPalette {
-    pub key: Interactive<ContainedLabel>,
+    pub key: Toggleable<ContainedLabel>,
     pub keystroke_spacing: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct InviteLink {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -511,7 +530,7 @@ pub struct InviteLink {
     pub icon: Icon,
 }
 
-#[derive(Deserialize, Clone, Copy, Default)]
+#[derive(Deserialize, Clone, Copy, Default, JsonSchema)]
 pub struct Icon {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -519,7 +538,7 @@ pub struct Icon {
     pub width: f32,
 }
 
-#[derive(Deserialize, Clone, Copy, Default)]
+#[derive(Deserialize, Clone, Copy, Default, JsonSchema)]
 pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -528,7 +547,7 @@ pub struct IconButton {
     pub button_width: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ChatMessage {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -537,7 +556,7 @@ pub struct ChatMessage {
     pub timestamp: ContainedText,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ChannelSelect {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -549,7 +568,7 @@ pub struct ChannelSelect {
     pub menu: ContainerStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ChannelName {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -557,7 +576,7 @@ pub struct ChannelName {
     pub name: TextStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Picker {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -565,10 +584,10 @@ pub struct Picker {
     pub input_editor: FieldEditor,
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
-    pub item: Interactive<ContainedLabel>,
+    pub item: Toggleable<Interactive<ContainedLabel>>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct ContainedText {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -576,7 +595,7 @@ pub struct ContainedText {
     pub text: TextStyle,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -584,7 +603,7 @@ pub struct ContainedLabel {
     pub label: LabelStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct ProjectDiagnostics {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -594,7 +613,7 @@ pub struct ProjectDiagnostics {
     pub tab_summary_spacing: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactNotification {
     pub header_avatar: ImageStyle,
     pub header_message: ContainedText,
@@ -604,21 +623,21 @@ pub struct ContactNotification {
     pub dismiss_button: Interactive<IconButton>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct UpdateNotification {
     pub message: ContainedText,
     pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct MessageNotification {
     pub message: ContainedText,
     pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ProjectSharedNotification {
     pub window_height: f32,
     pub window_width: f32,
@@ -635,7 +654,7 @@ pub struct ProjectSharedNotification {
     pub dismiss_button: ContainedText,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct IncomingCallNotification {
     pub window_height: f32,
     pub window_width: f32,
@@ -652,7 +671,7 @@ pub struct IncomingCallNotification {
     pub decline_button: ContainedText,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Editor {
     pub text_color: Color,
     #[serde(default)]
@@ -693,7 +712,7 @@ pub struct Editor {
     pub whitespace: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Scrollbar {
     pub track: ContainerStyle,
     pub thumb: ContainerStyle,
@@ -702,14 +721,14 @@ pub struct Scrollbar {
     pub git: GitDiffColors,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct GitDiffColors {
     pub inserted: Color,
     pub modified: Color,
     pub deleted: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct DiagnosticPathHeader {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -718,7 +737,7 @@ pub struct DiagnosticPathHeader {
     pub text_scale_factor: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct DiagnosticHeader {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -729,7 +748,7 @@ pub struct DiagnosticHeader {
     pub icon_width_factor: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct DiagnosticStyle {
     pub message: LabelStyle,
     #[serde(default)]
@@ -737,7 +756,7 @@ pub struct DiagnosticStyle {
     pub text_scale_factor: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct AutocompleteStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -747,13 +766,13 @@ pub struct AutocompleteStyle {
     pub match_highlight: HighlightStyle,
 }
 
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
 pub struct SelectionStyle {
     pub cursor: Color,
     pub selection: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct FieldEditor {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -763,21 +782,21 @@ pub struct FieldEditor {
     pub selection: SelectionStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct InteractiveColor {
     pub color: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct CodeActions {
     #[serde(default)]
-    pub indicator: Interactive<InteractiveColor>,
+    pub indicator: Toggleable<Interactive<InteractiveColor>>,
     pub vertical_scale: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Folds {
-    pub indicator: Interactive<InteractiveColor>,
+    pub indicator: Toggleable<Interactive<InteractiveColor>>,
     pub ellipses: FoldEllipses,
     pub fold_background: Color,
     pub icon_margin_scale: f32,
@@ -785,14 +804,14 @@ pub struct Folds {
     pub foldable_icon: String,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldEllipses {
     pub text_color: Color,
     pub background: Interactive<InteractiveColor>,
     pub corner_radius_factor: f32,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct DiffStyle {
     pub inserted: Color,
     pub modified: Color,
@@ -802,41 +821,49 @@ pub struct DiffStyle {
     pub corner_radius: f32,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, JsonSchema)]
 pub struct Interactive<T> {
     pub default: T,
-    pub hover: Option<T>,
-    pub hover_and_active: Option<T>,
+    pub hovered: Option<T>,
     pub clicked: Option<T>,
-    pub click_and_active: Option<T>,
-    pub active: Option<T>,
     pub disabled: Option<T>,
 }
 
-impl<T> Interactive<T> {
-    pub fn style_for(&self, state: &mut MouseState, active: bool) -> &T {
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+pub struct Toggleable<T> {
+    active: T,
+    inactive: T,
+}
+
+impl<T> Toggleable<T> {
+    pub fn new(active: T, inactive: T) -> Self {
+        Self { active, inactive }
+    }
+    pub fn in_state(&self, active: bool) -> &T {
         if active {
-            if state.hovered() {
-                self.hover_and_active
-                    .as_ref()
-                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
-            } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some()
-            {
-                self.click_and_active
-                    .as_ref()
-                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
-            } else {
-                self.active.as_ref().unwrap_or(&self.default)
-            }
-        } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
+            &self.active
+        } else {
+            &self.inactive
+        }
+    }
+    pub fn active_state(&self) -> &T {
+        self.in_state(true)
+    }
+    pub fn inactive_state(&self) -> &T {
+        self.in_state(false)
+    }
+}
+
+impl<T> Interactive<T> {
+    pub fn style_for(&self, state: &mut MouseState) -> &T {
+        if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
-            self.hover.as_ref().unwrap_or(&self.default)
+            self.hovered.as_ref().unwrap_or(&self.default)
         } else {
             &self.default
         }
     }
-
     pub fn disabled_style(&self) -> &T {
         self.disabled.as_ref().unwrap_or(&self.default)
     }
@@ -849,13 +876,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
     {
         #[derive(Deserialize)]
         struct Helper {
-            #[serde(flatten)]
             default: Value,
-            hover: Option<Value>,
-            hover_and_active: Option<Value>,
+            hovered: Option<Value>,
             clicked: Option<Value>,
-            click_and_active: Option<Value>,
-            active: Option<Value>,
             disabled: Option<Value>,
         }
 
@@ -880,21 +903,15 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             }
         };
 
-        let hover = deserialize_state(json.hover)?;
-        let hover_and_active = deserialize_state(json.hover_and_active)?;
+        let hovered = deserialize_state(json.hovered)?;
         let clicked = deserialize_state(json.clicked)?;
-        let click_and_active = deserialize_state(json.click_and_active)?;
-        let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
 
         Ok(Interactive {
             default,
-            hover,
-            hover_and_active,
+            hovered,
             clicked,
-            click_and_active,
-            active,
             disabled,
         })
     }
@@ -911,7 +928,7 @@ impl Editor {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, JsonSchema)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
 }
@@ -945,7 +962,7 @@ impl<'de> Deserialize<'de> for SyntaxTheme {
     }
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct HoverPopover {
     pub container: ContainerStyle,
     pub info_container: ContainerStyle,
@@ -957,7 +974,7 @@ pub struct HoverPopover {
     pub highlight: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct TerminalStyle {
     pub black: Color,
     pub red: Color,
@@ -991,24 +1008,39 @@ pub struct TerminalStyle {
     pub dim_foreground: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct AssistantStyle {
     pub container: ContainerStyle,
-    pub header: ContainerStyle,
+    pub hamburger_button: Interactive<IconStyle>,
+    pub split_button: Interactive<IconStyle>,
+    pub assist_button: Interactive<IconStyle>,
+    pub quote_button: Interactive<IconStyle>,
+    pub zoom_in_button: Interactive<IconStyle>,
+    pub zoom_out_button: Interactive<IconStyle>,
+    pub plus_button: Interactive<IconStyle>,
+    pub title: ContainedText,
+    pub message_header: ContainerStyle,
     pub sent_at: ContainedText,
     pub user_sender: Interactive<ContainedText>,
     pub assistant_sender: Interactive<ContainedText>,
     pub system_sender: Interactive<ContainedText>,
-    pub model_info_container: ContainerStyle,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
+    pub saved_conversation: SavedConversation,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct SavedConversation {
+    pub container: Interactive<ContainerStyle>,
+    pub saved_at: ContainedText,
+    pub title: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct FeedbackStyle {
     pub submit_button: Interactive<ContainedText>,
     pub button_margin: f32,
@@ -1017,7 +1049,7 @@ pub struct FeedbackStyle {
     pub link_text_hover: ContainedText,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct WelcomeStyle {
     pub page_width: f32,
     pub logo: SvgStyle,
@@ -1031,7 +1063,7 @@ pub struct WelcomeStyle {
     pub checkbox_group: ContainerStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct ColorScheme {
     pub name: String,
     pub is_light: bool,
@@ -1046,13 +1078,13 @@ pub struct ColorScheme {
     pub players: Vec<Player>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Player {
     pub cursor: Color,
     pub selection: Color,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct RampSet {
     pub neutral: Vec<Color>,
     pub red: Vec<Color>,
@@ -1065,7 +1097,7 @@ pub struct RampSet {
     pub magenta: Vec<Color>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Layer {
     pub base: StyleSet,
     pub variant: StyleSet,
@@ -1076,7 +1108,7 @@ pub struct Layer {
     pub negative: StyleSet,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct StyleSet {
     pub default: Style,
     pub active: Style,
@@ -1086,7 +1118,7 @@ pub struct StyleSet {
     pub inverted: Style,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Style {
     pub background: Color,
     pub border: Color,

@@ -3,6 +3,7 @@ mod mouse_region;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
@@ -99,7 +100,7 @@ pub struct Icon {
     pub color: Color,
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, JsonSchema)]
 pub struct Border {
     pub width: f32,
     pub color: Color,

@@ -6,6 +6,13 @@ import {
     ThemeConfig,
 } from "../../common"
 
+import { color as c, syntax } from "./common"
+
+const color = c.moon
+
+const green = chroma.mix(color.foam, "#10b981", 0.6, "lab")
+const magenta = chroma.mix(color.love, color.pine, 0.5, "lab")
+
 export const theme: ThemeConfig = {
     name: "Rosé Pine Moon",
     author: "edunfelt",
@@ -16,24 +23,25 @@ export const theme: ThemeConfig = {
     inputColor: {
         neutral: chroma
             .scale([
-                "#232136",
-                "#2A273F",
-                "#393552",
-                "#3E3A53",
-                "#56526C",
-                "#6E6A86",
-                "#908CAA",
-                "#E0DEF4",
+                color.base,
+                color.surface,
+                color.highlightHigh,
+                color.overlay,
+                color.muted,
+                color.subtle,
+                color.text,
             ])
             .domain([0, 0.3, 0.55, 1]),
-        red: colorRamp(chroma("#EB6F92")),
-        orange: colorRamp(chroma("#EBBCBA")),
-        yellow: colorRamp(chroma("#F6C177")),
-        green: colorRamp(chroma("#8DBD8D")),
-        cyan: colorRamp(chroma("#409BBE")),
-        blue: colorRamp(chroma("#9CCFD8")),
-        violet: colorRamp(chroma("#C4A7E7")),
-        magenta: colorRamp(chroma("#AB6FE9")),
+        red: colorRamp(chroma(color.love)),
+        orange: colorRamp(chroma(color.iris)),
+        yellow: colorRamp(chroma(color.gold)),
+        green: colorRamp(chroma(green)),
+        cyan: colorRamp(chroma(color.pine)),
+        blue: colorRamp(chroma(color.foam)),
+        violet: colorRamp(chroma(color.iris)),
+        magenta: colorRamp(chroma(magenta)),
     },
-    override: { syntax: {} },
+    override: {
+        syntax: syntax(color),
+    },
 }

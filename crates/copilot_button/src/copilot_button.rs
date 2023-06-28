@@ -71,7 +71,8 @@ impl View for CopilotButton {
                             .status_bar
                             .panel_buttons
                             .button
-                            .style_for(state, active);
+                            .in_state(active)
+                            .style_for(state);
 
                         Flex::row()
                             .with_child(
@@ -255,7 +256,7 @@ impl CopilotButton {
             move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                 Flex::row()
                     .with_child(Label::new("Copilot Settings", style.label.clone()))
-                    .with_child(theme::ui::icon(icon_style.style_for(state, false)))
+                    .with_child(theme::ui::icon(icon_style.style_for(state)))
                     .align_children_center()
                     .into_any()
             },

@@ -140,9 +140,11 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
+#[derive(Deserialize)]
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
+    #[serde(skip)]
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
@@ -183,9 +185,9 @@ impl Clone for Toast {
     }
 }
 
-pub type WorkspaceId = i64;
+impl_actions!(workspace, [ActivatePane, Toast]);
 
-impl_actions!(workspace, [ActivatePane]);
+pub type WorkspaceId = i64;
 
 pub fn init_settings(cx: &mut AppContext) {
     settings::register::<WorkspaceSettings>(cx);
@@ -859,7 +861,10 @@ impl Workspace {
         &self.right_dock
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    where
+        T::Event: std::fmt::Debug,
+    {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -902,10 +907,11 @@ impl Workspace {
                     });
                 } else if T::should_zoom_in_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-                    if panel.has_focus(cx) {
-                        this.zoomed = Some(panel.downgrade().into_any());
-                        this.zoomed_position = Some(panel.read(cx).position(cx));
+                    if !panel.has_focus(cx) {
+                        cx.focus(&panel);
                     }
+                    this.zoomed = Some(panel.downgrade().into_any());
+                    this.zoomed_position = Some(panel.read(cx).position(cx));
                 } else if T::should_zoom_out_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
                     if this.zoomed_position == Some(prev_position) {
@@ -1700,6 +1706,11 @@ impl Workspace {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.zoomed.and_then(|view| view.upgrade(cx))
+    }
+
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
         dock_to_reveal: Option<DockPosition>,
@@ -2285,11 +2296,11 @@ impl Workspace {
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen();
         let container_theme = if is_fullscreen {
-            let mut container_theme = theme.workspace.titlebar.container;
+            let mut container_theme = theme.titlebar.container;
             container_theme.padding.left = container_theme.padding.right;
             container_theme
         } else {
-            theme.workspace.titlebar.container
+            theme.titlebar.container
         };
 
         enum TitleBar {}
@@ -2309,7 +2320,7 @@ impl Workspace {
             }
         })
         .constrained()
-        .with_height(theme.workspace.titlebar.height)
+        .with_height(theme.titlebar.height)
         .into_any_named("titlebar")
     }
 
@@ -2754,7 +2765,7 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let track = participant.tracks.values().next()?.clone();
+        let track = participant.video_tracks.values().next()?.clone();
         let user = participant.user.clone();
 
         for item in pane.read(cx).items_of_type::<SharedScreen>() {

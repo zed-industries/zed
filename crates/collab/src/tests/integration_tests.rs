@@ -257,7 +257,7 @@ async fn test_basic_calls(
         room_b.read_with(cx_b, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
-                    .tracks
+                    .video_tracks
                     .len(),
                 1
             );
@@ -274,7 +274,7 @@ async fn test_basic_calls(
         room_c.read_with(cx_c, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
-                    .tracks
+                    .video_tracks
                     .len(),
                 1
             );
@@ -1266,6 +1266,27 @@ async fn test_share_project(
         let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
         assert_eq!(client_b_collaborator.replica_id, replica_id_b);
     });
+    project_b.read_with(cx_b, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap().read(cx);
+        assert_eq!(
+            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            [
+                Path::new(".gitignore"),
+                Path::new("a.txt"),
+                Path::new("b.txt"),
+                Path::new("ignored-dir"),
+            ]
+        );
+    });
+
+    project_b
+        .update(cx_b, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
+            project.expand_entry(worktree_id, entry.id, cx).unwrap()
+        })
+        .await
+        .unwrap();
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
@@ -6993,7 +7014,7 @@ async fn test_join_call_after_screen_was_shared(
             room.remote_participants()
                 .get(&client_a.user_id().unwrap())
                 .unwrap()
-                .tracks
+                .video_tracks
                 .len(),
             1
         );

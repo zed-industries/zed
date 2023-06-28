@@ -259,7 +259,11 @@ impl BufferSearchBar {
         }
     }
 
-    fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
+    pub fn is_dismissed(&self) -> bool {
+        self.dismissed
+    }
+
+    pub fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
         for searchable_item in self.seachable_items_with_matches.keys() {
             if let Some(searchable_item) =
@@ -275,7 +279,7 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
+    pub fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
         let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
             SearchableItemHandle::boxed_clone(searchable_item.as_ref())
         } else {
@@ -328,7 +332,11 @@ impl BufferSearchBar {
         Some(
             MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
                 let theme = theme::current(cx);
-                let style = theme.search.option_button.style_for(state, is_active);
+                let style = theme
+                    .search
+                    .option_button
+                    .in_state(is_active)
+                    .style_for(state);
                 Label::new(icon, style.text.clone())
                     .contained()
                     .with_style(style.container)
@@ -371,7 +379,7 @@ impl BufferSearchBar {
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.option_button.style_for(state, false);
+            let style = theme.search.option_button.inactive_state().style_for(state);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -403,7 +411,7 @@ impl BufferSearchBar {
 
         enum CloseButton {}
         MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
-            let style = theme.dismiss_button.style_for(state, false);
+            let style = theme.dismiss_button.style_for(state);
             Svg::new("icons/x_mark_8.svg")
                 .with_color(style.color)
                 .constrained()
@@ -480,7 +488,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, cx);
     }
 
-    fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+    pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
