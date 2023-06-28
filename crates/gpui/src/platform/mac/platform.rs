@@ -939,7 +939,6 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
                 }
             }
         }
-
         msg_send![super(this, class!(NSApplication)), sendEvent: native_event]
     }
 }

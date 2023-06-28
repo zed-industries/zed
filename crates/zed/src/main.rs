@@ -72,8 +72,6 @@ fn main() {
     let installation_id = app.background().block(installation_id()).ok();
     init_panic_hook(&app, installation_id.clone());
 
-    app.background();
-
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
