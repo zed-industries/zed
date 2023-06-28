@@ -1,6 +1,6 @@
 export type Prettify<T> = {
     [K in keyof T]: T[K];
-} & {};
+} & unknown;
 
 /**
 * Clean removes the [k: string]: unknown property from an object,

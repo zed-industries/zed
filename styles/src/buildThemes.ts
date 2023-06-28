@@ -24,11 +24,11 @@ function clearThemes(themeDirectory: string) {
 
 function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
     clearThemes(outputDirectory)
-    for (let colorScheme of colorSchemes) {
-        let styleTree = snakeCase(app(colorScheme))
-        let styleTreeJSON = JSON.stringify(styleTree, null, 2)
-        let tempPath = path.join(tempDirectory, `${colorScheme.name}.json`)
-        let outPath = path.join(outputDirectory, `${colorScheme.name}.json`)
+    for (const colorScheme of colorSchemes) {
+        const styleTree = snakeCase(app(colorScheme))
+        const styleTreeJSON = JSON.stringify(styleTree, null, 2)
+        const tempPath = path.join(tempDirectory, `${colorScheme.name}.json`)
+        const outPath = path.join(outputDirectory, `${colorScheme.name}.json`)
         fs.writeFileSync(tempPath, styleTreeJSON)
         fs.renameSync(tempPath, outPath)
         console.log(`- ${outPath} created`)

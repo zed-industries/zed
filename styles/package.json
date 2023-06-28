@@ -35,6 +35,7 @@
         "tabWidth": 4
     },
     "devDependencies": {
+        "@typescript-eslint/eslint-plugin": "^5.60.1",
         "@typescript-eslint/parser": "^5.60.1",
         "@vitest/coverage-v8": "^0.32.0",
         "eslint": "^8.43.0",

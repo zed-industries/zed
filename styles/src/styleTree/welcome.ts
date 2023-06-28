@@ -11,9 +11,9 @@ import {
 import { interactive } from "../element"
 
 export default function welcome(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest
+    const layer = colorScheme.highest
 
-    let checkboxBase = {
+    const checkboxBase = {
         cornerRadius: 4,
         padding: {
             left: 3,
@@ -30,7 +30,7 @@ export default function welcome(colorScheme: ColorScheme) {
         },
     }
 
-    let interactive_text_size: TextProperties = { size: "sm" }
+    const interactive_text_size: TextProperties = { size: "sm" }
 
     return {
         pageWidth: 320,
