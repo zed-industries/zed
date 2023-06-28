@@ -290,7 +290,7 @@ impl CollabTitlebarItem {
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
         if self.user_menu.take().is_none() {
-            let mut user_menu = cx.add_view(|cx| {
+            let user_menu = cx.add_view(|cx| {
                 let view_id = cx.view_id();
                 let mut menu = ContextMenu::new(view_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
