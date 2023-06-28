@@ -1681,6 +1681,8 @@ impl ConversationEditor {
                     |selections| selections.select_ranges(new_selections),
                 );
             });
+            // Avoid scrolling to the new cursor position so the assistant's output is stable.
+            cx.defer(|this, _| this.scroll_position = None);
         }
     }
 
