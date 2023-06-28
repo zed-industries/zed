@@ -31,14 +31,14 @@ pub fn init(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AppContext,
 ) {
-    let vector_store = cx.add_model(|cx| {
+    let vector_store = cx.add_model(|_| {
         VectorStore::new(
             fs,
             VECTOR_DB_URL.to_string(),
-            // Arc::new(OpenAIEmbeddings {
-            //     client: http_client,
-            // }),
-            Arc::new(DummyEmbeddings {}),
+            // Arc::new(DummyEmbeddings {}),
+            Arc::new(OpenAIEmbeddings {
+                client: http_client,
+            }),
             language_registry,
         )
     });
@@ -74,6 +74,7 @@ pub fn init(
             })
         }
     });
+
     SemanticSearch::init(cx);
 }
 

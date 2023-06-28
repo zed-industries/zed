@@ -1,15 +1,16 @@
-use std::sync::Arc;
-
+use crate::{SearchResult, VectorStore};
 use gpui::{
     actions, elements::*, AnyElement, AppContext, ModelHandle, MouseState, Task, ViewContext,
     WeakViewHandle,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Project;
+use std::{sync::Arc, time::Duration};
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::{SearchResult, VectorStore};
+const MIN_QUERY_LEN: usize = 5;
+const EMBEDDING_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(500);
 
 actions!(semantic_search, [Toggle]);
 
@@ -68,18 +69,26 @@ impl PickerDelegate for SemanticSearchDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<SemanticSearch>) -> Task<()> {
-        let task = self.vector_store.update(cx, |store, cx| {
-            store.search(&self.project, query.to_string(), 10, cx)
-        });
+        if query.len() < MIN_QUERY_LEN {
+            return Task::ready(());
+        }
 
+        let vector_store = self.vector_store.clone();
+        let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
-            let results = task.await.log_err();
-            this.update(&mut cx, |this, cx| {
-                if let Some(results) = results {
+            cx.background().timer(EMBEDDING_DEBOUNCE_INTERVAL).await;
+
+            let task = vector_store.update(&mut cx, |store, cx| {
+                store.search(&project, query.to_string(), 10, cx)
+            });
+
+            if let Some(results) = task.await.log_err() {
+                this.update(&mut cx, |this, _| {
                     let delegate = this.delegate_mut();
                     delegate.matches = results;
-                }
-            });
+                })
+                .ok();
+            }
         })
     }
 
