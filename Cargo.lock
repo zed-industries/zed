@@ -1734,7 +1734,10 @@ dependencies = [
 name = "crdb"
 version = "0.1.0"
 dependencies = [
+ "gpui",
+ "lazy_static",
  "parking_lot 0.11.2",
+ "rand 0.8.5",
  "rope",
  "smallvec",
  "sum_tree",

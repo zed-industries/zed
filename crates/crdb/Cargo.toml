@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/copilot.rs"
+path = "src/crdb.rs"
 doctest = false
 
 [dependencies]
 rope = { path = "../rope" }
 sum_tree = { path = "../sum_tree" }
 
+lazy_static.workspace = true
 parking_lot.workspace = true
 smallvec.workspace = true
 uuid = { version = "1.3", features = ["v4", "fast-rng"] }
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+rand.workspace = true
