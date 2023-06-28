@@ -1275,6 +1275,27 @@ async fn test_share_project(
                 Path::new("a.txt"),
                 Path::new("b.txt"),
                 Path::new("ignored-dir"),
+            ]
+        );
+    });
+
+    project_b
+        .update(cx_b, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
+            project.expand_entry(worktree_id, entry.id, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    project_b.read_with(cx_b, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap().read(cx);
+        assert_eq!(
+            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            [
+                Path::new(".gitignore"),
+                Path::new("a.txt"),
+                Path::new("b.txt"),
+                Path::new("ignored-dir"),
                 Path::new("ignored-dir/c.txt"),
                 Path::new("ignored-dir/d.txt"),
             ]

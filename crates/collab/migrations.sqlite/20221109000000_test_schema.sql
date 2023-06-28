@@ -74,6 +74,7 @@ CREATE TABLE "worktree_entries" (
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
     "is_symlink" BOOL NOT NULL,
+    "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "git_status" INTEGER,
