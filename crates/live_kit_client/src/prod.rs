@@ -402,10 +402,14 @@ impl Room {
 
     // A vec of publisher IDs
     fn active_speakers_changed(&self, speakers: Vec<String>) {
-        self.remote_audio_track_subscribers.lock().retain(move |tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers: speakers.clone() })
+        self.remote_audio_track_subscribers
+            .lock()
+            .retain(move |tx| {
+                tx.unbounded_send(RemoteAudioTrackUpdate::ActiveSpeakersChanged {
+                    speakers: speakers.clone(),
+                })
                 .is_ok()
-        });
+            });
     }
 
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
@@ -544,7 +548,11 @@ impl RoomDelegate {
         let speakers = unsafe {
             CFArray::wrap_under_get_rule(participants)
                 .into_iter()
-                .map(|speaker: core_foundation::base::ItemRef<'_, *const c_void>| CFString::wrap_under_get_rule(*speaker as CFStringRef).to_string())
+                .map(
+                    |speaker: core_foundation::base::ItemRef<'_, *const c_void>| {
+                        CFString::wrap_under_get_rule(*speaker as CFStringRef).to_string()
+                    },
+                )
                 .collect()
         };
 

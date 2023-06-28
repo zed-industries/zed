@@ -110,10 +110,7 @@ fn main() {
 
             // Clear out any active speakers changed messages
             let mut next = audio_track_updates.next().await.unwrap();
-            while let RemoteAudioTrackUpdate::ActiveSpeakersChanged {
-                speakers
-            } = next
-            {
+            while let RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers } = next {
                 println!("Speakers changed: {:?}", speakers);
                 next = audio_track_updates.next().await.unwrap();
             }
