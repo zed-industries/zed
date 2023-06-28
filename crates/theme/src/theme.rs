@@ -1014,7 +1014,7 @@ pub struct AssistantStyle {
     pub saved_conversation: SavedConversation,
 }
 
-#[derive(Clone, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Deserialize, Default)]
 pub struct SavedConversation {
     pub container: Interactive<ContainerStyle>,
     pub saved_at: ContainedText,
