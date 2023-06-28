@@ -1,5 +1,5 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
@@ -42,12 +42,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::select_next_match_on_pane);
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
-    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
-    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext) {
+fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| search_bar.show(false, false, cx)) {
@@ -69,9 +69,8 @@ pub struct BufferSearchBar {
     seachable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
     pending_search: Option<Task<()>>,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: bool,
+    search_options: SearchOptions,
+    default_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
 }
@@ -153,19 +152,19 @@ impl View for BufferSearchBar {
                             .with_children(self.render_search_option(
                                 supported_options.case,
                                 "Case",
-                                SearchOption::CaseSensitive,
+                                SearchOptions::CASE_SENSITIVE,
                                 cx,
                             ))
                             .with_children(self.render_search_option(
                                 supported_options.word,
                                 "Word",
-                                SearchOption::WholeWord,
+                                SearchOptions::WHOLE_WORD,
                                 cx,
                             ))
                             .with_children(self.render_search_option(
                                 supported_options.regex,
                                 "Regex",
-                                SearchOption::Regex,
+                                SearchOptions::REGEX,
                                 cx,
                             ))
                             .contained()
@@ -250,9 +249,8 @@ impl BufferSearchBar {
             active_searchable_item_subscription: None,
             active_match_index: None,
             seachable_items_with_matches: Default::default(),
-            case_sensitive: false,
-            whole_word: false,
-            regex: false,
+            default_options: SearchOptions::NONE,
+            search_options: SearchOptions::NONE,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
@@ -280,6 +278,17 @@ impl BufferSearchBar {
     }
 
     pub fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
+        self.show_with_options(focus, suggest_query, self.default_options, cx)
+    }
+
+    pub fn show_with_options(
+        &mut self,
+        focus: bool,
+        suggest_query: bool,
+        search_option: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        self.search_options = search_option;
         let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
             SearchableItemHandle::boxed_clone(searchable_item.as_ref())
         } else {
@@ -320,7 +329,7 @@ impl BufferSearchBar {
         &self,
         option_supported: bool,
         icon: &'static str,
-        option: SearchOption,
+        option: SearchOptions,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
         if !option_supported {
@@ -328,9 +337,9 @@ impl BufferSearchBar {
         }
 
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = self.is_search_option_enabled(option);
+        let is_active = self.search_options.contains(option);
         Some(
-            MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
+            MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
                 let theme = theme::current(cx);
                 let style = theme
                     .search
@@ -346,7 +355,7 @@ impl BufferSearchBar {
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .with_tooltip::<Self>(
-                option as usize,
+                option.bits as usize,
                 format!("Toggle {}", option.label()),
                 Some(option.to_toggle_action()),
                 tooltip_style,
@@ -461,21 +470,10 @@ impl BufferSearchBar {
         }
     }
 
-    fn is_search_option_enabled(&self, search_option: SearchOption) -> bool {
-        match search_option {
-            SearchOption::WholeWord => self.whole_word,
-            SearchOption::CaseSensitive => self.case_sensitive,
-            SearchOption::Regex => self.regex,
-        }
-    }
+    fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
+        self.search_options.toggle(search_option);
+        self.default_options = self.search_options;
 
-    fn toggle_search_option(&mut self, search_option: SearchOption, cx: &mut ViewContext<Self>) {
-        let value = match search_option {
-            SearchOption::WholeWord => &mut self.whole_word,
-            SearchOption::CaseSensitive => &mut self.case_sensitive,
-            SearchOption::Regex => &mut self.regex,
-        };
-        *value = !*value;
         self.update_matches(false, cx);
         cx.notify();
     }
@@ -571,11 +569,11 @@ impl BufferSearchBar {
                 self.active_match_index.take();
                 active_searchable_item.clear_matches(cx);
             } else {
-                let query = if self.regex {
+                let query = if self.search_options.contains(SearchOptions::REGEX) {
                     match SearchQuery::regex(
                         query,
-                        self.whole_word,
-                        self.case_sensitive,
+                        self.search_options.contains(SearchOptions::WHOLE_WORD),
+                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -589,8 +587,8 @@ impl BufferSearchBar {
                 } else {
                     SearchQuery::text(
                         query,
-                        self.whole_word,
-                        self.case_sensitive,
+                        self.search_options.contains(SearchOptions::WHOLE_WORD),
+                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
                     )
@@ -656,8 +654,7 @@ mod tests {
     use language::Buffer;
     use unindent::Unindent as _;
 
-    #[gpui::test]
-    async fn test_search_simple(cx: &mut TestAppContext) {
+    fn init_test(cx: &mut TestAppContext) -> (ViewHandle<Editor>, ViewHandle<BufferSearchBar>) {
         crate::project_search::tests::init_test(cx);
 
         let buffer = cx.add_model(|cx| {
@@ -684,6 +681,13 @@ mod tests {
             search_bar
         });
 
+        (editor, search_bar)
+    }
+
+    #[gpui::test]
+    async fn test_search_simple(cx: &mut TestAppContext) {
+        let (editor, search_bar) = init_test(cx);
+
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
         search_bar.update(cx, |search_bar, cx| {
@@ -708,7 +712,7 @@ mod tests {
 
         // Switch to a case sensitive search.
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.toggle_search_option(SearchOption::CaseSensitive, cx);
+            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
         });
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
@@ -765,7 +769,7 @@ mod tests {
 
         // Switch to a whole word search.
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.toggle_search_option(SearchOption::WholeWord, cx);
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
         });
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
@@ -964,6 +968,101 @@ mod tests {
         });
         search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_with_options(cx: &mut TestAppContext) {
+        let (editor, search_bar) = init_test(cx);
+
+        // show with options should make current search case sensitive
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
+            search_bar.set_query("us", cx);
+        });
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.all_background_highlights(cx),
+                &[(
+                    DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                    Color::red(),
+                )]
+            );
+        });
+
+        // show should return to the default options (case insensitive)
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.show(true, true, cx);
+        });
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.all_background_highlights(cx),
+                &[
+                    (
+                        DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                        Color::red(),
+                    )
+                ]
+            );
+        });
+
+        // toggling a search option (even in show_with_options mode) should update the defaults
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_query("regex", cx);
+            search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
+        });
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.all_background_highlights(cx),
+                &[(
+                    DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
+                    Color::red(),
+                ),]
+            );
+        });
+
+        // defaults should still include whole word
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.show(true, true, cx);
+        });
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.all_background_highlights(cx),
+                &[(
+                    DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
+                    Color::red(),
+                ),]
+            );
+        });
+
+        // removing whole word changes the search again
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
+        });
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.all_background_highlights(cx),
+                &[
+                    (
+                        DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(0, 44)..DisplayPoint::new(0, 49),
+                        Color::red()
+                    )
+                ]
+            );
         });
     }
 }
