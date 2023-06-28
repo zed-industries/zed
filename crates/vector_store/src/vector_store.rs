@@ -1,5 +1,6 @@
 mod db;
 mod embedding;
+mod modal;
 mod search;
 
 #[cfg(test)]
@@ -10,14 +11,13 @@ use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
+use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use project::{Fs, Project};
 use smol::channel;
 use std::{cmp::Ordering, collections::HashMap, path::PathBuf, sync::Arc};
 use tree_sitter::{Parser, QueryCursor};
 use util::{http::HttpClient, ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceCreated};
-
-actions!(semantic_search, [TestSearch]);
 
 #[derive(Debug)]
 pub struct Document {
@@ -60,24 +60,40 @@ pub fn init(
     .detach();
 
     cx.add_action({
-        let vector_store = vector_store.clone();
-        move |workspace: &mut Workspace, _: &TestSearch, cx: &mut ViewContext<Workspace>| {
-            let t0 = std::time::Instant::now();
-            let task = vector_store.update(cx, |store, cx| {
-                store.search("compute embeddings for all of the symbols in the codebase and write them to a database".to_string(), 10, cx)
-            });
-
-            cx.spawn(|this, cx| async move {
-                let results = task.await?;
-                let duration = t0.elapsed();
-
-                println!("search took {:?}", duration);
-                println!("results {:?}", results);
-
-                anyhow::Ok(())
-            }).detach()
+        move |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
+            let vector_store = vector_store.clone();
+            workspace.toggle_modal(cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let workspace = cx.weak_handle();
+                cx.add_view(|cx| {
+                    SemanticSearch::new(
+                        SemanticSearchDelegate::new(workspace, project, vector_store),
+                        cx,
+                    )
+                })
+            })
         }
     });
+    SemanticSearch::init(cx);
+    // cx.add_action({
+    //     let vector_store = vector_store.clone();
+    //     move |workspace: &mut Workspace, _: &TestSearch, cx: &mut ViewContext<Workspace>| {
+    //         let t0 = std::time::Instant::now();
+    //         let task = vector_store.update(cx, |store, cx| {
+    //             store.search("compute embeddings for all of the symbols in the codebase and write them to a database".to_string(), 10, cx)
+    //         });
+
+    //         cx.spawn(|this, cx| async move {
+    //             let results = task.await?;
+    //             let duration = t0.elapsed();
+
+    //             println!("search took {:?}", duration);
+    //             println!("results {:?}", results);
+
+    //             anyhow::Ok(())
+    //         }).detach()
+    //     }
+    // });
 }
 
 #[derive(Debug)]
@@ -87,7 +103,7 @@ pub struct IndexedFile {
     documents: Vec<Document>,
 }
 
-struct VectorStore {
+pub struct VectorStore {
     fs: Arc<dyn Fs>,
     database_url: Arc<str>,
     embedding_provider: Arc<dyn EmbeddingProvider>,

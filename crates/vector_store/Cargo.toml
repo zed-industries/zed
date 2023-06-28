@@ -14,6 +14,8 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
+picker = { path = "../picker" }
+theme = { path = "../theme" }
 anyhow.workspace = true
 futures.workspace = true
 smol.workspace = true
