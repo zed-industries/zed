@@ -26,7 +26,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { left: 12 },
+                    padding: { left: 8.5, right: 8.5 },
                 }
             },
             state: {
@@ -48,7 +48,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { left: 12 },
+                    padding: { left: 8.5, right: 8.5 },
                 }
             },
             state: {
@@ -70,7 +70,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { left: 12 },
+                    padding: { left: 8.5, right: 8.5 },
                 }
             },
             state: {
@@ -92,7 +92,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { left: 12, right: 24 },
+                    padding: { left: 8.5, right: 8.5 },
                 }
             },
             state: {
@@ -114,7 +114,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { right: 12 },
+                    padding: { left: 10, right: 10 },
                 }
             },
             state: {
@@ -136,7 +136,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { right: 12 },
+                    padding: { left: 10, right: 10 },
                 }
             },
             state: {
@@ -158,7 +158,7 @@ export default function assistant(colorScheme: ColorScheme) {
                     },
                 },
                 container: {
-                    margin: { right: 12 },
+                    padding: { left: 10, right: 10 },
                 }
             },
             state: {
