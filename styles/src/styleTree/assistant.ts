@@ -11,7 +11,6 @@ export default function assistant(colorScheme: ColorScheme) {
             padding: { left: 12 },
         },
         messageHeader: {
-            border: border(layer, "default", { bottom: true, top: true }),
             margin: { bottom: 6, top: 6 },
             background: editor(colorScheme).background,
         },
@@ -238,14 +237,14 @@ export default function assistant(colorScheme: ColorScheme) {
         }),
         remainingTokens: {
             background: background(layer, "on"),
-            margin: { top: 12, right: 12 },
+            margin: { top: 12, right: 24 },
             padding: 4,
             cornerRadius: 4,
             ...text(layer, "sans", "positive", { size: "xs" }),
         },
         noRemainingTokens: {
             background: background(layer, "on"),
-            margin: { top: 12, right: 12 },
+            margin: { top: 12, right: 24 },
             padding: 4,
             cornerRadius: 4,
             ...text(layer, "sans", "negative", { size: "xs" }),
