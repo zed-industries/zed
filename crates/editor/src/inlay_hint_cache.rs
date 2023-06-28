@@ -39,6 +39,7 @@ struct UpdateTask {
 pub struct CachedExcerptHints {
     version: usize,
     buffer_version: Global,
+    buffer_id: u64,
     pub hints: Vec<(InlayId, InlayHint)>,
 }
 
@@ -60,6 +61,13 @@ struct ExcerptDimensions {
 }
 
 impl ExcerptQuery {
+    fn should_invalidate(&self) -> bool {
+        matches!(
+            self.invalidate,
+            InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
+        )
+    }
+
     fn hints_fetch_ranges(&self, buffer: &BufferSnapshot) -> HintFetchRanges {
         let visible_range =
             self.dimensions.excerpt_visible_range_start..self.dimensions.excerpt_visible_range_end;
@@ -570,6 +578,7 @@ async fn fetch_and_update_hints(
                         Arc::new(RwLock::new(CachedExcerptHints {
                             version: new_update.cache_version,
                             buffer_version: buffer_snapshot.version().clone(),
+                            buffer_id: query.buffer_id,
                             hints: Vec::new(),
                         }))
                     });
@@ -614,6 +623,28 @@ async fn fetch_and_update_hints(
                         hint_a.position.cmp(&hint_b.position, &buffer_snapshot)
                     });
                 drop(cached_excerpt_hints);
+
+                if query.should_invalidate() {
+                    let mut outdated_excerpt_caches = HashSet::default();
+                    for (excerpt_id, excerpt_hints) in editor.inlay_hint_cache().hints.iter() {
+                        let excerpt_hints = excerpt_hints.read();
+                        if excerpt_hints.buffer_id == query.buffer_id
+                            && excerpt_id != &query.excerpt_id
+                            && buffer_snapshot
+                                .version()
+                                .changed_since(&excerpt_hints.buffer_version)
+                        {
+                            outdated_excerpt_caches.insert(*excerpt_id);
+                            splice
+                                .to_remove
+                                .extend(excerpt_hints.hints.iter().map(|(id, _)| id));
+                        }
+                    }
+                    editor
+                        .inlay_hint_cache
+                        .hints
+                        .retain(|excerpt_id, _| !outdated_excerpt_caches.contains(excerpt_id));
+                }
 
                 let InlaySplice {
                     to_remove,
@@ -670,10 +701,7 @@ fn calculate_hint_updates(
 
     let mut remove_from_visible = Vec::new();
     let mut remove_from_cache = HashSet::default();
-    if matches!(
-        query.invalidate,
-        InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
-    ) {
+    if query.should_invalidate() {
         remove_from_visible.extend(
             visible_hints
                 .iter()
@@ -748,10 +776,12 @@ fn contains_position(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use crate::{
-        scroll::scroll_amount::ScrollAmount, serde_json::json, ExcerptRange, InlayHintSettings,
+        scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
+        serde_json::json,
+        ExcerptRange, InlayHintSettings,
     };
     use futures::StreamExt;
     use gpui::{TestAppContext, ViewHandle};
@@ -1820,60 +1850,70 @@ mod tests {
         let (_, editor) =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
 
+        let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
+        let closure_editor_edited = Arc::clone(&editor_edited);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| async move {
-                let hint_text = if params.text_document.uri
-                    == lsp::Url::from_file_path("/a/main.rs").unwrap()
-                {
-                    "main hint"
-                } else if params.text_document.uri
-                    == lsp::Url::from_file_path("/a/other.rs").unwrap()
-                {
-                    "other hint"
-                } else {
-                    panic!("unexpected uri: {:?}", params.text_document.uri);
-                };
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_editor_edited = Arc::clone(&closure_editor_edited);
+                async move {
+                    let hint_text = if params.text_document.uri
+                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                    {
+                        "main hint"
+                    } else if params.text_document.uri
+                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                    {
+                        "other hint"
+                    } else {
+                        panic!("unexpected uri: {:?}", params.text_document.uri);
+                    };
 
-                let positions = [
-                    lsp::Position::new(0, 2),
-                    lsp::Position::new(4, 2),
-                    lsp::Position::new(22, 2),
-                    lsp::Position::new(44, 2),
-                    lsp::Position::new(56, 2),
-                    lsp::Position::new(67, 2),
-                ];
-                let out_of_range_hint = lsp::InlayHint {
-                    position: lsp::Position::new(
-                        params.range.start.line + 99,
-                        params.range.start.character + 99,
-                    ),
-                    label: lsp::InlayHintLabel::String(
-                        "out of excerpt range, should be ignored".to_string(),
-                    ),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                };
-                Ok(Some(
-                    std::iter::once(out_of_range_hint)
-                        .chain(positions.into_iter().enumerate().map(|(i, position)| {
-                            lsp::InlayHint {
-                                position,
-                                label: lsp::InlayHintLabel::String(format!("{hint_text} #{i}")),
-                                kind: None,
-                                text_edits: None,
-                                tooltip: None,
-                                padding_left: None,
-                                padding_right: None,
-                                data: None,
-                            }
-                        }))
-                        .collect(),
-                ))
+                    let positions = [
+                        lsp::Position::new(0, 2),
+                        lsp::Position::new(4, 2),
+                        lsp::Position::new(22, 2),
+                        lsp::Position::new(44, 2),
+                        lsp::Position::new(56, 2),
+                        lsp::Position::new(67, 2),
+                    ];
+                    let out_of_range_hint = lsp::InlayHint {
+                        position: lsp::Position::new(
+                            params.range.start.line + 99,
+                            params.range.start.character + 99,
+                        ),
+                        label: lsp::InlayHintLabel::String(
+                            "out of excerpt range, should be ignored".to_string(),
+                        ),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    };
+
+                    let edited = task_editor_edited.load(Ordering::Acquire);
+                    Ok(Some(
+                        std::iter::once(out_of_range_hint)
+                            .chain(positions.into_iter().enumerate().map(|(i, position)| {
+                                lsp::InlayHint {
+                                    position,
+                                    label: lsp::InlayHintLabel::String(format!(
+                                        "{hint_text}{} #{i}",
+                                        if edited { "(edited)" } else { "" },
+                                    )),
+                                    kind: None,
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                }
+                            }))
+                            .collect(),
+                    ))
+                }
             })
             .next()
             .await;
@@ -1900,9 +1940,15 @@ mod tests {
         });
 
         editor.update(cx, |editor, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(0.9), cx);
-            editor.scroll_screen(&ScrollAmount::Page(0.9), cx);
-            editor.scroll_screen(&ScrollAmount::Page(0.9), cx);
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
+            });
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges([Point::new(22, 0)..Point::new(22, 0)])
+            });
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges([Point::new(56, 0)..Point::new(56, 0)])
+            });
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
@@ -1911,24 +1957,24 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
+                "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
                 "other hint #2".to_string(),
-                "other hint #3".to_string(),
-                "other hint #4".to_string(),
-                "other hint #5".to_string(),
             ];
             assert_eq!(expected_layers, cached_hint_labels(editor),
                 "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 11);
+            assert_eq!(inlay_cache.version, 9);
         });
 
         editor.update(cx, |editor, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(0.9), cx);
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges([Point::new(100, 0)..Point::new(100, 0)])
+            });
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
@@ -1937,6 +1983,7 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
+                "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
@@ -1946,15 +1993,17 @@ mod tests {
                 "other hint #5".to_string(),
             ];
             assert_eq!(expected_layers, cached_hint_labels(editor),
-                "After multibuffer was scrolled to the end, further scrolls down should not bring more hints");
+                "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 11);
+            assert_eq!(inlay_cache.version, 12);
         });
 
         editor.update(cx, |editor, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-0.9), cx);
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
+            });
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
@@ -1963,6 +2012,7 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
+                "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
@@ -1976,22 +2026,20 @@ mod tests {
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 11, "No updates should happen during scrolling already scolled buffer");
+            assert_eq!(inlay_cache.version, 12, "No updates should happen during scrolling already scolled buffer");
         });
 
+        editor_edited.store(true, Ordering::Release);
         editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |s| s.select_ranges([2..2]));
             editor.handle_input("++++more text++++", cx);
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
             let expected_layers = vec![
-                "main hint #0".to_string(),
-                "main hint #0".to_string(),
-                "main hint #1".to_string(),
-                "main hint #2".to_string(),
-                "main hint #3".to_string(),
-                "main hint #5".to_string(),
+                "main hint(edited) #0".to_string(),
+                "main hint(edited) #1".to_string(),
+                "main hint(edited) #2".to_string(),
+                "main hint(edited) #3".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
                 "other hint #2".to_string(),
@@ -2000,12 +2048,12 @@ mod tests {
                 "other hint #5".to_string(),
             ];
             assert_eq!(expected_layers, cached_hint_labels(editor),
-                "After multibuffer was edited, hints for the edited buffer (1st) should be requeried for all of its excerpts, \
+                "After multibuffer was edited, hints for the edited buffer (1st) should be invalidated and requeried for all of its visible excerpts, \
 unedited (2nd) buffer should have the same hint");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 12);
+            assert_eq!(inlay_cache.version, 16);
         });
     }
 
