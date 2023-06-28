@@ -93,6 +93,14 @@ interface Text extends Object {
     underline?: boolean
 }
 
+export interface TextStyle extends Object {
+    family: keyof typeof fontFamilies
+    color: string
+    size: number
+    weight?: FontWeight
+    underline?: boolean
+}
+
 export interface TextProperties {
     size?: keyof typeof fontSizes
     weight?: FontWeight

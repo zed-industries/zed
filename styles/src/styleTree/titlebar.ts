@@ -1,9 +1,9 @@
-import { ColorScheme } from "../common";
+import { ColorScheme } from "../common"
 import { icon_button, toggleable_icon_button } from "../component/icon_button"
 import { toggleable_text_button } from "../component/text_button"
 import { interactive, toggleable } from "../element"
-import { withOpacity } from "../theme/color";
-import { background, border, foreground, text } from "./components";
+import { withOpacity } from "../theme/color"
+import { background, border, foreground, text } from "./components"
 
 const ITEM_SPACING = 8
 const TITLEBAR_HEIGHT = 32
@@ -25,7 +25,7 @@ function build_spacing(
 function call_controls(theme: ColorScheme) {
     const button_height = 18
 
-    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
+    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING)
     const marginY = {
         top: space.marginY,
         bottom: space.marginY,
@@ -38,14 +38,14 @@ function call_controls(theme: ColorScheme) {
                 left: space.group,
                 right: space.half_item,
             },
-            active_color: 'negative'
+            active_color: "negative",
         }),
 
         toggle_speakers_button: toggleable_icon_button(theme, {
             margin: {
                 ...marginY,
                 left: space.half_item,
-                right: space.half_item
+                right: space.half_item,
             },
         }),
 
@@ -53,9 +53,9 @@ function call_controls(theme: ColorScheme) {
             margin: {
                 ...marginY,
                 left: space.half_item,
-                right: space.group
+                right: space.group,
             },
-            active_color: 'accent'
+            active_color: "accent",
         }),
 
         muted: foreground(theme.lowest, "negative"),
@@ -64,15 +64,15 @@ function call_controls(theme: ColorScheme) {
 }
 
 /**
-* Opens the User Menu when toggled
-*
-* When logged in shows the user's avatar and a chevron,
-* When logged out only shows a chevron.
-*/
+ * Opens the User Menu when toggled
+ *
+ * When logged in shows the user's avatar and a chevron,
+ * When logged out only shows a chevron.
+ */
 function user_menu(theme: ColorScheme) {
     const button_height = 18
 
-    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING);
+    const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING)
 
     const build_button = ({ online }: { online: boolean }) => {
         const button = toggleable({
@@ -124,8 +124,8 @@ function user_menu(theme: ColorScheme) {
                         background: background(theme.middle, "pressed"),
                     },
                 },
-            }
-        });
+            },
+        })
 
         return {
             user_menu: button,
@@ -134,7 +134,7 @@ function user_menu(theme: ColorScheme) {
                 icon_height: 16,
                 corner_radius: 4,
                 outer_width: 16,
-                outer_corner_radius: 16
+                outer_corner_radius: 16,
             },
             icon: {
                 margin: {
@@ -145,8 +145,8 @@ function user_menu(theme: ColorScheme) {
                 },
                 width: 11,
                 height: 11,
-                color: foreground(theme.lowest)
-            }
+                color: foreground(theme.lowest),
+            },
         }
     }
     return {
@@ -240,7 +240,7 @@ export function titlebar(theme: ColorScheme) {
         leave_call_button: icon_button(theme, {
             margin: {
                 left: ITEM_SPACING / 2,
-                right: ITEM_SPACING
+                right: ITEM_SPACING,
             },
         }),
 
@@ -261,6 +261,6 @@ export function titlebar(theme: ColorScheme) {
             background: foreground(theme.lowest, "accent"),
         },
         shareButton: toggleable_text_button(theme, {}),
-        user_menu: user_menu(theme)
+        user_menu: user_menu(theme),
     }
 }

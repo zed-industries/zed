@@ -1,25 +1,32 @@
-import { ColorScheme } from "../common";
-import { interactive, toggleable } from "../element";
-import { background, foreground } from "../styleTree/components";
+import { ColorScheme } from "../common"
+import { interactive, toggleable } from "../element"
+import { background, foreground } from "../styleTree/components"
 
 export type Margin = {
-    top: number;
-    bottom: number;
-    left: number;
-    right: number;
+    top: number
+    bottom: number
+    left: number
+    right: number
 }
 
 interface IconButtonOptions {
-    layer?: ColorScheme['lowest'] | ColorScheme['middle'] | ColorScheme['highest'];
-    color?: keyof ColorScheme['lowest'];
-    margin?: Partial<Margin>;
+    layer?:
+        | ColorScheme["lowest"]
+        | ColorScheme["middle"]
+        | ColorScheme["highest"]
+    color?: keyof ColorScheme["lowest"]
+    margin?: Partial<Margin>
 }
 
-type ToggleableIconButtonOptions = IconButtonOptions & { active_color?: keyof ColorScheme['lowest'] };
+type ToggleableIconButtonOptions = IconButtonOptions & {
+    active_color?: keyof ColorScheme["lowest"]
+}
 
-export function icon_button(theme: ColorScheme, { color, margin, layer }: IconButtonOptions) {
-    if (!color)
-        color = "base";
+export function icon_button(
+    theme: ColorScheme,
+    { color, margin, layer }: IconButtonOptions
+) {
+    if (!color) color = "base"
 
     const m = {
         top: margin?.top ?? 0,
@@ -51,25 +58,29 @@ export function icon_button(theme: ColorScheme, { color, margin, layer }: IconBu
             hovered: {
                 background: background(layer ?? theme.lowest, color, "hovered"),
                 color: foreground(layer ?? theme.lowest, color, "hovered"),
-
             },
             clicked: {
                 background: background(layer ?? theme.lowest, color, "pressed"),
                 color: foreground(layer ?? theme.lowest, color, "pressed"),
-
             },
         },
-    });
+    })
 }
 
-export function toggleable_icon_button(theme: ColorScheme, { color, active_color, margin }: ToggleableIconButtonOptions) {
-    if (!color)
-        color = "base";
+export function toggleable_icon_button(
+    theme: ColorScheme,
+    { color, active_color, margin }: ToggleableIconButtonOptions
+) {
+    if (!color) color = "base"
 
     return toggleable({
         state: {
             inactive: icon_button(theme, { color, margin }),
-            active: icon_button(theme, { color: active_color ? active_color : color, margin, layer: theme.middle }),
-        }
+            active: icon_button(theme, {
+                color: active_color ? active_color : color,
+                margin,
+                layer: theme.middle,
+            }),
+        },
     })
 }
