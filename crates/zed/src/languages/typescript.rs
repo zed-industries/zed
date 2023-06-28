@@ -263,11 +263,11 @@ impl LspAdapter for EsLintLspAdapter {
             fs::rename(first.path(), &repo_root).await?;
 
             self.node
-                .run_npm_subcommand(&repo_root, "install", &[])
+                .run_npm_subcommand(Some(&repo_root), "install", &[])
                 .await?;
 
             self.node
-                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
+                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
                 .await?;
         }
 
