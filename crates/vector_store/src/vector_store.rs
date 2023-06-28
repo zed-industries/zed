@@ -1,6 +1,5 @@
 mod db;
 mod embedding;
-mod parsing;
 mod search;
 
 #[cfg(test)]
@@ -11,7 +10,6 @@ use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
-use parsing::Document;
 use project::{Fs, Project};
 use smol::channel;
 use std::{cmp::Ordering, collections::HashMap, path::PathBuf, sync::Arc};
@@ -20,6 +18,13 @@ use util::{http::HttpClient, ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceCreated};
 
 actions!(semantic_search, [TestSearch]);
+
+#[derive(Debug)]
+pub struct Document {
+    pub offset: usize,
+    pub name: String,
+    pub embedding: Vec<f32>,
+}
 
 pub fn init(
     fs: Arc<dyn Fs>,
