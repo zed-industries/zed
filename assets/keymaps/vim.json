@@ -60,6 +60,8 @@
           "ignorePunctuation": true
         }
       ],
+      "n": "search::SelectNextMatch",
+      "shift-n": "search::SelectPrevMatch",
       "%": "vim::Matching",
       "f": [
         "vim::PushOperator",
@@ -334,6 +336,12 @@
         "vim::SwitchMode",
         "Normal"
       ]
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "enter": "buffer_search::FocusEditor"
     }
   }
 ]

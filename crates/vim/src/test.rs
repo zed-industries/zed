@@ -5,6 +5,7 @@ mod vim_binding_test_context;
 mod vim_test_context;
 
 use command_palette::CommandPalette;
+use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_binding_test_context::*;
@@ -152,4 +153,45 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystroke("escape");
     assert!(!cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
     cx.assert_state("aˇbc\n", Mode::Insert);
+}
+
+#[gpui::test]
+async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(indoc! {"aa\nbˇb\ncc\ncc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["/", "c", "c"]);
+
+    let search_bar = cx.workspace(|workspace, cx| {
+        workspace
+            .active_pane()
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+            .expect("Buffer search bar should be deployed")
+    });
+
+    search_bar.read_with(cx.cx, |bar, cx| {
+        assert_eq!(bar.query_editor.read(cx).text(cx), "cc");
+    });
+
+    // wait for the query editor change event to fire.
+    search_bar.next_notification(&cx).await;
+
+    cx.update_editor(|editor, cx| {
+        let highlights = editor.all_background_highlights(cx);
+        assert_eq!(3, highlights.len());
+        assert_eq!(
+            DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
+            highlights[0].0
+        )
+    });
+    cx.simulate_keystrokes(["enter"]);
+
+    cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["n"]);
+    cx.assert_state(indoc! {"aa\nbb\ncc\nˇcc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["shift-n"]);
+    cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
 }
