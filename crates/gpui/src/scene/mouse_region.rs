@@ -14,7 +14,7 @@ use super::{
         MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover, MouseMove, MouseUp,
         MouseUpOut,
     },
-    MouseMoveOut, MouseScrollWheel, MouseClickOut,
+    MouseClickOut, MouseMoveOut, MouseScrollWheel,
 };
 
 #[derive(Clone)]
