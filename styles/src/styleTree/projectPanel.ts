@@ -1,37 +1,16 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
-import { background, border, foreground, text } from "./components"
+import { Border, TextProperties, background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
+import { InteractiveState } from "../element/interactive"
 export default function projectPanel(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
 
     let layer = colorScheme.middle
 
-    let baseEntry = {
-        height: 22,
-        iconColor: foreground(layer, "variant"),
-        iconSize: 7,
-        iconSpacing: 5,
-    }
-
-    let status = {
-        git: {
-            modified: isLight
-                ? colorScheme.ramps.yellow(0.6).hex()
-                : colorScheme.ramps.yellow(0.5).hex(),
-            inserted: isLight
-                ? colorScheme.ramps.green(0.45).hex()
-                : colorScheme.ramps.green(0.5).hex(),
-            conflict: isLight
-                ? colorScheme.ramps.red(0.6).hex()
-                : colorScheme.ramps.red(0.5).hex(),
-        },
-    }
-
     const default_entry = interactive({
         base: {
             ...baseEntry,
-            text: text(layer, "mono", "variant", { size: "sm" }),
             status,
         },
         state: {
@@ -47,7 +26,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
     })
 
-    let entry = toggleable({
+    let base_entry = toggleable({
         base: default_entry,
         state: {
             active: interactive({
@@ -68,6 +47,86 @@ export default function projectPanel(colorScheme: ColorScheme) {
             }),
         },
     })
+
+    type EntryStateProps = {
+        background?: string,
+        border: Border,
+        text: TextProperties,
+        iconColor: string,
+    }
+
+    type EntryState = Record<Partial<InteractiveState>, EntryStateProps>
+
+    const entry = (base: object, unselected: EntryState, selected: EntryState) => {
+        const git_status = {
+            git: {
+                modified: isLight
+                    ? colorScheme.ramps.yellow(0.6).hex()
+                    : colorScheme.ramps.yellow(0.5).hex(),
+                inserted: isLight
+                    ? colorScheme.ramps.green(0.45).hex()
+                    : colorScheme.ramps.green(0.5).hex(),
+                conflict: isLight
+                    ? colorScheme.ramps.red(0.6).hex()
+                    : colorScheme.ramps.red(0.5).hex(),
+            },
+        }
+
+        const base_properties = {
+            height: 22,
+            iconColor: foreground(layer, "variant"),
+            iconSize: 7,
+            iconSpacing: 5,
+            text: text(layer, "mono", "variant", { size: "sm" }),
+            status: {
+                ...git_status
+            }
+        }
+
+        const unselected_i = interactive({
+            base: base_properties,
+            state: {
+                default: {
+                    background: background(layer),
+                    ...unselected.default ?? {},
+                },
+                hovered: {
+                    background: background(layer, "variant", "hovered"),
+                    ...unselected.hovered ?? {},
+                },
+                clicked: {
+                    background: background(layer, "variant", "pressed"),
+                    ...unselected.clicked ?? {},
+                },
+            },
+        })
+
+        const selected_i = interactive({
+            base: base,
+            state: {
+                default: {
+                    ...base_entry,
+                    ...(selected.default ?? {}),
+            },
+            hovered: {
+                ...base_entry,
+                ...selected.hovered ?? {},
+            },
+            clicked: {
+                ...base_entry,
+                ...selected.clicked ?? {},
+            },
+            }
+        })
+
+        return toggleable({
+            state: {
+            inactive: unselected_i,
+            active: selected_i,
+            }
+        })
+
+    }
 
     return {
         openProjectButton: interactive({
