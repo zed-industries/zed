@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::Context;
 use clock::Global;
+use futures::{future::Shared, FutureExt};
 use gpui::{ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
@@ -28,14 +29,10 @@ pub struct InlayHintCache {
 }
 
 struct UpdateTask {
-    current: (InvalidationStrategy, SpawnedTask),
-    pending_refresh: Option<SpawnedTask>,
-}
-
-struct SpawnedTask {
-    version: usize,
-    is_running_rx: smol::channel::Receiver<()>,
-    _task: Task<()>,
+    invalidation_strategy: InvalidationStrategy,
+    cache_version: usize,
+    _task: Shared<Task<()>>,
+    pending_refresh: Option<Task<()>>,
 }
 
 #[derive(Debug)]
@@ -95,35 +92,10 @@ impl ExcerptQuery {
     }
 }
 
-impl UpdateTask {
-    fn new(invalidation_strategy: InvalidationStrategy, spawned_task: SpawnedTask) -> Self {
-        Self {
-            current: (invalidation_strategy, spawned_task),
-            pending_refresh: None,
-        }
-    }
-
-    fn is_running(&self) -> bool {
-        !self.current.1.is_running_rx.is_closed()
-            || self
-                .pending_refresh
-                .as_ref()
-                .map_or(false, |task| !task.is_running_rx.is_closed())
-    }
-
-    fn cache_version(&self) -> usize {
-        self.current.1.version
-    }
-
-    fn invalidation_strategy(&self) -> InvalidationStrategy {
-        self.current.0
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum InvalidationStrategy {
-    Forced,
-    OnConflict,
+    RefreshRequested,
+    ExcerptEdited,
     None,
 }
 
@@ -217,7 +189,7 @@ impl InlayHintCache {
         let update_tasks = &mut self.update_tasks;
         let invalidate_cache = matches!(
             invalidate,
-            InvalidationStrategy::Forced | InvalidationStrategy::OnConflict
+            InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
         );
         if invalidate_cache {
             update_tasks
@@ -226,7 +198,7 @@ impl InlayHintCache {
         let cache_version = self.version;
         excerpts_to_query.retain(|visible_excerpt_id, _| {
             match update_tasks.entry(*visible_excerpt_id) {
-                hash_map::Entry::Occupied(o) => match o.get().cache_version().cmp(&cache_version) {
+                hash_map::Entry::Occupied(o) => match o.get().cache_version.cmp(&cache_version) {
                     cmp::Ordering::Less => true,
                     cmp::Ordering::Equal => invalidate_cache,
                     cmp::Ordering::Greater => false,
@@ -367,25 +339,23 @@ fn spawn_new_update_tasks(
             let buffer = buffer_handle.read(cx);
             let buffer_snapshot = buffer.snapshot();
             let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-            let cache_is_empty = match &cached_excerpt_hints {
-                Some(cached_excerpt_hints) => {
-                    let new_task_buffer_version = buffer_snapshot.version();
-                    let cached_excerpt_hints = cached_excerpt_hints.read();
-                    let cached_buffer_version = &cached_excerpt_hints.buffer_version;
-                    if cached_excerpt_hints.version > update_cache_version
-                        || cached_buffer_version.changed_since(new_task_buffer_version)
-                    {
-                        return;
-                    }
-                    if !new_task_buffer_version.changed_since(&cached_buffer_version)
-                        && !matches!(invalidation_strategy, InvalidationStrategy::Forced)
-                    {
-                        return;
-                    }
-
-                    cached_excerpt_hints.hints.is_empty()
+            if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
+                let new_task_buffer_version = buffer_snapshot.version();
+                let cached_excerpt_hints = cached_excerpt_hints.read();
+                let cached_buffer_version = &cached_excerpt_hints.buffer_version;
+                if cached_excerpt_hints.version > update_cache_version
+                    || cached_buffer_version.changed_since(new_task_buffer_version)
+                {
+                    return;
                 }
-                None => true,
+                if !new_task_buffer_version.changed_since(&cached_buffer_version)
+                    && !matches!(
+                        invalidation_strategy,
+                        InvalidationStrategy::RefreshRequested
+                    )
+                {
+                    return;
+                }
             };
 
             let buffer_id = buffer.remote_id();
@@ -419,55 +389,53 @@ fn spawn_new_update_tasks(
                     invalidate: invalidation_strategy,
                 };
 
-                let new_update_task = |previous_task| {
+                let new_update_task = |is_refresh_after_regular_task| {
                     new_update_task(
                         query,
                         multi_buffer_snapshot,
                         buffer_snapshot,
                         Arc::clone(&visible_hints),
                         cached_excerpt_hints,
-                        previous_task,
+                        is_refresh_after_regular_task,
                         cx,
                     )
                 };
                 match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
                     hash_map::Entry::Occupied(mut o) => {
                         let update_task = o.get_mut();
-                        if update_task.is_running() {
-                            match (update_task.invalidation_strategy(), invalidation_strategy) {
-                                (InvalidationStrategy::Forced, _)
-                                | (_, InvalidationStrategy::OnConflict) => {
-                                    o.insert(UpdateTask::new(
-                                        invalidation_strategy,
-                                        new_update_task(None),
-                                    ));
-                                }
-                                (_, InvalidationStrategy::Forced) => {
-                                    if cache_is_empty {
-                                        o.insert(UpdateTask::new(
-                                            invalidation_strategy,
-                                            new_update_task(None),
-                                        ));
-                                    } else if update_task.pending_refresh.is_none() {
-                                        update_task.pending_refresh = Some(new_update_task(Some(
-                                            update_task.current.1.is_running_rx.clone(),
-                                        )));
-                                    }
-                                }
-                                _ => {}
+                        match (update_task.invalidation_strategy, invalidation_strategy) {
+                            (_, InvalidationStrategy::None) => {}
+                            (InvalidationStrategy::RefreshRequested, _)
+                            | (_, InvalidationStrategy::ExcerptEdited)
+                            | (
+                                InvalidationStrategy::None,
+                                InvalidationStrategy::RefreshRequested,
+                            ) => {
+                                o.insert(UpdateTask {
+                                    invalidation_strategy,
+                                    cache_version: query.cache_version,
+                                    _task: new_update_task(false).shared(),
+                                    pending_refresh: None,
+                                });
                             }
-                        } else {
-                            o.insert(UpdateTask::new(
-                                invalidation_strategy,
-                                new_update_task(None),
-                            ));
+                            (_, InvalidationStrategy::RefreshRequested) => {
+                                let pending_fetch = o.get()._task.clone();
+                                let refresh_task = new_update_task(true);
+                                o.get_mut().pending_refresh =
+                                    Some(cx.background().spawn(async move {
+                                        pending_fetch.await;
+                                        refresh_task.await
+                                    }));
+                            }
                         }
                     }
                     hash_map::Entry::Vacant(v) => {
-                        v.insert(UpdateTask::new(
+                        v.insert(UpdateTask {
                             invalidation_strategy,
-                            new_update_task(None),
-                        ));
+                            cache_version: query.cache_version,
+                            _task: new_update_task(false).shared(),
+                            pending_refresh: None,
+                        });
                     }
                 }
             }
@@ -481,17 +449,11 @@ fn new_update_task(
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
-    task_before_refresh: Option<smol::channel::Receiver<()>>,
+    is_refresh_after_regular_task: bool,
     cx: &mut ViewContext<'_, '_, Editor>,
-) -> SpawnedTask {
+) -> Task<()> {
     let hints_fetch_tasks = query.hints_fetch_ranges(&buffer_snapshot);
-    let (is_running_tx, is_running_rx) = smol::channel::bounded(1);
-    let is_refresh_task = task_before_refresh.is_some();
-    let _task = cx.spawn(|editor, cx| async move {
-        let _is_running_tx = is_running_tx;
-        if let Some(task_before_refresh) = task_before_refresh {
-            task_before_refresh.recv().await.ok();
-        }
+    cx.spawn(|editor, cx| async move {
         let create_update_task = |range| {
             fetch_and_update_hints(
                 editor.clone(),
@@ -505,7 +467,7 @@ fn new_update_task(
             )
         };
 
-        if is_refresh_task {
+        if is_refresh_after_regular_task {
             let visible_range_has_updates =
                 match create_update_task(hints_fetch_tasks.visible_range).await {
                     Ok(updated) => updated,
@@ -545,13 +507,7 @@ fn new_update_task(
                 }
             }
         }
-    });
-
-    SpawnedTask {
-        version: query.cache_version,
-        _task,
-        is_running_rx,
-    }
+    })
 }
 
 async fn fetch_and_update_hints(
@@ -716,7 +672,7 @@ fn calculate_hint_updates(
     let mut remove_from_cache = HashSet::default();
     if matches!(
         query.invalidate,
-        InvalidationStrategy::Forced | InvalidationStrategy::OnConflict
+        InvalidationStrategy::RefreshRequested | InvalidationStrategy::ExcerptEdited
     ) {
         remove_from_visible.extend(
             visible_hints
@@ -1421,18 +1377,6 @@ mod tests {
         cx.foreground().start_waiting();
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let fake_server = Arc::new(fake_server);
-        let mut initial_refresh_tasks = Vec::new();
-        let task_cx = cx.clone();
-        let add_refresh_task = |tasks: &mut Vec<Task<()>>| {
-            let task_fake_server = Arc::clone(&fake_server);
-            tasks.push(task_cx.foreground().spawn(async move {
-                task_fake_server
-                    .request::<lsp::request::InlayHintRefreshRequest>(())
-                    .await
-                    .expect("inlay refresh request failed");
-            }))
-        };
-
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         let another_lsp_request_count = Arc::clone(&lsp_request_count);
         fake_server
@@ -1459,6 +1403,17 @@ mod tests {
             .next()
             .await;
 
+        let mut initial_refresh_tasks = Vec::new();
+        let task_cx = cx.clone();
+        let add_refresh_task = |tasks: &mut Vec<Task<()>>| {
+            let task_fake_server = Arc::clone(&fake_server);
+            tasks.push(task_cx.foreground().spawn(async move {
+                task_fake_server
+                    .request::<lsp::request::InlayHintRefreshRequest>(())
+                    .await
+                    .expect("inlay refresh request failed");
+            }))
+        };
         add_refresh_task(&mut initial_refresh_tasks);
         add_refresh_task(&mut initial_refresh_tasks);
         let _ = futures::future::join_all(initial_refresh_tasks).await;
@@ -1470,7 +1425,7 @@ mod tests {
             assert_eq!(
                 lsp_request_count.load(Ordering::Relaxed),
                 3,
-                "Should query new hints once for editor opening, 2 times for every request"
+                "Should query new hints once for editor opening and 2 times due to 2 refresh requests"
             );
             let expected_hints = vec!["3".to_string()];
             assert_eq!(
@@ -1494,16 +1449,22 @@ mod tests {
             expected_changes.push(async_later_change);
             let task_editor = editor.clone();
             let mut task_cx = cx.clone();
-            add_refresh_task(&mut edits_and_refreshes);
+            let task_fake_server = Arc::clone(&fake_server);
             edits_and_refreshes.push(cx.foreground().spawn(async move {
+                task_fake_server
+                    .request::<lsp::request::InlayHintRefreshRequest>(())
+                    .await
+                    .expect("inlay refresh request failed");
                 task_editor.update(&mut task_cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
                     editor.handle_input(async_later_change, cx);
                 });
+                task_fake_server
+                    .request::<lsp::request::InlayHintRefreshRequest>(())
+                    .await
+                    .expect("inlay refresh request failed");
             }));
-            add_refresh_task(&mut edits_and_refreshes);
         }
-        add_refresh_task(&mut edits_and_refreshes);
         let _ = futures::future::join_all(edits_and_refreshes).await;
         cx.foreground().run_until_parked();
 
@@ -1515,12 +1476,8 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(
-                lsp_request_count.load(Ordering::Relaxed),
-                5,
-                "Should query new hints twice more, for last edit & refresh request after it"
-            );
-            let expected_hints = vec!["5".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 13);
+            let expected_hints = vec!["13".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),

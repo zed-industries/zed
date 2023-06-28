@@ -2633,12 +2633,12 @@ impl Editor {
                         return;
                     }
                     ControlFlow::Break(None) => return,
-                    ControlFlow::Continue(()) => InvalidationStrategy::Forced,
+                    ControlFlow::Continue(()) => InvalidationStrategy::RefreshRequested,
                 }
             }
             InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
-            InlayRefreshReason::ExcerptEdited => InvalidationStrategy::OnConflict,
-            InlayRefreshReason::RefreshRequested => InvalidationStrategy::Forced,
+            InlayRefreshReason::ExcerptEdited => InvalidationStrategy::ExcerptEdited,
+            InlayRefreshReason::RefreshRequested => InvalidationStrategy::RefreshRequested,
         };
 
         if !self.inlay_hint_cache.enabled {
