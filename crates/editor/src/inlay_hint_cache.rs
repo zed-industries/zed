@@ -9,7 +9,6 @@ use crate::{
 };
 use anyhow::Context;
 use clock::Global;
-use futures::{future::Shared, FutureExt};
 use gpui::{ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
@@ -50,10 +49,15 @@ pub struct InlaySplice {
 }
 
 struct UpdateTask {
-    invalidation_strategy: InvalidationStrategy,
+    invalidate: InvalidationStrategy,
     cache_version: usize,
-    _task: Shared<Task<()>>,
-    pending_refresh: Option<Task<()>>,
+    task: RunningTask,
+    pending_refresh: Option<ExcerptQuery>,
+}
+
+struct RunningTask {
+    _task: Task<()>,
+    is_running_rx: smol::channel::Receiver<()>,
 }
 
 #[derive(Debug)]
@@ -79,6 +83,11 @@ struct ExcerptDimensions {
     excerpt_range_end: language::Anchor,
     excerpt_visible_range_start: language::Anchor,
     excerpt_visible_range_end: language::Anchor,
+}
+
+struct HintFetchRanges {
+    visible_range: Range<language::Anchor>,
+    other_ranges: Vec<Range<language::Anchor>>,
 }
 
 impl InvalidationStrategy {
@@ -405,37 +414,29 @@ fn spawn_new_update_tasks(
                 match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
                     hash_map::Entry::Occupied(mut o) => {
                         let update_task = o.get_mut();
-                        match (update_task.invalidation_strategy, invalidate) {
+                        match (update_task.invalidate, invalidate) {
                             (_, InvalidationStrategy::None) => {}
-                            (InvalidationStrategy::RefreshRequested, _)
-                            | (_, InvalidationStrategy::ExcerptEdited)
-                            | (
-                                InvalidationStrategy::None,
+                            (
+                                InvalidationStrategy::ExcerptEdited,
                                 InvalidationStrategy::RefreshRequested,
-                            ) => {
+                            ) if !update_task.task.is_running_rx.is_closed() => {
+                                update_task.pending_refresh = Some(query);
+                            }
+                            _ => {
                                 o.insert(UpdateTask {
-                                    invalidation_strategy: invalidate,
+                                    invalidate,
                                     cache_version: query.cache_version,
-                                    _task: new_update_task(false).shared(),
+                                    task: new_update_task(false),
                                     pending_refresh: None,
                                 });
-                            }
-                            (_, InvalidationStrategy::RefreshRequested) => {
-                                let pending_fetch = o.get()._task.clone();
-                                let refresh_task = new_update_task(true);
-                                o.get_mut().pending_refresh =
-                                    Some(cx.background().spawn(async move {
-                                        pending_fetch.await;
-                                        refresh_task.await
-                                    }));
                             }
                         }
                     }
                     hash_map::Entry::Vacant(v) => {
                         v.insert(UpdateTask {
-                            invalidation_strategy: invalidate,
+                            invalidate,
                             cache_version: query.cache_version,
-                            _task: new_update_task(false).shared(),
+                            task: new_update_task(false),
                             pending_refresh: None,
                         });
                     }
@@ -453,9 +454,11 @@ fn new_update_task(
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     is_refresh_after_regular_task: bool,
     cx: &mut ViewContext<'_, '_, Editor>,
-) -> Task<()> {
+) -> RunningTask {
     let hints_fetch_ranges = query.hints_fetch_ranges(&buffer_snapshot);
-    cx.spawn(|editor, cx| async move {
+    let (is_running_tx, is_running_rx) = smol::channel::bounded(1);
+    let _task = cx.spawn(|editor, mut cx| async move {
+        let _is_running_tx = is_running_tx;
         let create_update_task = |range| {
             fetch_and_update_hints(
                 editor.clone(),
@@ -508,7 +511,55 @@ fn new_update_task(
                 }
             }
         }
-    })
+
+        editor
+            .update(&mut cx, |editor, cx| {
+                let pending_refresh_query = editor
+                    .inlay_hint_cache
+                    .update_tasks
+                    .get_mut(&query.excerpt_id)
+                    .and_then(|task| task.pending_refresh.take());
+
+                if let Some(pending_refresh_query) = pending_refresh_query {
+                    let refresh_multi_buffer = editor.buffer().read(cx);
+                    let refresh_multi_buffer_snapshot = refresh_multi_buffer.snapshot(cx);
+                    let refresh_visible_hints = Arc::new(editor.visible_inlay_hints(cx));
+                    let refresh_cached_excerpt_hints = editor
+                        .inlay_hint_cache
+                        .hints
+                        .get(&pending_refresh_query.excerpt_id)
+                        .map(Arc::clone);
+                    if let Some(buffer) =
+                        refresh_multi_buffer.buffer(pending_refresh_query.buffer_id)
+                    {
+                        drop(refresh_multi_buffer);
+                        editor.inlay_hint_cache.update_tasks.insert(
+                            pending_refresh_query.excerpt_id,
+                            UpdateTask {
+                                invalidate: InvalidationStrategy::RefreshRequested,
+                                cache_version: editor.inlay_hint_cache.version,
+                                task: new_update_task(
+                                    pending_refresh_query,
+                                    refresh_multi_buffer_snapshot,
+                                    buffer.read(cx).snapshot(),
+                                    refresh_visible_hints,
+                                    refresh_cached_excerpt_hints,
+                                    true,
+                                    cx,
+                                ),
+                                pending_refresh: None,
+                            },
+                        );
+                    }
+                }
+            })
+            .ok();
+    });
+
+    RunningTask {
+        _task,
+        is_running_rx,
+    }
 }
 
 async fn fetch_and_update_hints(
@@ -544,7 +595,7 @@ async fn fetch_and_update_hints(
         .context("inlay hint fetch task")?;
     let background_task_buffer_snapshot = buffer_snapshot.clone();
     let backround_fetch_range = fetch_range.clone();
-    if let Some(new_update) = cx
+    let new_update = cx
         .background()
         .spawn(async move {
             calculate_hint_updates(
@@ -556,13 +607,15 @@ async fn fetch_and_update_hints(
                 &visible_hints,
             )
         })
-        .await
-    {
-        update_happened = !new_update.add_to_cache.is_empty()
-            || !new_update.remove_from_cache.is_empty()
-            || !new_update.remove_from_visible.is_empty();
-        editor
-            .update(&mut cx, |editor, cx| {
+        .await;
+
+    editor
+        .update(&mut cx, |editor, cx| {
+            if let Some(new_update) = new_update {
+                update_happened = !new_update.add_to_cache.is_empty()
+                    || !new_update.remove_from_cache.is_empty()
+                    || !new_update.remove_from_visible.is_empty();
+
                 let cached_excerpt_hints = editor
                     .inlay_hint_cache
                     .hints
@@ -646,9 +699,9 @@ async fn fetch_and_update_hints(
                 if !to_remove.is_empty() || !to_insert.is_empty() {
                     editor.splice_inlay_hints(to_remove, to_insert, cx)
                 }
-            })
-            .ok();
-    }
+            }
+        })
+        .ok();
 
     Ok(update_happened)
 }
@@ -750,11 +803,6 @@ fn calculate_hint_updates(
             add_to_cache,
         })
     }
-}
-
-struct HintFetchRanges {
-    visible_range: Range<language::Anchor>,
-    other_ranges: Vec<Range<language::Anchor>>,
 }
 
 fn contains_position(
@@ -1246,7 +1294,7 @@ mod tests {
                 visible_hint_labels(editor, cx),
             );
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds,);
+            assert_eq!(inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds);
             assert_eq!(inlay_cache.version, edits_made);
         });
     }
@@ -1498,19 +1546,19 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 12);
-            let expected_hints = vec!["12".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 11);
+            let expected_hints = vec!["11".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
-                "Should get hints from the last edit and refresh request only"
+                "Should get hints from the refresh request"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
-                inlay_cache.version, 2,
-                "Should update the cache version once since refresh did not get new hint updates"
+                inlay_cache.version, 3,
+                "Last request and refresh after it should bring updates and cache version bump"
             );
         });
 
@@ -1539,12 +1587,8 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(
-                lsp_request_count.load(Ordering::Relaxed),
-                6,
-                "Should query new hints once more, for last edit. All refresh tasks were before this edit hence should be cancelled."
-            );
-            let expected_hints = vec!["6".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 13);
+            let expected_hints = vec!["13".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
@@ -1553,10 +1597,7 @@ mod tests {
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(
-                inlay_cache.version, 3,
-                "Should update the cache version once due to the new change"
-            );
+            assert_eq!(inlay_cache.version, 5);
         });
     }
 
@@ -1633,13 +1674,9 @@ mod tests {
 
                     task_lsp_request_ranges.lock().push(params.range);
                     let query_start = params.range.start;
-                    let query_end = params.range.end;
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
                     Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(
-                            (query_end.line - query_start.line) / 2,
-                            (query_end.character - query_start.character) / 2,
-                        ),
+                        position: query_start,
                         label: lsp::InlayHintLabel::String(i.to_string()),
                         kind: None,
                         text_edits: None,
@@ -1701,13 +1738,13 @@ mod tests {
 
             assert_eq!(lsp_request_count.load(Ordering::SeqCst), 5,
                 "When scroll not at the edge of a big document, visible part + 2 other parts should be queried for hints");
-            let expected_layers = vec!["4".to_string(), "5".to_string()];
+            let expected_layers = vec!["3".to_string(), "4".to_string(), "5".to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after edit");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 4, "Should update the cache for every LSP response with hints added");
+            assert_eq!(inlay_cache.version, 5, "Should update the cache for every LSP response with hints added");
         });
     }
 
