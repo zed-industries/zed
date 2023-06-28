@@ -1,6 +1,13 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
-import { Border, TextStyle, background, border, foreground, text } from "./components"
+import {
+    Border,
+    TextStyle,
+    background,
+    border,
+    foreground,
+    text,
+} from "./components"
 import { interactive, toggleable } from "../element"
 import merge from "ts-deepmerge"
 export default function projectPanel(colorScheme: ColorScheme) {
@@ -9,20 +16,19 @@ export default function projectPanel(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 
     type EntryStateProps = {
-        background?: string,
-        border?: Border,
-        text?: TextStyle,
-        iconColor?: string,
+        background?: string
+        border?: Border
+        text?: TextStyle
+        iconColor?: string
     }
 
     type EntryState = {
-        default: EntryStateProps,
-        hovered?: EntryStateProps,
-        clicked?: EntryStateProps,
+        default: EntryStateProps
+        hovered?: EntryStateProps
+        clicked?: EntryStateProps
     }
 
     const entry = (unselected?: EntryState, selected?: EntryState) => {
-
         const git_status = {
             git: {
                 modified: isLight
@@ -45,18 +51,44 @@ export default function projectPanel(colorScheme: ColorScheme) {
             iconSpacing: 5,
             text: text(layer, "mono", "variant", { size: "sm" }),
             status: {
-                ...git_status
-            }
+                ...git_status,
+            },
         }
 
-        const selectedStyle: EntryState | undefined = selected ? selected : unselected
+        const selectedStyle: EntryState | undefined = selected
+            ? selected
+            : unselected
 
-        const unselected_default_style = merge(base_properties, unselected?.default ?? {}, {})
-        const unselected_hovered_style = merge(base_properties, unselected?.hovered ?? {}, { background: background(layer, "variant", "hovered") })
-        const unselected_clicked_style = merge(base_properties, unselected?.clicked ?? {}, { background: background(layer, "variant", "pressed") })
-        const selected_default_style = merge(base_properties, selectedStyle?.default ?? {}, { background: background(layer) })
-        const selected_hovered_style = merge(base_properties, selectedStyle?.hovered ?? {}, { background: background(layer, "variant", "hovered") })
-        const selected_clicked_style = merge(base_properties, selectedStyle?.clicked ?? {}, { background: background(layer, "variant", "pressed") })
+        const unselected_default_style = merge(
+            base_properties,
+            unselected?.default ?? {},
+            {}
+        )
+        const unselected_hovered_style = merge(
+            base_properties,
+            unselected?.hovered ?? {},
+            { background: background(layer, "variant", "hovered") }
+        )
+        const unselected_clicked_style = merge(
+            base_properties,
+            unselected?.clicked ?? {},
+            { background: background(layer, "variant", "pressed") }
+        )
+        const selected_default_style = merge(
+            base_properties,
+            selectedStyle?.default ?? {},
+            { background: background(layer) }
+        )
+        const selected_hovered_style = merge(
+            base_properties,
+            selectedStyle?.hovered ?? {},
+            { background: background(layer, "variant", "hovered") }
+        )
+        const selected_clicked_style = merge(
+            base_properties,
+            selectedStyle?.clicked ?? {},
+            { background: background(layer, "variant", "pressed") }
+        )
 
         return toggleable({
             state: {
@@ -74,9 +106,8 @@ export default function projectPanel(colorScheme: ColorScheme) {
                         clicked: selected_clicked_style,
                     },
                 }),
-            }
+            },
         })
-
     }
 
     const defaultEntry = entry()
@@ -123,25 +154,31 @@ export default function projectPanel(colorScheme: ColorScheme) {
             background: withOpacity(background(layer, "on"), 0.9),
             border: border(layer),
         },
-        ignoredEntry: entry({
-            default: {
-                text: text(layer, "mono", "disabled"),
+        ignoredEntry: entry(
+            {
+                default: {
+                    text: text(layer, "mono", "disabled"),
+                },
             },
-        }, {
-            default: {
-                iconColor: foreground(layer, "variant"),
+            {
+                default: {
+                    iconColor: foreground(layer, "variant"),
+                },
             }
-        }),
-        cutEntry: entry({
-            default: {
-                text: text(layer, "mono", "disabled"),
+        ),
+        cutEntry: entry(
+            {
+                default: {
+                    text: text(layer, "mono", "disabled"),
+                },
             },
-        }, {
-            default: {
-                background: background(layer, "active"),
-                text: text(layer, "mono", "disabled", { size: "sm" }),
+            {
+                default: {
+                    background: background(layer, "active"),
+                    text: text(layer, "mono", "disabled", { size: "sm" }),
+                },
             }
-        }),
+        ),
         filenameEditor: {
             background: background(layer, "on"),
             text: text(layer, "mono", "on", { size: "sm" }),
