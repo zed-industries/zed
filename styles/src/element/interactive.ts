@@ -1,7 +1,7 @@
 import merge from "ts-deepmerge"
 import { DeepPartial } from "utility-types"
 
-type InteractiveState =
+export type InteractiveState =
     | "default"
     | "hovered"
     | "clicked"
