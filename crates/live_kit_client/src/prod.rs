@@ -32,6 +32,15 @@ extern "C" {
             publisher_id: CFStringRef,
             track_id: CFStringRef,
         ),
+        on_mute_changed_from_remote_audio_track: extern "C" fn(
+            callback_data: *mut c_void,
+            track_id: CFStringRef,
+            muted: bool,
+        ),
+        on_active_speakers_changed: extern "C" fn(
+            callback_data: *mut c_void,
+            participants: CFArrayRef,
+        ),
         on_did_subscribe_to_remote_video_track: extern "C" fn(
             callback_data: *mut c_void,
             publisher_id: CFStringRef,
@@ -381,6 +390,24 @@ impl Room {
         });
     }
 
+    fn mute_changed_from_remote_audio_track(&self, track_id: String, muted: bool) {
+        self.remote_audio_track_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RemoteAudioTrackUpdate::MuteChanged {
+                track_id: track_id.clone(),
+                muted,
+            })
+            .is_ok()
+        });
+    }
+
+    // A vec of publisher IDs
+    fn active_speakers_changed(&self, speakers: Vec<String>) {
+        self.remote_audio_track_subscribers.lock().retain(move |tx| {
+            tx.unbounded_send(RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers: speakers.clone() })
+                .is_ok()
+        });
+    }
+
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
         let track = Arc::new(track);
         self.remote_video_track_subscribers.lock().retain(|tx| {
@@ -445,6 +472,8 @@ impl RoomDelegate {
                 Self::on_did_disconnect,
                 Self::on_did_subscribe_to_remote_audio_track,
                 Self::on_did_unsubscribe_from_remote_audio_track,
+                Self::on_mute_change_from_remote_audio_track,
+                Self::on_active_speakers_changed,
                 Self::on_did_subscribe_to_remote_video_track,
                 Self::on_did_unsubscribe_from_remote_video_track,
             )
@@ -489,6 +518,38 @@ impl RoomDelegate {
         let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
         if let Some(room) = room.upgrade() {
             room.did_unsubscribe_from_remote_audio_track(publisher_id, track_id);
+        }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_mute_change_from_remote_audio_track(
+        room: *mut c_void,
+        track_id: CFStringRef,
+        muted: bool,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
+        if let Some(room) = room.upgrade() {
+            room.mute_changed_from_remote_audio_track(track_id, muted);
+        }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_active_speakers_changed(room: *mut c_void, participants: CFArrayRef) {
+        if participants.is_null() {
+            return;
+        }
+
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        let speakers = unsafe {
+            CFArray::wrap_under_get_rule(participants)
+                .into_iter()
+                .map(|speaker: core_foundation::base::ItemRef<'_, *const c_void>| CFString::wrap_under_get_rule(*speaker as CFStringRef).to_string())
+                .collect()
+        };
+
+        if let Some(room) = room.upgrade() {
+            room.active_speakers_changed(speakers);
         }
         let _ = Weak::into_raw(room);
     }
@@ -761,7 +822,8 @@ pub enum RemoteVideoTrackUpdate {
 }
 
 pub enum RemoteAudioTrackUpdate {
-    MuteChanged { track_id: Sid, muted: bool},
+    ActiveSpeakersChanged { speakers: Vec<Sid> },
+    MuteChanged { track_id: Sid, muted: bool },
     Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }

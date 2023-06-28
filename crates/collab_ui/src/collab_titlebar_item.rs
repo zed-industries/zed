@@ -86,8 +86,10 @@ impl View for CollabTitlebarItem {
             right_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
             right_container.add_child(self.render_leave_call(&theme, cx));
+            let muted = room.read(cx).is_muted();
+            let speaking = room.read(cx).is_speaking();
             left_container
-                .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
+                .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, muted, speaking, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
             right_container.add_child(self.render_toggle_mute(&theme, &room, cx));
             right_container.add_child(self.render_toggle_deafen(&theme, &room, cx));
@@ -449,7 +451,7 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let icon;
         let tooltip;
-        let is_muted = room.read(cx).is_muted().unwrap_or(false);
+        let is_muted = room.read(cx).is_muted();
         if is_muted {
             icon = "icons/radix/mic-mute.svg";
             tooltip = "Unmute microphone\nRight click for options";
@@ -766,6 +768,8 @@ impl CollabTitlebarItem {
                         replica_id,
                         participant.peer_id,
                         Some(participant.location),
+                        participant.muted,
+                        participant.speaking,
                         workspace,
                         theme,
                         cx,
@@ -782,14 +786,19 @@ impl CollabTitlebarItem {
         theme: &Theme,
         user: &Arc<User>,
         peer_id: PeerId,
+        muted: bool,
+        speaking: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
+
         Container::new(self.render_face_pile(
             user,
             Some(replica_id),
             peer_id,
             None,
+            muted,
+            speaking,
             workspace,
             theme,
             cx,
@@ -804,6 +813,8 @@ impl CollabTitlebarItem {
         replica_id: Option<ReplicaId>,
         peer_id: PeerId,
         location: Option<ParticipantLocation>,
+        muted: bool,
+        speaking: bool,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
@@ -829,11 +840,17 @@ impl CollabTitlebarItem {
         let leader_style = theme.titlebar.leader_avatar;
         let follower_style = theme.titlebar.follower_avatar;
 
-        let mut background_color = theme
-            .titlebar
-            .container
-            .background_color
-            .unwrap_or_default();
+        let mut background_color = if muted {
+            gpui::color::Color::red()
+        } else if speaking {
+            gpui::color::Color::green()
+        } else {
+            theme
+                .titlebar
+                .container
+                .background_color
+                .unwrap_or_default()
+        };
         if let Some(replica_id) = replica_id {
             if followed_by_self {
                 let selection = theme.editor.replica_selection_style(replica_id).selection;

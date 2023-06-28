@@ -8,6 +8,8 @@ class LKRoomDelegate: RoomDelegate {
     var onDidDisconnect: @convention(c) (UnsafeRawPointer) -> Void
     var onDidSubscribeToRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
+    var onMuteChangedFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void
+    var onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void
     var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
 
@@ -16,6 +18,8 @@ class LKRoomDelegate: RoomDelegate {
         onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
         onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
         onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+        onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
+        onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void,
         onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
         onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void)
     {
@@ -25,6 +29,8 @@ class LKRoomDelegate: RoomDelegate {
         self.onDidUnsubscribeFromRemoteAudioTrack = onDidUnsubscribeFromRemoteAudioTrack
         self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
         self.onDidUnsubscribeFromRemoteVideoTrack = onDidUnsubscribeFromRemoteVideoTrack
+        self.onMuteChangedFromRemoteAudioTrack = onMuteChangedFromRemoteAudioTrack
+        self.onActiveSpeakersChanged = onActiveSpeakersChanged
     }
 
     func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
@@ -41,6 +47,17 @@ class LKRoomDelegate: RoomDelegate {
         }
     }
 
+    func room(_ room: Room, participant: Participant, didUpdate publication: TrackPublication, muted: Bool) {
+        if publication.kind == .audio {
+            self.onMuteChangedFromRemoteAudioTrack(self.data, publication.sid as CFString, muted)
+        }
+    }
+    
+    func room(_ room: Room, didUpdate speakers: [Participant]) {
+        guard let speaker_ids = speakers.compactMap({ $0.identity as CFString }) as CFArray? else { return }
+        self.onActiveSpeakersChanged(self.data, speaker_ids)
+    }
+    
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
             self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString)
@@ -89,6 +106,8 @@ public func LKRoomDelegateCreate(
     onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
     onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
     onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+    onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
+    onActiveSpeakerChanged: @escaping @convention(c) (UnsafeRawPointer, CFArray) -> Void,
     onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
     onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
 ) -> UnsafeMutableRawPointer {
@@ -97,6 +116,8 @@ public func LKRoomDelegateCreate(
         onDidDisconnect: onDidDisconnect,
         onDidSubscribeToRemoteAudioTrack: onDidSubscribeToRemoteAudioTrack,
         onDidUnsubscribeFromRemoteAudioTrack: onDidUnsubscribeFromRemoteAudioTrack,
+        onMuteChangedFromRemoteAudioTrack: onMuteChangedFromRemoteAudioTrack,
+        onActiveSpeakersChanged: onActiveSpeakerChanged,
         onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack,
         onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack
     )

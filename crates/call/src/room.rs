@@ -164,6 +164,7 @@ impl Room {
                 microphone_track: LocalTrack::None,
                 next_publish_id: 0,
                 deafened: false,
+                speaking: false,
                 _maintain_room,
                 _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
             })
@@ -648,6 +649,7 @@ impl Room {
                                     projects: participant.projects,
                                     location,
                                     muted: false,
+                                    speaking: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
                                 },
@@ -782,6 +784,30 @@ impl Room {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match change {
+            RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers } => {
+                let mut speaker_ids = speakers
+                    .into_iter()
+                    .filter_map(|speaker_sid| speaker_sid.parse().ok())
+                    .collect::<Vec<u64>>();
+                speaker_ids.sort_unstable();
+                for (sid, participant) in &mut self.remote_participants {
+                    if let Ok(_) = speaker_ids.binary_search(sid) {
+                        participant.speaking = true;
+                    } else {
+                        participant.speaking = false;
+                    }
+                }
+                if let Some(id) = self.client.user_id() {
+                    if let Some(room) = &mut self.live_kit {
+                        if let Ok(_) = speaker_ids.binary_search(&id) {
+                            room.speaking = true;
+                        } else {
+                            room.speaking = false;
+                        }
+                    }
+                }
+                cx.notify();
+            }
             RemoteAudioTrackUpdate::MuteChanged { track_id, muted } => {
                 for participant in &mut self.remote_participants.values_mut() {
                     let mut found = false;
@@ -796,6 +822,7 @@ impl Room {
                         break;
                     }
                 }
+                cx.notify();
             }
             RemoteAudioTrackUpdate::Subscribed(track) => {
                 let user_id = track.publisher_id().parse()?;
@@ -1011,7 +1038,7 @@ impl Room {
         })
     }
 
-    pub fn is_muted(&self) -> Option<bool> {
+    pub fn is_muted(&self) -> bool {
         self.live_kit
             .as_ref()
             .and_then(|live_kit| match &live_kit.microphone_track {
@@ -1019,6 +1046,13 @@ impl Room {
                 LocalTrack::Pending { muted, .. } => Some(*muted),
                 LocalTrack::Published { muted, .. } => Some(*muted),
             })
+            .unwrap_or(false)
+    }
+
+    pub fn is_speaking(&self) -> bool {
+        self.live_kit
+            .as_ref()
+            .map_or(false, |live_kit| live_kit.speaking)
     }
 
     pub fn is_deafened(&self) -> Option<bool> {
@@ -1215,7 +1249,7 @@ impl Room {
         }
     }
     pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
-        let should_mute = self.is_muted().unwrap_or(false);
+        let should_mute = self.is_muted();
         if let Some(live_kit) = self.live_kit.as_mut() {
             Self::set_mute(live_kit, !should_mute, cx)
         } else {
@@ -1298,6 +1332,7 @@ struct LiveKitRoom {
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
     deafened: bool,
+    speaking: bool,
     next_publish_id: usize,
     _maintain_room: Task<()>,
     _maintain_tracks: [Task<()>; 2],

@@ -44,6 +44,7 @@ pub struct RemoteParticipant {
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
     pub muted: bool,
+    pub speaking: bool,
     pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
     pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }
