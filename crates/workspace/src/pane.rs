@@ -1,9 +1,10 @@
 mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
+pub use crate::toolbar::Toolbar;
 use crate::{
-    item::WeakItemHandle, notify_of_new_dock, toolbar::Toolbar, AutosaveSetting, Item,
-    NewCenterTerminal, NewFile, NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, notify_of_new_dock, AutosaveSetting, Item, NewCenterTerminal, NewFile,
+    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -250,7 +251,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: cx.add_view(|_| Toolbar::new(handle)),
+            toolbar: cx.add_view(|_| Toolbar::new(Some(handle))),
             tab_bar_context_menu: TabBarContextMenu {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,
@@ -285,19 +286,27 @@ impl Pane {
                         pane.tab_bar_context_menu
                             .handle_if_kind(TabBarContextMenuKind::Split),
                     ))
-                    .with_child(Pane::render_tab_bar_button(
-                        2,
+                    .with_child({
+                        let icon_path;
+                        let tooltip_label;
                         if pane.is_zoomed() {
-                            "icons/minimize_8.svg"
+                            icon_path = "icons/minimize_8.svg";
+                            tooltip_label = "Zoom In".into();
                         } else {
-                            "icons/maximize_8.svg"
-                        },
-                        pane.is_zoomed(),
-                        Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
-                        cx,
-                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-                        None,
-                    ))
+                            icon_path = "icons/maximize_8.svg";
+                            tooltip_label = "Zoom In".into();
+                        }
+
+                        Pane::render_tab_bar_button(
+                            2,
+                            icon_path,
+                            pane.is_zoomed(),
+                            Some((tooltip_label, Some(Box::new(ToggleZoom)))),
+                            cx,
+                            move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                            None,
+                        )
+                    })
                     .into_any()
             }),
         }
@@ -1112,7 +1121,7 @@ impl Pane {
             .get(self.active_item_index)
             .map(|item| item.as_ref());
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_active_pane_item(active_item, cx);
+            toolbar.set_active_item(active_item, cx);
         });
     }
 
@@ -1410,7 +1419,7 @@ impl Pane {
     pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
         index: usize,
         icon: &'static str,
-        active: bool,
+        is_active: bool,
         tooltip: Option<(String, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F,
@@ -1420,7 +1429,7 @@ impl Pane {
 
         let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
-            let style = theme.pane_button.style_for(mouse_state, active);
+            let style = theme.pane_button.in_state(is_active).style_for(mouse_state);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
@@ -1602,7 +1611,7 @@ impl View for Pane {
         }
 
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.pane_focus_update(true, cx);
+            toolbar.focus_changed(true, cx);
         });
 
         if let Some(active_item) = self.active_item() {
@@ -1631,7 +1640,7 @@ impl View for Pane {
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = false;
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.pane_focus_update(false, cx);
+            toolbar.focus_changed(false, cx);
         });
         cx.notify();
     }

@@ -20,7 +20,6 @@ use feedback::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions,
     anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
@@ -50,6 +49,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
     NewWindow, Workspace, WorkspaceSettings,
 };
+use zed_actions::*;
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -57,33 +57,6 @@ pub struct OpenBrowser {
 }
 
 impl_actions!(zed, [OpenBrowser]);
-
-actions!(
-    zed,
-    [
-        About,
-        Hide,
-        HideOthers,
-        ShowAll,
-        Minimize,
-        Zoom,
-        ToggleFullScreen,
-        Quit,
-        DebugElements,
-        OpenLog,
-        OpenLicenses,
-        OpenTelemetryLog,
-        OpenKeymap,
-        OpenSettings,
-        OpenLocalSettings,
-        OpenDefaultSettings,
-        OpenDefaultKeymap,
-        IncreaseBufferFontSize,
-        DecreaseBufferFontSize,
-        ResetBufferFontSize,
-        ResetDatabase,
-    ]
-);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(about);
@@ -361,15 +334,15 @@ pub fn initialize_workspace(
 
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-        let assistant_panel = if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
-            None
-        } else {
-            Some(AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
-        };
-        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
+        let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel, assistant_panel) =
+            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
+            workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(assistant_panel, cx);
+
             if !was_deserialized
                 && workspace
                     .project()
@@ -383,13 +356,7 @@ pub fn initialize_workspace(
             {
                 workspace.toggle_dock(project_panel_position, cx);
             }
-
             cx.focus_self();
-
-            workspace.add_panel(terminal_panel, cx);
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, cx);
-            }
         })?;
         Ok(())
     })
@@ -741,8 +708,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        elements::Empty, executor::Deterministic, Action, AnyElement, AppContext, AssetSource,
-        Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
+        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;

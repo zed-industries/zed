@@ -291,7 +291,7 @@ pub mod simple_message_notification {
                         )
                         .with_child(
                             MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
-                                let style = theme.dismiss_button.style_for(state, false);
+                                let style = theme.dismiss_button.style_for(state);
                                 Svg::new("icons/x_mark_8.svg")
                                     .with_color(style.color)
                                     .constrained()
@@ -323,7 +323,7 @@ pub mod simple_message_notification {
                                 0,
                                 cx,
                                 |state, _| {
-                                    let style = theme.action_message.style_for(state, false);
+                                    let style = theme.action_message.style_for(state);
 
                                     Flex::row()
                                         .with_child(

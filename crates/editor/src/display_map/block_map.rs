@@ -88,6 +88,7 @@ pub struct BlockContext<'a, 'b, 'c> {
     pub gutter_padding: f32,
     pub em_width: f32,
     pub line_height: f32,
+    pub block_id: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -30,7 +30,7 @@ const getTheme = (variant: Variant): ThemeConfig => {
     return {
         name: `${meta.name} Forest Light`,
         author: meta.author,
-        appearance: ThemeAppearance.Dark,
+        appearance: ThemeAppearance.Light,
         licenseType: meta.licenseType,
         licenseUrl: meta.licenseUrl,
         licenseFile: `${__dirname}/LICENSE`,

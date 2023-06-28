@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(paste);
 }
 
-pub fn visual_motion(motion: Motion, times: usize, cx: &mut WindowContext) {
+pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {

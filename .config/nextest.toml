@@ -1,0 +1,6 @@
+[test-groups]
+sequential-db-tests = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(db)'
+test-group = 'sequential-db-tests'

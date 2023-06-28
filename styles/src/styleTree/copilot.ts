@@ -1,60 +1,69 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, svg, text } from "./components"
-
+import { interactive } from "../element"
 export default function copilot(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 
     let content_width = 264
 
-    let ctaButton = {
+    let ctaButton =
         // Copied from welcome screen. FIXME: Move this into a ZDS component
-        background: background(layer),
-        border: border(layer, "default"),
-        cornerRadius: 4,
-        margin: {
-            top: 4,
-            bottom: 4,
-            left: 8,
-            right: 8,
-        },
-        padding: {
-            top: 3,
-            bottom: 3,
-            left: 7,
-            right: 7,
-        },
-        ...text(layer, "sans", "default", { size: "sm" }),
-        hover: {
-            ...text(layer, "sans", "default", { size: "sm" }),
-            background: background(layer, "hovered"),
-            border: border(layer, "active"),
-        },
-    }
+        interactive({
+            base: {
+                background: background(layer),
+                border: border(layer, "default"),
+                cornerRadius: 4,
+                margin: {
+                    top: 4,
+                    bottom: 4,
+                    left: 8,
+                    right: 8,
+                },
+                padding: {
+                    top: 3,
+                    bottom: 3,
+                    left: 7,
+                    right: 7,
+                },
+                ...text(layer, "sans", "default", { size: "sm" }),
+            },
+            state: {
+                hovered: {
+                    ...text(layer, "sans", "default", { size: "sm" }),
+                    background: background(layer, "hovered"),
+                    border: border(layer, "active"),
+                },
+            },
+        })
 
     return {
-        outLinkIcon: {
-            icon: svg(
-                foreground(layer, "variant"),
-                "icons/link_out_12.svg",
-                12,
-                12
-            ),
-            container: {
-                cornerRadius: 6,
-                padding: { left: 6 },
-            },
-            hover: {
+        outLinkIcon: interactive({
+            base: {
                 icon: svg(
-                    foreground(layer, "hovered"),
+                    foreground(layer, "variant"),
                     "icons/link_out_12.svg",
                     12,
                     12
                 ),
+                container: {
+                    cornerRadius: 6,
+                    padding: { left: 6 },
+                },
             },
-        },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered"),
+                    },
+                },
+            },
+        }),
+
         modal: {
             titleText: {
-                ...text(layer, "sans", { size: "xs", weight: "bold" }),
+                default: {
+                    ...text(layer, "sans", { size: "xs", weight: "bold" }),
+                },
             },
             titlebar: {
                 background: background(colorScheme.lowest),
@@ -75,42 +84,46 @@ export default function copilot(colorScheme: ColorScheme) {
                     bottom: 8,
                 },
             },
-            closeIcon: {
-                icon: svg(
-                    foreground(layer, "variant"),
-                    "icons/x_mark_8.svg",
-                    8,
-                    8
-                ),
-                container: {
-                    cornerRadius: 2,
-                    padding: {
-                        top: 4,
-                        bottom: 4,
-                        left: 4,
-                        right: 4,
-                    },
-                    margin: {
-                        right: 0,
-                    },
-                },
-                hover: {
+            closeIcon: interactive({
+                base: {
                     icon: svg(
-                        foreground(layer, "on"),
+                        foreground(layer, "variant"),
                         "icons/x_mark_8.svg",
                         8,
                         8
                     ),
+                    container: {
+                        cornerRadius: 2,
+                        padding: {
+                            top: 4,
+                            bottom: 4,
+                            left: 4,
+                            right: 4,
+                        },
+                        margin: {
+                            right: 0,
+                        },
+                    },
                 },
-                clicked: {
-                    icon: svg(
-                        foreground(layer, "base"),
-                        "icons/x_mark_8.svg",
-                        8,
-                        8
-                    ),
+                state: {
+                    hovered: {
+                        icon: svg(
+                            foreground(layer, "on"),
+                            "icons/x_mark_8.svg",
+                            8,
+                            8
+                        ),
+                    },
+                    clicked: {
+                        icon: svg(
+                            foreground(layer, "base"),
+                            "icons/x_mark_8.svg",
+                            8,
+                            8
+                        ),
+                    },
                 },
-            },
+            }),
             dimensions: {
                 width: 280,
                 height: 280,
@@ -185,28 +198,32 @@ export default function copilot(colorScheme: ColorScheme) {
                         },
                     },
                     right: (content_width * 1) / 3,
-                    rightContainer: {
-                        border: border(colorScheme.lowest, "inverted", {
-                            bottom: false,
-                            right: false,
-                            top: false,
-                            left: true,
-                        }),
-                        padding: {
-                            top: 3,
-                            bottom: 5,
-                            left: 8,
-                            right: 0,
-                        },
-                        hover: {
-                            border: border(layer, "active", {
+                    rightContainer: interactive({
+                        base: {
+                            border: border(colorScheme.lowest, "inverted", {
                                 bottom: false,
                                 right: false,
                                 top: false,
                                 left: true,
                             }),
+                            padding: {
+                                top: 3,
+                                bottom: 5,
+                                left: 8,
+                                right: 0,
+                            },
                         },
-                    },
+                        state: {
+                            hovered: {
+                                border: border(layer, "active", {
+                                    bottom: false,
+                                    right: false,
+                                    top: false,
+                                    left: true,
+                                }),
+                            },
+                        },
+                    }),
                 },
             },
 

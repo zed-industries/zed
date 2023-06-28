@@ -1,6 +1,6 @@
 [
   {
-    "context": "Editor && VimControl && !VimWaiting",
+    "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "g": [
         "vim::PushOperator",
@@ -25,11 +25,15 @@
         }
       ],
       "h": "vim::Left",
+      "left": "vim::Left",
       "backspace": "vim::Backspace",
       "j": "vim::Down",
+      "down": "vim::Down",
       "enter": "vim::NextLineStart",
       "k": "vim::Up",
+      "up": "vim::Up",
       "l": "vim::Right",
+      "right": "vim::Right",
       "$": "vim::EndOfLine",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
@@ -54,10 +58,6 @@
         }
       ],
       "%": "vim::Matching",
-      "ctrl-y": [
-        "vim::Scroll",
-        "LineUp"
-      ],
       "f": [
         "vim::PushOperator",
         {
@@ -90,6 +90,8 @@
           }
         }
       ],
+      "ctrl-o": "pane::GoBack",
+      "ctrl-]": "editor::GoToDefinition",
       "escape": "editor::Cancel",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
@@ -131,7 +133,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
       "c": [
         "vim::PushOperator",
@@ -143,6 +145,7 @@
         "Delete"
       ],
       "shift-d": "vim::DeleteToEndOfLine",
+      "shift-j": "editor::JoinLines",
       "y": [
         "vim::PushOperator",
         "Yank"
@@ -165,6 +168,7 @@
       "^": "vim::FirstNonWhitespace",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
+      "~": "vim::ChangeCase",
       "v": [
         "vim::SwitchMode",
         {
@@ -184,37 +188,29 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "ctrl-o": "pane::GoBack",
       "/": [
         "buffer_search::Deploy",
         {
           "focus": true
         }
       ],
-      "ctrl-f": [
-        "vim::Scroll",
-        "PageDown"
-      ],
-      "ctrl-b": [
-        "vim::Scroll",
-        "PageUp"
-      ],
-      "ctrl-d": [
-        "vim::Scroll",
-        "HalfPageDown"
-      ],
-      "ctrl-u": [
-        "vim::Scroll",
-        "HalfPageUp"
-      ],
-      "ctrl-e": [
-        "vim::Scroll",
-        "LineDown"
-      ],
+      "ctrl-f": "vim::PageDown",
+      "pagedown": "vim::PageDown",
+      "ctrl-b": "vim::PageUp",
+      "pageup": "vim::PageUp",
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp",
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "s": "vim::Substitute",
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-pageup": "pane::ActivatePrevItem"
     }
   },
   {
@@ -231,6 +227,8 @@
     "bindings": {
       "g": "vim::StartOfDocument",
       "h": "editor::Hover",
+      "t": "pane::ActivateNextItem",
+      "shift-t": "pane::ActivatePrevItem",
       "escape": [
         "vim::SwitchMode",
         "Normal"
@@ -301,10 +299,14 @@
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
+      "s": "vim::Substitute",
+      "~": "vim::ChangeCase",
       "r": [
         "vim::PushOperator",
         "Replace"
-      ]
+      ],
+      "> >": "editor::Indent",
+      "< <": "editor::Outdent"
     }
   },
   {

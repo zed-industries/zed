@@ -173,7 +173,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
         let theme = theme::current(cx);
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
 
         let string_match = &self.matches[ix];
 

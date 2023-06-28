@@ -14,12 +14,13 @@ use util::ResultExt as _;
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
-#[derive(Clone)]
+#[derive(Clone, JsonSchema)]
 pub struct ThemeSettings {
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub(crate) buffer_font_size: f32,
+    #[serde(skip)]
     pub theme: Arc<Theme>,
 }
 

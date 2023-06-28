@@ -152,6 +152,29 @@ impl App {
             asset_source,
         ))));
 
+        foreground_platform.on_event(Box::new({
+            let cx = app.0.clone();
+            move |event| {
+                if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
+                    // Allow system menu "cmd-?" shortcut to be overridden
+                    if keystroke.cmd
+                        && !keystroke.shift
+                        && !keystroke.alt
+                        && !keystroke.function
+                        && keystroke.key == "?"
+                    {
+                        if cx
+                            .borrow_mut()
+                            .update_active_window(|cx| cx.dispatch_keystroke(keystroke))
+                            .unwrap_or(false)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+        }));
         foreground_platform.on_quit(Box::new({
             let cx = app.0.clone();
             move || {

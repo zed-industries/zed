@@ -249,7 +249,7 @@ impl Dock {
         }
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub(crate) fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.subscribe(&panel, |this, panel, event, cx| {
@@ -498,7 +498,9 @@ impl View for PanelButtons {
                     Stack::new()
                         .with_child(
                             MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
-                                let style = button_style.style_for(state, is_active);
+                                let style = button_style.in_state(is_active);
+
+                                let style = style.style_for(state);
                                 Flex::row()
                                     .with_child(
                                         Svg::new(view.icon_path(cx))
@@ -603,6 +605,7 @@ pub mod test {
     use super::*;
     use gpui::{ViewContext, WindowContext};
 
+    #[derive(Debug)]
     pub enum TestPanelEvent {
         PositionChanged,
         Activated,

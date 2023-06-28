@@ -63,6 +63,8 @@ message Envelope {
         CopyProjectEntry copy_project_entry = 47;
         DeleteProjectEntry delete_project_entry = 48;
         ProjectEntryResponse project_entry_response = 49;
+        ExpandProjectEntry expand_project_entry = 114;
+        ExpandProjectEntryResponse expand_project_entry_response = 115;
 
         UpdateDiagnosticSummary update_diagnostic_summary = 50;
         StartLanguageServer start_language_server = 51;
@@ -370,6 +372,15 @@ message CopyProjectEntry {
 message DeleteProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
+}
+
+message ExpandProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
 }
 
 message ProjectEntryResponse {
@@ -1005,7 +1016,8 @@ message Entry {
     Timestamp mtime = 5;
     bool is_symlink = 6;
     bool is_ignored = 7;
-    optional GitStatus git_status = 8;
+    bool is_external = 8;
+    optional GitStatus git_status = 9;
 }
 
 message RepositoryEntry {
