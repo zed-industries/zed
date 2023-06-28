@@ -668,7 +668,7 @@ impl CollabTitlebarItem {
                             avatar_img,
                             *avatar_style,
                             Color::transparent_black(),
-                            None
+                            None,
                         ));
                     };
 
@@ -876,7 +876,7 @@ impl CollabTitlebarItem {
                         avatar.clone(),
                         Self::location_style(workspace, location, leader_style, cx),
                         background_color,
-                        microphone_state
+                        microphone_state,
                     ))
                     .with_children(
                         (|| {
@@ -908,7 +908,7 @@ impl CollabTitlebarItem {
                                     avatar.clone(),
                                     follower_style,
                                     background_color,
-                                    None
+                                    None,
                                 ))
                             }))
                         })()
@@ -1027,7 +1027,7 @@ impl CollabTitlebarItem {
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,
-        microphone_state: Option<Color>
+        microphone_state: Option<Color>,
     ) -> AnyElement<V> {
         Image::from_data(avatar)
             .with_style(avatar_style.image)
