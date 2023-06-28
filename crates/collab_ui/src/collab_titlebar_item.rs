@@ -50,7 +50,6 @@ pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     user_menu: ViewHandle<ContextMenu>,
-    user_menu_is_visible: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -183,7 +182,6 @@ impl CollabTitlebarItem {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
-            user_menu_is_visible: false,
             _subscriptions: subscriptions,
         }
     }
@@ -296,35 +294,31 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
-        if !self.user_menu_is_visible {
-            self.user_menu.update(cx, |user_menu, cx| {
-                let items = if let Some(_) = self.user_store.read(cx).current_user() {
-                    vec![
-                        ContextMenuItem::action("Settings", zed_actions::OpenSettings),
-                        ContextMenuItem::action("Theme", theme_selector::Toggle),
-                        ContextMenuItem::separator(),
-                        ContextMenuItem::action(
-                            "Share Feedback",
-                            feedback::feedback_editor::GiveFeedback,
-                        ),
-                        ContextMenuItem::action("Sign out", SignOut),
-                    ]
-                } else {
-                    vec![
-                        ContextMenuItem::action("Settings", zed_actions::OpenSettings),
-                        ContextMenuItem::action("Theme", theme_selector::Toggle),
-                        ContextMenuItem::separator(),
-                        ContextMenuItem::action(
-                            "Share Feedback",
-                            feedback::feedback_editor::GiveFeedback,
-                        ),
-                    ]
-                };
-
-                user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
-            });
-        }
-        self.user_menu_is_visible = !self.user_menu_is_visible;
+        self.user_menu.update(cx, |user_menu, cx| {
+            let items = if let Some(_) = self.user_store.read(cx).current_user() {
+                vec![
+                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
+                    ContextMenuItem::action("Theme", theme_selector::Toggle),
+                    ContextMenuItem::separator(),
+                    ContextMenuItem::action(
+                        "Share Feedback",
+                        feedback::feedback_editor::GiveFeedback,
+                    ),
+                    ContextMenuItem::action("Sign out", SignOut),
+                ]
+            } else {
+                vec![
+                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
+                    ContextMenuItem::action("Theme", theme_selector::Toggle),
+                    ContextMenuItem::separator(),
+                    ContextMenuItem::action(
+                        "Share Feedback",
+                        feedback::feedback_editor::GiveFeedback,
+                    ),
+                ]
+            };
+            user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
+        });
     }
 
     fn render_toggle_contacts_button(
@@ -701,12 +695,12 @@ impl CollabTitlebarItem {
                 )
                 .contained(),
             )
-            .with_children(self.user_menu_is_visible.then(|| {
+            .with_child(
                 ChildView::new(&self.user_menu, cx)
                     .aligned()
                     .bottom()
-                    .right()
-            }))
+                    .right(),
+            )
             .into_any()
     }
 
