@@ -49,7 +49,7 @@ pub struct CollabTitlebarItem {
     client: Arc<Client>,
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
-    user_menu: ViewHandle<ContextMenu>,
+    user_menu: Option<ViewHandle<ContextMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -170,18 +170,13 @@ impl CollabTitlebarItem {
             }),
         );
 
-        let view_id = cx.view_id();
         Self {
             workspace: workspace.weak_handle(),
             project,
             user_store,
             client,
             contacts_popover: None,
-            user_menu: cx.add_view(|cx| {
-                let mut menu = ContextMenu::new(view_id, cx);
-                menu.set_position_mode(OverlayPositionMode::Local);
-                menu
-            }),
+            user_menu: None,
             _subscriptions: subscriptions,
         }
     }
@@ -294,32 +289,41 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
-        self.user_menu.update(cx, |user_menu, cx| {
-            let items = if let Some(_) = self.user_store.read(cx).current_user() {
-                vec![
-                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
-                    ContextMenuItem::action("Theme", theme_selector::Toggle),
-                    ContextMenuItem::separator(),
-                    ContextMenuItem::action(
-                        "Share Feedback",
-                        feedback::feedback_editor::GiveFeedback,
-                    ),
-                    ContextMenuItem::action("Sign out", SignOut),
-                ]
-            } else {
-                vec![
-                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
-                    ContextMenuItem::action("Theme", theme_selector::Toggle),
-                    ContextMenuItem::separator(),
-                    ContextMenuItem::action(
-                        "Share Feedback",
-                        feedback::feedback_editor::GiveFeedback,
-                    ),
-                ]
-            };
+        if self.user_menu.take().is_none() {
+            let mut user_menu = cx.add_view(|cx| {
+                let view_id = cx.view_id();
+                let mut menu = ContextMenu::new(view_id, cx);
+                menu.set_position_mode(OverlayPositionMode::Local);
+                menu
+            });
+            user_menu.update(cx, |user_menu, cx| {
+                let items = if let Some(_) = self.user_store.read(cx).current_user() {
+                    vec![
+                        ContextMenuItem::action("Settings", zed_actions::OpenSettings),
+                        ContextMenuItem::action("Theme", theme_selector::Toggle),
+                        ContextMenuItem::separator(),
+                        ContextMenuItem::action(
+                            "Share Feedback",
+                            feedback::feedback_editor::GiveFeedback,
+                        ),
+                        ContextMenuItem::action("Sign out", SignOut),
+                    ]
+                } else {
+                    vec![
+                        ContextMenuItem::action("Settings", zed_actions::OpenSettings),
+                        ContextMenuItem::action("Theme", theme_selector::Toggle),
+                        ContextMenuItem::separator(),
+                        ContextMenuItem::action(
+                            "Share Feedback",
+                            feedback::feedback_editor::GiveFeedback,
+                        ),
+                    ]
+                };
 
-            user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
-        });
+                user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
+            });
+            self.user_menu = Some(user_menu);
+        }
     }
 
     fn render_toggle_contacts_button(
@@ -695,11 +699,10 @@ impl CollabTitlebarItem {
                 )
                 .contained(),
             )
-            .with_child(
-                ChildView::new(&self.user_menu, cx)
-                    .aligned()
-                    .bottom()
-                    .right(),
+            .with_children(
+                self.user_menu
+                    .as_ref()
+                    .map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
             )
             .into_any()
     }
