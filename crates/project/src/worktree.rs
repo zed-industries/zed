@@ -3172,8 +3172,8 @@ impl BackgroundScanner {
                         .map_or(false, |entry| entry.kind == EntryKind::Dir)
                 });
                 if !parent_dir_is_loaded {
+                    log::debug!("ignoring event {relative_path:?} within unloaded directory");
                     unloaded_relative_paths.push(relative_path);
-                    log::debug!("ignoring event {abs_path:?} within unloaded directory");
                     return false;
                 }
 
