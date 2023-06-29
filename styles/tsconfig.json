@@ -21,6 +21,7 @@
         "experimentalDecorators": true,
         "strictPropertyInitialization": false,
         "skipLibCheck": true,
+        "useUnknownInCatchVariables": false,
         "baseUrl": ".",
         "paths": {
             "@/*": ["./*"],
@@ -28,6 +29,7 @@
             "@component/*": ["./src/component/*"],
             "@styleTree/*": ["./src/styleTree/*"],
             "@theme/*": ["./src/theme/*"],
+            "@types/*": ["./src/util/*"],
             "@themes/*": ["./src/themes/*"],
             "@util/*": ["./src/util/*"]
         }

@@ -1,1 +1,1 @@
-export { lightDefault } from "./gruvbox-common"
+export { light_default } from "./gruvbox-common"

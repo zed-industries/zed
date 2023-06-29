@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest"
 describe("interactive", () => {
     it("creates an Interactive<Element> with base properties and states", () => {
         const result = interactive({
-            base: { fontSize: 10, color: "#FFFFFF" },
+            base: { font_size: 10, color: "#FFFFFF" },
             state: {
                 hovered: { color: "#EEEEEE" },
                 clicked: { color: "#CCCCCC" },
@@ -16,25 +16,25 @@ describe("interactive", () => {
         })
 
         expect(result).toEqual({
-            default: { color: "#FFFFFF", fontSize: 10 },
-            hovered: { color: "#EEEEEE", fontSize: 10 },
-            clicked: { color: "#CCCCCC", fontSize: 10 },
+            default: { color: "#FFFFFF", font_size: 10 },
+            hovered: { color: "#EEEEEE", font_size: 10 },
+            clicked: { color: "#CCCCCC", font_size: 10 },
         })
     })
 
     it("creates an Interactive<Element> with no base properties", () => {
         const result = interactive({
             state: {
-                default: { color: "#FFFFFF", fontSize: 10 },
+                default: { color: "#FFFFFF", font_size: 10 },
                 hovered: { color: "#EEEEEE" },
                 clicked: { color: "#CCCCCC" },
             },
         })
 
         expect(result).toEqual({
-            default: { color: "#FFFFFF", fontSize: 10 },
-            hovered: { color: "#EEEEEE", fontSize: 10 },
-            clicked: { color: "#CCCCCC", fontSize: 10 },
+            default: { color: "#FFFFFF", font_size: 10 },
+            hovered: { color: "#EEEEEE", font_size: 10 },
+            clicked: { color: "#CCCCCC", font_size: 10 },
         })
     })
 
@@ -48,7 +48,7 @@ describe("interactive", () => {
 
     it("throws error when no other state besides default is present", () => {
         const state = {
-            default: { fontSize: 10 },
+            default: { font_size: 10 },
         }
 
         expect(() => interactive({ state })).toThrow(NOT_ENOUGH_STATES_ERROR)

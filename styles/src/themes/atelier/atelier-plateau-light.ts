@@ -1,5 +1,5 @@
-import { chroma, ThemeAppearance, ThemeConfig, colorRamp } from "../../common"
-import { meta, buildSyntax, Variant } from "./common"
+import { chroma, ThemeAppearance, ThemeConfig, color_ramp } from "../../common"
+import { meta, build_syntax, Variant } from "./common"
 
 const variant: Variant = {
     colors: {
@@ -22,19 +22,19 @@ const variant: Variant = {
     },
 }
 
-const syntax = buildSyntax(variant)
+const syntax = build_syntax(variant)
 
-const getTheme = (variant: Variant): ThemeConfig => {
+const get_theme = (variant: Variant): ThemeConfig => {
     const { colors } = variant
 
     return {
         name: `${meta.name} Plateau Light`,
         author: meta.author,
         appearance: ThemeAppearance.Light,
-        licenseType: meta.licenseType,
-        licenseUrl: meta.licenseUrl,
-        licenseFile: `${__dirname}/LICENSE`,
-        inputColor: {
+        license_type: meta.license_type,
+        license_url: meta.license_url,
+        license_file: `${__dirname}/LICENSE`,
+        input_color: {
             neutral: chroma.scale(
                 [
                     colors.base00,
@@ -47,17 +47,17 @@ const getTheme = (variant: Variant): ThemeConfig => {
                     colors.base07,
                 ].reverse()
             ),
-            red: colorRamp(chroma(colors.base08)),
-            orange: colorRamp(chroma(colors.base09)),
-            yellow: colorRamp(chroma(colors.base0A)),
-            green: colorRamp(chroma(colors.base0B)),
-            cyan: colorRamp(chroma(colors.base0C)),
-            blue: colorRamp(chroma(colors.base0D)),
-            violet: colorRamp(chroma(colors.base0E)),
-            magenta: colorRamp(chroma(colors.base0F)),
+            red: color_ramp(chroma(colors.base08)),
+            orange: color_ramp(chroma(colors.base09)),
+            yellow: color_ramp(chroma(colors.base0A)),
+            green: color_ramp(chroma(colors.base0B)),
+            cyan: color_ramp(chroma(colors.base0C)),
+            blue: color_ramp(chroma(colors.base0D)),
+            violet: color_ramp(chroma(colors.base0E)),
+            magenta: color_ramp(chroma(colors.base0F)),
         },
         override: { syntax },
     }
 }
 
-export const theme = getTheme(variant)
+export const theme = get_theme(variant)

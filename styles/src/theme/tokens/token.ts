@@ -1,6 +1,6 @@
 import { SingleColorToken, TokenTypes } from "@tokens-studio/types"
 
-export function colorToken(
+export function color_token(
     name: string,
     value: string,
     description?: string

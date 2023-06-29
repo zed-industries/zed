@@ -1,14 +1,14 @@
 import chroma, { Color, Scale } from "chroma-js"
-import { RampSet } from "./colorScheme"
+import { RampSet } from "./color_scheme"
 import {
     ThemeConfigInputColors,
     ThemeConfigInputColorsKeys,
-} from "./themeConfig"
+} from "./theme_config"
 
-export function colorRamp(color: Color): Scale {
-    let endColor = color.desaturate(1).brighten(5)
-    let startColor = color.desaturate(1).darken(4)
-    return chroma.scale([startColor, color, endColor]).mode("lab")
+export function color_ramp(color: Color): Scale {
+    const end_color = color.desaturate(1).brighten(5)
+    const start_color = color.desaturate(1).darken(4)
+    return chroma.scale([start_color, color, end_color]).mode("lab")
 }
 
 /**
@@ -18,29 +18,29 @@ export function colorRamp(color: Color): Scale {
     theme so that we don't modify the passed in ramps.
     This combined with an error in the type definitions for chroma js means we have to cast the colors
     function to any in order to get the colors back out from the original ramps.
- * @param isLight 
- * @param colorRamps 
- * @returns 
+ * @param is_light
+ * @param color_ramps
+ * @returns
  */
-export function getRamps(
-    isLight: boolean,
-    colorRamps: ThemeConfigInputColors
+export function get_ramps(
+    is_light: boolean,
+    color_ramps: ThemeConfigInputColors
 ): RampSet {
-    const ramps: RampSet = {} as any
-    const colorsKeys = Object.keys(colorRamps) as ThemeConfigInputColorsKeys[]
+    const ramps: RampSet = {} as any // eslint-disable-line @typescript-eslint/no-explicit-any
+    const color_keys = Object.keys(color_ramps) as ThemeConfigInputColorsKeys[]
 
-    if (isLight) {
-        for (const rampName of colorsKeys) {
-            ramps[rampName] = chroma.scale(
-                colorRamps[rampName].colors(100).reverse()
+    if (is_light) {
+        for (const ramp_name of color_keys) {
+            ramps[ramp_name] = chroma.scale(
+                color_ramps[ramp_name].colors(100).reverse()
             )
         }
-        ramps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse())
+        ramps.neutral = chroma.scale(color_ramps.neutral.colors(100).reverse())
     } else {
-        for (const rampName of colorsKeys) {
-            ramps[rampName] = chroma.scale(colorRamps[rampName].colors(100))
+        for (const ramp_name of color_keys) {
+            ramps[ramp_name] = chroma.scale(color_ramps[ramp_name].colors(100))
         }
-        ramps.neutral = chroma.scale(colorRamps.neutral.colors(100))
+        ramps.neutral = chroma.scale(color_ramps.neutral.colors(100))
     }
 
     return ramps
