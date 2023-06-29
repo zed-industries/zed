@@ -159,7 +159,7 @@ impl PickerDelegate for BranchListDelegate {
                 model.show_toast(
                     Toast::new(
                         GIT_CHECKOUT_FAILURE_ID,
-                        format!("Failed to check out branch `{current_pick}`, error: `{err}`"),
+                        format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"),
                     ),
                     ctx,
                 )
