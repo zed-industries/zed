@@ -1027,6 +1027,7 @@ pub struct AssistantStyle {
     pub system_sender: Interactive<ContainedText>,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
+    pub low_remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,

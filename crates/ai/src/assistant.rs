@@ -2060,6 +2060,8 @@ impl ConversationEditor {
         let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
         let remaining_tokens_style = if remaining_tokens <= 0 {
             &style.no_remaining_tokens
+        } else if remaining_tokens <= 500 {
+            &style.low_remaining_tokens
         } else {
             &style.remaining_tokens
         };
