@@ -5,12 +5,12 @@ export default function status_bar(colorScheme: ColorScheme): any {
     const layer = colorScheme.lowest
 
     const statusContainer = {
-        cornerRadius: 6,
+        corner_radius: 6,
         padding: { top: 3, bottom: 3, left: 6, right: 6 },
     }
 
     const diagnosticStatusContainer = {
-        cornerRadius: 6,
+        corner_radius: 6,
         padding: { top: 1, bottom: 1, left: 6, right: 6 },
     }
 
@@ -42,7 +42,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
             base: {
                 ...diagnosticStatusContainer,
                 iconSpacing: 4,
-                iconWidth: 14,
+                icon_width: 14,
                 height: 18,
                 message: text(layer, "sans"),
                 iconColor: foreground(layer),
@@ -64,7 +64,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
         diagnosticSummary: interactive({
             base: {
                 height: 20,
-                iconWidth: 16,
+                icon_width: 16,
                 iconSpacing: 2,
                 summarySpacing: 6,
                 text: text(layer, "sans", { size: "sm" }),
@@ -72,7 +72,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
                 iconColorWarning: foreground(layer, "warning"),
                 iconColorError: foreground(layer, "negative"),
                 containerOk: {
-                    cornerRadius: 6,
+                    corner_radius: 6,
                     padding: { top: 3, bottom: 3, left: 7, right: 7 },
                 },
                 containerWarning: {
@@ -143,7 +143,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
                 },
             }),
             badge: {
-                cornerRadius: 3,
+                corner_radius: 3,
                 padding: 2,
                 margin: { bottom: -1, right: -1 },
                 border: border(layer),

@@ -9,7 +9,7 @@ export default function command_palette(colorScheme: ColorScheme): any {
     const key = toggleable({
         base: {
             text: text(layer, "mono", "variant", "default", { size: "xs" }),
-            cornerRadius: 2,
+            corner_radius: 2,
             background: background(layer, "on"),
             padding: {
                 top: 1,
@@ -32,7 +32,7 @@ export default function command_palette(colorScheme: ColorScheme): any {
     })
 
     return {
-        keystrokeSpacing: 8,
+        keystroke_spacing: 8,
         // TODO: This should be a Toggle<ContainedText> on the rust side so we don't have to do this
         key: {
             inactive: { ...key.inactive },

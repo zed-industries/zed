@@ -117,7 +117,7 @@ export default function project_panel(theme: ColorScheme): any {
             base: {
                 background: background(layer),
                 border: border(layer, "active"),
-                cornerRadius: 4,
+                corner_radius: 4,
                 margin: {
                     top: 16,
                     left: 16,

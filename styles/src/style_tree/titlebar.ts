@@ -78,7 +78,7 @@ function user_menu(theme: ColorScheme) {
         const button = toggleable({
             base: interactive({
                 base: {
-                    cornerRadius: 6,
+                    corner_radius: 6,
                     height: button_height,
                     width: online ? 37 : 24,
                     padding: {
@@ -180,13 +180,13 @@ export function titlebar(theme: ColorScheme): any {
         leaderAvatar: {
             width: avatarWidth,
             outerWidth: avatarOuterWidth,
-            cornerRadius: avatarWidth / 2,
+            corner_radius: avatarWidth / 2,
             outerCornerRadius: avatarOuterWidth / 2,
         },
         followerAvatar: {
             width: followerAvatarWidth,
             outerWidth: followerAvatarOuterWidth,
-            cornerRadius: followerAvatarWidth / 2,
+            corner_radius: followerAvatarWidth / 2,
             outerCornerRadius: followerAvatarOuterWidth / 2,
         },
         inactiveAvatarGrayscale: true,
@@ -202,7 +202,7 @@ export function titlebar(theme: ColorScheme): any {
                 top: 2,
                 bottom: 2,
             },
-            cornerRadius: 6,
+            corner_radius: 6,
         },
         avatarRibbon: {
             height: 3,
@@ -234,7 +234,7 @@ export function titlebar(theme: ColorScheme): any {
                 left: 8,
                 right: 8,
             },
-            cornerRadius: 6,
+            corner_radius: 6,
         },
 
         leave_call_button: icon_button(theme, {
@@ -254,7 +254,7 @@ export function titlebar(theme: ColorScheme): any {
 
         // Jewel that notifies you that there are new contact requests
         toggleContactsBadge: {
-            cornerRadius: 3,
+            corner_radius: 3,
             padding: 2,
             margin: { top: 3, left: 3 },
             border: border(theme.lowest),

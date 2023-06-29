@@ -1,7 +1,11 @@
-import { fontFamilies, fontSizes, FontWeight } from "../common"
+import {
+    fontFamilies as font_families,
+    fontSizes as font_sizes,
+    FontWeight,
+} from "../common"
 import { Layer, Styles, StyleSets, Style } from "../theme/color_scheme"
 
-function isStyleSet(key: any): key is StyleSets {
+function is_style_set(key: any): key is StyleSets {
     return [
         "base",
         "variant",
@@ -13,7 +17,7 @@ function isStyleSet(key: any): key is StyleSets {
     ].includes(key)
 }
 
-function isStyle(key: any): key is Styles {
+function is_style(key: any): key is Styles {
     return [
         "default",
         "active",
@@ -23,78 +27,70 @@ function isStyle(key: any): key is Styles {
         "inverted",
     ].includes(key)
 }
-function getStyle(
+function get_style(
     layer: Layer,
-    possibleStyleSetOrStyle?: any,
-    possibleStyle?: any
+    possible_style_set_or_style?: any,
+    possible_style?: any
 ): Style {
-    let styleSet: StyleSets = "base"
+    let style_set: StyleSets = "base"
     let style: Styles = "default"
-    if (isStyleSet(possibleStyleSetOrStyle)) {
-        styleSet = possibleStyleSetOrStyle
-    } else if (isStyle(possibleStyleSetOrStyle)) {
-        style = possibleStyleSetOrStyle
+    if (is_style_set(possible_style_set_or_style)) {
+        style_set = possible_style_set_or_style
+    } else if (is_style(possible_style_set_or_style)) {
+        style = possible_style_set_or_style
     }
 
-    if (isStyle(possibleStyle)) {
-        style = possibleStyle
+    if (is_style(possible_style)) {
+        style = possible_style
     }
 
-    return layer[styleSet][style]
+    return layer[style_set][style]
 }
 
 export function background(layer: Layer, style?: Styles): string
 export function background(
     layer: Layer,
-    styleSet?: StyleSets,
+    style_set?: StyleSets,
     style?: Styles
 ): string
 export function background(
     layer: Layer,
-    styleSetOrStyles?: StyleSets | Styles,
+    style_set_or_styles?: StyleSets | Styles,
     style?: Styles
 ): string {
-    return getStyle(layer, styleSetOrStyles, style).background
+    return get_style(layer, style_set_or_styles, style).background
 }
 
-export function borderColor(layer: Layer, style?: Styles): string
-export function borderColor(
+export function border_color(layer: Layer, style?: Styles): string
+export function border_color(
     layer: Layer,
-    styleSet?: StyleSets,
+    style_set?: StyleSets,
     style?: Styles
 ): string
-export function borderColor(
+export function border_color(
     layer: Layer,
-    styleSetOrStyles?: StyleSets | Styles,
+    style_set_or_styles?: StyleSets | Styles,
     style?: Styles
 ): string {
-    return getStyle(layer, styleSetOrStyles, style).border
+    return get_style(layer, style_set_or_styles, style).border
 }
 
 export function foreground(layer: Layer, style?: Styles): string
 export function foreground(
     layer: Layer,
-    styleSet?: StyleSets,
+    style_set?: StyleSets,
     style?: Styles
 ): string
 export function foreground(
     layer: Layer,
-    styleSetOrStyles?: StyleSets | Styles,
+    style_set_or_styles?: StyleSets | Styles,
     style?: Styles
 ): string {
-    return getStyle(layer, styleSetOrStyles, style).foreground
-}
-
-interface Text extends Object {
-    family: keyof typeof fontFamilies
-    color: string
-    size: number
-    weight?: FontWeight
-    underline?: boolean
+    return get_style(layer, style_set_or_styles, style).foreground
 }
 
 export interface TextStyle extends Object {
-    family: keyof typeof fontFamilies
+    family: keyof typeof font_families
     color: string
     size: number
     weight?: FontWeight
@@ -102,7 +98,7 @@ export interface TextStyle extends Object {
 }
 
 export interface TextProperties {
-    size?: keyof typeof fontSizes
+    size?: keyof typeof font_sizes
     weight?: FontWeight
     underline?: boolean
     color?: string
@@ -182,49 +178,53 @@ interface FontFeatures {
 
 export function text(
     layer: Layer,
-    fontFamily: keyof typeof fontFamilies,
-    styleSet: StyleSets,
+    font_family: keyof typeof font_families,
+    style_set: StyleSets,
     style: Styles,
     properties?: TextProperties
-): Text
+): TextStyle
 export function text(
     layer: Layer,
-    fontFamily: keyof typeof fontFamilies,
-    styleSet: StyleSets,
+    font_family: keyof typeof font_families,
+    style_set: StyleSets,
     properties?: TextProperties
-): Text
+): TextStyle
 export function text(
     layer: Layer,
-    fontFamily: keyof typeof fontFamilies,
+    font_family: keyof typeof font_families,
     style: Styles,
     properties?: TextProperties
-): Text
+): TextStyle
 export function text(
     layer: Layer,
-    fontFamily: keyof typeof fontFamilies,
+    font_family: keyof typeof font_families,
     properties?: TextProperties
-): Text
+): TextStyle
 export function text(
     layer: Layer,
-    fontFamily: keyof typeof fontFamilies,
-    styleSetStyleOrProperties?: StyleSets | Styles | TextProperties,
-    styleOrProperties?: Styles | TextProperties,
+    font_family: keyof typeof font_families,
+    style_set_style_or_properties?: StyleSets | Styles | TextProperties,
+    style_or_properties?: Styles | TextProperties,
     properties?: TextProperties
 ) {
-    const style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
+    const style = get_style(
+        layer,
+        style_set_style_or_properties,
+        style_or_properties
+    )
 
-    if (typeof styleSetStyleOrProperties === "object") {
-        properties = styleSetStyleOrProperties
+    if (typeof style_set_style_or_properties === "object") {
+        properties = style_set_style_or_properties
     }
-    if (typeof styleOrProperties === "object") {
-        properties = styleOrProperties
+    if (typeof style_or_properties === "object") {
+        properties = style_or_properties
     }
 
-    const size = fontSizes[properties?.size || "sm"]
+    const size = font_sizes[properties?.size || "sm"]
     const color = properties?.color || style.foreground
 
     return {
-        family: fontFamilies[fontFamily],
+        family: font_families[font_family],
         ...properties,
         color,
         size,
@@ -252,13 +252,13 @@ export interface BorderProperties {
 
 export function border(
     layer: Layer,
-    styleSet: StyleSets,
+    style_set: StyleSets,
     style: Styles,
     properties?: BorderProperties
 ): Border
 export function border(
     layer: Layer,
-    styleSet: StyleSets,
+    style_set: StyleSets,
     properties?: BorderProperties
 ): Border
 export function border(
@@ -269,17 +269,17 @@ export function border(
 export function border(layer: Layer, properties?: BorderProperties): Border
 export function border(
     layer: Layer,
-    styleSetStyleOrProperties?: StyleSets | Styles | BorderProperties,
-    styleOrProperties?: Styles | BorderProperties,
+    style_set_or_properties?: StyleSets | Styles | BorderProperties,
+    style_or_properties?: Styles | BorderProperties,
     properties?: BorderProperties
 ): Border {
-    const style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
+    const style = get_style(layer, style_set_or_properties, style_or_properties)
 
-    if (typeof styleSetStyleOrProperties === "object") {
-        properties = styleSetStyleOrProperties
+    if (typeof style_set_or_properties === "object") {
+        properties = style_set_or_properties
     }
-    if (typeof styleOrProperties === "object") {
-        properties = styleOrProperties
+    if (typeof style_or_properties === "object") {
+        properties = style_or_properties
     }
 
     return {

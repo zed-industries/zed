@@ -9,7 +9,7 @@ export default function picker(colorScheme: ColorScheme): any {
         background: background(layer),
         border: border(layer),
         shadow: colorScheme.modalShadow,
-        cornerRadius: 12,
+        corner_radius: 12,
         padding: {
             bottom: 4,
         },
@@ -53,7 +53,7 @@ export default function picker(colorScheme: ColorScheme): any {
                         left: 4,
                         right: 4,
                     },
-                    cornerRadius: 8,
+                    corner_radius: 8,
                     text: text(layer, "sans", "variant"),
                     highlightText: text(layer, "sans", "accent", {
                         weight: "bold",

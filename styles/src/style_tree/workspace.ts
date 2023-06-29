@@ -3,7 +3,7 @@ import { withOpacity } from "../theme/color"
 import {
     background,
     border,
-    borderColor,
+    border_color,
     foreground,
     svg,
     text,
@@ -46,7 +46,7 @@ export default function workspace(colorScheme: ColorScheme): any {
                 margin: {
                     top: 96,
                 },
-                cornerRadius: 4,
+                corner_radius: 4,
             },
             keyboardHint: interactive({
                 base: {
@@ -57,7 +57,7 @@ export default function workspace(colorScheme: ColorScheme): any {
                         right: 8,
                         bottom: 3,
                     },
-                    cornerRadius: 8,
+                    corner_radius: 8,
                 },
                 state: {
                     hovered: {
@@ -69,7 +69,7 @@ export default function workspace(colorScheme: ColorScheme): any {
             keyboardHintWidth: 320,
         },
         joiningProjectAvatar: {
-            cornerRadius: 40,
+            corner_radius: 40,
             width: 80,
         },
         joiningProjectMessage: {
@@ -79,7 +79,7 @@ export default function workspace(colorScheme: ColorScheme): any {
         externalLocationMessage: {
             background: background(colorScheme.middle, "accent"),
             border: border(colorScheme.middle, "accent"),
-            cornerRadius: 6,
+            corner_radius: 6,
             padding: 12,
             margin: { bottom: 8, right: 8 },
             ...text(colorScheme.middle, "sans", "accent", { size: "xs" }),
@@ -121,7 +121,7 @@ export default function workspace(colorScheme: ColorScheme): any {
             },
         },
         paneDivider: {
-            color: borderColor(layer),
+            color: border_color(layer),
             width: 1,
         },
         statusBar: statusBar(colorScheme),
@@ -134,9 +134,9 @@ export default function workspace(colorScheme: ColorScheme): any {
             navButton: interactive({
                 base: {
                     color: foreground(colorScheme.highest, "on"),
-                    iconWidth: 12,
-                    buttonWidth: 24,
-                    cornerRadius: 6,
+                    icon_width: 12,
+                    button_width: 24,
+                    corner_radius: 6,
                 },
                 state: {
                     hovered: {
@@ -162,7 +162,7 @@ export default function workspace(colorScheme: ColorScheme): any {
         breadcrumbs: interactive({
             base: {
                 ...text(colorScheme.highest, "sans", "variant"),
-                cornerRadius: 6,
+                corner_radius: 6,
                 padding: {
                     left: 6,
                     right: 6,
@@ -186,7 +186,7 @@ export default function workspace(colorScheme: ColorScheme): any {
         notification: {
             margin: { top: 10 },
             background: background(colorScheme.middle),
-            cornerRadius: 6,
+            corner_radius: 6,
             padding: 12,
             border: border(colorScheme.middle),
             shadow: colorScheme.popoverShadow,

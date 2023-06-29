@@ -1,6 +1,12 @@
 import { withOpacity } from "../theme/color"
 import { ColorScheme, Layer, StyleSets } from "../theme/color_scheme"
-import { background, border, borderColor, foreground, text } from "./components"
+import {
+    background,
+    border,
+    border_color,
+    foreground,
+    text,
+} from "./components"
 import hoverPopover from "./hover_popover"
 
 import { buildSyntax } from "../theme/syntax"
@@ -12,7 +18,7 @@ export default function editor(colorScheme: ColorScheme): any {
     const layer = colorScheme.highest
 
     const autocompleteItem = {
-        cornerRadius: 6,
+        corner_radius: 6,
         padding: {
             bottom: 2,
             left: 6,
@@ -111,7 +117,7 @@ export default function editor(colorScheme: ColorScheme): any {
             }),
             ellipses: {
                 textColor: colorScheme.ramps.neutral(0.71).hex(),
-                cornerRadiusFactor: 0.15,
+                corner_radiusFactor: 0.15,
                 background: {
                     // Copied from hover_popover highlight
                     default: {
@@ -141,7 +147,7 @@ export default function editor(colorScheme: ColorScheme): any {
                 : colorScheme.ramps.green(0.5).hex(),
             removedWidthEm: 0.275,
             widthEm: 0.15,
-            cornerRadius: 0.05,
+            corner_radius: 0.05,
         },
         /** Highlights matching occurrences of what is under the cursor
          * as well as matched brackets
@@ -174,7 +180,7 @@ export default function editor(colorScheme: ColorScheme): any {
         ],
         autocomplete: {
             background: background(colorScheme.middle),
-            cornerRadius: 8,
+            corner_radius: 8,
             padding: 4,
             margin: {
                 left: -14,
@@ -204,7 +210,7 @@ export default function editor(colorScheme: ColorScheme): any {
         },
         diagnosticHeader: {
             background: background(colorScheme.middle),
-            iconWidthFactor: 1.5,
+            icon_widthFactor: 1.5,
             textScaleFactor: 0.857,
             border: border(colorScheme.middle, {
                 bottom: true,
@@ -257,9 +263,9 @@ export default function editor(colorScheme: ColorScheme): any {
         jumpIcon: interactive({
             base: {
                 color: foreground(layer, "on"),
-                iconWidth: 20,
-                buttonWidth: 20,
-                cornerRadius: 6,
+                icon_width: 20,
+                button_width: 20,
+                corner_radius: 6,
                 padding: {
                     top: 6,
                     bottom: 6,
@@ -284,7 +290,7 @@ export default function editor(colorScheme: ColorScheme): any {
                 background: withOpacity(background(layer, "inverted"), 0.3),
                 border: {
                     width: 1,
-                    color: borderColor(layer, "variant"),
+                    color: border_color(layer, "variant"),
                     top: false,
                     right: true,
                     left: true,
@@ -306,7 +312,7 @@ export default function editor(colorScheme: ColorScheme): any {
         compositionMark: {
             underline: {
                 thickness: 1.0,
-                color: borderColor(layer),
+                color: border_color(layer),
             },
         },
         syntax,

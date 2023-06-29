@@ -1,7 +1,6 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { StyleTree } from "../types"
 
-export default function terminal(theme: ColorScheme): StyleTree.TerminalStyle {
+export default function terminal(theme: ColorScheme) {
     /**
      * Colors are controlled per-cell in the terminal grid.
      * Cells can be set to any of these more 'theme-capable' colors

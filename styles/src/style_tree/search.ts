@@ -9,7 +9,7 @@ export default function search(colorScheme: ColorScheme): any {
     // Search input
     const editor = {
         background: background(layer),
-        cornerRadius: 8,
+        corner_radius: 8,
         minWidth: 200,
         maxWidth: 500,
         placeholderText: text(layer, "mono", "disabled"),
@@ -41,7 +41,7 @@ export default function search(colorScheme: ColorScheme): any {
                 base: {
                     ...text(layer, "mono", "on"),
                     background: background(layer, "on"),
-                    cornerRadius: 6,
+                    corner_radius: 6,
                     border: border(layer, "on"),
                     margin: {
                         right: 4,
@@ -115,8 +115,8 @@ export default function search(colorScheme: ColorScheme): any {
         dismissButton: interactive({
             base: {
                 color: foreground(layer, "variant"),
-                iconWidth: 12,
-                buttonWidth: 14,
+                icon_width: 12,
+                button_width: 14,
                 padding: {
                     left: 10,
                     right: 10,

@@ -25,10 +25,10 @@ export default function tab_bar(colorScheme: ColorScheme): any {
         spacing: 8,
 
         // Tab type icons (e.g. Project Search)
-        typeIconWidth: 14,
+        type_icon_width: 14,
 
         // Close icons
-        closeIconWidth: 8,
+        close_icon_width: 8,
         iconClose: foreground(layer, "variant"),
         iconCloseActive: foreground(layer, "hovered"),
 
@@ -92,8 +92,8 @@ export default function tab_bar(colorScheme: ColorScheme): any {
             base: interactive({
                 base: {
                     color: foreground(layer, "variant"),
-                    iconWidth: 12,
-                    buttonWidth: activePaneActiveTab.height,
+                    icon_width: 12,
+                    button_width: activePaneActiveTab.height,
                 },
                 state: {
                     hovered: {

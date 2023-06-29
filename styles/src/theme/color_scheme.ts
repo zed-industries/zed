@@ -252,11 +252,7 @@ function buildStyleSet(
     }
 }
 
-function buildStyleDefinition(
-    bgBase: number,
-    fgBase: number,
-    step = 0.08
-) {
+function buildStyleDefinition(bgBase: number, fgBase: number, step = 0.08) {
     return {
         background: {
             default: bgBase,

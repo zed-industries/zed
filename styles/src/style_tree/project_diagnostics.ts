@@ -6,7 +6,7 @@ export default function project_diagnostics(colorScheme: ColorScheme): any {
     return {
         background: background(layer),
         tabIconSpacing: 4,
-        tabIconWidth: 13,
+        tab_icon_width: 13,
         tabSummarySpacing: 10,
         emptyMessage: text(layer, "sans", "variant", { size: "md" }),
     }

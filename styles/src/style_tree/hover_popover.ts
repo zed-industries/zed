@@ -5,7 +5,7 @@ export default function hover_popover(colorScheme: ColorScheme): any {
     const layer = colorScheme.middle
     const baseContainer = {
         background: background(layer),
-        cornerRadius: 8,
+        corner_radius: 8,
         padding: {
             left: 8,
             right: 8,

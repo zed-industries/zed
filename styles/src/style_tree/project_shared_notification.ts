@@ -17,7 +17,7 @@ export default function project_shared_notification(
         ownerAvatar: {
             height: avatarSize,
             width: avatarSize,
-            cornerRadius: avatarSize / 2,
+            corner_radius: avatarSize / 2,
         },
         ownerMetadata: {
             margin: { left: 10 },
@@ -34,7 +34,7 @@ export default function project_shared_notification(
             ...text(layer, "sans", "variant", { size: "xs", weight: "bold" }),
             margin: { top: -3 },
         },
-        buttonWidth: 96,
+        button_width: 96,
         openButton: {
             background: background(layer, "accent"),
             border: border(layer, { left: true, bottom: true }),

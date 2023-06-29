@@ -16,7 +16,7 @@ export default function incoming_call_notification(
         callerAvatar: {
             height: avatarSize,
             width: avatarSize,
-            cornerRadius: avatarSize / 2,
+            corner_radius: avatarSize / 2,
         },
         callerMetadata: {
             margin: { left: 10 },
@@ -33,7 +33,7 @@ export default function incoming_call_notification(
             ...text(layer, "sans", "variant", { size: "xs", weight: "bold" }),
             margin: { top: -3 },
         },
-        buttonWidth: 96,
+        button_width: 96,
         acceptButton: {
             background: background(layer, "accent"),
             border: border(layer, { left: true, bottom: true }),

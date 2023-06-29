@@ -4,48 +4,47 @@ import { interactive } from "../element"
 const avatarSize = 12
 const headerPadding = 8
 
-export default function contact_notification(colorScheme: ColorScheme): any {
-    const layer = colorScheme.lowest
+export default function contact_notification(theme: ColorScheme): any {
     return {
-        headerAvatar: {
+        header_avatar: {
             height: avatarSize,
             width: avatarSize,
-            cornerRadius: 6,
+            corner_radius: 6,
         },
-        headerMessage: {
-            ...text(layer, "sans", { size: "xs" }),
+        header_message: {
+            ...text(theme.lowest, "sans", { size: "xs" }),
             margin: { left: headerPadding, right: headerPadding },
         },
-        headerHeight: 18,
-        bodyMessage: {
-            ...text(layer, "sans", { size: "xs" }),
+        header_height: 18,
+        body_message: {
+            ...text(theme.lowest, "sans", { size: "xs" }),
             margin: { left: avatarSize + headerPadding, top: 6, bottom: 6 },
         },
         button: interactive({
             base: {
-                ...text(layer, "sans", "on", { size: "xs" }),
-                background: background(layer, "on"),
+                ...text(theme.lowest, "sans", "on", { size: "xs" }),
+                background: background(theme.lowest, "on"),
                 padding: 4,
-                cornerRadius: 6,
+                corner_radius: 6,
                 margin: { left: 6 },
             },
 
             state: {
                 hovered: {
-                    background: background(layer, "on", "hovered"),
+                    background: background(theme.lowest, "on", "hovered"),
                 },
             },
         }),
 
-        dismissButton: {
+        dismiss_button: {
             default: {
-                color: foreground(layer, "variant"),
-                iconWidth: 8,
+                color: foreground(theme.lowest, "variant"),
+                icon_width: 8,
                 iconHeight: 8,
-                buttonWidth: 8,
+                button_width: 8,
                 buttonHeight: 8,
                 hover: {
-                    color: foreground(layer, "hovered"),
+                    color: foreground(theme.lowest, "hovered"),
                 },
             },
         },

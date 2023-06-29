@@ -2,25 +2,25 @@ import picker from "./picker"
 import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 
-export default function contact_finder(colorScheme: ColorScheme): any {
-    const layer = colorScheme.middle
+export default function contact_finder(theme: ColorScheme): any {
+    const layer = theme.middle
 
-    const sideMargin = 6
-    const contactButton = {
+    const side_margin = 6
+    const contact_button = {
         background: background(layer, "variant"),
         color: foreground(layer, "variant"),
-        iconWidth: 8,
-        buttonWidth: 16,
-        cornerRadius: 8,
+        icon_width: 8,
+        button_width: 16,
+        corner_radius: 8,
     }
 
-    const pickerStyle = picker(colorScheme)
-    const pickerInput = {
+    const picker_style = picker(theme)
+    const picker_input = {
         background: background(layer, "on"),
-        cornerRadius: 6,
+        corner_radius: 6,
         text: text(layer, "mono"),
-        placeholderText: text(layer, "mono", "on", "disabled", { size: "xs" }),
-        selection: colorScheme.players[0],
+        placeholder_text: text(layer, "mono", "on", "disabled", { size: "xs" }),
+        selection: theme.players[0],
         border: border(layer),
         padding: {
             bottom: 4,
@@ -29,40 +29,40 @@ export default function contact_finder(colorScheme: ColorScheme): any {
             top: 4,
         },
         margin: {
-            left: sideMargin,
-            right: sideMargin,
+            left: side_margin,
+            right: side_margin,
         },
     }
 
     return {
         picker: {
-            emptyContainer: {},
+            empty_container: {},
             item: {
-                ...pickerStyle.item,
-                margin: { left: sideMargin, right: sideMargin },
+                ...picker_style.item,
+                margin: { left: side_margin, right: side_margin },
             },
-            noMatches: pickerStyle.noMatches,
-            inputEditor: pickerInput,
-            emptyInputEditor: pickerInput,
+            no_matches: picker_style.noMatches,
+            input_editor: picker_input,
+            empty_input_editor: picker_input,
         },
-        rowHeight: 28,
-        contactAvatar: {
-            cornerRadius: 10,
+        row_height: 28,
+        contact_avatar: {
+            corner_radius: 10,
             width: 18,
         },
-        contactUsername: {
+        contact_username: {
             padding: {
                 left: 8,
             },
         },
-        contactButton: {
-            ...contactButton,
+        contact_button: {
+            ...contact_button,
             hover: {
                 background: background(layer, "variant", "hovered"),
             },
         },
-        disabledContactButton: {
-            ...contactButton,
+        disabled_contact_button: {
+            ...contact_button,
             background: background(layer, "disabled"),
             color: foreground(layer, "disabled"),
         },

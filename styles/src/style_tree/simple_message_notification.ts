@@ -17,7 +17,7 @@ export default function simple_message_notification(
             base: {
                 ...text(layer, "sans", { size: "xs" }),
                 border: border(layer, "active"),
-                cornerRadius: 4,
+                corner_radius: 4,
                 padding: {
                     top: 3,
                     bottom: 3,
@@ -38,9 +38,9 @@ export default function simple_message_notification(
         dismissButton: interactive({
             base: {
                 color: foreground(layer),
-                iconWidth: 8,
+                icon_width: 8,
                 iconHeight: 8,
-                buttonWidth: 8,
+                button_width: 8,
                 buttonHeight: 8,
             },
             state: {

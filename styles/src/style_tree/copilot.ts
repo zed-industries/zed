@@ -12,7 +12,7 @@ export default function copilot(colorScheme: ColorScheme): any {
             base: {
                 background: background(layer),
                 border: border(layer, "default"),
-                cornerRadius: 4,
+                corner_radius: 4,
                 margin: {
                     top: 4,
                     bottom: 4,
@@ -46,7 +46,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                     12
                 ),
                 container: {
-                    cornerRadius: 6,
+                    corner_radius: 6,
                     padding: { left: 6 },
                 },
             },
@@ -93,7 +93,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                         8
                     ),
                     container: {
-                        cornerRadius: 2,
+                        corner_radius: 2,
                         padding: {
                             top: 4,
                             bottom: 4,
@@ -246,7 +246,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                     }),
                     border: border(layer, "warning"),
                     background: background(layer, "warning"),
-                    cornerRadius: 2,
+                    corner_radius: 2,
                     padding: {
                         top: 4,
                         left: 4,

@@ -25,9 +25,9 @@ export default function update_notification(colorScheme: ColorScheme): any {
         dismissButton: interactive({
             base: {
                 color: foreground(layer),
-                iconWidth: 8,
+                icon_width: 8,
                 iconHeight: 8,
-                buttonWidth: 8,
+                button_width: 8,
                 buttonHeight: 8,
             },
             state: {

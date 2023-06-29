@@ -14,7 +14,7 @@ export default function welcome(colorScheme: ColorScheme): any {
     const layer = colorScheme.highest
 
     const checkboxBase = {
-        cornerRadius: 4,
+        corner_radius: 4,
         padding: {
             left: 3,
             right: 3,
@@ -57,7 +57,7 @@ export default function welcome(colorScheme: ColorScheme): any {
         checkboxGroup: {
             border: border(layer, "variant"),
             background: withOpacity(background(layer, "hovered"), 0.25),
-            cornerRadius: 4,
+            corner_radius: 4,
             padding: {
                 left: 12,
                 top: 2,
@@ -68,7 +68,7 @@ export default function welcome(colorScheme: ColorScheme): any {
             base: {
                 background: background(layer),
                 border: border(layer, "active"),
-                cornerRadius: 4,
+                corner_radius: 4,
                 margin: {
                     top: 4,
                     bottom: 4,

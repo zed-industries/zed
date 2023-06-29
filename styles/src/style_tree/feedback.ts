@@ -10,7 +10,7 @@ export default function feedback(colorScheme: ColorScheme): any {
             base: {
                 ...text(layer, "mono", "on"),
                 background: background(layer, "on"),
-                cornerRadius: 6,
+                corner_radius: 6,
                 border: border(layer, "on"),
                 margin: {
                     right: 4,

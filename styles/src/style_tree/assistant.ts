@@ -10,11 +10,11 @@ export default function assistant(colorScheme: ColorScheme): any {
             background: editor(colorScheme).background,
             padding: { left: 12 },
         },
-        messageHeader: {
+        message_header: {
             margin: { bottom: 6, top: 6 },
             background: editor(colorScheme).background,
         },
-        hamburgerButton: interactive({
+        hamburger_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -36,7 +36,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        splitButton: interactive({
+        split_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -58,7 +58,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        quoteButton: interactive({
+        quote_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -80,7 +80,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        assistButton: interactive({
+        assist_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -102,7 +102,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        zoomInButton: interactive({
+        zoom_in_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -124,7 +124,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        zoomOutButton: interactive({
+        zoom_out_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -146,7 +146,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        plusButton: interactive({
+        plus_button: interactive({
             base: {
                 icon: {
                     color: foreground(layer, "variant"),
@@ -171,7 +171,7 @@ export default function assistant(colorScheme: ColorScheme): any {
         title: {
             ...text(layer, "sans", "default", { size: "sm" }),
         },
-        savedConversation: {
+        saved_conversation: {
             container: interactive({
                 base: {
                     background: background(layer, "on"),
@@ -195,7 +195,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 }),
             },
         },
-        userSender: {
+        user_sender: {
             default: {
                 ...text(layer, "sans", "default", {
                     size: "sm",
@@ -203,7 +203,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 }),
             },
         },
-        assistantSender: {
+        assistant_sender: {
             default: {
                 ...text(layer, "sans", "accent", {
                     size: "sm",
@@ -211,7 +211,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 }),
             },
         },
-        systemSender: {
+        system_sender: {
             default: {
                 ...text(layer, "sans", "variant", {
                     size: "sm",
@@ -219,7 +219,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 }),
             },
         },
-        sentAt: {
+        sent_at: {
             margin: { top: 2, left: 8 },
             ...text(layer, "sans", "default", { size: "2xs" }),
         },
@@ -228,7 +228,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 background: background(layer, "on"),
                 margin: { left: 12, right: 12, top: 12 },
                 padding: 4,
-                cornerRadius: 4,
+                corner_radius: 4,
                 ...text(layer, "sans", "default", { size: "xs" }),
             },
             state: {
@@ -238,28 +238,28 @@ export default function assistant(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        remainingTokens: {
+        remaining_tokens: {
             background: background(layer, "on"),
             margin: { top: 12, right: 24 },
             padding: 4,
-            cornerRadius: 4,
+            corner_radius: 4,
             ...text(layer, "sans", "positive", { size: "xs" }),
         },
-        noRemainingTokens: {
+        no_remaining_tokens: {
             background: background(layer, "on"),
             margin: { top: 12, right: 24 },
             padding: 4,
-            cornerRadius: 4,
+            corner_radius: 4,
             ...text(layer, "sans", "negative", { size: "xs" }),
         },
-        errorIcon: {
+        error_icon: {
             margin: { left: 8 },
             color: foreground(layer, "negative"),
             width: 12,
         },
-        apiKeyEditor: {
+        api_key_editor: {
             background: background(layer, "on"),
-            cornerRadius: 6,
+            corner_radius: 6,
             text: text(layer, "mono", "on"),
             placeholderText: text(layer, "mono", "on", "disabled", {
                 size: "xs",
@@ -273,7 +273,7 @@ export default function assistant(colorScheme: ColorScheme): any {
                 top: 4,
             },
         },
-        apiKeyPrompt: {
+        api_key_prompt: {
             padding: 10,
             ...text(layer, "sans", "default", { size: "xs" }),
         },

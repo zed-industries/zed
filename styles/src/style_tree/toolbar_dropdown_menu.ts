@@ -18,7 +18,7 @@ export default function dropdown_menu(colorScheme: ColorScheme): any {
                 }),
                 secondaryTextSpacing: 10,
                 padding: { left: 8, right: 8, top: 2, bottom: 2 },
-                cornerRadius: 6,
+                corner_radius: 6,
                 background: background(layer, "on"),
             },
             state: {
