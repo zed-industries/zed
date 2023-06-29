@@ -3774,25 +3774,22 @@ impl BackgroundScanner {
 
                 // Scan any directories that were previously ignored and weren't
                 // previously scanned.
-                if was_ignored
-                    && !entry.is_ignored
-                    && !entry.is_external
-                    && entry.kind == EntryKind::UnloadedDir
-                {
-                    job.scan_queue
-                        .try_send(ScanJob {
-                            abs_path: abs_path.clone(),
-                            path: entry.path.clone(),
-                            ignore_stack: child_ignore_stack.clone(),
-                            scan_queue: job.scan_queue.clone(),
-                            ancestor_inodes: self
-                                .state
-                                .lock()
-                                .snapshot
-                                .ancestor_inodes_for_path(&entry.path),
-                            is_external: false,
-                        })
-                        .unwrap();
+                if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
+                    let state = self.state.lock();
+                    if state.should_scan_directory(&entry) {
+                        job.scan_queue
+                            .try_send(ScanJob {
+                                abs_path: abs_path.clone(),
+                                path: entry.path.clone(),
+                                ignore_stack: child_ignore_stack.clone(),
+                                scan_queue: job.scan_queue.clone(),
+                                ancestor_inodes: state
+                                    .snapshot
+                                    .ancestor_inodes_for_path(&entry.path),
+                                is_external: false,
+                            })
+                            .unwrap();
+                    }
                 }
 
                 job.ignore_queue
