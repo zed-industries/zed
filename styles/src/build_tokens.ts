@@ -1,6 +1,6 @@
 import * as fs from "fs"
 import * as path from "path"
-import { ColorScheme, createColorScheme } from "./common"
+import { ColorScheme, create_color_scheme } from "./common"
 import { themes } from "./themes"
 import { slugify } from "./utils/slugify"
 import { colorSchemeTokens as color_scheme_tokens } from "./theme/tokens/color_scheme"
@@ -81,7 +81,7 @@ function write_tokens(themes: ColorScheme[], tokens_directory: string) {
 }
 
 const all_themes: ColorScheme[] = themes.map((theme) =>
-    createColorScheme(theme)
+    create_color_scheme(theme)
 )
 
 write_tokens(all_themes, TOKENS_DIRECTORY)

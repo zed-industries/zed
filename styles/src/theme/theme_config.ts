@@ -17,15 +17,15 @@ interface ThemeMeta {
      *
      * Example: `MIT`
      */
-    licenseType?: string | ThemeLicenseType
-    licenseUrl?: string
-    licenseFile: string
-    themeUrl?: string
+    license_type?: string | ThemeLicenseType
+    license_url?: string
+    license_file: string
+    theme_url?: string
 }
 
 export type ThemeFamilyMeta = Pick<
     ThemeMeta,
-    "name" | "author" | "licenseType" | "licenseUrl"
+    "name" | "author" | "license_type" | "license_url"
 >
 
 export interface ThemeConfigInputColors {
@@ -62,7 +62,7 @@ interface ThemeConfigOverrides {
 }
 
 type ThemeConfigProperties = ThemeMeta & {
-    inputColor: ThemeConfigInputColors
+    input_color: ThemeConfigInputColors
     override: ThemeConfigOverrides
 }
 

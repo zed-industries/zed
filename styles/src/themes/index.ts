@@ -1,82 +1,82 @@
 import { ThemeConfig } from "../theme"
-import { darkDefault as gruvboxDark } from "./gruvbox/gruvbox-dark"
-import { darkHard as gruvboxDarkHard } from "./gruvbox/gruvbox-dark-hard"
-import { darkSoft as gruvboxDarkSoft } from "./gruvbox/gruvbox-dark-soft"
-import { lightDefault as gruvboxLight } from "./gruvbox/gruvbox-light"
-import { lightHard as gruvboxLightHard } from "./gruvbox/gruvbox-light-hard"
-import { lightSoft as gruvboxLightSoft } from "./gruvbox/gruvbox-light-soft"
-import { dark as solarizedDark } from "./solarized/solarized"
-import { light as solarizedLight } from "./solarized/solarized"
-import { dark as andromedaDark } from "./andromeda/andromeda"
-import { theme as oneDark } from "./one/one-dark"
-import { theme as oneLight } from "./one/one-light"
-import { theme as ayuLight } from "./ayu/ayu-light"
-import { theme as ayuDark } from "./ayu/ayu-dark"
-import { theme as ayuMirage } from "./ayu/ayu-mirage"
-import { theme as rosePine } from "./rose-pine/rose-pine"
-import { theme as rosePineDawn } from "./rose-pine/rose-pine-dawn"
-import { theme as rosePineMoon } from "./rose-pine/rose-pine-moon"
+import { dark_default as gruvbox_dark } from "./gruvbox/gruvbox-dark"
+import { dark_hard as gruvbox_dark_hard } from "./gruvbox/gruvbox-dark-hard"
+import { dark_soft as gruvbox_dark_soft } from "./gruvbox/gruvbox-dark-soft"
+import { light_default as gruvbox_light } from "./gruvbox/gruvbox-light"
+import { light_hard as gruvbox_light_hard } from "./gruvbox/gruvbox-light-hard"
+import { light_soft as gruvbox_light_soft } from "./gruvbox/gruvbox-light-soft"
+import { dark as solarized_dark } from "./solarized/solarized"
+import { light as solarized_light } from "./solarized/solarized"
+import { dark as andromeda_dark } from "./andromeda/andromeda"
+import { theme as one_dark } from "./one/one-dark"
+import { theme as one_light } from "./one/one-light"
+import { theme as ayu_light } from "./ayu/ayu-light"
+import { theme as ayu_dark } from "./ayu/ayu-dark"
+import { theme as ayu_mirage } from "./ayu/ayu-mirage"
+import { theme as rose_pine } from "./rose-pine/rose-pine"
+import { theme as rose_pine_dawn } from "./rose-pine/rose-pine-dawn"
+import { theme as rose_pine_moon } from "./rose-pine/rose-pine-moon"
 import { theme as sandcastle } from "./sandcastle/sandcastle"
 import { theme as summercamp } from "./summercamp/summercamp"
-import { theme as atelierCaveDark } from "./atelier/atelier-cave-dark"
-import { theme as atelierCaveLight } from "./atelier/atelier-cave-light"
-import { theme as atelierDuneDark } from "./atelier/atelier-dune-dark"
-import { theme as atelierDuneLight } from "./atelier/atelier-dune-light"
-import { theme as atelierEstuaryDark } from "./atelier/atelier-estuary-dark"
-import { theme as atelierEstuaryLight } from "./atelier/atelier-estuary-light"
-import { theme as atelierForestDark } from "./atelier/atelier-forest-dark"
-import { theme as atelierForestLight } from "./atelier/atelier-forest-light"
-import { theme as atelierHeathDark } from "./atelier/atelier-heath-dark"
-import { theme as atelierHeathLight } from "./atelier/atelier-heath-light"
-import { theme as atelierLakesideDark } from "./atelier/atelier-lakeside-dark"
-import { theme as atelierLakesideLight } from "./atelier/atelier-lakeside-light"
-import { theme as atelierPlateauDark } from "./atelier/atelier-plateau-dark"
-import { theme as atelierPlateauLight } from "./atelier/atelier-plateau-light"
-import { theme as atelierSavannaDark } from "./atelier/atelier-savanna-dark"
-import { theme as atelierSavannaLight } from "./atelier/atelier-savanna-light"
-import { theme as atelierSeasideDark } from "./atelier/atelier-seaside-dark"
-import { theme as atelierSeasideLight } from "./atelier/atelier-seaside-light"
-import { theme as atelierSulphurpoolDark } from "./atelier/atelier-sulphurpool-dark"
-import { theme as atelierSulphurpoolLight } from "./atelier/atelier-sulphurpool-light"
+import { theme as atelier_cave_dark } from "./atelier/atelier-cave-dark"
+import { theme as atelier_cave_light } from "./atelier/atelier-cave-light"
+import { theme as atelier_dune_dark } from "./atelier/atelier-dune-dark"
+import { theme as atelier_dune_light } from "./atelier/atelier-dune-light"
+import { theme as atelier_estuary_dark } from "./atelier/atelier-estuary-dark"
+import { theme as atelier_estuary_light } from "./atelier/atelier-estuary-light"
+import { theme as atelier_forest_dark } from "./atelier/atelier-forest-dark"
+import { theme as atelier_forest_light } from "./atelier/atelier-forest-light"
+import { theme as atelier_heath_dark } from "./atelier/atelier-heath-dark"
+import { theme as atelier_heath_light } from "./atelier/atelier-heath-light"
+import { theme as atelier_lakeside_dark } from "./atelier/atelier-lakeside-dark"
+import { theme as atelier_lakeside_light } from "./atelier/atelier-lakeside-light"
+import { theme as atelier_plateau_dark } from "./atelier/atelier-plateau-dark"
+import { theme as atelier_plateau_light } from "./atelier/atelier-plateau-light"
+import { theme as atelier_savanna_dark } from "./atelier/atelier-savanna-dark"
+import { theme as atelier_savanna_light } from "./atelier/atelier-savanna-light"
+import { theme as atelier_seaside_dark } from "./atelier/atelier-seaside-dark"
+import { theme as atelier_seaside_light } from "./atelier/atelier-seaside-light"
+import { theme as atelier_sulphurpool_dark } from "./atelier/atelier-sulphurpool-dark"
+import { theme as atelier_sulphurpool_light } from "./atelier/atelier-sulphurpool-light"
 
 export const themes: ThemeConfig[] = [
-    oneDark,
-    oneLight,
-    ayuLight,
-    ayuDark,
-    ayuMirage,
-    gruvboxDark,
-    gruvboxDarkHard,
-    gruvboxDarkSoft,
-    gruvboxLight,
-    gruvboxLightHard,
-    gruvboxLightSoft,
-    rosePine,
-    rosePineDawn,
-    rosePineMoon,
+    one_dark,
+    one_light,
+    ayu_light,
+    ayu_dark,
+    ayu_mirage,
+    gruvbox_dark,
+    gruvbox_dark_hard,
+    gruvbox_dark_soft,
+    gruvbox_light,
+    gruvbox_light_hard,
+    gruvbox_light_soft,
+    rose_pine,
+    rose_pine_dawn,
+    rose_pine_moon,
     sandcastle,
-    solarizedDark,
-    solarizedLight,
-    andromedaDark,
+    solarized_dark,
+    solarized_light,
+    andromeda_dark,
     summercamp,
-    atelierCaveDark,
-    atelierCaveLight,
-    atelierDuneDark,
-    atelierDuneLight,
-    atelierEstuaryDark,
-    atelierEstuaryLight,
-    atelierForestDark,
-    atelierForestLight,
-    atelierHeathDark,
-    atelierHeathLight,
-    atelierLakesideDark,
-    atelierLakesideLight,
-    atelierPlateauDark,
-    atelierPlateauLight,
-    atelierSavannaDark,
-    atelierSavannaLight,
-    atelierSeasideDark,
-    atelierSeasideLight,
-    atelierSulphurpoolDark,
-    atelierSulphurpoolLight,
+    atelier_cave_dark,
+    atelier_cave_light,
+    atelier_dune_dark,
+    atelier_dune_light,
+    atelier_estuary_dark,
+    atelier_estuary_light,
+    atelier_forest_dark,
+    atelier_forest_light,
+    atelier_heath_dark,
+    atelier_heath_light,
+    atelier_lakeside_dark,
+    atelier_lakeside_light,
+    atelier_plateau_dark,
+    atelier_plateau_light,
+    atelier_savanna_dark,
+    atelier_savanna_light,
+    atelier_seaside_dark,
+    atelier_seaside_light,
+    atelier_sulphurpool_dark,
+    atelier_sulphurpool_light,
 ]

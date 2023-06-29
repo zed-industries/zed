@@ -73,7 +73,7 @@ export default function tab_bar(colorScheme: ColorScheme): any {
         ...activePaneActiveTab,
         background: withOpacity(tab.background, 0.9),
         border: undefined as any,
-        shadow: colorScheme.popoverShadow,
+        shadow: colorScheme.popover_shadow,
     }
 
     return {

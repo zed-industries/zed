@@ -116,7 +116,7 @@ export interface Syntax {
 
 export type ThemeSyntax = Partial<Syntax>
 
-const default_syntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
+const default_syntax_highlight_style: Omit<SyntaxHighlightStyle, "color"> = {
     weight: "normal",
     underline: false,
     italic: false,
@@ -132,7 +132,7 @@ function build_default_syntax(color_scheme: ColorScheme): Syntax {
     // then spread the default to each style
     for (const key of Object.keys({} as Syntax)) {
         syntax[key as keyof Syntax] = {
-            ...default_syntaxHighlightStyle,
+            ...default_syntax_highlight_style,
         }
     }
 

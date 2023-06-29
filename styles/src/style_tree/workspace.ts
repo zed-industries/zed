@@ -102,7 +102,7 @@ export default function workspace(colorScheme: ColorScheme): any {
         },
         zoomedPaneForeground: {
             margin: 16,
-            shadow: colorScheme.modalShadow,
+            shadow: colorScheme.modal_shadow,
             border: border(colorScheme.lowest, { overlay: true }),
         },
         zoomedPanelForeground: {
@@ -189,7 +189,7 @@ export default function workspace(colorScheme: ColorScheme): any {
             corner_radius: 6,
             padding: 12,
             border: border(colorScheme.middle),
-            shadow: colorScheme.popoverShadow,
+            shadow: colorScheme.popover_shadow,
         },
         notifications: {
             width: 400,

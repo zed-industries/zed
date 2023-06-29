@@ -7,7 +7,7 @@ export default function context_menu(theme: ColorScheme): any {
         background: background(theme.middle),
         corner_radius: 10,
         padding: 4,
-        shadow: theme.popoverShadow,
+        shadow: theme.popover_shadow,
         border: border(theme.middle),
         keystroke_margin: 30,
         item: toggleable({

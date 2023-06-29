@@ -1,7 +1,7 @@
 import {
     chroma,
     font_weights,
-    colorRamp,
+    color_ramp,
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
@@ -11,7 +11,7 @@ const color = {
     black: "#383A41",
     grey: "#A2A3A7",
     red: "#D36050",
-    darkRed: "#B92C46",
+    dark_red: "#B92C46",
     orange: "#AD6F26",
     yellow: "#DFC184",
     green: "#659F58",
@@ -25,11 +25,11 @@ export const theme: ThemeConfig = {
     name: "One Light",
     author: "simurai",
     appearance: ThemeAppearance.Light,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl:
+    license_type: ThemeLicenseType.MIT,
+    license_url:
         "https://github.com/atom/atom/tree/master/packages/one-light-ui",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: {
+    license_file: `${__dirname}/LICENSE`,
+    input_color: {
         neutral: chroma
             .scale([
                 "#383A41",
@@ -42,14 +42,14 @@ export const theme: ThemeConfig = {
                 "#FAFAFA",
             ])
             .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
-        red: colorRamp(chroma(color.red)),
-        orange: colorRamp(chroma(color.orange)),
-        yellow: colorRamp(chroma(color.yellow)),
-        green: colorRamp(chroma(color.green)),
-        cyan: colorRamp(chroma(color.teal)),
-        blue: colorRamp(chroma(color.blue)),
-        violet: colorRamp(chroma(color.purple)),
-        magenta: colorRamp(chroma(color.magenta)),
+        red: color_ramp(chroma(color.red)),
+        orange: color_ramp(chroma(color.orange)),
+        yellow: color_ramp(chroma(color.yellow)),
+        green: color_ramp(chroma(color.green)),
+        cyan: color_ramp(chroma(color.teal)),
+        blue: color_ramp(chroma(color.blue)),
+        violet: color_ramp(chroma(color.purple)),
+        magenta: color_ramp(chroma(color.magenta)),
     },
     override: {
         syntax: {
@@ -67,7 +67,7 @@ export const theme: ThemeConfig = {
             property: { color: color.red },
             punctuation: { color: color.black },
             "punctuation.list_marker": { color: color.red },
-            "punctuation.special": { color: color.darkRed },
+            "punctuation.special": { color: color.dark_red },
             string: { color: color.green },
             title: { color: color.red, weight: font_weights.normal },
             "text.literal": { color: color.green },

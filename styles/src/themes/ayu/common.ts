@@ -1,7 +1,7 @@
 import { dark, light, mirage } from "ayu"
 import {
     chroma,
-    colorRamp,
+    color_ramp,
     ThemeLicenseType,
     ThemeSyntax,
     ThemeFamilyMeta,
@@ -13,7 +13,7 @@ export const ayu = {
     mirage,
 }
 
-export const buildTheme = (t: typeof dark, light: boolean) => {
+export const build_theme = (t: typeof dark, light: boolean) => {
     const color = {
         lightBlue: t.syntax.tag.hex(),
         yellow: t.syntax.func.hex(),
@@ -48,20 +48,20 @@ export const buildTheme = (t: typeof dark, light: boolean) => {
                 light ? t.editor.fg.hex() : t.editor.bg.hex(),
                 light ? t.editor.bg.hex() : t.editor.fg.hex(),
             ]),
-            red: colorRamp(chroma(color.red)),
-            orange: colorRamp(chroma(color.orange)),
-            yellow: colorRamp(chroma(color.yellow)),
-            green: colorRamp(chroma(color.green)),
-            cyan: colorRamp(chroma(color.teal)),
-            blue: colorRamp(chroma(color.blue)),
-            violet: colorRamp(chroma(color.purple)),
-            magenta: colorRamp(chroma(color.lightBlue)),
+            red: color_ramp(chroma(color.red)),
+            orange: color_ramp(chroma(color.orange)),
+            yellow: color_ramp(chroma(color.yellow)),
+            green: color_ramp(chroma(color.green)),
+            cyan: color_ramp(chroma(color.teal)),
+            blue: color_ramp(chroma(color.blue)),
+            violet: color_ramp(chroma(color.purple)),
+            magenta: color_ramp(chroma(color.lightBlue)),
         },
         syntax,
     }
 }
 
-export const buildSyntax = (t: typeof dark): ThemeSyntax => {
+export const build_syntax = (t: typeof dark): ThemeSyntax => {
     return {
         constant: { color: t.syntax.constant.hex() },
         "string.regex": { color: t.syntax.regexp.hex() },
@@ -80,6 +80,6 @@ export const buildSyntax = (t: typeof dark): ThemeSyntax => {
 export const meta: ThemeFamilyMeta = {
     name: "Ayu",
     author: "dempfi",
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/dempfi/ayu",
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/dempfi/ayu",
 }

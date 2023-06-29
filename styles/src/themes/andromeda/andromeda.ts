@@ -1,6 +1,6 @@
 import {
     chroma,
-    colorRamp,
+    color_ramp,
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
@@ -10,10 +10,10 @@ export const dark: ThemeConfig = {
     name: "Andromeda",
     author: "EliverLara",
     appearance: ThemeAppearance.Dark,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/EliverLara/Andromeda",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: {
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/EliverLara/Andromeda",
+    license_file: `${__dirname}/LICENSE`,
+    input_color: {
         neutral: chroma
             .scale([
                 "#1E2025",
@@ -26,14 +26,14 @@ export const dark: ThemeConfig = {
                 "#F7F7F8",
             ])
             .domain([0, 0.15, 0.25, 0.35, 0.7, 0.8, 0.9, 1]),
-        red: colorRamp(chroma("#F92672")),
-        orange: colorRamp(chroma("#F39C12")),
-        yellow: colorRamp(chroma("#FFE66D")),
-        green: colorRamp(chroma("#96E072")),
-        cyan: colorRamp(chroma("#00E8C6")),
-        blue: colorRamp(chroma("#0CA793")),
-        violet: colorRamp(chroma("#8A3FA6")),
-        magenta: colorRamp(chroma("#C74DED")),
+        red: color_ramp(chroma("#F92672")),
+        orange: color_ramp(chroma("#F39C12")),
+        yellow: color_ramp(chroma("#FFE66D")),
+        green: color_ramp(chroma("#96E072")),
+        cyan: color_ramp(chroma("#00E8C6")),
+        blue: color_ramp(chroma("#0CA793")),
+        violet: color_ramp(chroma("#8A3FA6")),
+        magenta: color_ramp(chroma("#C74DED")),
     },
     override: { syntax: {} },
 }

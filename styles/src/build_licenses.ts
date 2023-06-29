@@ -30,7 +30,7 @@ function generate_license_file(themes: ThemeConfig[]) {
     check_licenses(themes)
     for (const theme of themes) {
         const license_text = fs.readFileSync(theme.licenseFile).toString()
-        write_license(theme.name, license_text, theme.licenseUrl)
+        write_license(theme.name, license_text, theme.license_url)
     }
 }
 

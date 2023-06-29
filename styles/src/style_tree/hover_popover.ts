@@ -12,7 +12,7 @@ export default function hover_popover(colorScheme: ColorScheme): any {
             top: 4,
             bottom: 4,
         },
-        shadow: colorScheme.popoverShadow,
+        shadow: colorScheme.popover_shadow,
         border: border(layer),
         margin: {
             left: -8,

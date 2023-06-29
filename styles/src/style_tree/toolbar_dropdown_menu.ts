@@ -8,7 +8,7 @@ export default function dropdown_menu(colorScheme: ColorScheme): any {
         rowHeight: 30,
         background: background(layer),
         border: border(layer),
-        shadow: colorScheme.popoverShadow,
+        shadow: colorScheme.popover_shadow,
         header: interactive({
             base: {
                 ...text(layer, "sans", { size: "sm" }),

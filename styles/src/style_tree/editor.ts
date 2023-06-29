@@ -186,7 +186,7 @@ export default function editor(theme: ColorScheme): any {
                 left: -14,
             },
             border: border(theme.middle),
-            shadow: theme.popoverShadow,
+            shadow: theme.popover_shadow,
             matchHighlight: foreground(theme.middle, "accent"),
             item: autocomplete_item,
             hoveredItem: {

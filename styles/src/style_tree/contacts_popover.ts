@@ -6,7 +6,7 @@ export default function contacts_popover(theme: ColorScheme): any {
         background: background(theme.middle),
         corner_radius: 6,
         padding: { top: 6, bottom: 6 },
-        shadow: theme.popoverShadow,
+        shadow: theme.popover_shadow,
         border: border(theme.middle),
         width: 300,
         height: 400,

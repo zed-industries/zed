@@ -8,7 +8,7 @@ export default function picker(colorScheme: ColorScheme): any {
     const container = {
         background: background(layer),
         border: border(layer),
-        shadow: colorScheme.modalShadow,
+        shadow: colorScheme.modal_shadow,
         corner_radius: 12,
         padding: {
             bottom: 4,

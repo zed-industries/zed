@@ -23,30 +23,30 @@ interface ColorSchemeTokens {
     middle: LayerToken
     highest: LayerToken
     players: PlayersToken
-    popoverShadow: SingleBoxShadowToken
-    modalShadow: SingleBoxShadowToken
+    popover_shadow: SingleBoxShadowToken
+    modal_shadow: SingleBoxShadowToken
     syntax?: Partial<ThemeSyntaxColorTokens>
 }
 
-const createShadowToken = (
+const create_shadow_token = (
     shadow: Shadow,
-    tokenName: string
+    token_name: string
 ): SingleBoxShadowToken => {
     return {
-        name: tokenName,
+        name: token_name,
         type: TokenTypes.BOX_SHADOW,
         value: `${shadow.offset[0]}px ${shadow.offset[1]}px ${shadow.blur}px 0px ${shadow.color}`,
     }
 }
 
-const popoverShadowToken = (colorScheme: ColorScheme): SingleBoxShadowToken => {
-    const shadow = colorScheme.popoverShadow
-    return createShadowToken(shadow, "popoverShadow")
+const popover_shadow_token = (theme: ColorScheme): SingleBoxShadowToken => {
+    const shadow = theme.popover_shadow
+    return create_shadow_token(shadow, "popover_shadow")
 }
 
-const modalShadowToken = (colorScheme: ColorScheme): SingleBoxShadowToken => {
-    const shadow = colorScheme.modalShadow
-    return createShadowToken(shadow, "modalShadow")
+const modal_shadow_token = (theme: ColorScheme): SingleBoxShadowToken => {
+    const shadow = theme.modal_shadow
+    return create_shadow_token(shadow, "modal_shadow")
 }
 
 type ThemeSyntaxColorTokens = Record<keyof ThemeSyntax, SingleColorToken>
@@ -68,32 +68,32 @@ function syntaxHighlightStyleColorTokens(
     }, {} as ThemeSyntaxColorTokens)
 }
 
-const syntaxTokens = (
-    colorScheme: ColorScheme
+const syntax_Tokens = (
+    theme: ColorScheme
 ): ColorSchemeTokens["syntax"] => {
-    const syntax = editor(colorScheme).syntax
+    const syntax = editor(theme).syntax
 
     return syntaxHighlightStyleColorTokens(syntax)
 }
 
-export function colorSchemeTokens(colorScheme: ColorScheme): ColorSchemeTokens {
+export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
     return {
         name: {
             name: "themeName",
-            value: colorScheme.name,
+            value: theme.name,
             type: TokenTypes.OTHER,
         },
         appearance: {
             name: "themeAppearance",
-            value: colorScheme.is_light ? "light" : "dark",
+            value: theme.is_light ? "light" : "dark",
             type: TokenTypes.OTHER,
         },
-        lowest: layerToken(colorScheme.lowest, "lowest"),
-        middle: layerToken(colorScheme.middle, "middle"),
-        highest: layerToken(colorScheme.highest, "highest"),
-        popoverShadow: popoverShadowToken(colorScheme),
-        modalShadow: modalShadowToken(colorScheme),
-        players: playersToken(colorScheme),
-        syntax: syntaxTokens(colorScheme),
+        lowest: layerToken(theme.lowest, "lowest"),
+        middle: layerToken(theme.middle, "middle"),
+        highest: layerToken(theme.highest, "highest"),
+        popover_shadow: popover_shadow_token(theme),
+        modal_shadow: modal_shadow_token(theme),
+        players: playersToken(theme),
+        syntax: syntax_Tokens(theme),
     }
 }

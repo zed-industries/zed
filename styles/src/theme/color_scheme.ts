@@ -6,7 +6,7 @@ import {
     ThemeAppearance,
     ThemeConfigInputColors,
 } from "./theme_config"
-import { getRamps } from "./ramps"
+import { get_ramps } from "./ramps"
 
 export interface ColorScheme {
     name: string
@@ -18,8 +18,8 @@ export interface ColorScheme {
 
     ramps: RampSet
 
-    popoverShadow: Shadow
-    modalShadow: Shadow
+    popover_shadow: Shadow
+    modal_shadow: Shadow
 
     players: Players
     syntax?: Partial<ThemeSyntax>
@@ -105,37 +105,37 @@ export interface Style {
     foreground: string
 }
 
-export function createColorScheme(theme: ThemeConfig): ColorScheme {
+export function create_color_scheme(theme: ThemeConfig): ColorScheme {
     const {
         name,
         appearance,
-        inputColor,
+        input_color,
         override: { syntax },
     } = theme
 
-    const isLight = appearance === ThemeAppearance.Light
-    const colorRamps: ThemeConfigInputColors = inputColor
+    const is_light = appearance === ThemeAppearance.Light
+    const color_ramps: ThemeConfigInputColors = input_color
 
-    // Chromajs scales from 0 to 1 flipped if isLight is true
-    const ramps = getRamps(isLight, colorRamps)
-    const lowest = lowestLayer(ramps)
-    const middle = middleLayer(ramps)
-    const highest = highestLayer(ramps)
+    // Chromajs scales from 0 to 1 flipped if is_light is true
+    const ramps = get_ramps(is_light, color_ramps)
+    const lowest = lowest_layer(ramps)
+    const middle = middle_layer(ramps)
+    const highest = highest_layer(ramps)
 
-    const popoverShadow = {
+    const popover_shadow = {
         blur: 4,
         color: ramps
-            .neutral(isLight ? 7 : 0)
+            .neutral(is_light ? 7 : 0)
             .darken()
             .alpha(0.2)
             .hex(), // TODO used blend previously. Replace with something else
         offset: [1, 2],
     }
 
-    const modalShadow = {
+    const modal_shadow = {
         blur: 16,
         color: ramps
-            .neutral(isLight ? 7 : 0)
+            .neutral(is_light ? 7 : 0)
             .darken()
             .alpha(0.2)
             .hex(), // TODO used blend previously. Replace with something else
@@ -155,7 +155,7 @@ export function createColorScheme(theme: ThemeConfig): ColorScheme {
 
     return {
         name,
-        is_light: isLight,
+        is_light,
 
         ramps,
 
@@ -163,8 +163,8 @@ export function createColorScheme(theme: ThemeConfig): ColorScheme {
         middle,
         highest,
 
-        popoverShadow,
-        modalShadow,
+        popover_shadow,
+        modal_shadow,
 
         players,
         syntax,
@@ -178,105 +178,105 @@ function player(ramp: Scale): Player {
     }
 }
 
-function lowestLayer(ramps: RampSet): Layer {
+function lowest_layer(ramps: RampSet): Layer {
     return {
-        base: buildStyleSet(ramps.neutral, 0.2, 1),
-        variant: buildStyleSet(ramps.neutral, 0.2, 0.7),
-        on: buildStyleSet(ramps.neutral, 0.1, 1),
-        accent: buildStyleSet(ramps.blue, 0.1, 0.5),
-        positive: buildStyleSet(ramps.green, 0.1, 0.5),
-        warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
-        negative: buildStyleSet(ramps.red, 0.1, 0.5),
+        base: build_style_set(ramps.neutral, 0.2, 1),
+        variant: build_style_set(ramps.neutral, 0.2, 0.7),
+        on: build_style_set(ramps.neutral, 0.1, 1),
+        accent: build_style_set(ramps.blue, 0.1, 0.5),
+        positive: build_style_set(ramps.green, 0.1, 0.5),
+        warning: build_style_set(ramps.yellow, 0.1, 0.5),
+        negative: build_style_set(ramps.red, 0.1, 0.5),
     }
 }
 
-function middleLayer(ramps: RampSet): Layer {
+function middle_layer(ramps: RampSet): Layer {
     return {
-        base: buildStyleSet(ramps.neutral, 0.1, 1),
-        variant: buildStyleSet(ramps.neutral, 0.1, 0.7),
-        on: buildStyleSet(ramps.neutral, 0, 1),
-        accent: buildStyleSet(ramps.blue, 0.1, 0.5),
-        positive: buildStyleSet(ramps.green, 0.1, 0.5),
-        warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
-        negative: buildStyleSet(ramps.red, 0.1, 0.5),
+        base: build_style_set(ramps.neutral, 0.1, 1),
+        variant: build_style_set(ramps.neutral, 0.1, 0.7),
+        on: build_style_set(ramps.neutral, 0, 1),
+        accent: build_style_set(ramps.blue, 0.1, 0.5),
+        positive: build_style_set(ramps.green, 0.1, 0.5),
+        warning: build_style_set(ramps.yellow, 0.1, 0.5),
+        negative: build_style_set(ramps.red, 0.1, 0.5),
     }
 }
 
-function highestLayer(ramps: RampSet): Layer {
+function highest_layer(ramps: RampSet): Layer {
     return {
-        base: buildStyleSet(ramps.neutral, 0, 1),
-        variant: buildStyleSet(ramps.neutral, 0, 0.7),
-        on: buildStyleSet(ramps.neutral, 0.1, 1),
-        accent: buildStyleSet(ramps.blue, 0.1, 0.5),
-        positive: buildStyleSet(ramps.green, 0.1, 0.5),
-        warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
-        negative: buildStyleSet(ramps.red, 0.1, 0.5),
+        base: build_style_set(ramps.neutral, 0, 1),
+        variant: build_style_set(ramps.neutral, 0, 0.7),
+        on: build_style_set(ramps.neutral, 0.1, 1),
+        accent: build_style_set(ramps.blue, 0.1, 0.5),
+        positive: build_style_set(ramps.green, 0.1, 0.5),
+        warning: build_style_set(ramps.yellow, 0.1, 0.5),
+        negative: build_style_set(ramps.red, 0.1, 0.5),
     }
 }
 
-function buildStyleSet(
+function build_style_set(
     ramp: Scale,
-    backgroundBase: number,
-    foregroundBase: number,
+    background_base: number,
+    foreground_base: number,
     step = 0.08
 ): StyleSet {
-    const styleDefinitions = buildStyleDefinition(
-        backgroundBase,
-        foregroundBase,
+    const style_definitions = build_style_definition(
+        background_base,
+        foreground_base,
         step
     )
 
-    function colorString(indexOrColor: number | Color): string {
-        if (typeof indexOrColor === "number") {
-            return ramp(indexOrColor).hex()
+    function color_string(index_or_color: number | Color): string {
+        if (typeof index_or_color === "number") {
+            return ramp(index_or_color).hex()
         } else {
-            return indexOrColor.hex()
+            return index_or_color.hex()
         }
     }
 
-    function buildStyle(style: Styles): Style {
+    function build_style(style: Styles): Style {
         return {
-            background: colorString(styleDefinitions.background[style]),
-            border: colorString(styleDefinitions.border[style]),
-            foreground: colorString(styleDefinitions.foreground[style]),
+            background: color_string(style_definitions.background[style]),
+            border: color_string(style_definitions.border[style]),
+            foreground: color_string(style_definitions.foreground[style]),
         }
     }
 
     return {
-        default: buildStyle("default"),
-        hovered: buildStyle("hovered"),
-        pressed: buildStyle("pressed"),
-        active: buildStyle("active"),
-        disabled: buildStyle("disabled"),
-        inverted: buildStyle("inverted"),
+        default: build_style("default"),
+        hovered: build_style("hovered"),
+        pressed: build_style("pressed"),
+        active: build_style("active"),
+        disabled: build_style("disabled"),
+        inverted: build_style("inverted"),
     }
 }
 
-function buildStyleDefinition(bgBase: number, fgBase: number, step = 0.08) {
+function build_style_definition(bg_base: number, fg_base: number, step = 0.08) {
     return {
         background: {
-            default: bgBase,
-            hovered: bgBase + step,
-            pressed: bgBase + step * 1.5,
-            active: bgBase + step * 2.2,
-            disabled: bgBase,
-            inverted: fgBase + step * 6,
+            default: bg_base,
+            hovered: bg_base + step,
+            pressed: bg_base + step * 1.5,
+            active: bg_base + step * 2.2,
+            disabled: bg_base,
+            inverted: fg_base + step * 6,
         },
         border: {
-            default: bgBase + step * 1,
-            hovered: bgBase + step,
-            pressed: bgBase + step,
-            active: bgBase + step * 3,
-            disabled: bgBase + step * 0.5,
-            inverted: bgBase - step * 3,
+            default: bg_base + step * 1,
+            hovered: bg_base + step,
+            pressed: bg_base + step,
+            active: bg_base + step * 3,
+            disabled: bg_base + step * 0.5,
+            inverted: bg_base - step * 3,
         },
         foreground: {
-            default: fgBase,
-            hovered: fgBase,
-            pressed: fgBase,
-            active: fgBase + step * 6,
-            disabled: bgBase + step * 4,
-            inverted: bgBase + step * 2,
+            default: fg_base,
+            hovered: fg_base,
+            pressed: fg_base,
+            active: fg_base + step * 6,
+            disabled: bg_base + step * 4,
+            inverted: bg_base + step * 2,
         },
     }
 }

@@ -24,12 +24,12 @@ export interface Variant {
 export const meta: ThemeFamilyMeta = {
     name: "Atelier",
     author: "Bram de Haan (http://atelierbramdehaan.nl)",
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl:
+    license_type: ThemeLicenseType.MIT,
+    license_url:
         "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/",
 }
 
-export const buildSyntax = (variant: Variant): ThemeSyntax => {
+export const build_syntax = (variant: Variant): ThemeSyntax => {
     const { colors } = variant
     return {
         primary: { color: colors.base06 },

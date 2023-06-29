@@ -21,7 +21,7 @@ export default function welcome(colorScheme: ColorScheme): any {
             top: 3,
             bottom: 3,
         },
-        // shadow: colorScheme.popoverShadow,
+        // shadow: colorScheme.popover_shadow,
         border: border(layer),
         margin: {
             right: 8,
