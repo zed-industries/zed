@@ -1,9 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, ViewHandle};
+use gpui::{elements::*, AppContext, MouseState, Task, ViewContext, ViewHandle};
 use picker::{Picker, PickerDelegate, PickerEvent};
-use project::Project;
-use std::{cmp::Ordering, sync::Arc};
-use util::{ResultExt, TryFutureExt};
+use std::sync::Arc;
+use util::ResultExt;
 use workspace::{Toast, Workspace};
 
 pub fn init(cx: &mut AppContext) {

@@ -15,7 +15,6 @@ use gpui::{
     actions,
     color::Color,
     elements::*,
-    fonts::TextStyle,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
@@ -241,7 +240,7 @@ impl CollabTitlebarItem {
             ret = ret.with_child(
                 Stack::new()
                     .with_child(
-                        MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |state, _| {
+                        MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |_, _| {
                             Label::new(git_branch, style)
                                 .contained()
                                 .with_margin_right(item_spacing)
