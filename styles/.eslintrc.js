@@ -29,40 +29,5 @@ module.exports = {
     rules: {
         "linebreak-style": ["error", "unix"],
         semi: ["error", "never"],
-        "@typescript-eslint/naming-convention": [
-            "warn",
-            {
-                selector: ["property", "variableLike", "memberLike", "method"],
-                format: ["snake_case"],
-            },
-            {
-                selector: ["typeLike"],
-                format: ["PascalCase"],
-            },
-        ],
-        "import/no-restricted-paths": [
-            "error",
-            {
-                zones: [
-                    {
-                        target: [
-                            "./src/component/*",
-                            "./src/element/*",
-                            "./src/styleTree/*",
-                            "./src/system/*",
-                            "./src/theme/*",
-                            "./src/themes/*",
-                            "./src/utils/*",
-                        ],
-                        from: [
-                            "./src/types/styleTree.ts",
-                            "./src/types/element.ts",
-                            "./src/types/property.ts",
-                        ],
-                        message: "Import from `@types` instead",
-                    },
-                ],
-            },
-        ],
     },
 }
