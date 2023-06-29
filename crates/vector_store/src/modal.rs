@@ -6,7 +6,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::{Project, ProjectPath};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -23,6 +23,7 @@ pub struct SemanticSearchDelegate {
     vector_store: ModelHandle<VectorStore>,
     selected_match_index: usize,
     matches: Vec<SearchResult>,
+    history: HashMap<String, Vec<SearchResult>>,
 }
 
 impl SemanticSearchDelegate {
@@ -40,6 +41,7 @@ impl SemanticSearchDelegate {
             vector_store,
             selected_match_index: 0,
             matches: vec![],
+            history: HashMap::new(),
         }
     }
 }
@@ -97,7 +99,9 @@ impl PickerDelegate for SemanticSearchDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<SemanticSearch>) -> Task<()> {
+        log::info!("Searching for {:?}...", query);
         if query.len() < MIN_QUERY_LEN {
+            log::info!("Query below minimum length");
             return Task::ready(());
         }
 
@@ -106,18 +110,35 @@ impl PickerDelegate for SemanticSearchDelegate {
         cx.spawn(|this, mut cx| async move {
             cx.background().timer(EMBEDDING_DEBOUNCE_INTERVAL).await;
 
-            log::info!("Searching for {:?}", &query);
-
-            let task = vector_store.update(&mut cx, |store, cx| {
-                store.search(&project, query.to_string(), 10, cx)
+            let retrieved_cached = this.update(&mut cx, |this, _| {
+                let delegate = this.delegate_mut();
+                if delegate.history.contains_key(&query) {
+                    let historic_results = delegate.history.get(&query).unwrap().to_owned();
+                    delegate.matches = historic_results.clone();
+                    true
+                } else {
+                    false
+                }
             });
 
-            if let Some(results) = task.await.log_err() {
-                this.update(&mut cx, |this, _| {
-                    let delegate = this.delegate_mut();
-                    delegate.matches = results;
-                })
-                .ok();
+            if let Some(retrieved) = retrieved_cached.log_err() {
+                if !retrieved {
+                    let task = vector_store.update(&mut cx, |store, cx| {
+                        store.search(&project, query.to_string(), 10, cx)
+                    });
+
+                    if let Some(results) = task.await.log_err() {
+                        log::info!("Not queried previously, searching...");
+                        this.update(&mut cx, |this, _| {
+                            let delegate = this.delegate_mut();
+                            delegate.matches = results.clone();
+                            delegate.history.insert(query, results);
+                        })
+                        .ok();
+                    }
+                } else {
+                    log::info!("Already queried, retrieved directly from cached history");
+                }
             }
         })
     }
@@ -135,7 +156,7 @@ impl PickerDelegate for SemanticSearchDelegate {
 
         let search_result = &self.matches[ix];
 
-        let mut path = search_result.file_path.to_string_lossy();
+        let path = search_result.file_path.to_string_lossy();
         let name = search_result.name.clone();
 
         Flex::column()

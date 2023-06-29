@@ -7,8 +7,8 @@ mod vector_store_tests;
 
 use anyhow::{anyhow, Result};
 use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
-use embedding::{DummyEmbeddings, EmbeddingProvider, OpenAIEmbeddings};
-use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
+use embedding::{EmbeddingProvider, OpenAIEmbeddings};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use project::{Fs, Project, WorktreeId};
@@ -93,7 +93,7 @@ pub struct VectorStore {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SearchResult {
     pub worktree_id: WorktreeId,
     pub name: String,
