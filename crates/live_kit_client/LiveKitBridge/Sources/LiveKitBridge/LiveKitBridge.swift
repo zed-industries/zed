@@ -262,10 +262,21 @@ public func LKRemoteAudioTrackGetSid(track: UnsafeRawPointer) -> CFString {
 @_cdecl("LKAudioInputSources")
 public func LKAudioInputSources(
     data: UnsafeRawPointer,
-    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool, UnsafeMutableRawPointer) -> Void
+    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, UnsafeMutableRawPointer) -> Void
 ) -> UnsafeRawPointer {
     Room.audioDeviceModule.inputDevices.forEach { inputDevice in
-        callback(data, inputDevice.name as CFString, inputDevice.isDefault, Unmanaged.passRetained(inputDevice).toOpaque())
+        callback(data, inputDevice.name as CFString, inputDevice.deviceId as CFString, inputDevice.isDefault, Unmanaged.passRetained(inputDevice).toOpaque())
+    }
+    return data
+}
+
+@_cdecl("LKAudioOutputSources")
+public func LKAudioOutputSources(
+    data: UnsafeRawPointer,
+    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, UnsafeMutableRawPointer) -> Void
+) -> UnsafeRawPointer {
+    Room.audioDeviceModule.outputDevices.forEach { outputDevice in
+        callback(data, outputDevice.name as CFString, outputDevice.deviceId as CFString, outputDevice.isDefault, Unmanaged.passRetained(outputDevice).toOpaque())
     }
     return data
 }

@@ -106,6 +106,18 @@ extern "C" {
         callback: extern "C" fn(
             callback_data: *mut c_void,
             name: CFStringRef,
+            id: CFStringRef,
+            is_default: bool,
+            native_device: *const c_void,
+        ),
+    ) -> *mut c_void;
+
+    fn LKAudioOutputSources(
+        callback_data: *mut c_void,
+        callback: extern "C" fn(
+            callback_data: *mut c_void,
+            name: CFStringRef,
+            id: CFStringRef,
             is_default: bool,
             native_device: *const c_void,
         ),
@@ -143,6 +155,22 @@ pub type Sid = String;
 pub enum ConnectionState {
     Disconnected,
     Connected { url: String, token: String },
+}
+
+extern "C" fn push_audio_device(
+    vec: *mut c_void,
+    name: CFStringRef,
+    id: CFStringRef,
+    is_default: bool,
+    native_device: *const c_void,
+) {
+    unsafe {
+        let mut sources = Box::from_raw(vec as *mut Vec<AudioDevice>);
+        let name = CFString::wrap_under_get_rule(name).to_string();
+        let id = CFString::wrap_under_get_rule(id).to_string();
+        sources.push(AudioDevice::new(name, id, is_default, native_device));
+        let _ = Box::into_raw(sources);
+    }
 }
 
 pub struct Room {
@@ -205,22 +233,10 @@ impl Room {
     pub fn audio_input_sources() -> Vec<AudioDevice> {
         let input_sources = Vec::<AudioDevice>::new();
         unsafe {
-            extern "C" fn callback(
-                vec: *mut c_void,
-                name: CFStringRef,
-                is_default: bool,
-                native_device: *const c_void,
-            ) {
-                unsafe {
-                    let mut input_sources = Box::from_raw(vec as *mut Vec<AudioDevice>);
-                    let name = CFString::wrap_under_get_rule(name).to_string();
-                    input_sources.push(AudioDevice::new(name, is_default, native_device));
-                    let _ = Box::into_raw(input_sources);
-                }
-            }
-
-            let input_sources_raw =
-                LKAudioInputSources(Box::into_raw(Box::new(input_sources)) as *mut _, callback);
+            let input_sources_raw = LKAudioInputSources(
+                Box::into_raw(Box::new(input_sources)) as *mut _,
+                push_audio_device,
+            );
 
             let input_sources = Box::from_raw(input_sources_raw as *mut Vec<AudioDevice>);
 
@@ -228,8 +244,16 @@ impl Room {
         }
     }
 
-    pub fn audio_output_sources() -> Result<Vec<AudioDevice>> {
-        Ok(vec![])
+    pub fn audio_output_sources() -> Vec<AudioDevice> {
+        let output_sources = Vec::<AudioDevice>::new();
+        unsafe {
+            let output_sources_ptr =
+                LKAudioOutputSources(Box::into_raw(Box::new(output_sources)) as *mut _, push_audio_device);
+
+            let output_sources = Box::from_raw(output_sources_ptr as *mut Vec<AudioDevice>);
+
+            return output_sources.into_iter().collect();
+        }
     }
 
     pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
@@ -878,17 +902,19 @@ pub enum RemoteAudioTrackUpdate {
 
 pub struct AudioDevice {
     name: String,
+    id: String,
     default: bool,
     native_device: *const c_void,
 }
 
 impl AudioDevice {
-    fn new(name: String, default: bool, ptr: *const c_void) -> Self {
+    fn new(name: String, id: String, default: bool, ptr: *const c_void) -> Self {
         unsafe {
             CFRetain(ptr);
         };
         Self {
             name,
+            id,
             default,
             native_device: ptr,
         }
@@ -905,6 +931,7 @@ impl std::fmt::Debug for AudioDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioDevice")
             .field("name", &self.name)
+            .field("id", &self.id)
             .field("default", &self.default)
             .finish()
     }

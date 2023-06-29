@@ -51,7 +51,7 @@ fn main() {
 
             println!("Audio input sources: {:?}", Room::audio_input_sources());
             // TODO
-            println!("Audio output sources: {:?}", Room::audio_input_sources());
+            println!("Audio output sources: {:?}", Room::audio_output_sources());
 
             let user2_token = token::create(
                 &live_kit_key,

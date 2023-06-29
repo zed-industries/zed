@@ -366,6 +366,13 @@ impl Room {
         ]
     }
 
+    pub fn audio_output_sources() -> Vec<AudioDevice> {
+        vec![
+            AudioDevice::new("Test Speaker 1".to_string()),
+            AudioDevice::new("Test Speaker 2".to_string()),
+        ]
+    }
+
     pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
         let this = self.clone();
         async move {
