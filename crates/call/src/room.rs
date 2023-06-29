@@ -1060,6 +1060,11 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
+    pub fn test_set_audio(&mut self, _cx: &mut ModelContext<Self>) {
+        let output = live_kit_client::Room::audio_output_sources();
+        dbg!(output.get(2).map(|device| device.set()));
+    }
+
     pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));

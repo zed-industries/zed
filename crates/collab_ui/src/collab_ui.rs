@@ -23,7 +23,8 @@ actions!(
         ToggleMute,
         ToggleDeafen,
         LeaveCall,
-        ShareMicrophone
+        ShareMicrophone,
+        SetThirdAudioOutput,
     ]
 );
 
@@ -40,6 +41,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     cx.add_global_action(toggle_mute);
     cx.add_global_action(toggle_deafen);
     cx.add_global_action(share_microphone);
+    cx.add_global_action(test);
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
@@ -75,5 +77,11 @@ pub fn share_microphone(_: &ShareMicrophone, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
         room.update(cx, Room::share_microphone)
             .detach_and_log_err(cx)
+    }
+}
+
+pub fn test(_: &SetThirdAudioOutput, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        room.update(cx, Room::test_set_audio)
     }
 }
