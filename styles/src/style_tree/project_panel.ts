@@ -47,7 +47,7 @@ export default function project_panel(theme: ColorScheme): any {
             icon_color: foreground(theme.middle, "variant"),
             icon_size: 7,
             icon_spacing: 5,
-            text: text(theme.middle, "mono", "variant", { size: "sm" }),
+            text: text(theme.middle, "sans", "variant", { size: "sm" }),
             status: {
                 ...git_status,
             },
@@ -64,28 +64,42 @@ export default function project_panel(theme: ColorScheme): any {
         )
         const unselected_hovered_style = merge(
             base_properties,
+            { background: background(theme.middle, "hovered") },
             unselected?.hovered ?? {},
-            { background: background(theme.middle, "variant", "hovered") }
         )
         const unselected_clicked_style = merge(
             base_properties,
+            { background: background(theme.middle, "pressed"), }
+            ,
             unselected?.clicked ?? {},
-            { background: background(theme.middle, "variant", "pressed") }
         )
         const selected_default_style = merge(
             base_properties,
+            {
+                background: background(theme.lowest),
+                text: text(theme.lowest, "sans", { size: "sm" }),
+            },
             selected_style?.default ?? {},
-            { background: background(theme.middle) }
+
         )
         const selected_hovered_style = merge(
             base_properties,
+            {
+                background: background(theme.lowest, "hovered"),
+                text: text(theme.lowest, "sans", { size: "sm" }),
+
+            },
             selected_style?.hovered ?? {},
-            { background: background(theme.middle, "variant", "hovered") }
+
         )
         const selected_clicked_style = merge(
             base_properties,
+            {
+                background: background(theme.lowest, "pressed"),
+                text: text(theme.lowest, "sans", { size: "sm" }),
+            },
             selected_style?.clicked ?? {},
-            { background: background(theme.middle, "variant", "pressed") }
+
         )
 
         return toggleable({
@@ -148,14 +162,14 @@ export default function project_panel(theme: ColorScheme): any {
         entry: default_entry,
         dragged_entry: {
             ...default_entry.inactive.default,
-            text: text(theme.middle, "mono", "on", { size: "sm" }),
+            text: text(theme.middle, "sans", "on", { size: "sm" }),
             background: with_opacity(background(theme.middle, "on"), 0.9),
             border: border(theme.middle),
         },
         ignored_entry: entry(
             {
                 default: {
-                    text: text(theme.middle, "mono", "disabled"),
+                    text: text(theme.middle, "sans", "disabled"),
                 },
             },
             {
@@ -167,13 +181,13 @@ export default function project_panel(theme: ColorScheme): any {
         cut_entry: entry(
             {
                 default: {
-                    text: text(theme.middle, "mono", "disabled"),
+                    text: text(theme.middle, "sans", "disabled"),
                 },
             },
             {
                 default: {
                     background: background(theme.middle, "active"),
-                    text: text(theme.middle, "mono", "disabled", {
+                    text: text(theme.middle, "sans", "disabled", {
                         size: "sm",
                     }),
                 },
@@ -181,7 +195,7 @@ export default function project_panel(theme: ColorScheme): any {
         ),
         filename_editor: {
             background: background(theme.middle, "on"),
-            text: text(theme.middle, "mono", "on", { size: "sm" }),
+            text: text(theme.middle, "sans", "on", { size: "sm" }),
             selection: theme.players[0],
         },
     }
