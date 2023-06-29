@@ -16,6 +16,7 @@ workspace = { path = "../workspace" }
 util = { path = "../util" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }
+editor = { path = "../editor" }
 anyhow.workspace = true
 futures.workspace = true
 smol.workspace = true

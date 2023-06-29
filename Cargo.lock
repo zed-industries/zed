@@ -8041,6 +8041,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "editor",
  "futures 0.3.28",
  "gpui",
  "isahc",

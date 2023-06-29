@@ -1,11 +1,12 @@
 use crate::{SearchResult, VectorStore};
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, elements::*, AnyElement, AppContext, ModelHandle, MouseState, Task, ViewContext,
     WeakViewHandle,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use project::Project;
-use std::{sync::Arc, time::Duration};
+use project::{Project, ProjectPath};
+use std::{path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -50,7 +51,34 @@ impl PickerDelegate for SemanticSearchDelegate {
 
     fn confirm(&mut self, cx: &mut ViewContext<SemanticSearch>) {
         if let Some(search_result) = self.matches.get(self.selected_match_index) {
-            // search_result.file_path
+            // Open Buffer
+            let search_result = search_result.clone();
+            let buffer = self.project.update(cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id: search_result.worktree_id,
+                        path: search_result.file_path.clone().into(),
+                    },
+                    cx,
+                )
+            });
+
+            let workspace = self.workspace.clone();
+            let position = search_result.clone().offset;
+            cx.spawn(|_, mut cx| async move {
+                let buffer = buffer.await?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    let editor = workspace.open_project_item::<Editor>(buffer, cx);
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                            s.select_ranges([position..position])
+                        });
+                    });
+                })?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach_and_log_err(cx);
+            cx.emit(PickerEvent::Dismiss);
         }
     }
 
@@ -77,6 +105,8 @@ impl PickerDelegate for SemanticSearchDelegate {
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             cx.background().timer(EMBEDDING_DEBOUNCE_INTERVAL).await;
+
+            log::info!("Searching for {:?}", &query);
 
             let task = vector_store.update(&mut cx, |store, cx| {
                 store.search(&project, query.to_string(), 10, cx)

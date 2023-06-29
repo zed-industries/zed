@@ -294,42 +294,9 @@ impl VectorStore {
 
             let db_write_task = cx.background().spawn(
                 async move {
-                    // Initialize Database, creates database and tables if not exists
                     while let Ok((worktree_id, indexed_file)) = indexed_files_rx.recv().await {
                         db.insert_file(worktree_id, indexed_file).log_err();
                     }
-
-                    // ALL OF THE BELOW IS FOR TESTING,
-                    // This should be removed as we find and appropriate place for evaluate our search.
-
-                    // let queries = vec![
-                    //     "compute embeddings for all of the symbols in the codebase, and write them to a database",
-                    //         "compute an outline view of all of the symbols in a buffer",
-                    //         "scan a directory on the file system and load all of its children into an in-memory snapshot",
-                    // ];
-                    // let embeddings = embedding_provider.embed_batch(queries.clone()).await?;
-
-                    // let t2 = Instant::now();
-                    // let documents = db.get_documents().unwrap();
-                    // let files = db.get_files().unwrap();
-                    // println!("Retrieving all documents from Database: {}", t2.elapsed().as_millis());
-
-                    // let t1 = Instant::now();
-                    // let mut bfs = BruteForceSearch::load(&db).unwrap();
-                    // println!("Loading BFS to Memory: {:?}", t1.elapsed().as_millis());
-                    // for (idx, embed) in embeddings.into_iter().enumerate() {
-                    //     let t0 = Instant::now();
-                    //     println!("\nQuery: {:?}", queries[idx]);
-                    //     let results = bfs.top_k_search(&embed, 5).await;
-                    //     println!("Search Elapsed: {}", t0.elapsed().as_millis());
-                    //     for (id, distance) in results {
-                    //         println!("");
-                    //         println!("   distance: {:?}", distance);
-                    //         println!("   document: {:?}", documents[&id].name);
-                    //         println!("   path:     {:?}", files[&documents[&id].file_id].relative_path);
-                    //     }
-
-                    // }
 
                     anyhow::Ok(())
                 }
