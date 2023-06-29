@@ -49,7 +49,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
             iconColor: foreground(layer, "variant"),
             iconSize: 7,
             iconSpacing: 5,
-            text: text(layer, "mono", "variant", { size: "sm" }),
+            text: text(layer, "sans", "variant", { size: "sm" }),
             status: {
                 ...git_status,
             },
@@ -66,28 +66,37 @@ export default function projectPanel(colorScheme: ColorScheme) {
         )
         const unselected_hovered_style = merge(
             base_properties,
+            { background: background(layer, "hovered") },
             unselected?.hovered ?? {},
-            { background: background(layer, "variant", "hovered") }
         )
         const unselected_clicked_style = merge(
             base_properties,
+            { background: background(layer, "pressed") },
             unselected?.clicked ?? {},
-            { background: background(layer, "variant", "pressed") }
         )
         const selected_default_style = merge(
             base_properties,
+            {
+                background: background(colorScheme.lowest),
+                text: text(colorScheme.lowest, "sans", { size: "sm" }),
+            },
             selectedStyle?.default ?? {},
-            { background: background(layer) }
         )
         const selected_hovered_style = merge(
             base_properties,
+            {
+                background: background(colorScheme.lowest, "hovered"),
+                text: text(colorScheme.lowest, "sans", { size: "sm" }),
+            },
             selectedStyle?.hovered ?? {},
-            { background: background(layer, "variant", "hovered") }
         )
         const selected_clicked_style = merge(
             base_properties,
+            {
+                background: background(colorScheme.lowest, "pressed"),
+                text: text(colorScheme.lowest, "sans", { size: "sm" }),
+            },
             selectedStyle?.clicked ?? {},
-            { background: background(layer, "variant", "pressed") }
         )
 
         return toggleable({
@@ -150,14 +159,14 @@ export default function projectPanel(colorScheme: ColorScheme) {
         entry: defaultEntry,
         draggedEntry: {
             ...defaultEntry.inactive.default,
-            text: text(layer, "mono", "on", { size: "sm" }),
+            text: text(layer, "sans", "on", { size: "sm" }),
             background: withOpacity(background(layer, "on"), 0.9),
             border: border(layer),
         },
         ignoredEntry: entry(
             {
                 default: {
-                    text: text(layer, "mono", "disabled"),
+                    text: text(layer, "sans", "disabled"),
                 },
             },
             {
@@ -169,19 +178,19 @@ export default function projectPanel(colorScheme: ColorScheme) {
         cutEntry: entry(
             {
                 default: {
-                    text: text(layer, "mono", "disabled"),
+                    text: text(layer, "sans", "disabled"),
                 },
             },
             {
                 default: {
                     background: background(layer, "active"),
-                    text: text(layer, "mono", "disabled", { size: "sm" }),
+                    text: text(layer, "sans", "disabled", { size: "sm" }),
                 },
             }
         ),
         filenameEditor: {
             background: background(layer, "on"),
-            text: text(layer, "mono", "on", { size: "sm" }),
+            text: text(layer, "sans", "on", { size: "sm" }),
             selection: colorScheme.players[0],
         },
     }
