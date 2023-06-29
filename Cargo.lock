@@ -1415,6 +1415,7 @@ dependencies = [
  "picker",
  "postage",
  "project",
+ "recent_projects",
  "serde",
  "serde_derive",
  "settings",
@@ -5376,6 +5377,7 @@ version = "0.1.0"
 dependencies = [
  "db",
  "editor",
+ "futures 0.3.28",
  "fuzzy",
  "gpui",
  "language",

@@ -64,9 +64,26 @@ fn toggle(
     }))
 }
 
-type RecentProjects = Picker<RecentProjectsDelegate>;
+pub fn build_recent_projects(
+    workspace: WeakViewHandle<Workspace>,
+    cx: &mut ViewContext<RecentProjects>,
+) -> RecentProjects {
+    let workspaces = futures::executor::block_on(async {
+        WORKSPACE_DB
+            .recent_workspaces_on_disk()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, location)| location)
+            .collect()
+    });
+    Picker::new(RecentProjectsDelegate::new(workspace, workspaces), cx)
+        .with_theme(|theme| theme.picker.clone())
+}
 
-struct RecentProjectsDelegate {
+pub type RecentProjects = Picker<RecentProjectsDelegate>;
+
+pub struct RecentProjectsDelegate {
     workspace: WeakViewHandle<Workspace>,
     workspace_locations: Vec<WorkspaceLocation>,
     selected_match_index: usize,

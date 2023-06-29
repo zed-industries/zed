@@ -23,6 +23,7 @@ use gpui::{
 };
 use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
+use recent_projects::{build_recent_projects, RecentProjects};
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
@@ -37,6 +38,7 @@ actions!(
         ToggleContactsMenu,
         ToggleUserMenu,
         ToggleVcsMenu,
+        ToggleProjectMenu,
         SwitchBranch,
         ShareProject,
         UnshareProject,
@@ -49,6 +51,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabTitlebarItem::unshare_project);
     cx.add_action(CollabTitlebarItem::toggle_user_menu);
     cx.add_action(CollabTitlebarItem::toggle_vcs_menu);
+    cx.add_action(CollabTitlebarItem::toggle_project_menu);
 }
 
 pub struct CollabTitlebarItem {
@@ -58,6 +61,7 @@ pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     branch_popover: Option<ViewHandle<BranchList>>,
+    project_popover: Option<ViewHandle<recent_projects::RecentProjects>>,
     user_menu: ViewHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
@@ -191,6 +195,7 @@ impl CollabTitlebarItem {
                 menu
             }),
             branch_popover: None,
+            project_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -233,14 +238,22 @@ impl CollabTitlebarItem {
         };
         let highlights = (0..name.len()).into_iter().collect();
         let mut ret = Flex::row().with_child(
-            Stack::new().with_child(
-                Label::new(name, style.clone())
-                    .with_highlights(highlights)
-                    .contained()
-                    .aligned()
-                    .left()
-                    .into_any_named("title-project-name"),
-            ),
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |_, _| {
+                        Label::new(name, style.clone())
+                            .with_highlights(highlights)
+                            .contained()
+                            .aligned()
+                            .left()
+                            .into_any_named("title-project-name")
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.toggle_project_menu(&Default::default(), cx)
+                    }),
+                )
+                .with_children(self.render_project_popover_host(&theme.titlebar, cx)),
         );
         if let Some(git_branch) = branch_prepended {
             ret = ret.with_child(
@@ -382,6 +395,36 @@ impl CollabTitlebarItem {
                 .into_any()
         })
     }
+    fn render_project_popover_host<'a>(
+        &'a self,
+        _theme: &'a theme::Titlebar,
+        cx: &'a mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
+        self.project_popover.as_ref().map(|child| {
+            let theme = theme::current(cx).clone();
+            let child = ChildView::new(child, cx);
+            let child = MouseEventHandler::<RecentProjects, Self>::new(0, cx, |_, _| {
+                Flex::column()
+                    .with_child(child.flex(1., true))
+                    .contained()
+                    .constrained()
+                    .with_width(theme.contacts_popover.width)
+                    .with_height(theme.contacts_popover.height)
+            })
+            .on_click(MouseButton::Left, |_, _, _| {})
+            .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(()))
+            .into_any();
+
+            Overlay::new(child)
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::TopLeft)
+                .with_z_index(999)
+                .aligned()
+                .bottom()
+                .left()
+                .into_any()
+        })
+    }
     pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade(cx) {
@@ -398,6 +441,26 @@ impl CollabTitlebarItem {
                 .detach();
                 self.branch_popover = Some(view);
             }
+        }
+
+        cx.notify();
+    }
+
+    pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
+        log::error!("Toggling project menu");
+        if self.project_popover.take().is_none() {
+            let view = cx.add_view(|cx| build_recent_projects(self.workspace.clone(), cx));
+            cx.subscribe(&view, |this, _, event, cx| {
+                match event {
+                    PickerEvent::Dismiss => {
+                        this.project_popover = None;
+                    }
+                }
+
+                cx.notify();
+            })
+            .detach();
+            self.project_popover = Some(view);
         }
 
         cx.notify();
