@@ -6,10 +6,7 @@ export type PlayerToken = Record<"selection" | "cursor", SingleColorToken>
 
 export type PlayersToken = Record<keyof Players, PlayerToken>
 
-function build_player_token(
-    theme: ColorScheme,
-    index: number
-): PlayerToken {
+function build_player_token(theme: ColorScheme, index: number): PlayerToken {
     const player_number = index.toString() as keyof Players
 
     return {

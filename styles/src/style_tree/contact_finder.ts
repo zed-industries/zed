@@ -17,7 +17,9 @@ export default function contact_finder(theme: ColorScheme): any {
         background: background(theme.middle, "on"),
         corner_radius: 6,
         text: text(theme.middle, "mono"),
-        placeholder_text: text(theme.middle, "mono", "on", "disabled", { size: "xs" }),
+        placeholder_text: text(theme.middle, "mono", "on", "disabled", {
+            size: "xs",
+        }),
         selection: theme.players[0],
         border: border(theme.middle),
         padding: {

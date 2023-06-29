@@ -191,20 +191,12 @@ export default function editor(theme: ColorScheme): any {
             item: autocomplete_item,
             hovered_item: {
                 ...autocomplete_item,
-                match_highlight: foreground(
-                    theme.middle,
-                    "accent",
-                    "hovered"
-                ),
+                match_highlight: foreground(theme.middle, "accent", "hovered"),
                 background: background(theme.middle, "hovered"),
             },
             selected_item: {
                 ...autocomplete_item,
-                match_highlight: foreground(
-                    theme.middle,
-                    "accent",
-                    "active"
-                ),
+                match_highlight: foreground(theme.middle, "accent", "active"),
                 background: background(theme.middle, "active"),
             },
         },

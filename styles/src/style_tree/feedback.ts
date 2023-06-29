@@ -34,7 +34,9 @@ export default function feedback(theme: ColorScheme): any {
             },
         }),
         button_margin: 8,
-        info_text_default: text(theme.highest, "sans", "default", { size: "xs" }),
+        info_text_default: text(theme.highest, "sans", "default", {
+            size: "xs",
+        }),
         link_text_default: text(theme.highest, "sans", "default", {
             size: "xs",
             underline: true,

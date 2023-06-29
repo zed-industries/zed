@@ -29,7 +29,10 @@ export default function incoming_call_notification(
             margin: { top: -3 },
         },
         worktree_roots: {
-            ...text(theme.middle, "sans", "variant", { size: "xs", weight: "bold" }),
+            ...text(theme.middle, "sans", "variant", {
+                size: "xs",
+                weight: "bold",
+            }),
             margin: { top: -3 },
         },
         button_width: 96,

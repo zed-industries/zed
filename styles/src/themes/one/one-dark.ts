@@ -25,7 +25,8 @@ export const theme: ThemeConfig = {
     author: "simurai",
     appearance: ThemeAppearance.Dark,
     license_type: ThemeLicenseType.MIT,
-    license_url: "https://github.com/atom/atom/tree/master/packages/one-dark-ui",
+    license_url:
+        "https://github.com/atom/atom/tree/master/packages/one-dark-ui",
     license_file: `${__dirname}/LICENSE`,
     input_color: {
         neutral: chroma

@@ -140,18 +140,10 @@ export default function workspace(theme: ColorScheme): any {
                 state: {
                     hovered: {
                         color: foreground(theme.highest, "on", "hovered"),
-                        background: background(
-                            theme.highest,
-                            "on",
-                            "hovered"
-                        ),
+                        background: background(theme.highest, "on", "hovered"),
                     },
                     disabled: {
-                        color: foreground(
-                            theme.highest,
-                            "on",
-                            "disabled"
-                        ),
+                        color: foreground(theme.highest, "on", "disabled"),
                     },
                 },
             }),
@@ -170,11 +162,7 @@ export default function workspace(theme: ColorScheme): any {
             state: {
                 hovered: {
                     color: foreground(theme.highest, "on", "hovered"),
-                    background: background(
-                        theme.highest,
-                        "on",
-                        "hovered"
-                    ),
+                    background: background(theme.highest, "on", "hovered"),
                 },
             },
         }),
@@ -194,6 +182,9 @@ export default function workspace(theme: ColorScheme): any {
             width: 400,
             margin: { right: 10, bottom: 10 },
         },
-        drop_target_overlay_color: with_opacity(foreground(theme.lowest, "variant"), 0.5),
+        drop_target_overlay_color: with_opacity(
+            foreground(theme.lowest, "variant"),
+            0.5
+        ),
     }
 }

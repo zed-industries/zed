@@ -33,7 +33,10 @@ export default function search(theme: ColorScheme): any {
 
     return {
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
-        match_background: with_opacity(foreground(theme.highest, "accent"), 0.4),
+        match_background: with_opacity(
+            foreground(theme.highest, "accent"),
+            0.4
+        ),
         option_button: toggleable({
             base: interactive({
                 base: {

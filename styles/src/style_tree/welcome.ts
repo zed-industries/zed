@@ -32,7 +32,12 @@ export default function welcome(theme: ColorScheme): any {
 
     return {
         page_width: 320,
-        logo: svg(foreground(theme.highest, "default"), "icons/logo_96.svg", 64, 64),
+        logo: svg(
+            foreground(theme.highest, "default"),
+            "icons/logo_96.svg",
+            64,
+            64
+        ),
         logo_subheading: {
             ...text(theme.highest, "sans", "variant", { size: "md" }),
             margin: {
@@ -54,7 +59,10 @@ export default function welcome(theme: ColorScheme): any {
         },
         checkbox_group: {
             border: border(theme.highest, "variant"),
-            background: with_opacity(background(theme.highest, "hovered"), 0.25),
+            background: with_opacity(
+                background(theme.highest, "hovered"),
+                0.25
+            ),
             corner_radius: 4,
             padding: {
                 left: 12,
@@ -77,11 +85,21 @@ export default function welcome(theme: ColorScheme): any {
                     left: 7,
                     right: 7,
                 },
-                ...text(theme.highest, "sans", "default", interactive_text_size),
+                ...text(
+                    theme.highest,
+                    "sans",
+                    "default",
+                    interactive_text_size
+                ),
             },
             state: {
                 hovered: {
-                    ...text(theme.highest, "sans", "default", interactive_text_size),
+                    ...text(
+                        theme.highest,
+                        "sans",
+                        "default",
+                        interactive_text_size
+                    ),
                     background: background(theme.highest, "hovered"),
                 },
             },
@@ -106,7 +124,12 @@ export default function welcome(theme: ColorScheme): any {
                 ...text(theme.highest, "sans", interactive_text_size),
                 // Also supports margin, container, border, etc.
             },
-            icon: svg(foreground(theme.highest, "on"), "icons/check_12.svg", 12, 12),
+            icon: svg(
+                foreground(theme.highest, "on"),
+                "icons/check_12.svg",
+                12,
+                12
+            ),
             default: {
                 ...checkbox_base,
                 background: background(theme.highest, "default"),

@@ -2,7 +2,6 @@ import { ColorScheme } from "../theme/color_scheme"
 import { foreground, text } from "./components"
 import { interactive } from "../element"
 
-
 export default function update_notification(theme: ColorScheme): any {
     const header_padding = 8
 

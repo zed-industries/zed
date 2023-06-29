@@ -2,7 +2,6 @@ import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, svg, text } from "./components"
 import { interactive } from "../element"
 export default function copilot(theme: ColorScheme): any {
-
     const content_width = 264
 
     const cta_button =
@@ -61,7 +60,10 @@ export default function copilot(theme: ColorScheme): any {
         modal: {
             title_text: {
                 default: {
-                    ...text(theme.middle, "sans", { size: "xs", weight: "bold" }),
+                    ...text(theme.middle, "sans", {
+                        size: "xs",
+                        weight: "bold",
+                    }),
                 },
             },
             titlebar: {
@@ -163,7 +165,10 @@ export default function copilot(theme: ColorScheme): any {
                 },
 
                 hint: {
-                    ...text(theme.middle, "sans", { size: "xs", color: "#838994" }),
+                    ...text(theme.middle, "sans", {
+                        size: "xs",
+                        color: "#838994",
+                    }),
                     margin: {
                         top: 6,
                         bottom: 2,
@@ -271,7 +276,10 @@ export default function copilot(theme: ColorScheme): any {
                 },
 
                 hint: {
-                    ...text(theme.middle, "sans", { size: "xs", color: "#838994" }),
+                    ...text(theme.middle, "sans", {
+                        size: "xs",
+                        color: "#838994",
+                    }),
                     margin: {
                         top: 24,
                         bottom: 4,

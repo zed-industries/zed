@@ -43,7 +43,9 @@ export default function dropdown_menu(theme: ColorScheme): any {
                 state: {
                     hovered: {
                         background: background(theme.middle, "hovered"),
-                        ...text(theme.middle, "sans", "hovered", { size: "sm" }),
+                        ...text(theme.middle, "sans", "hovered", {
+                            size: "sm",
+                        }),
                     },
                 },
             }),

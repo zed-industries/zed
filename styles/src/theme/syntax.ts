@@ -291,7 +291,10 @@ function build_default_syntax(color_scheme: ColorScheme): Syntax {
     return default_syntax
 }
 
-function merge_syntax(default_syntax: Syntax, color_scheme: ColorScheme): Syntax {
+function merge_syntax(
+    default_syntax: Syntax,
+    color_scheme: ColorScheme
+): Syntax {
     if (!color_scheme.syntax) {
         return default_syntax
     }

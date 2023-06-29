@@ -10,9 +10,9 @@ import {
     SyntaxHighlightStyle,
     ThemeSyntax,
 } from "../color_scheme"
-import { LayerToken, layerToken } from "./layer"
-import { PlayersToken, playersToken } from "./players"
-import { colorToken } from "./token"
+import { LayerToken, layer_token } from "./layer"
+import { PlayersToken, players_token } from "./players"
+import { color_token } from "./token"
 import { Syntax } from "../syntax"
 import editor from "../../style_tree/editor"
 
@@ -64,13 +64,11 @@ function syntax_highlight_style_color_tokens(
         if (!syntax[style_key] || typeof syntax[style_key] === "function")
             return acc
         const { color } = syntax[style_key] as Required<SyntaxHighlightStyle>
-        return { ...acc, [style_key]: colorToken(style_key, color) }
+        return { ...acc, [style_key]: color_token(style_key, color) }
     }, {} as ThemeSyntaxColorTokens)
 }
 
-const syntax_tokens = (
-    theme: ColorScheme
-): ColorSchemeTokens["syntax"] => {
+const syntax_tokens = (theme: ColorScheme): ColorSchemeTokens["syntax"] => {
     const syntax = editor(theme).syntax
 
     return syntax_highlight_style_color_tokens(syntax)
@@ -88,12 +86,12 @@ export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
             value: theme.is_light ? "light" : "dark",
             type: TokenTypes.OTHER,
         },
-        lowest: layerToken(theme.lowest, "lowest"),
-        middle: layerToken(theme.middle, "middle"),
-        highest: layerToken(theme.highest, "highest"),
+        lowest: layer_token(theme.lowest, "lowest"),
+        middle: layer_token(theme.middle, "middle"),
+        highest: layer_token(theme.highest, "highest"),
         popover_shadow: popover_shadow_token(theme),
         modal_shadow: modal_shadow_token(theme),
-        players: playersToken(theme),
+        players: players_token(theme),
         syntax: syntax_tokens(theme),
     }
 }

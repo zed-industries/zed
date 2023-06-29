@@ -12,12 +12,10 @@ export const font_sizes = {
     xs: 12,
     sm: 14,
     md: 16,
-    lg: 18
+    lg: 18,
 }
 
-export type FontWeight =
-    | "normal"
-    | "bold"
+export type FontWeight = "normal" | "bold"
 
 export const font_weights: { [key: string]: FontWeight } = {
     normal: "normal",

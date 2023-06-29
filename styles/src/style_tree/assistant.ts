@@ -181,7 +181,7 @@ export default function assistant(theme: ColorScheme): any {
                     },
                 },
             }),
-            savedAt: {
+            saved_at: {
                 margin: { left: 8 },
                 ...text(theme.highest, "sans", "default", { size: "xs" }),
             },

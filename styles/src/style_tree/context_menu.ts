@@ -29,7 +29,9 @@ export default function context_menu(theme: ColorScheme): any {
                 state: {
                     hovered: {
                         background: background(theme.middle, "hovered"),
-                        label: text(theme.middle, "sans", "hovered", { size: "sm" }),
+                        label: text(theme.middle, "sans", "hovered", {
+                            size: "sm",
+                        }),
                         keystroke: {
                             ...text(theme.middle, "sans", "hovered", {
                                 size: "sm",

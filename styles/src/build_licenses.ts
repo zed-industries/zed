@@ -20,7 +20,7 @@ function parse_accepted_toml(file: string): string[] {
 
 function check_licenses(themes: ThemeConfig[]) {
     for (const theme of themes) {
-        if (!theme.licenseFile) {
+        if (!theme.license_file) {
             throw Error(`Theme ${theme.name} should have a LICENSE file`)
         }
     }
@@ -29,7 +29,7 @@ function check_licenses(themes: ThemeConfig[]) {
 function generate_license_file(themes: ThemeConfig[]) {
     check_licenses(themes)
     for (const theme of themes) {
-        const license_text = fs.readFileSync(theme.licenseFile).toString()
+        const license_text = fs.readFileSync(theme.license_file).toString()
         write_license(theme.name, license_text, theme.license_url)
     }
 }

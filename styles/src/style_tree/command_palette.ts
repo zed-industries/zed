@@ -6,7 +6,9 @@ import { toggleable } from "../element"
 export default function command_palette(theme: ColorScheme): any {
     const key = toggleable({
         base: {
-            text: text(theme.highest, "mono", "variant", "default", { size: "xs" }),
+            text: text(theme.highest, "mono", "variant", "default", {
+                size: "xs",
+            }),
             corner_radius: 2,
             background: background(theme.highest, "on"),
             padding: {
@@ -23,7 +25,9 @@ export default function command_palette(theme: ColorScheme): any {
         },
         state: {
             active: {
-                text: text(theme.highest, "mono", "on", "default", { size: "xs" }),
+                text: text(theme.highest, "mono", "on", "default", {
+                    size: "xs",
+                }),
                 background: with_opacity(background(theme.highest, "on"), 0.2),
             },
         },

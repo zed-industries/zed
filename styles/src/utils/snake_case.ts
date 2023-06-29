@@ -5,8 +5,8 @@ import { snakeCase } from "case-anything"
 // Typescript magic to convert any string from camelCase to snake_case at compile time
 type SnakeCase<S> = S extends string
     ? S extends `${infer T}${infer U}`
-    ? `${T extends Capitalize<T> ? "_" : ""}${Lowercase<T>}${SnakeCase<U>}`
-    : S
+        ? `${T extends Capitalize<T> ? "_" : ""}${Lowercase<T>}${SnakeCase<U>}`
+        : S
     : S
 
 type SnakeCased<Type> = {

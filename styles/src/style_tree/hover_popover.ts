@@ -39,7 +39,9 @@ export default function hover_popover(theme: ColorScheme): any {
             padding: { top: 4 },
         },
         prose: text(theme.middle, "sans", { size: "sm" }),
-        diagnostic_source_highlight: { color: foreground(theme.middle, "accent") },
+        diagnostic_source_highlight: {
+            color: foreground(theme.middle, "accent"),
+        },
         highlight: theme.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: blend was used here. Replace with something better
     }
 }

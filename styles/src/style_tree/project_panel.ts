@@ -173,7 +173,9 @@ export default function project_panel(theme: ColorScheme): any {
             {
                 default: {
                     background: background(theme.middle, "active"),
-                    text: text(theme.middle, "mono", "disabled", { size: "sm" }),
+                    text: text(theme.middle, "mono", "disabled", {
+                        size: "sm",
+                    }),
                 },
             }
         ),

@@ -2,9 +2,7 @@ import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 import { interactive } from "../element"
 
-export default function simple_message_notification(
-    theme: ColorScheme
-): any {
+export default function simple_message_notification(theme: ColorScheme): any {
     const header_padding = 8
 
     return {

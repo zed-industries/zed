@@ -3,7 +3,7 @@ import * as path from "path"
 import { ColorScheme, create_color_scheme } from "./common"
 import { themes } from "./themes"
 import { slugify } from "./utils/slugify"
-import { colorSchemeTokens as color_scheme_tokens } from "./theme/tokens/color_scheme"
+import { theme_tokens } from "./theme/tokens/color_scheme"
 
 const TOKENS_DIRECTORY = path.join(__dirname, "..", "target", "tokens")
 const TOKENS_FILE = path.join(TOKENS_DIRECTORY, "$themes.json")
@@ -60,7 +60,7 @@ function write_tokens(themes: ColorScheme[], tokens_directory: string) {
 
     for (const theme of themes) {
         const file_name = slugify(theme.name) + ".json"
-        const tokens = color_scheme_tokens(theme)
+        const tokens = theme_tokens(theme)
         const tokens_json = JSON.stringify(tokens, null, 2)
         const out_path = path.join(tokens_directory, file_name)
         fs.writeFileSync(out_path, tokens_json, { mode: 0o644 })
