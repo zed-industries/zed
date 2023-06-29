@@ -27,7 +27,7 @@ use recent_projects::{build_recent_projects, RecentProjects};
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
-use workspace::{FollowNextCollaborator, Workspace};
+use workspace::{FollowNextCollaborator, Workspace, WORKSPACE_DB};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -448,23 +448,39 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace.clone();
         if self.project_popover.take().is_none() {
-            let view = cx.add_view(|cx| build_recent_projects(self.workspace.clone(), cx));
-            cx.subscribe(&view, |this, _, event, cx| {
-                match event {
-                    PickerEvent::Dismiss => {
-                        this.project_popover = None;
-                    }
-                }
+            cx.spawn(|this, mut cx| async move {
+                let workspaces = WORKSPACE_DB
+                    .recent_workspaces_on_disk()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, location)| location)
+                    .collect();
 
-                cx.notify();
+                let workspace = workspace.clone();
+                this.update(&mut cx, move |this, cx| {
+                    let view = cx.add_view(|cx| build_recent_projects(workspace, workspaces, cx));
+
+                    cx.subscribe(&view, |this, _, event, cx| {
+                        match event {
+                            PickerEvent::Dismiss => {
+                                this.project_popover = None;
+                            }
+                        }
+
+                        cx.notify();
+                    })
+                    .detach();
+                    this.branch_popover.take();
+                    this.project_popover = Some(view);
+                    cx.notify();
+                })
+                .log_err();
             })
             .detach();
-            self.branch_popover.take();
-            self.project_popover = Some(view);
         }
-
-        cx.notify();
     }
     fn render_toggle_contacts_button(
         &self,
