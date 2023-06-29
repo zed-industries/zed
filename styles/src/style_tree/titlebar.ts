@@ -17,8 +17,8 @@ function build_spacing(
         group: spacing,
         item: spacing / 2,
         half_item: spacing / 4,
-        marginY: (container_height - element_height) / 2,
-        marginX: (container_height - element_height) / 2,
+        margin_y: (container_height - element_height) / 2,
+        margin_x: (container_height - element_height) / 2,
     }
 }
 
@@ -26,15 +26,15 @@ function call_controls(theme: ColorScheme) {
     const button_height = 18
 
     const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING)
-    const marginY = {
-        top: space.marginY,
-        bottom: space.marginY,
+    const margin_y = {
+        top: space.margin_y,
+        bottom: space.margin_y,
     }
 
     return {
         toggle_microphone_button: toggleable_icon_button(theme, {
             margin: {
-                ...marginY,
+                ...margin_y,
                 left: space.group,
                 right: space.half_item,
             },
@@ -43,7 +43,7 @@ function call_controls(theme: ColorScheme) {
 
         toggle_speakers_button: toggleable_icon_button(theme, {
             margin: {
-                ...marginY,
+                ...margin_y,
                 left: space.half_item,
                 right: space.half_item,
             },
@@ -51,7 +51,7 @@ function call_controls(theme: ColorScheme) {
 
         screen_share_button: toggleable_icon_button(theme, {
             margin: {
-                ...marginY,
+                ...margin_y,
                 left: space.half_item,
                 right: space.group,
             },
@@ -150,20 +150,20 @@ function user_menu(theme: ColorScheme) {
         }
     }
     return {
-        userMenuButtonOnline: build_button({ online: true }),
-        userMenuButtonOffline: build_button({ online: false }),
+        user_menu_button_online: build_button({ online: true }),
+        user_menu_button_offline: build_button({ online: false }),
     }
 }
 
 export function titlebar(theme: ColorScheme): any {
-    const avatarWidth = 15
-    const avatarOuterWidth = avatarWidth + 4
-    const followerAvatarWidth = 14
-    const followerAvatarOuterWidth = followerAvatarWidth + 4
+    const avatar_width = 15
+    const avatar_outer_width = avatar_width + 4
+    const follower_avatar_width = 14
+    const follower_avatar_outer_width = follower_avatar_width + 4
 
     return {
         item_spacing: ITEM_SPACING,
-        facePileSpacing: 2,
+        face_pile_spacing: 2,
         height: TITLEBAR_HEIGHT,
         background: background(theme.lowest),
         border: border(theme.lowest, { bottom: true }),
@@ -177,21 +177,21 @@ export function titlebar(theme: ColorScheme): any {
         highlight_color: text(theme.lowest, "sans", "active").color,
 
         // Collaborators
-        leaderAvatar: {
-            width: avatarWidth,
-            outerWidth: avatarOuterWidth,
-            corner_radius: avatarWidth / 2,
-            outerCornerRadius: avatarOuterWidth / 2,
+        leader_avatar: {
+            width: avatar_width,
+            outer_width: avatar_outer_width,
+            corner_radius: avatar_width / 2,
+            outer_corner_radius: avatar_outer_width / 2,
         },
-        followerAvatar: {
-            width: followerAvatarWidth,
-            outerWidth: followerAvatarOuterWidth,
-            corner_radius: followerAvatarWidth / 2,
-            outerCornerRadius: followerAvatarOuterWidth / 2,
+        follower_avatar: {
+            width: follower_avatar_width,
+            outer_width: follower_avatar_outer_width,
+            corner_radius: follower_avatar_width / 2,
+            outer_corner_radius: follower_avatar_outer_width / 2,
         },
-        inactiveAvatarGrayscale: true,
-        followerAvatarOverlap: 8,
-        leaderSelection: {
+        inactive_avatar_grayscale: true,
+        follower_avatar_overlap: 8,
+        leader_selection: {
             margin: {
                 top: 4,
                 bottom: 4,
@@ -204,14 +204,14 @@ export function titlebar(theme: ColorScheme): any {
             },
             corner_radius: 6,
         },
-        avatarRibbon: {
+        avatar_ribbon: {
             height: 3,
             width: 14,
             // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
         },
 
         sign_in_button: toggleable_text_button(theme, {}),
-        offlineIcon: {
+        offline_icon: {
             color: foreground(theme.lowest, "variant"),
             width: 16,
             margin: {
@@ -223,7 +223,7 @@ export function titlebar(theme: ColorScheme): any {
         },
 
         // When the collaboration server is out of date, show a warning
-        outdatedWarning: {
+        outdated_warning: {
             ...text(theme.lowest, "sans", "warning", { size: "xs" }),
             background: with_opacity(background(theme.lowest, "warning"), 0.3),
             border: border(theme.lowest, "warning"),
@@ -253,14 +253,14 @@ export function titlebar(theme: ColorScheme): any {
         }),
 
         // Jewel that notifies you that there are new contact requests
-        toggleContactsBadge: {
+        toggle_contacts_badge: {
             corner_radius: 3,
             padding: 2,
             margin: { top: 3, left: 3 },
             border: border(theme.lowest),
             background: foreground(theme.lowest, "accent"),
         },
-        shareButton: toggleable_text_button(theme, {}),
+        share_button: toggleable_text_button(theme, {}),
         user_menu: user_menu(theme),
     }
 }

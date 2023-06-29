@@ -1,23 +1,22 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, border, text } from "./components"
 
-export default function tooltip(colorScheme: ColorScheme): any {
-    const layer = colorScheme.middle
+export default function tooltip(theme: ColorScheme): any {
     return {
-        background: background(layer),
-        border: border(layer),
+        background: background(theme.middle),
+        border: border(theme.middle),
         padding: { top: 4, bottom: 4, left: 8, right: 8 },
         margin: { top: 6, left: 6 },
-        shadow: colorScheme.popover_shadow,
+        shadow: theme.popover_shadow,
         corner_radius: 6,
-        text: text(layer, "sans", { size: "xs" }),
+        text: text(theme.middle, "sans", { size: "xs" }),
         keystroke: {
-            background: background(layer, "on"),
+            background: background(theme.middle, "on"),
             corner_radius: 4,
             margin: { left: 6 },
             padding: { left: 4, right: 4 },
-            ...text(layer, "mono", "on", { size: "xs", weight: "bold" }),
+            ...text(theme.middle, "mono", "on", { size: "xs", weight: "bold" }),
         },
-        maxTextWidth: 200,
+        max_text_width: 200,
     }
 }

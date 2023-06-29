@@ -15,14 +15,14 @@ export const ayu = {
 
 export const build_theme = (t: typeof dark, light: boolean) => {
     const color = {
-        lightBlue: t.syntax.tag.hex(),
+        light_blue: t.syntax.tag.hex(),
         yellow: t.syntax.func.hex(),
         blue: t.syntax.entity.hex(),
         green: t.syntax.string.hex(),
         teal: t.syntax.regexp.hex(),
         red: t.syntax.markup.hex(),
         orange: t.syntax.keyword.hex(),
-        lightYellow: t.syntax.special.hex(),
+        light_yellow: t.syntax.special.hex(),
         gray: t.syntax.comment.hex(),
         purple: t.syntax.constant.hex(),
     }
@@ -55,7 +55,7 @@ export const build_theme = (t: typeof dark, light: boolean) => {
             cyan: color_ramp(chroma(color.teal)),
             blue: color_ramp(chroma(color.blue)),
             violet: color_ramp(chroma(color.purple)),
-            magenta: color_ramp(chroma(color.lightBlue)),
+            magenta: color_ramp(chroma(color.light_blue)),
         },
         syntax,
     }

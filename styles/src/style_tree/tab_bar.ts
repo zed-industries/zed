@@ -3,11 +3,11 @@ import { with_opacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
 import { interactive, toggleable } from "../element"
 
-export default function tab_bar(colorScheme: ColorScheme): any {
+export default function tab_bar(theme: ColorScheme): any {
     const height = 32
 
-    const activeLayer = colorScheme.highest
-    const layer = colorScheme.middle
+    const active_layer = theme.highest
+    const layer = theme.middle
 
     const tab = {
         height,
@@ -29,12 +29,12 @@ export default function tab_bar(colorScheme: ColorScheme): any {
 
         // Close icons
         close_icon_width: 8,
-        iconClose: foreground(layer, "variant"),
-        iconCloseActive: foreground(layer, "hovered"),
+        icon_close: foreground(layer, "variant"),
+        icon_close_active: foreground(layer, "hovered"),
 
         // Indicators
-        iconConflict: foreground(layer, "warning"),
-        iconDirty: foreground(layer, "accent"),
+        icon_conflict: foreground(layer, "warning"),
+        icon_dirty: foreground(layer, "accent"),
 
         // When two tabs of the same name are open, a label appears next to them
         description: {
@@ -43,25 +43,25 @@ export default function tab_bar(colorScheme: ColorScheme): any {
         },
     }
 
-    const activePaneActiveTab = {
+    const active_pane_active_tab = {
         ...tab,
-        background: background(activeLayer),
-        text: text(activeLayer, "sans", "active", { size: "sm" }),
+        background: background(active_layer),
+        text: text(active_layer, "sans", "active", { size: "sm" }),
         border: {
             ...tab.border,
             bottom: false,
         },
     }
 
-    const inactivePaneInactiveTab = {
+    const inactive_pane_inactive_tab = {
         ...tab,
         background: background(layer),
         text: text(layer, "sans", "variant", { size: "sm" }),
     }
 
-    const inactivePaneActiveTab = {
+    const inactive_pane_active_tab = {
         ...tab,
-        background: background(activeLayer),
+        background: background(active_layer),
         text: text(layer, "sans", "variant", { size: "sm" }),
         border: {
             ...tab.border,
@@ -69,31 +69,31 @@ export default function tab_bar(colorScheme: ColorScheme): any {
         },
     }
 
-    const draggedTab = {
-        ...activePaneActiveTab,
+    const dragged_tab = {
+        ...active_pane_active_tab,
         background: with_opacity(tab.background, 0.9),
         border: undefined as any,
-        shadow: colorScheme.popover_shadow,
+        shadow: theme.popover_shadow,
     }
 
     return {
         height,
         background: background(layer),
-        activePane: {
-            activeTab: activePaneActiveTab,
-            inactiveTab: tab,
+        active_pane: {
+            active_tab: active_pane_active_tab,
+            inactive_tab: tab,
         },
-        inactivePane: {
-            activeTab: inactivePaneActiveTab,
-            inactiveTab: inactivePaneInactiveTab,
+        inactive_pane: {
+            active_tab: inactive_pane_active_tab,
+            inactive_tab: inactive_pane_inactive_tab,
         },
-        draggedTab,
-        paneButton: toggleable({
+        dragged_tab,
+        pane_button: toggleable({
             base: interactive({
                 base: {
                     color: foreground(layer, "variant"),
                     icon_width: 12,
-                    button_width: activePaneActiveTab.height,
+                    button_width: active_pane_active_tab.height,
                 },
                 state: {
                     hovered: {
@@ -118,7 +118,7 @@ export default function tab_bar(colorScheme: ColorScheme): any {
                 },
             },
         }),
-        paneButtonContainer: {
+        pane_button_container: {
             background: tab.background,
             border: {
                 ...tab.border,

@@ -13,44 +13,43 @@ import tabBar from "./tab_bar"
 import { interactive } from "../element"
 
 import { titlebar } from "./titlebar"
-export default function workspace(colorScheme: ColorScheme): any {
-    const layer = colorScheme.lowest
-    const is_light = colorScheme.is_light
+export default function workspace(theme: ColorScheme): any {
+    const { is_light } = theme
 
     return {
-        background: background(colorScheme.lowest),
-        blankPane: {
-            logoContainer: {
+        background: background(theme.lowest),
+        blank_pane: {
+            logo_container: {
                 width: 256,
                 height: 256,
             },
             logo: svg(
-                with_opacity("#000000", colorScheme.is_light ? 0.6 : 0.8),
+                with_opacity("#000000", theme.is_light ? 0.6 : 0.8),
                 "icons/logo_96.svg",
                 256,
                 256
             ),
 
-            logoShadow: svg(
+            logo_shadow: svg(
                 with_opacity(
-                    colorScheme.is_light
+                    theme.is_light
                         ? "#FFFFFF"
-                        : colorScheme.lowest.base.default.background,
-                    colorScheme.is_light ? 1 : 0.6
+                        : theme.lowest.base.default.background,
+                    theme.is_light ? 1 : 0.6
                 ),
                 "icons/logo_96.svg",
                 256,
                 256
             ),
-            keyboardHints: {
+            keyboard_hints: {
                 margin: {
                     top: 96,
                 },
                 corner_radius: 4,
             },
-            keyboardHint: interactive({
+            keyboard_hint: interactive({
                 base: {
-                    ...text(layer, "sans", "variant", { size: "sm" }),
+                    ...text(theme.lowest, "sans", "variant", { size: "sm" }),
                     padding: {
                         top: 3,
                         left: 8,
@@ -61,32 +60,32 @@ export default function workspace(colorScheme: ColorScheme): any {
                 },
                 state: {
                     hovered: {
-                        ...text(layer, "sans", "active", { size: "sm" }),
+                        ...text(theme.lowest, "sans", "active", { size: "sm" }),
                     },
                 },
             }),
 
-            keyboardHintWidth: 320,
+            keyboard_hint_width: 320,
         },
-        joiningProjectAvatar: {
+        joining_project_avatar: {
             corner_radius: 40,
             width: 80,
         },
-        joiningProjectMessage: {
+        joining_project_message: {
             padding: 12,
-            ...text(layer, "sans", { size: "lg" }),
+            ...text(theme.lowest, "sans", { size: "lg" }),
         },
-        externalLocationMessage: {
-            background: background(colorScheme.middle, "accent"),
-            border: border(colorScheme.middle, "accent"),
+        external_location_message: {
+            background: background(theme.middle, "accent"),
+            border: border(theme.middle, "accent"),
             corner_radius: 6,
             padding: 12,
             margin: { bottom: 8, right: 8 },
-            ...text(colorScheme.middle, "sans", "accent", { size: "xs" }),
+            ...text(theme.middle, "sans", "accent", { size: "xs" }),
         },
-        leaderBorderOpacity: 0.7,
-        leaderBorderWidth: 2.0,
-        tabBar: tabBar(colorScheme),
+        leader_border_opacity: 0.7,
+        leader_border_width: 2.0,
+        tab_bar: tabBar(theme),
         modal: {
             margin: {
                 bottom: 52,
@@ -94,62 +93,62 @@ export default function workspace(colorScheme: ColorScheme): any {
             },
             cursor: "Arrow",
         },
-        zoomedBackground: {
+        zoomed_background: {
             cursor: "Arrow",
             background: is_light
-                ? with_opacity(background(colorScheme.lowest), 0.8)
-                : with_opacity(background(colorScheme.highest), 0.6),
+                ? with_opacity(background(theme.lowest), 0.8)
+                : with_opacity(background(theme.highest), 0.6),
         },
-        zoomedPaneForeground: {
+        zoomed_pane_foreground: {
             margin: 16,
-            shadow: colorScheme.modal_shadow,
-            border: border(colorScheme.lowest, { overlay: true }),
+            shadow: theme.modal_shadow,
+            border: border(theme.lowest, { overlay: true }),
         },
-        zoomedPanelForeground: {
+        zoomed_panel_foreground: {
             margin: 16,
-            border: border(colorScheme.lowest, { overlay: true }),
+            border: border(theme.lowest, { overlay: true }),
         },
         dock: {
             left: {
-                border: border(layer, { right: true }),
+                border: border(theme.lowest, { right: true }),
             },
             bottom: {
-                border: border(layer, { top: true }),
+                border: border(theme.lowest, { top: true }),
             },
             right: {
-                border: border(layer, { left: true }),
+                border: border(theme.lowest, { left: true }),
             },
         },
-        paneDivider: {
-            color: border_color(layer),
+        pane_divider: {
+            color: border_color(theme.lowest),
             width: 1,
         },
-        statusBar: statusBar(colorScheme),
-        titlebar: titlebar(colorScheme),
+        status_bar: statusBar(theme),
+        titlebar: titlebar(theme),
         toolbar: {
             height: 34,
-            background: background(colorScheme.highest),
-            border: border(colorScheme.highest, { bottom: true }),
-            itemSpacing: 8,
-            navButton: interactive({
+            background: background(theme.highest),
+            border: border(theme.highest, { bottom: true }),
+            item_spacing: 8,
+            nav_button: interactive({
                 base: {
-                    color: foreground(colorScheme.highest, "on"),
+                    color: foreground(theme.highest, "on"),
                     icon_width: 12,
                     button_width: 24,
                     corner_radius: 6,
                 },
                 state: {
                     hovered: {
-                        color: foreground(colorScheme.highest, "on", "hovered"),
+                        color: foreground(theme.highest, "on", "hovered"),
                         background: background(
-                            colorScheme.highest,
+                            theme.highest,
                             "on",
                             "hovered"
                         ),
                     },
                     disabled: {
                         color: foreground(
-                            colorScheme.highest,
+                            theme.highest,
                             "on",
                             "disabled"
                         ),
@@ -158,10 +157,10 @@ export default function workspace(colorScheme: ColorScheme): any {
             }),
             padding: { left: 8, right: 8, top: 4, bottom: 4 },
         },
-        breadcrumbHeight: 24,
+        breadcrumb_height: 24,
         breadcrumbs: interactive({
             base: {
-                ...text(colorScheme.highest, "sans", "variant"),
+                ...text(theme.highest, "sans", "variant"),
                 corner_radius: 6,
                 padding: {
                     left: 6,
@@ -170,31 +169,31 @@ export default function workspace(colorScheme: ColorScheme): any {
             },
             state: {
                 hovered: {
-                    color: foreground(colorScheme.highest, "on", "hovered"),
+                    color: foreground(theme.highest, "on", "hovered"),
                     background: background(
-                        colorScheme.highest,
+                        theme.highest,
                         "on",
                         "hovered"
                     ),
                 },
             },
         }),
-        disconnectedOverlay: {
-            ...text(layer, "sans"),
-            background: with_opacity(background(layer), 0.8),
+        disconnected_overlay: {
+            ...text(theme.lowest, "sans"),
+            background: with_opacity(background(theme.lowest), 0.8),
         },
         notification: {
             margin: { top: 10 },
-            background: background(colorScheme.middle),
+            background: background(theme.middle),
             corner_radius: 6,
             padding: 12,
-            border: border(colorScheme.middle),
-            shadow: colorScheme.popover_shadow,
+            border: border(theme.middle),
+            shadow: theme.popover_shadow,
         },
         notifications: {
             width: 400,
             margin: { right: 10, bottom: 10 },
         },
-        dropTargetOverlayColor: with_opacity(foreground(layer, "variant"), 0.5),
+        drop_target_overlay_color: with_opacity(foreground(theme.lowest, "variant"), 0.5),
     }
 }

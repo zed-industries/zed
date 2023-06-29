@@ -36,7 +36,7 @@ export default function status_bar(theme: ColorScheme): any {
                 },
             },
         }),
-        auto_updat_progress_message: text(layer, "sans", "variant"),
+        auto_update_progress_message: text(layer, "sans", "variant"),
         auto_update_done_message: text(layer, "sans", "variant"),
         lsp_status: interactive({
             base: {

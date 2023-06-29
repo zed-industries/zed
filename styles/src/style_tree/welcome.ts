@@ -10,10 +10,8 @@ import {
 } from "./components"
 import { interactive } from "../element"
 
-export default function welcome(colorScheme: ColorScheme): any {
-    const layer = colorScheme.highest
-
-    const checkboxBase = {
+export default function welcome(theme: ColorScheme): any {
+    const checkbox_base = {
         corner_radius: 4,
         padding: {
             left: 3,
@@ -21,8 +19,8 @@ export default function welcome(colorScheme: ColorScheme): any {
             top: 3,
             bottom: 3,
         },
-        // shadow: colorScheme.popover_shadow,
-        border: border(layer),
+        // shadow: theme.popover_shadow,
+        border: border(theme.highest),
         margin: {
             right: 8,
             top: 5,
@@ -33,30 +31,30 @@ export default function welcome(colorScheme: ColorScheme): any {
     const interactive_text_size: TextProperties = { size: "sm" }
 
     return {
-        pageWidth: 320,
-        logo: svg(foreground(layer, "default"), "icons/logo_96.svg", 64, 64),
-        logoSubheading: {
-            ...text(layer, "sans", "variant", { size: "md" }),
+        page_width: 320,
+        logo: svg(foreground(theme.highest, "default"), "icons/logo_96.svg", 64, 64),
+        logo_subheading: {
+            ...text(theme.highest, "sans", "variant", { size: "md" }),
             margin: {
                 top: 10,
                 bottom: 7,
             },
         },
-        buttonGroup: {
+        button_group: {
             margin: {
                 top: 8,
                 bottom: 16,
             },
         },
-        headingGroup: {
+        heading_group: {
             margin: {
                 top: 8,
                 bottom: 12,
             },
         },
-        checkboxGroup: {
-            border: border(layer, "variant"),
-            background: with_opacity(background(layer, "hovered"), 0.25),
+        checkbox_group: {
+            border: border(theme.highest, "variant"),
+            background: with_opacity(background(theme.highest, "hovered"), 0.25),
             corner_radius: 4,
             padding: {
                 left: 12,
@@ -66,8 +64,8 @@ export default function welcome(colorScheme: ColorScheme): any {
         },
         button: interactive({
             base: {
-                background: background(layer),
-                border: border(layer, "active"),
+                background: background(theme.highest),
+                border: border(theme.highest, "active"),
                 corner_radius: 4,
                 margin: {
                     top: 4,
@@ -79,23 +77,23 @@ export default function welcome(colorScheme: ColorScheme): any {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", interactive_text_size),
+                ...text(theme.highest, "sans", "default", interactive_text_size),
             },
             state: {
                 hovered: {
-                    ...text(layer, "sans", "default", interactive_text_size),
-                    background: background(layer, "hovered"),
+                    ...text(theme.highest, "sans", "default", interactive_text_size),
+                    background: background(theme.highest, "hovered"),
                 },
             },
         }),
 
-        usageNote: {
-            ...text(layer, "sans", "variant", { size: "2xs" }),
+        usage_note: {
+            ...text(theme.highest, "sans", "variant", { size: "2xs" }),
             padding: {
                 top: -4,
             },
         },
-        checkboxContainer: {
+        checkbox_container: {
             margin: {
                 top: 4,
             },
@@ -105,29 +103,29 @@ export default function welcome(colorScheme: ColorScheme): any {
         },
         checkbox: {
             label: {
-                ...text(layer, "sans", interactive_text_size),
+                ...text(theme.highest, "sans", interactive_text_size),
                 // Also supports margin, container, border, etc.
             },
-            icon: svg(foreground(layer, "on"), "icons/check_12.svg", 12, 12),
+            icon: svg(foreground(theme.highest, "on"), "icons/check_12.svg", 12, 12),
             default: {
-                ...checkboxBase,
-                background: background(layer, "default"),
-                border: border(layer, "active"),
+                ...checkbox_base,
+                background: background(theme.highest, "default"),
+                border: border(theme.highest, "active"),
             },
             checked: {
-                ...checkboxBase,
-                background: background(layer, "hovered"),
-                border: border(layer, "active"),
+                ...checkbox_base,
+                background: background(theme.highest, "hovered"),
+                border: border(theme.highest, "active"),
             },
             hovered: {
-                ...checkboxBase,
-                background: background(layer, "hovered"),
-                border: border(layer, "active"),
+                ...checkbox_base,
+                background: background(theme.highest, "hovered"),
+                border: border(theme.highest, "active"),
             },
-            hoveredAndChecked: {
-                ...checkboxBase,
-                background: background(layer, "hovered"),
-                border: border(layer, "active"),
+            hovered_and_checked: {
+                ...checkbox_base,
+                background: background(theme.highest, "hovered"),
+                border: border(theme.highest, "active"),
             },
         },
     }

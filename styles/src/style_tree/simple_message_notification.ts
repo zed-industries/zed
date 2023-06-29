@@ -12,7 +12,7 @@ export default function simple_message_notification(
             ...text(theme.middle, "sans", { size: "xs" }),
             margin: { left: header_padding, right: header_padding },
         },
-        action_nessage: interactive({
+        action_message: interactive({
             base: {
                 ...text(theme.middle, "sans", { size: "xs" }),
                 border: border(theme.middle, "active"),

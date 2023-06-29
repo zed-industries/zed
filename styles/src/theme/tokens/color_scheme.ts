@@ -51,29 +51,29 @@ const modal_shadow_token = (theme: ColorScheme): SingleBoxShadowToken => {
 
 type ThemeSyntaxColorTokens = Record<keyof ThemeSyntax, SingleColorToken>
 
-function syntaxHighlightStyleColorTokens(
+function syntax_highlight_style_color_tokens(
     syntax: Syntax
 ): ThemeSyntaxColorTokens {
-    const styleKeys = Object.keys(syntax) as (keyof Syntax)[]
+    const style_keys = Object.keys(syntax) as (keyof Syntax)[]
 
-    return styleKeys.reduce((acc, styleKey) => {
+    return style_keys.reduce((acc, style_key) => {
         // Hack: The type of a style could be "Function"
         // This can happen because we have a "constructor" property on the syntax object
         // and a "constructor" property on the prototype of the syntax object
         // To work around this just assert that the type of the style is not a function
-        if (!syntax[styleKey] || typeof syntax[styleKey] === "function")
+        if (!syntax[style_key] || typeof syntax[style_key] === "function")
             return acc
-        const { color } = syntax[styleKey] as Required<SyntaxHighlightStyle>
-        return { ...acc, [styleKey]: colorToken(styleKey, color) }
+        const { color } = syntax[style_key] as Required<SyntaxHighlightStyle>
+        return { ...acc, [style_key]: colorToken(style_key, color) }
     }, {} as ThemeSyntaxColorTokens)
 }
 
-const syntax_Tokens = (
+const syntax_tokens = (
     theme: ColorScheme
 ): ColorSchemeTokens["syntax"] => {
     const syntax = editor(theme).syntax
 
-    return syntaxHighlightStyleColorTokens(syntax)
+    return syntax_highlight_style_color_tokens(syntax)
 }
 
 export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
@@ -94,6 +94,6 @@ export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
         popover_shadow: popover_shadow_token(theme),
         modal_shadow: modal_shadow_token(theme),
         players: playersToken(theme),
-        syntax: syntax_Tokens(theme),
+        syntax: syntax_tokens(theme),
     }
 }

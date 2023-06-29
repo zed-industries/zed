@@ -1,61 +1,59 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, border, text } from "./components"
 import { interactive, toggleable } from "../element"
-export default function dropdown_menu(colorScheme: ColorScheme): any {
-    const layer = colorScheme.middle
-
+export default function dropdown_menu(theme: ColorScheme): any {
     return {
-        rowHeight: 30,
-        background: background(layer),
-        border: border(layer),
-        shadow: colorScheme.popover_shadow,
+        row_height: 30,
+        background: background(theme.middle),
+        border: border(theme.middle),
+        shadow: theme.popover_shadow,
         header: interactive({
             base: {
-                ...text(layer, "sans", { size: "sm" }),
-                secondaryText: text(layer, "sans", {
+                ...text(theme.middle, "sans", { size: "sm" }),
+                secondary_text: text(theme.middle, "sans", {
                     size: "sm",
                     color: "#aaaaaa",
                 }),
-                secondaryTextSpacing: 10,
+                secondary_text_spacing: 10,
                 padding: { left: 8, right: 8, top: 2, bottom: 2 },
                 corner_radius: 6,
-                background: background(layer, "on"),
+                background: background(theme.middle, "on"),
             },
             state: {
                 hovered: {
-                    background: background(layer, "hovered"),
+                    background: background(theme.middle, "hovered"),
                 },
                 clicked: {
-                    background: background(layer, "pressed"),
+                    background: background(theme.middle, "pressed"),
                 },
             },
         }),
-        sectionHeader: {
-            ...text(layer, "sans", { size: "sm" }),
+        section_header: {
+            ...text(theme.middle, "sans", { size: "sm" }),
             padding: { left: 8, right: 8, top: 8, bottom: 8 },
         },
         item: toggleable({
             base: interactive({
                 base: {
-                    ...text(layer, "sans", { size: "sm" }),
-                    secondaryTextSpacing: 10,
-                    secondaryText: text(layer, "sans", { size: "sm" }),
+                    ...text(theme.middle, "sans", { size: "sm" }),
+                    secondary_text_spacing: 10,
+                    secondary_text: text(theme.middle, "sans", { size: "sm" }),
                     padding: { left: 18, right: 18, top: 2, bottom: 2 },
                 },
                 state: {
                     hovered: {
-                        background: background(layer, "hovered"),
-                        ...text(layer, "sans", "hovered", { size: "sm" }),
+                        background: background(theme.middle, "hovered"),
+                        ...text(theme.middle, "sans", "hovered", { size: "sm" }),
                     },
                 },
             }),
             state: {
                 active: {
                     default: {
-                        background: background(layer, "active"),
+                        background: background(theme.middle, "active"),
                     },
                     hovered: {
-                        background: background(layer, "hovered"),
+                        background: background(theme.middle, "hovered"),
                     },
                 },
             },
