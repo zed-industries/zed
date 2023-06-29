@@ -4239,6 +4239,7 @@ dependencies = [
  "async-tar",
  "futures 0.3.28",
  "gpui",
+ "log",
  "parking_lot 0.11.2",
  "serde",
  "serde_derive",

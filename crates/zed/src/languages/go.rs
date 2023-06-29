@@ -4,6 +4,7 @@ use futures::StreamExt;
 use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lazy_static::lazy_static;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::{fs, process};
 use std::{
@@ -148,32 +149,19 @@ impl super::LspAdapter for GoLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last_binary_path = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_file()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .map_or(false, |name| name.starts_with("gopls_"))
-                {
-                    last_binary_path = Some(entry.path());
-                }
-            }
+        get_cached_server_binary(container_dir).await
+    }
 
-            if let Some(path) = last_binary_path {
-                Ok(LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                })
-            } else {
-                Err(anyhow!("no cached binary"))
-            }
-        })()
-        .await
-        .log_err()
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
     }
 
     async fn label_for_completion(
@@ -334,6 +322,35 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last_binary_path = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .map_or(false, |name| name.starts_with("gopls_"))
+            {
+                last_binary_path = Some(entry.path());
+            }
+        }
+
+        if let Some(path) = last_binary_path {
+            Ok(LanguageServerBinary {
+                path,
+                arguments: server_binary_arguments(),
+            })
+        } else {
+            Err(anyhow!("no cached binary"))
+        }
+    })()
+    .await
+    .log_err()
 }
 
 fn adjust_runs(

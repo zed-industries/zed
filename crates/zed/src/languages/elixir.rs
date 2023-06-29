@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Task};
 pub use language::*;
-use lsp::{CompletionItemKind, SymbolKind};
+use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -140,20 +140,14 @@ impl LspAdapter for ElixirLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                last = Some(entry?.path());
-            }
-            last.map(|path| LanguageServerBinary {
-                path,
-                arguments: vec![],
-            })
-            .ok_or_else(|| anyhow!("no cached binary"))
-        })()
-        .await
-        .log_err()
+        get_cached_server_binary(container_dir).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
     }
 
     async fn label_for_completion(
@@ -238,4 +232,21 @@ impl LspAdapter for ElixirLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
+        }
+        last.map(|path| LanguageServerBinary {
+            path,
+            arguments: vec![],
+        })
+        .ok_or_else(|| anyhow!("no cached binary"))
+    })()
+    .await
+    .log_err()
 }
