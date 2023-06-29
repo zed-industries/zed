@@ -602,12 +602,17 @@ pub enum RemoteAudioTrackUpdate {
 
 #[derive(Debug)]
 pub struct AudioDevice {
-    _name: String,
+    name: String,
 }
 
 impl AudioDevice {
     fn new(name: String) -> Self {
-        Self { _name: name }
+        Self { name }
+    }
+
+    pub fn set(&self) -> Result<()> {
+        println!("Setting audio device {}", self.name);
+        Ok(())
     }
 }
 

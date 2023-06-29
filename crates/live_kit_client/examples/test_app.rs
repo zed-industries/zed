@@ -50,8 +50,16 @@ fn main() {
             room_a.connect(&live_kit_url, &user_a_token).await.unwrap();
 
             println!("Audio input sources: {:?}", Room::audio_input_sources());
-            // TODO
-            println!("Audio output sources: {:?}", Room::audio_output_sources());
+
+            let output_devices = Room::audio_output_sources();
+            println!("Audio output sources: {:?}", output_devices);
+
+            println!("Setting to third output audio source...");
+            if output_devices[2].set().is_ok() {
+                println!("Sucess!");
+            } else {
+                println!("failure :(");
+            }
 
             let user2_token = token::create(
                 &live_kit_key,
@@ -61,7 +69,6 @@ fn main() {
             )
             .unwrap();
             let room_b = Room::new();
-
             room_b.connect(&live_kit_url, &user2_token).await.unwrap();
 
             let mut audio_track_updates = room_b.remote_audio_track_updates();
@@ -142,6 +149,7 @@ fn main() {
                 .await
                 .unwrap();
 
+            println!("Waiting for video track updates...");
             if let RemoteVideoTrackUpdate::Subscribed(track) =
                 video_track_updates.next().await.unwrap()
             {

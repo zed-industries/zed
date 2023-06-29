@@ -262,24 +262,38 @@ public func LKRemoteAudioTrackGetSid(track: UnsafeRawPointer) -> CFString {
 @_cdecl("LKAudioInputSources")
 public func LKAudioInputSources(
     data: UnsafeRawPointer,
-    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, UnsafeMutableRawPointer) -> Void
+    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, Bool, UnsafeMutableRawPointer) -> Void
 ) -> UnsafeRawPointer {
     Room.audioDeviceModule.inputDevices.forEach { inputDevice in
-        callback(data, inputDevice.name as CFString, inputDevice.deviceId as CFString, inputDevice.isDefault, Unmanaged.passRetained(inputDevice).toOpaque())
+        callback(data, inputDevice.name as CFString, inputDevice.deviceId as CFString, false, inputDevice.isDefault, Unmanaged.passRetained(inputDevice).toOpaque())
     }
     return data
+}
+
+@_cdecl("LKSetInputDevice")
+public func LKSetInputDevice(device: UnsafeMutableRawPointer) -> Bool {
+    let device = Unmanaged<RTCAudioDevice>.fromOpaque(device).takeUnretainedValue();
+    return Room.audioDeviceModule.setInputDevice(device)
 }
 
 @_cdecl("LKAudioOutputSources")
 public func LKAudioOutputSources(
     data: UnsafeRawPointer,
-    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, UnsafeMutableRawPointer) -> Void
+    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, Bool, Bool, UnsafeMutableRawPointer) -> Void
 ) -> UnsafeRawPointer {
     Room.audioDeviceModule.outputDevices.forEach { outputDevice in
-        callback(data, outputDevice.name as CFString, outputDevice.deviceId as CFString, outputDevice.isDefault, Unmanaged.passRetained(outputDevice).toOpaque())
+        callback(data, outputDevice.name as CFString, outputDevice.deviceId as CFString, true, outputDevice.isDefault, Unmanaged.passRetained(outputDevice).toOpaque())
     }
     return data
 }
+
+@_cdecl("LKSetOutputDevice")
+public func LKSetOutputDevice(device: UnsafeMutableRawPointer) -> Bool {
+    let device = Unmanaged<RTCAudioDevice>.fromOpaque(device).takeUnretainedValue();
+    print("Got device: ", device.name, device.deviceId, " is output: ", device.type == .output)
+    return Room.audioDeviceModule.setOutputDevice(device)
+}
+
 
 
 @_cdecl("LKDisplaySources")

@@ -41,6 +41,7 @@ extern "C" {
             callback_data: *mut c_void,
             participants: CFArrayRef,
         ),
+        on_devices_updated: extern "C" fn(callback_data: *mut c_void),
         on_did_subscribe_to_remote_video_track: extern "C" fn(
             callback_data: *mut c_void,
             publisher_id: CFStringRef,
@@ -107,10 +108,13 @@ extern "C" {
             callback_data: *mut c_void,
             name: CFStringRef,
             id: CFStringRef,
+            is_output: bool,
             is_default: bool,
             native_device: *const c_void,
         ),
     ) -> *mut c_void;
+
+    fn LKSetInputDevice(device: *const c_void) -> bool;
 
     fn LKAudioOutputSources(
         callback_data: *mut c_void,
@@ -118,10 +122,13 @@ extern "C" {
             callback_data: *mut c_void,
             name: CFStringRef,
             id: CFStringRef,
+            is_output: bool,
             is_default: bool,
             native_device: *const c_void,
         ),
     ) -> *mut c_void;
+
+    fn LKSetOutputDevice(device: *const c_void) -> bool;
 
     fn LKDisplaySources(
         callback_data: *mut c_void,
@@ -161,6 +168,7 @@ extern "C" fn push_audio_device(
     vec: *mut c_void,
     name: CFStringRef,
     id: CFStringRef,
+    is_output: bool,
     is_default: bool,
     native_device: *const c_void,
 ) {
@@ -168,7 +176,13 @@ extern "C" fn push_audio_device(
         let mut sources = Box::from_raw(vec as *mut Vec<AudioDevice>);
         let name = CFString::wrap_under_get_rule(name).to_string();
         let id = CFString::wrap_under_get_rule(id).to_string();
-        sources.push(AudioDevice::new(name, id, is_default, native_device));
+        sources.push(AudioDevice::new(
+            name,
+            id,
+            is_default,
+            is_output,
+            native_device,
+        ));
         let _ = Box::into_raw(sources);
     }
 }
@@ -180,6 +194,7 @@ pub struct Room {
         watch::Receiver<ConnectionState>,
     )>,
     remote_audio_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteAudioTrackUpdate>>>,
+    local_devices_updated_subscribers: Mutex<Vec<mpsc::UnboundedSender<()>>>,
     remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackUpdate>>>,
     _delegate: RoomDelegate,
 }
@@ -192,6 +207,7 @@ impl Room {
                 native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
                 connection: Mutex::new(watch::channel_with(ConnectionState::Disconnected)),
                 remote_audio_track_subscribers: Default::default(),
+                local_devices_updated_subscribers: Default::default(),
                 remote_video_track_subscribers: Default::default(),
                 _delegate: delegate,
             }
@@ -247,8 +263,10 @@ impl Room {
     pub fn audio_output_sources() -> Vec<AudioDevice> {
         let output_sources = Vec::<AudioDevice>::new();
         unsafe {
-            let output_sources_ptr =
-                LKAudioOutputSources(Box::into_raw(Box::new(output_sources)) as *mut _, push_audio_device);
+            let output_sources_ptr = LKAudioOutputSources(
+                Box::into_raw(Box::new(output_sources)) as *mut _,
+                push_audio_device,
+            );
 
             let output_sources = Box::from_raw(output_sources_ptr as *mut Vec<AudioDevice>);
 
@@ -430,6 +448,12 @@ impl Room {
         rx
     }
 
+    pub fn local_devices_updated(&self) -> mpsc::UnboundedReceiver<()> {
+        let (tx, rx) = mpsc::unbounded();
+        self.local_devices_updated_subscribers.lock().push(tx);
+        rx
+    }
+
     pub fn remote_video_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackUpdate> {
         let (tx, rx) = mpsc::unbounded();
         self.remote_video_track_subscribers.lock().push(tx);
@@ -474,6 +498,12 @@ impl Room {
                 })
                 .is_ok()
             });
+    }
+
+    fn devices_updated(&self) {
+        self.local_devices_updated_subscribers
+            .lock()
+            .retain(|tx| tx.unbounded_send(()).is_ok())
     }
 
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
@@ -542,6 +572,7 @@ impl RoomDelegate {
                 Self::on_did_unsubscribe_from_remote_audio_track,
                 Self::on_mute_change_from_remote_audio_track,
                 Self::on_active_speakers_changed,
+                Self::on_devices_updated,
                 Self::on_did_subscribe_to_remote_video_track,
                 Self::on_did_unsubscribe_from_remote_video_track,
             )
@@ -623,6 +654,16 @@ impl RoomDelegate {
         if let Some(room) = room.upgrade() {
             room.active_speakers_changed(speakers);
         }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_devices_updated(room: *mut c_void) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+
+        if let Some(room) = room.upgrade() {
+            room.devices_updated();
+        }
+
         let _ = Weak::into_raw(room);
     }
 
@@ -900,23 +941,52 @@ pub enum RemoteAudioTrackUpdate {
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
+#[derive(PartialEq, Eq, Debug)]
+enum AudioDeviceKind {
+    Input,
+    Output,
+}
+
 pub struct AudioDevice {
     name: String,
     id: String,
     default: bool,
+    kind: AudioDeviceKind,
     native_device: *const c_void,
 }
 
 impl AudioDevice {
-    fn new(name: String, id: String, default: bool, ptr: *const c_void) -> Self {
+    fn new(name: String, id: String, default: bool, is_output: bool, ptr: *const c_void) -> Self {
         unsafe {
             CFRetain(ptr);
         };
+
+        let kind = if is_output {
+            AudioDeviceKind::Output
+        } else {
+            AudioDeviceKind::Input
+        };
+
         Self {
             name,
             id,
             default,
+            kind,
             native_device: ptr,
+        }
+    }
+
+    pub fn set(&self) -> Result<()> {
+        unsafe {
+            let result = match self.kind {
+                AudioDeviceKind::Input => LKSetInputDevice(self.native_device),
+                AudioDeviceKind::Output => LKSetOutputDevice(self.native_device),
+            };
+            if result {
+                Ok(())
+            } else {
+                Err(anyhow!("Unable to set {:?} audio device", self.kind))
+            }
         }
     }
 }
