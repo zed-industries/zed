@@ -1,232 +1,164 @@
-import { ColorScheme } from "../theme/color_scheme"
-import { text, border, background, foreground } from "./components"
-import { interactive } from "../element"
+import { ColorScheme, StyleSets } from "../theme/color_scheme"
+import { text, border, background, foreground, TextStyle } from "./components"
+import { Interactive, interactive } from "../element"
+
+interface ToolbarButtonOptions {
+    icon: string
+}
+
+type RoleCycleButton = TextStyle & {
+    background?: string
+}
+// TODO: Replace these with zed types
+type RemainingTokens = TextStyle & {
+    background: string,
+    margin: { top: number, right: number },
+    padding: {
+        right: number,
+        left: number,
+        top: number,
+        bottom: number,
+    },
+    corner_radius: number,
+}
 
 export default function assistant(theme: ColorScheme): any {
+    const TOOLBAR_SPACING = 8
+
+    const toolbar_button = ({ icon }: ToolbarButtonOptions) => {
+        return (
+            interactive({
+                base: {
+                    icon: {
+                        color: foreground(theme.highest, "variant"),
+                        asset: icon,
+                        dimensions: {
+                            width: 15,
+                            height: 15,
+                        },
+                    },
+                    container: {
+                        padding: { left: TOOLBAR_SPACING, right: TOOLBAR_SPACING },
+                    },
+                },
+                state: {
+                    hovered: {
+                        icon: {
+                            color: foreground(theme.highest, "hovered"),
+                        },
+                    },
+                },
+            })
+        )
+    }
+
+    const interactive_role = (color: StyleSets): Interactive<RoleCycleButton> => {
+        return (
+            interactive({
+                base: {
+                    ...text(theme.highest, "sans", color, { size: "sm" }),
+                },
+                state: {
+                    hovered: {
+                        ...text(theme.highest, "sans", color, { size: "sm" }),
+                        background: background(theme.highest, color, "hovered"),
+                    },
+                    clicked: {
+                        ...text(theme.highest, "sans", color, { size: "sm" }),
+                        background: background(theme.highest, color, "pressed"),
+                    }
+                },
+            })
+        )
+    }
+
+    const tokens_remaining = (color: StyleSets): RemainingTokens => {
+        return (
+            {
+                ...text(theme.highest, "mono", color, { size: "xs" }),
+                background: background(theme.highest, "on", "default"),
+                margin: { top: 12, right: 8 },
+                padding: { right: 4, left: 4, top: 1, bottom: 1 },
+                corner_radius: 6,
+            }
+        )
+    }
+
     return {
         container: {
             background: background(theme.highest),
             padding: { left: 12 },
         },
         message_header: {
-            margin: { bottom: 6, top: 6 },
+            margin: { bottom: 4, top: 4 },
             background: background(theme.highest),
         },
-        hamburger_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/hamburger_15.svg",
-                    dimensions: {
-                        width: 15,
-                        height: 15,
-                    },
-                },
-                container: {
-                    padding: { left: 12, right: 8.5 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        hamburger_button: toolbar_button({
+            icon: "icons/hamburger_15.svg",
         }),
-        split_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/split_message_15.svg",
-                    dimensions: {
-                        width: 15,
-                        height: 15,
-                    },
-                },
-                container: {
-                    padding: { left: 8.5, right: 8.5 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+
+        split_button: toolbar_button({
+            icon: "icons/split_message_15.svg",
         }),
-        quote_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/quote_15.svg",
-                    dimensions: {
-                        width: 15,
-                        height: 15,
-                    },
-                },
-                container: {
-                    padding: { left: 8.5, right: 8.5 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        quote_button: toolbar_button({
+            icon: "icons/radix/quote.svg",
         }),
-        assist_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/assist_15.svg",
-                    dimensions: {
-                        width: 15,
-                        height: 15,
-                    },
-                },
-                container: {
-                    padding: { left: 8.5, right: 8.5 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        assist_button: toolbar_button({
+            icon: "icons/radix/magic-wand.svg",
         }),
-        zoom_in_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/maximize_8.svg",
-                    dimensions: {
-                        width: 12,
-                        height: 12,
-                    },
-                },
-                container: {
-                    padding: { left: 10, right: 10 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        zoom_in_button: toolbar_button({
+            icon: "icons/radix/enter-full-screen.svg",
         }),
-        zoom_out_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/minimize_8.svg",
-                    dimensions: {
-                        width: 12,
-                        height: 12,
-                    },
-                },
-                container: {
-                    padding: { left: 10, right: 10 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        zoom_out_button: toolbar_button({
+            icon: "icons/radix/exit-full-screen.svg",
         }),
-        plus_button: interactive({
-            base: {
-                icon: {
-                    color: foreground(theme.highest, "variant"),
-                    asset: "icons/plus_12.svg",
-                    dimensions: {
-                        width: 12,
-                        height: 12,
-                    },
-                },
-                container: {
-                    padding: { left: 10, right: 10 },
-                },
-            },
-            state: {
-                hovered: {
-                    icon: {
-                        color: foreground(theme.highest, "hovered"),
-                    },
-                },
-            },
+        plus_button: toolbar_button({
+            icon: "icons/radix/plus.svg",
         }),
         title: {
-            ...text(theme.highest, "sans", "default", { size: "sm" }),
+            ...text(theme.highest, "sans", "default", { size: "xs" }),
         },
         saved_conversation: {
             container: interactive({
                 base: {
-                    background: background(theme.highest, "on"),
+                    background: background(theme.middle),
                     padding: { top: 4, bottom: 4 },
+                    border: border(theme.middle, "default", { top: true, overlay: true }),
                 },
                 state: {
                     hovered: {
-                        background: background(theme.highest, "on", "hovered"),
+                        background: background(theme.middle, "hovered"),
                     },
+                    clicked: {
+                        background: background(theme.middle, "pressed"),
+                    }
                 },
             }),
             saved_at: {
                 margin: { left: 8 },
-                ...text(theme.highest, "sans", "default", { size: "xs" }),
+                ...text(theme.highest, "sans", "variant", { size: "xs" }),
             },
             title: {
-                margin: { left: 16 },
+                margin: { left: 12 },
                 ...text(theme.highest, "sans", "default", {
                     size: "sm",
                     weight: "bold",
                 }),
             },
         },
-        user_sender: {
-            default: {
-                ...text(theme.highest, "sans", "default", {
-                    size: "sm",
-                    weight: "bold",
-                }),
-            },
-        },
-        assistant_sender: {
-            default: {
-                ...text(theme.highest, "sans", "accent", {
-                    size: "sm",
-                    weight: "bold",
-                }),
-            },
-        },
-        system_sender: {
-            default: {
-                ...text(theme.highest, "sans", "variant", {
-                    size: "sm",
-                    weight: "bold",
-                }),
-            },
-        },
+        user_sender: interactive_role("base"),
+        assistant_sender: interactive_role("accent"),
+        system_sender: interactive_role("warning"),
         sent_at: {
             margin: { top: 2, left: 8 },
-            ...text(theme.highest, "sans", "default", { size: "2xs" }),
+            ...text(theme.highest, "sans", "variant", { size: "2xs" }),
         },
         model: interactive({
             base: {
-                background: background(theme.highest, "on"),
-                margin: { left: 12, right: 12, top: 12 },
-                padding: 4,
-                corner_radius: 4,
+                background: background(theme.highest),
+                margin: { left: 12, right: 4, top: 12 },
+                padding: { right: 4, left: 4, top: 1, bottom: 1 },
+                corner_radius: 6,
                 ...text(theme.highest, "sans", "default", { size: "xs" }),
             },
             state: {
@@ -236,20 +168,9 @@ export default function assistant(theme: ColorScheme): any {
                 },
             },
         }),
-        remaining_tokens: {
-            background: background(theme.highest, "on"),
-            margin: { top: 12, right: 24 },
-            padding: 4,
-            corner_radius: 4,
-            ...text(theme.highest, "sans", "positive", { size: "xs" }),
-        },
-        no_remaining_tokens: {
-            background: background(theme.highest, "on"),
-            margin: { top: 12, right: 24 },
-            padding: 4,
-            corner_radius: 4,
-            ...text(theme.highest, "sans", "negative", { size: "xs" }),
-        },
+        remaining_tokens: tokens_remaining("positive"),
+        low_remaining_tokens: tokens_remaining("warning"),
+        no_remaining_tokens: tokens_remaining("negative"),
         error_icon: {
             margin: { left: 8 },
             color: foreground(theme.highest, "negative"),
