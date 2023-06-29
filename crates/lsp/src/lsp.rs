@@ -716,7 +716,7 @@ impl LanguageServer {
                                         .context("failed to deserialize response"),
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
-                                let _ = tx.send(response);
+                                _ = tx.send(response);
                             })
                             .detach();
                     }),

@@ -2707,10 +2707,11 @@ impl Project {
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
         let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
-
         let language_server = match pending_server.task.await? {
             Some(server) => server.initialize(initialization_options).await?,
-            None => return Ok(None),
+            None => {
+                return Ok(None);
+            }
         };
 
         language_server
@@ -7505,15 +7506,11 @@ impl Project {
     ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_server_ids_for_buffer(buffer, cx)
             .into_iter()
-            .filter_map(|server_id| {
-                if let LanguageServerState::Running {
+            .filter_map(|server_id| match self.language_servers.get(&server_id)? {
+                LanguageServerState::Running {
                     adapter, server, ..
-                } = self.language_servers.get(&server_id)?
-                {
-                    Some((adapter, server))
-                } else {
-                    None
-                }
+                } => Some((adapter, server)),
+                _ => None,
             })
     }
 

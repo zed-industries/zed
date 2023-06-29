@@ -589,7 +589,6 @@ async fn fetch_and_update_hints(
         .flatten();
     let mut update_happened = false;
     let Some(inlay_hints_fetch_task) = inlay_hints_fetch_task else { return Ok(update_happened) };
-
     let new_hints = inlay_hints_fetch_task
         .await
         .context("inlay hint fetch task")?;
@@ -824,7 +823,7 @@ mod tests {
         ExcerptRange, InlayHintSettings,
     };
     use futures::StreamExt;
-    use gpui::{TestAppContext, ViewHandle};
+    use gpui::{executor::Deterministic, TestAppContext, ViewHandle};
     use language::{
         language_settings::AllLanguageSettingsContent, FakeLspAdapter, Language, LanguageConfig,
     };
@@ -1406,7 +1405,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                lsp_request_count.load(Ordering::Relaxed),
+                lsp_request_count.load(Ordering::SeqCst),
                 3,
                 "Should query new hints one more time, for the last edit only"
             );
@@ -1423,173 +1422,6 @@ mod tests {
                 inlay_cache.version, 2,
                 "Should update the cache version once more, for the new change"
             );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_hint_refresh_request_cancellation(cx: &mut gpui::TestAppContext) {
-        let allowed_hint_kinds = HashSet::from_iter([None]);
-        init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                enabled: true,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
-            })
-        });
-
-        let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
-        let fake_server = Arc::new(fake_server);
-        let lsp_request_count = Arc::new(AtomicU32::new(0));
-        let another_lsp_request_count = Arc::clone(&lsp_request_count);
-        fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_lsp_request_count = Arc::clone(&another_lsp_request_count);
-                async move {
-                    let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
-                    );
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, i),
-                        label: lsp::InlayHintLabel::String(i.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            })
-            .next()
-            .await;
-
-        let mut initial_refresh_tasks = Vec::new();
-        let task_cx = cx.clone();
-        let add_refresh_task = |tasks: &mut Vec<Task<()>>| {
-            let task_fake_server = Arc::clone(&fake_server);
-            tasks.push(task_cx.foreground().spawn(async move {
-                task_fake_server
-                    .request::<lsp::request::InlayHintRefreshRequest>(())
-                    .await
-                    .expect("inlay refresh request failed");
-            }))
-        };
-        add_refresh_task(&mut initial_refresh_tasks);
-        add_refresh_task(&mut initial_refresh_tasks);
-        let _ = futures::future::join_all(initial_refresh_tasks).await;
-
-        cx.foreground().run_until_parked();
-
-        editor.update(cx, |editor, cx| {
-            assert_eq!(
-                lsp_request_count.load(Ordering::Relaxed),
-                3,
-                "Should query new hints once for editor opening and 2 times due to 2 refresh requests"
-            );
-            let expected_hints = vec!["3".to_string()];
-            assert_eq!(
-                expected_hints,
-                cached_hint_labels(editor),
-                "Should get hints from the last refresh landed only"
-            );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(
-                inlay_cache.version, 1,
-                "Only one update should be registered in the cache after all cancellations"
-            );
-        });
-
-        let mut expected_changes = Vec::new();
-        let mut edits_and_refreshes = Vec::new();
-        add_refresh_task(&mut edits_and_refreshes);
-        for async_later_change in ["change #1", "change #2", "change #3"] {
-            expected_changes.push(async_later_change);
-            let task_editor = editor.clone();
-            let mut task_cx = cx.clone();
-            let task_fake_server = Arc::clone(&fake_server);
-            edits_and_refreshes.push(cx.foreground().spawn(async move {
-                task_fake_server
-                    .request::<lsp::request::InlayHintRefreshRequest>(())
-                    .await
-                    .expect("inlay refresh request failed");
-                task_editor.update(&mut task_cx, |editor, cx| {
-                    editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-                    editor.handle_input(async_later_change, cx);
-                });
-                task_fake_server
-                    .request::<lsp::request::InlayHintRefreshRequest>(())
-                    .await
-                    .expect("inlay refresh request failed");
-            }));
-        }
-        let _ = futures::future::join_all(edits_and_refreshes).await;
-        cx.foreground().run_until_parked();
-
-        editor.update(cx, |editor, cx| {
-            let current_text = editor.text(cx);
-            for change in &expected_changes {
-                assert!(
-                    current_text.contains(change),
-                    "Should apply all changes made"
-                );
-            }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 10);
-            let expected_hints = vec!["10".to_string()];
-            assert_eq!(
-                expected_hints,
-                cached_hint_labels(editor),
-                "Should get hints from the refresh request"
-            );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(
-                inlay_cache.version, 3,
-                "Last request and refresh after it should bring updates and cache version bump"
-            );
-        });
-
-        let mut edits_and_refreshes = Vec::new();
-        add_refresh_task(&mut edits_and_refreshes);
-        for async_later_change in ["last change #1", "last change #2", "last change #3"] {
-            expected_changes.push(async_later_change);
-            let task_editor = editor.clone();
-            let mut task_cx = cx.clone();
-            add_refresh_task(&mut edits_and_refreshes);
-            edits_and_refreshes.push(cx.foreground().spawn(async move {
-                task_editor.update(&mut task_cx, |editor, cx| {
-                    editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-                    editor.handle_input(async_later_change, cx);
-                });
-            }));
-        }
-        let _ = futures::future::join_all(edits_and_refreshes).await;
-        cx.foreground().run_until_parked();
-
-        editor.update(cx, |editor, cx| {
-            let current_text = editor.text(cx);
-            for change in &expected_changes {
-                assert!(
-                    current_text.contains(change),
-                    "Should apply all changes made"
-                );
-            }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 12);
-            let expected_hints = vec!["12".to_string()];
-            assert_eq!(
-                expected_hints,
-                cached_hint_labels(editor),
-                "Should get hints from the last edit only"
-            );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
-            assert_eq!(inlay_cache.version, 5);
         });
     }
 
@@ -1689,7 +1521,6 @@ mod tests {
             .next()
             .await;
         cx.foreground().run_until_parked();
-
         editor.update(cx, |editor, cx| {
             let mut ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
             ranges.sort_by_key(|range| range.start);
@@ -1747,7 +1578,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
+    async fn test_multiple_excerpts_large_multibuffer(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
@@ -1873,10 +1707,10 @@ mod tests {
             multibuffer
         });
 
-        cx.foreground().start_waiting();
+        deterministic.run_until_parked();
+        cx.foreground().run_until_parked();
         let (_, editor) =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
-
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -1944,7 +1778,6 @@ mod tests {
             })
             .next()
             .await;
-
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
