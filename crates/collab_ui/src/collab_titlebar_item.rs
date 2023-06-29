@@ -254,9 +254,7 @@ impl CollabTitlebarItem {
                             this.toggle_vcs_menu(&Default::default(), cx)
                         }),
                     )
-                    .with_children(
-                        self.render_branches_popover_host(&theme.workspace.titlebar, cx),
-                    ),
+                    .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
             )
         }
         ret.into_any()
