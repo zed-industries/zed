@@ -439,6 +439,7 @@ impl CollabTitlebarItem {
                     cx.notify();
                 })
                 .detach();
+                self.project_popover.take();
                 self.branch_popover = Some(view);
             }
         }
@@ -447,7 +448,6 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
-        log::error!("Toggling project menu");
         if self.project_popover.take().is_none() {
             let view = cx.add_view(|cx| build_recent_projects(self.workspace.clone(), cx));
             cx.subscribe(&view, |this, _, event, cx| {
@@ -460,6 +460,7 @@ impl CollabTitlebarItem {
                 cx.notify();
             })
             .detach();
+            self.branch_popover.take();
             self.project_popover = Some(view);
         }
 
