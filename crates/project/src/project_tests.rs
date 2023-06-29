@@ -596,6 +596,8 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         );
     });
 
+    let prev_read_dir_count = fs.read_dir_call_count();
+
     // Keep track of the FS events reported to the language server.
     let fake_server = fake_servers.next().await.unwrap();
     let file_changes = Arc::new(Mutex::new(Vec::new()));
@@ -607,6 +609,12 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 register_options: serde_json::to_value(
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/Cargo.toml".to_string(),
+                                ),
+                                kind: None,
+                            },
                             lsp::FileSystemWatcher {
                                 glob_pattern: lsp::GlobPattern::String(
                                     "/the-root/src/*.{rs,c}".to_string(),
@@ -638,6 +646,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     cx.foreground().run_until_parked();
     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
 
     // Now the language server has asked us to watch an ignored directory path,
     // so we recursively load it.
