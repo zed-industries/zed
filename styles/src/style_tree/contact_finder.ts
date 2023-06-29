@@ -3,12 +3,10 @@ import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 
 export default function contact_finder(theme: ColorScheme): any {
-    const layer = theme.middle
-
     const side_margin = 6
     const contact_button = {
-        background: background(layer, "variant"),
-        color: foreground(layer, "variant"),
+        background: background(theme.middle, "variant"),
+        color: foreground(theme.middle, "variant"),
         icon_width: 8,
         button_width: 16,
         corner_radius: 8,
@@ -16,12 +14,12 @@ export default function contact_finder(theme: ColorScheme): any {
 
     const picker_style = picker(theme)
     const picker_input = {
-        background: background(layer, "on"),
+        background: background(theme.middle, "on"),
         corner_radius: 6,
-        text: text(layer, "mono"),
-        placeholder_text: text(layer, "mono", "on", "disabled", { size: "xs" }),
+        text: text(theme.middle, "mono"),
+        placeholder_text: text(theme.middle, "mono", "on", "disabled", { size: "xs" }),
         selection: theme.players[0],
-        border: border(layer),
+        border: border(theme.middle),
         padding: {
             bottom: 4,
             left: 8,
@@ -41,7 +39,7 @@ export default function contact_finder(theme: ColorScheme): any {
                 ...picker_style.item,
                 margin: { left: side_margin, right: side_margin },
             },
-            no_matches: picker_style.noMatches,
+            no_matches: picker_style.no_matches,
             input_editor: picker_input,
             empty_input_editor: picker_input,
         },
@@ -58,13 +56,13 @@ export default function contact_finder(theme: ColorScheme): any {
         contact_button: {
             ...contact_button,
             hover: {
-                background: background(layer, "variant", "hovered"),
+                background: background(theme.middle, "variant", "hovered"),
             },
         },
         disabled_contact_button: {
             ...contact_button,
-            background: background(layer, "disabled"),
-            color: foreground(layer, "disabled"),
+            background: background(theme.middle, "disabled"),
+            color: foreground(theme.middle, "disabled"),
         },
     }
 }

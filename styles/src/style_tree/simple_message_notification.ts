@@ -2,21 +2,20 @@ import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 import { interactive } from "../element"
 
-const headerPadding = 8
-
 export default function simple_message_notification(
-    colorScheme: ColorScheme
-): unknown {
-    const layer = colorScheme.middle
+    theme: ColorScheme
+): any {
+    const header_padding = 8
+
     return {
         message: {
-            ...text(layer, "sans", { size: "xs" }),
-            margin: { left: headerPadding, right: headerPadding },
+            ...text(theme.middle, "sans", { size: "xs" }),
+            margin: { left: header_padding, right: header_padding },
         },
-        actionMessage: interactive({
+        action_nessage: interactive({
             base: {
-                ...text(layer, "sans", { size: "xs" }),
-                border: border(layer, "active"),
+                ...text(theme.middle, "sans", { size: "xs" }),
+                border: border(theme.middle, "active"),
                 corner_radius: 4,
                 padding: {
                     top: 3,
@@ -25,27 +24,27 @@ export default function simple_message_notification(
                     right: 7,
                 },
 
-                margin: { left: headerPadding, top: 6, bottom: 6 },
+                margin: { left: header_padding, top: 6, bottom: 6 },
             },
             state: {
                 hovered: {
-                    ...text(layer, "sans", "default", { size: "xs" }),
-                    background: background(layer, "hovered"),
-                    border: border(layer, "active"),
+                    ...text(theme.middle, "sans", "default", { size: "xs" }),
+                    background: background(theme.middle, "hovered"),
+                    border: border(theme.middle, "active"),
                 },
             },
         }),
-        dismissButton: interactive({
+        dismiss_button: interactive({
             base: {
-                color: foreground(layer),
+                color: foreground(theme.middle),
                 icon_width: 8,
-                iconHeight: 8,
+                icon_height: 8,
                 button_width: 8,
-                buttonHeight: 8,
+                button_height: 8,
             },
             state: {
                 hovered: {
-                    color: foreground(layer, "hovered"),
+                    color: foreground(theme.middle, "hovered"),
                 },
             },
         }),

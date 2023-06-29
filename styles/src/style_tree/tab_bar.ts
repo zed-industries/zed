@@ -1,5 +1,5 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
 import { interactive, toggleable } from "../element"
 
@@ -71,7 +71,7 @@ export default function tab_bar(colorScheme: ColorScheme): any {
 
     const draggedTab = {
         ...activePaneActiveTab,
-        background: withOpacity(tab.background, 0.9),
+        background: with_opacity(tab.background, 0.9),
         border: undefined as any,
         shadow: colorScheme.popover_shadow,
     }

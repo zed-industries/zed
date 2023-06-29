@@ -1,21 +1,19 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 
-export default function search(colorScheme: ColorScheme): any {
-    const layer = colorScheme.highest
-
+export default function search(theme: ColorScheme): any {
     // Search input
     const editor = {
-        background: background(layer),
+        background: background(theme.highest),
         corner_radius: 8,
-        minWidth: 200,
-        maxWidth: 500,
-        placeholderText: text(layer, "mono", "disabled"),
-        selection: colorScheme.players[0],
-        text: text(layer, "mono", "default"),
-        border: border(layer),
+        min_width: 200,
+        max_width: 500,
+        placeholder_text: text(theme.highest, "mono", "disabled"),
+        selection: theme.players[0],
+        text: text(theme.highest, "mono", "default"),
+        border: border(theme.highest),
         margin: {
             right: 12,
         },
@@ -27,22 +25,22 @@ export default function search(colorScheme: ColorScheme): any {
         },
     }
 
-    const includeExcludeEditor = {
+    const include_exclude_editor = {
         ...editor,
-        minWidth: 100,
-        maxWidth: 250,
+        min_width: 100,
+        max_width: 250,
     }
 
     return {
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
-        matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
-        optionButton: toggleable({
+        match_background: with_opacity(foreground(theme.highest, "accent"), 0.4),
+        option_button: toggleable({
             base: interactive({
                 base: {
-                    ...text(layer, "mono", "on"),
-                    background: background(layer, "on"),
+                    ...text(theme.highest, "mono", "on"),
+                    background: background(theme.highest, "on"),
                     corner_radius: 6,
-                    border: border(layer, "on"),
+                    border: border(theme.highest, "on"),
                     margin: {
                         right: 4,
                     },
@@ -55,66 +53,66 @@ export default function search(colorScheme: ColorScheme): any {
                 },
                 state: {
                     hovered: {
-                        ...text(layer, "mono", "on", "hovered"),
-                        background: background(layer, "on", "hovered"),
-                        border: border(layer, "on", "hovered"),
+                        ...text(theme.highest, "mono", "on", "hovered"),
+                        background: background(theme.highest, "on", "hovered"),
+                        border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
-                        ...text(layer, "mono", "on", "pressed"),
-                        background: background(layer, "on", "pressed"),
-                        border: border(layer, "on", "pressed"),
+                        ...text(theme.highest, "mono", "on", "pressed"),
+                        background: background(theme.highest, "on", "pressed"),
+                        border: border(theme.highest, "on", "pressed"),
                     },
                 },
             }),
             state: {
                 active: {
                     default: {
-                        ...text(layer, "mono", "accent"),
+                        ...text(theme.highest, "mono", "accent"),
                     },
                     hovered: {
-                        ...text(layer, "mono", "accent", "hovered"),
+                        ...text(theme.highest, "mono", "accent", "hovered"),
                     },
                     clicked: {
-                        ...text(layer, "mono", "accent", "pressed"),
+                        ...text(theme.highest, "mono", "accent", "pressed"),
                     },
                 },
             },
         }),
         editor,
-        invalidEditor: {
+        invalid_editor: {
             ...editor,
-            border: border(layer, "negative"),
+            border: border(theme.highest, "negative"),
         },
-        includeExcludeEditor,
-        invalidIncludeExcludeEditor: {
-            ...includeExcludeEditor,
-            border: border(layer, "negative"),
+        include_exclude_editor,
+        invalid_include_exclude_editor: {
+            ...include_exclude_editor,
+            border: border(theme.highest, "negative"),
         },
-        matchIndex: {
-            ...text(layer, "mono", "variant"),
+        match_index: {
+            ...text(theme.highest, "mono", "variant"),
             padding: {
                 left: 6,
             },
         },
-        optionButtonGroup: {
+        option_button_group: {
             padding: {
                 left: 12,
                 right: 12,
             },
         },
-        includeExcludeInputs: {
-            ...text(layer, "mono", "variant"),
+        include_exclude_inputs: {
+            ...text(theme.highest, "mono", "variant"),
             padding: {
                 right: 6,
             },
         },
-        resultsStatus: {
-            ...text(layer, "mono", "on"),
+        results_status: {
+            ...text(theme.highest, "mono", "on"),
             size: 18,
         },
-        dismissButton: interactive({
+        dismiss_button: interactive({
             base: {
-                color: foreground(layer, "variant"),
+                color: foreground(theme.highest, "variant"),
                 icon_width: 12,
                 button_width: 14,
                 padding: {
@@ -124,10 +122,10 @@ export default function search(colorScheme: ColorScheme): any {
             },
             state: {
                 hovered: {
-                    color: foreground(layer, "hovered"),
+                    color: foreground(theme.highest, "hovered"),
                 },
                 clicked: {
-                    color: foreground(layer, "pressed"),
+                    color: foreground(theme.highest, "pressed"),
                 },
             },
         }),

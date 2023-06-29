@@ -1,13 +1,12 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, text } from "./components"
 
-export default function project_diagnostics(colorScheme: ColorScheme): any {
-    const layer = colorScheme.highest
+export default function project_diagnostics(theme: ColorScheme): any {
     return {
-        background: background(layer),
-        tabIconSpacing: 4,
+        background: background(theme.highest),
+        tab_icon_spacing: 4,
         tab_icon_width: 13,
-        tabSummarySpacing: 10,
-        emptyMessage: text(layer, "sans", "variant", { size: "md" }),
+        tab_summary_spacing: 10,
+        empty_message: text(theme.highest, "sans", "variant", { size: "md" }),
     }
 }

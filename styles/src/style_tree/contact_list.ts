@@ -8,19 +8,19 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 export default function contacts_panel(theme: ColorScheme): any {
-    const nameMargin = 8
-    const sidePadding = 12
+    const name_margin = 8
+    const side_padding = 12
 
     const layer = theme.middle
 
-    const contactButton = {
+    const contact_button = {
         background: background(layer, "on"),
         color: foreground(layer, "on"),
         icon_width: 8,
         button_width: 16,
         corner_radius: 8,
     }
-    const projectRow = {
+    const project_row = {
         guest_avatar_spacing: 4,
         height: 24,
         guest_avatar: {
@@ -30,19 +30,19 @@ export default function contacts_panel(theme: ColorScheme): any {
         name: {
             ...text(layer, "mono", { size: "sm" }),
             margin: {
-                left: nameMargin,
+                left: name_margin,
                 right: 6,
             },
         },
         guests: {
             margin: {
-                left: nameMargin,
-                right: nameMargin,
+                left: name_margin,
+                right: name_margin,
             },
         },
         padding: {
-            left: sidePadding,
-            right: sidePadding,
+            left: side_padding,
+            right: side_padding,
         },
     }
 
@@ -83,8 +83,8 @@ export default function contacts_panel(theme: ColorScheme): any {
                     ...text(layer, "mono", { size: "sm" }),
                     margin: { top: 14 },
                     padding: {
-                        left: sidePadding,
-                        right: sidePadding,
+                        left: side_padding,
+                        right: side_padding,
                     },
                     background: background(layer, "default"), // posiewic: breaking change
                 },
@@ -140,8 +140,8 @@ export default function contacts_panel(theme: ColorScheme): any {
             inactive: {
                 default: {
                     padding: {
-                        left: sidePadding,
-                        right: sidePadding,
+                        left: side_padding,
+                        right: side_padding,
                     },
                 },
             },
@@ -149,8 +149,8 @@ export default function contacts_panel(theme: ColorScheme): any {
                 default: {
                     background: background(layer, "active"),
                     padding: {
-                        left: sidePadding,
-                        right: sidePadding,
+                        left: side_padding,
+                        right: side_padding,
                     },
                 },
             },
@@ -174,12 +174,12 @@ export default function contacts_panel(theme: ColorScheme): any {
         contact_username: {
             ...text(layer, "mono", { size: "sm" }),
             margin: {
-                left: nameMargin,
+                left: name_margin,
             },
         },
-        contact_button_spacing: nameMargin,
+        contact_button_spacing: name_margin,
         contact_button: interactive({
-            base: { ...contactButton },
+            base: { ...contact_button },
             state: {
                 hovered: {
                     background: background(layer, "hovered"),
@@ -187,7 +187,7 @@ export default function contacts_panel(theme: ColorScheme): any {
             },
         }),
         disabled_button: {
-            ...contactButton,
+            ...contact_button,
             background: background(layer, "on"),
             color: foreground(layer, "on"),
         },
@@ -217,15 +217,15 @@ export default function contacts_panel(theme: ColorScheme): any {
         project_row: toggleable({
             base: interactive({
                 base: {
-                    ...projectRow,
+                    ...project_row,
                     background: background(layer),
                     icon: {
-                        margin: { left: nameMargin },
+                        margin: { left: name_margin },
                         color: foreground(layer, "variant"),
                         width: 12,
                     },
                     name: {
-                        ...projectRow.name,
+                        ...project_row.name,
                         ...text(layer, "mono", { size: "sm" }),
                     },
                 },

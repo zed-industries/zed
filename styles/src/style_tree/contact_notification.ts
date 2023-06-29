@@ -1,24 +1,25 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, foreground, text } from "./components"
 import { interactive } from "../element"
-const avatarSize = 12
-const headerPadding = 8
 
 export default function contact_notification(theme: ColorScheme): any {
+    const avatar_size = 12
+    const header_padding = 8
+
     return {
         header_avatar: {
-            height: avatarSize,
-            width: avatarSize,
+            height: avatar_size,
+            width: avatar_size,
             corner_radius: 6,
         },
         header_message: {
             ...text(theme.lowest, "sans", { size: "xs" }),
-            margin: { left: headerPadding, right: headerPadding },
+            margin: { left: header_padding, right: header_padding },
         },
         header_height: 18,
         body_message: {
             ...text(theme.lowest, "sans", { size: "xs" }),
-            margin: { left: avatarSize + headerPadding, top: 6, bottom: 6 },
+            margin: { left: avatar_size + header_padding, top: 6, bottom: 6 },
         },
         button: interactive({
             base: {
@@ -40,9 +41,9 @@ export default function contact_notification(theme: ColorScheme): any {
             default: {
                 color: foreground(theme.lowest, "variant"),
                 icon_width: 8,
-                iconHeight: 8,
+                icon_height: 8,
                 button_width: 8,
-                buttonHeight: 8,
+                button_height: 8,
                 hover: {
                     color: foreground(theme.lowest, "hovered"),
                 },

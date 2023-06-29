@@ -2,50 +2,48 @@ import { ColorScheme } from "../theme/color_scheme"
 import { background, border, text } from "./components"
 
 export default function project_shared_notification(
-    colorScheme: ColorScheme
+    theme: ColorScheme
 ): unknown {
-    const layer = colorScheme.middle
-
-    const avatarSize = 48
+    const avatar_size = 48
     return {
-        windowHeight: 74,
-        windowWidth: 380,
-        background: background(layer),
-        ownerContainer: {
+        window_height: 74,
+        window_width: 380,
+        background: background(theme.middle),
+        owner_container: {
             padding: 12,
         },
-        ownerAvatar: {
-            height: avatarSize,
-            width: avatarSize,
-            corner_radius: avatarSize / 2,
+        owner_avatar: {
+            height: avatar_size,
+            width: avatar_size,
+            corner_radius: avatar_size / 2,
         },
-        ownerMetadata: {
+        owner_metadata: {
             margin: { left: 10 },
         },
-        ownerUsername: {
-            ...text(layer, "sans", { size: "sm", weight: "bold" }),
+        owner_username: {
+            ...text(theme.middle, "sans", { size: "sm", weight: "bold" }),
             margin: { top: -3 },
         },
         message: {
-            ...text(layer, "sans", "variant", { size: "xs" }),
+            ...text(theme.middle, "sans", "variant", { size: "xs" }),
             margin: { top: -3 },
         },
-        worktreeRoots: {
-            ...text(layer, "sans", "variant", { size: "xs", weight: "bold" }),
+        worktree_roots: {
+            ...text(theme.middle, "sans", "variant", { size: "xs", weight: "bold" }),
             margin: { top: -3 },
         },
         button_width: 96,
-        openButton: {
-            background: background(layer, "accent"),
-            border: border(layer, { left: true, bottom: true }),
-            ...text(layer, "sans", "accent", {
+        open_button: {
+            background: background(theme.middle, "accent"),
+            border: border(theme.middle, { left: true, bottom: true }),
+            ...text(theme.middle, "sans", "accent", {
                 size: "xs",
                 weight: "bold",
             }),
         },
-        dismissButton: {
-            border: border(layer, { left: true }),
-            ...text(layer, "sans", "variant", {
+        dismiss_button: {
+            border: border(theme.middle, { left: true }),
+            ...text(theme.middle, "sans", "variant", {
                 size: "xs",
                 weight: "bold",
             }),

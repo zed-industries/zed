@@ -1,5 +1,5 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import {
     Border,
     TextStyle,
@@ -13,13 +13,11 @@ import merge from "ts-deepmerge"
 export default function project_panel(theme: ColorScheme): any {
     const { is_light } = theme
 
-    const layer = theme.middle
-
     type EntryStateProps = {
         background?: string
         border?: Border
         text?: TextStyle
-        iconColor?: string
+        icon_color?: string
     }
 
     type EntryState = {
@@ -45,17 +43,17 @@ export default function project_panel(theme: ColorScheme): any {
 
         const base_properties = {
             height: 22,
-            background: background(layer),
-            iconColor: foreground(layer, "variant"),
-            iconSize: 7,
+            background: background(theme.middle),
+            icon_color: foreground(theme.middle, "variant"),
+            icon_size: 7,
             icon_spacing: 5,
-            text: text(layer, "mono", "variant", { size: "sm" }),
+            text: text(theme.middle, "mono", "variant", { size: "sm" }),
             status: {
                 ...git_status,
             },
         }
 
-        const selectedStyle: EntryState | undefined = selected
+        const selected_style: EntryState | undefined = selected
             ? selected
             : unselected
 
@@ -67,27 +65,27 @@ export default function project_panel(theme: ColorScheme): any {
         const unselected_hovered_style = merge(
             base_properties,
             unselected?.hovered ?? {},
-            { background: background(layer, "variant", "hovered") }
+            { background: background(theme.middle, "variant", "hovered") }
         )
         const unselected_clicked_style = merge(
             base_properties,
             unselected?.clicked ?? {},
-            { background: background(layer, "variant", "pressed") }
+            { background: background(theme.middle, "variant", "pressed") }
         )
         const selected_default_style = merge(
             base_properties,
-            selectedStyle?.default ?? {},
-            { background: background(layer) }
+            selected_style?.default ?? {},
+            { background: background(theme.middle) }
         )
         const selected_hovered_style = merge(
             base_properties,
-            selectedStyle?.hovered ?? {},
-            { background: background(layer, "variant", "hovered") }
+            selected_style?.hovered ?? {},
+            { background: background(theme.middle, "variant", "hovered") }
         )
         const selected_clicked_style = merge(
             base_properties,
-            selectedStyle?.clicked ?? {},
-            { background: background(layer, "variant", "pressed") }
+            selected_style?.clicked ?? {},
+            { background: background(theme.middle, "variant", "pressed") }
         )
 
         return toggleable({
@@ -110,13 +108,13 @@ export default function project_panel(theme: ColorScheme): any {
         })
     }
 
-    const defaultEntry = entry()
+    const default_entry = entry()
 
     return {
-        openProjectButton: interactive({
+        open_project_button: interactive({
             base: {
-                background: background(layer),
-                border: border(layer, "active"),
+                background: background(theme.middle),
+                border: border(theme.middle, "active"),
                 corner_radius: 4,
                 margin: {
                     top: 16,
@@ -129,59 +127,59 @@ export default function project_panel(theme: ColorScheme): any {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", { size: "sm" }),
+                ...text(theme.middle, "sans", "default", { size: "sm" }),
             },
             state: {
                 hovered: {
-                    ...text(layer, "sans", "default", { size: "sm" }),
-                    background: background(layer, "hovered"),
-                    border: border(layer, "active"),
+                    ...text(theme.middle, "sans", "default", { size: "sm" }),
+                    background: background(theme.middle, "hovered"),
+                    border: border(theme.middle, "active"),
                 },
                 clicked: {
-                    ...text(layer, "sans", "default", { size: "sm" }),
-                    background: background(layer, "pressed"),
-                    border: border(layer, "active"),
+                    ...text(theme.middle, "sans", "default", { size: "sm" }),
+                    background: background(theme.middle, "pressed"),
+                    border: border(theme.middle, "active"),
                 },
             },
         }),
-        background: background(layer),
+        background: background(theme.middle),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
-        indentWidth: 12,
-        entry: defaultEntry,
-        draggedEntry: {
-            ...defaultEntry.inactive.default,
-            text: text(layer, "mono", "on", { size: "sm" }),
-            background: withOpacity(background(layer, "on"), 0.9),
-            border: border(layer),
+        indent_width: 12,
+        entry: default_entry,
+        dragged_entry: {
+            ...default_entry.inactive.default,
+            text: text(theme.middle, "mono", "on", { size: "sm" }),
+            background: with_opacity(background(theme.middle, "on"), 0.9),
+            border: border(theme.middle),
         },
-        ignoredEntry: entry(
+        ignored_entry: entry(
             {
                 default: {
-                    text: text(layer, "mono", "disabled"),
+                    text: text(theme.middle, "mono", "disabled"),
                 },
             },
             {
                 default: {
-                    iconColor: foreground(layer, "variant"),
+                    icon_color: foreground(theme.middle, "variant"),
                 },
             }
         ),
-        cutEntry: entry(
+        cut_entry: entry(
             {
                 default: {
-                    text: text(layer, "mono", "disabled"),
+                    text: text(theme.middle, "mono", "disabled"),
                 },
             },
             {
                 default: {
-                    background: background(layer, "active"),
-                    text: text(layer, "mono", "disabled", { size: "sm" }),
+                    background: background(theme.middle, "active"),
+                    text: text(theme.middle, "mono", "disabled", { size: "sm" }),
                 },
             }
         ),
-        filenameEditor: {
-            background: background(layer, "on"),
-            text: text(layer, "mono", "on", { size: "sm" }),
+        filename_editor: {
+            background: background(theme.middle, "on"),
+            text: text(theme.middle, "mono", "on", { size: "sm" }),
             selection: theme.players[0],
         },
     }

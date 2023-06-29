@@ -1,9 +1,8 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background } from "./components"
 
-export default function sharedScreen(colorScheme: ColorScheme) {
-    const layer = colorScheme.highest
+export default function sharedScreen(theme: ColorScheme) {
     return {
-        background: background(layer),
+        background: background(theme.highest),
     }
 }

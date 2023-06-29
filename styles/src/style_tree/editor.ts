@@ -1,4 +1,4 @@
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import { ColorScheme, Layer, StyleSets } from "../theme/color_scheme"
 import {
     background,
@@ -27,7 +27,7 @@ export default function editor(theme: ColorScheme): any {
         },
     }
 
-    function diagnostic(layer: Layer, styleSet: StyleSets) {
+    function diagnostic(layer: Layer, style_set: StyleSets) {
         return {
             text_scale_factor: 0.857,
             header: {
@@ -36,8 +36,8 @@ export default function editor(theme: ColorScheme): any {
                 }),
             },
             message: {
-                text: text(layer, "sans", styleSet, "default", { size: "sm" }),
-                highlight_text: text(layer, "sans", styleSet, "default", {
+                text: text(layer, "sans", style_set, "default", { size: "sm" }),
+                highlight_text: text(layer, "sans", style_set, "default", {
                     size: "sm",
                     weight: "bold",
                 }),
@@ -50,7 +50,7 @@ export default function editor(theme: ColorScheme): any {
     return {
         text_color: syntax.primary.color,
         background: background(layer),
-        active_line_background: withOpacity(background(layer, "on"), 0.75),
+        active_line_background: with_opacity(background(layer, "on"), 0.75),
         highlighted_line_background: background(layer, "on"),
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
         suggestion: syntax.predictive,
@@ -133,7 +133,7 @@ export default function editor(theme: ColorScheme): any {
                     },
                 },
             },
-            foldBackground: foreground(layer, "variant"),
+            fold_background: foreground(layer, "variant"),
         },
         diff: {
             deleted: is_light
@@ -145,31 +145,31 @@ export default function editor(theme: ColorScheme): any {
             inserted: is_light
                 ? theme.ramps.green(0.4).hex()
                 : theme.ramps.green(0.5).hex(),
-            removedWidthEm: 0.275,
-            widthEm: 0.15,
+            removed_width_em: 0.275,
+            width_em: 0.15,
             corner_radius: 0.05,
         },
         /** Highlights matching occurrences of what is under the cursor
          * as well as matched brackets
          */
-        documentHighlightReadBackground: withOpacity(
+        document_highlight_read_background: with_opacity(
             foreground(layer, "accent"),
             0.1
         ),
-        documentHighlightWriteBackground: theme.ramps
+        document_highlight_write_background: theme.ramps
             .neutral(0.5)
             .alpha(0.4)
             .hex(), // TODO: This was blend * 2
-        errorColor: background(layer, "negative"),
-        gutterBackground: background(layer),
-        gutterPaddingFactor: 3.5,
-        lineNumber: withOpacity(foreground(layer), 0.35),
-        lineNumberActive: foreground(layer),
-        renameFade: 0.6,
-        unnecessaryCodeFade: 0.5,
+        error_color: background(layer, "negative"),
+        gutter_background: background(layer),
+        gutter_padding_factor: 3.5,
+        line_number: with_opacity(foreground(layer), 0.35),
+        line_number_active: foreground(layer),
+        rename_fade: 0.6,
+        unnecessary_code_fade: 0.5,
         selection: theme.players[0],
         whitespace: theme.ramps.neutral(0.5).hex(),
-        guestSelections: [
+        guest_selections: [
             theme.players[1],
             theme.players[2],
             theme.players[3],
@@ -187,20 +187,20 @@ export default function editor(theme: ColorScheme): any {
             },
             border: border(theme.middle),
             shadow: theme.popover_shadow,
-            matchHighlight: foreground(theme.middle, "accent"),
+            match_highlight: foreground(theme.middle, "accent"),
             item: autocomplete_item,
-            hoveredItem: {
+            hovered_item: {
                 ...autocomplete_item,
-                matchHighlight: foreground(
+                match_highlight: foreground(
                     theme.middle,
                     "accent",
                     "hovered"
                 ),
                 background: background(theme.middle, "hovered"),
             },
-            selectedItem: {
+            selected_item: {
                 ...autocomplete_item,
-                matchHighlight: foreground(
+                match_highlight: foreground(
                     theme.middle,
                     "accent",
                     "active"
@@ -208,10 +208,10 @@ export default function editor(theme: ColorScheme): any {
                 background: background(theme.middle, "active"),
             },
         },
-        diagnosticHeader: {
+        diagnostic_header: {
             background: background(theme.middle),
-            icon_widthFactor: 1.5,
-            textScaleFactor: 0.857,
+            icon_width_factor: 1.5,
+            text_scale_factor: 0.857,
             border: border(theme.middle, {
                 bottom: true,
                 top: true,
@@ -229,16 +229,16 @@ export default function editor(theme: ColorScheme): any {
                 }),
             },
             message: {
-                highlightText: text(theme.middle, "sans", {
+                highlight_text: text(theme.middle, "sans", {
                     size: "sm",
                     weight: "bold",
                 }),
                 text: text(theme.middle, "sans", { size: "sm" }),
             },
         },
-        diagnosticPathHeader: {
+        diagnostic_path_header: {
             background: background(theme.middle),
-            textScaleFactor: 0.857,
+            text_scale_factor: 0.857,
             filename: text(theme.middle, "mono", { size: "sm" }),
             path: {
                 ...text(theme.middle, "mono", { size: "sm" }),
@@ -247,20 +247,20 @@ export default function editor(theme: ColorScheme): any {
                 },
             },
         },
-        errorDiagnostic: diagnostic(theme.middle, "negative"),
-        warningDiagnostic: diagnostic(theme.middle, "warning"),
-        informationDiagnostic: diagnostic(theme.middle, "accent"),
-        hintDiagnostic: diagnostic(theme.middle, "warning"),
-        invalidErrorDiagnostic: diagnostic(theme.middle, "base"),
-        invalidHintDiagnostic: diagnostic(theme.middle, "base"),
-        invalidInformationDiagnostic: diagnostic(theme.middle, "base"),
-        invalidWarningDiagnostic: diagnostic(theme.middle, "base"),
+        error_diagnostic: diagnostic(theme.middle, "negative"),
+        warning_diagnostic: diagnostic(theme.middle, "warning"),
+        information_diagnostic: diagnostic(theme.middle, "accent"),
+        hint_diagnostic: diagnostic(theme.middle, "warning"),
+        invalid_error_diagnostic: diagnostic(theme.middle, "base"),
+        invalid_hint_diagnostic: diagnostic(theme.middle, "base"),
+        invalid_information_diagnostic: diagnostic(theme.middle, "base"),
+        invalid_warning_diagnostic: diagnostic(theme.middle, "base"),
         hover_popover: hover_popover(theme),
-        linkDefinition: {
+        link_definition: {
             color: syntax.link_uri.color,
             underline: syntax.link_uri.underline,
         },
-        jumpIcon: interactive({
+        jump_icon: interactive({
             base: {
                 color: foreground(layer, "on"),
                 icon_width: 20,
@@ -282,12 +282,12 @@ export default function editor(theme: ColorScheme): any {
 
         scrollbar: {
             width: 12,
-            minHeightFactor: 1.0,
+            min_height_factor: 1.0,
             track: {
                 border: border(layer, "variant", { left: true }),
             },
             thumb: {
-                background: withOpacity(background(layer, "inverted"), 0.3),
+                background: with_opacity(background(layer, "inverted"), 0.3),
                 border: {
                     width: 1,
                     color: border_color(layer, "variant"),
@@ -299,17 +299,17 @@ export default function editor(theme: ColorScheme): any {
             },
             git: {
                 deleted: is_light
-                    ? withOpacity(theme.ramps.red(0.5).hex(), 0.8)
-                    : withOpacity(theme.ramps.red(0.4).hex(), 0.8),
+                    ? with_opacity(theme.ramps.red(0.5).hex(), 0.8)
+                    : with_opacity(theme.ramps.red(0.4).hex(), 0.8),
                 modified: is_light
-                    ? withOpacity(theme.ramps.yellow(0.5).hex(), 0.8)
-                    : withOpacity(theme.ramps.yellow(0.4).hex(), 0.8),
+                    ? with_opacity(theme.ramps.yellow(0.5).hex(), 0.8)
+                    : with_opacity(theme.ramps.yellow(0.4).hex(), 0.8),
                 inserted: is_light
-                    ? withOpacity(theme.ramps.green(0.5).hex(), 0.8)
-                    : withOpacity(theme.ramps.green(0.4).hex(), 0.8),
+                    ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
+                    : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
         },
-        compositionMark: {
+        composition_mark: {
             underline: {
                 thickness: 1.0,
                 color: border_color(layer),

@@ -2,7 +2,7 @@ import { ColorScheme } from "../common"
 import { icon_button, toggleable_icon_button } from "../component/icon_button"
 import { toggleable_text_button } from "../component/text_button"
 import { interactive, toggleable } from "../element"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 
 const ITEM_SPACING = 8
@@ -225,7 +225,7 @@ export function titlebar(theme: ColorScheme): any {
         // When the collaboration server is out of date, show a warning
         outdatedWarning: {
             ...text(theme.lowest, "sans", "warning", { size: "xs" }),
-            background: withOpacity(background(theme.lowest, "warning"), 0.3),
+            background: with_opacity(background(theme.lowest, "warning"), 0.3),
             border: border(theme.lowest, "warning"),
             margin: {
                 left: ITEM_SPACING,

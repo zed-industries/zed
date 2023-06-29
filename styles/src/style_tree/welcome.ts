@@ -1,5 +1,5 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import {
     border,
     background,
@@ -56,7 +56,7 @@ export default function welcome(colorScheme: ColorScheme): any {
         },
         checkboxGroup: {
             border: border(layer, "variant"),
-            background: withOpacity(background(layer, "hovered"), 0.25),
+            background: with_opacity(background(layer, "hovered"), 0.25),
             corner_radius: 4,
             padding: {
                 left: 12,

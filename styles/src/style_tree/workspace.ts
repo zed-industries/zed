@@ -1,5 +1,5 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import {
     background,
     border,
@@ -25,14 +25,14 @@ export default function workspace(colorScheme: ColorScheme): any {
                 height: 256,
             },
             logo: svg(
-                withOpacity("#000000", colorScheme.is_light ? 0.6 : 0.8),
+                with_opacity("#000000", colorScheme.is_light ? 0.6 : 0.8),
                 "icons/logo_96.svg",
                 256,
                 256
             ),
 
             logoShadow: svg(
-                withOpacity(
+                with_opacity(
                     colorScheme.is_light
                         ? "#FFFFFF"
                         : colorScheme.lowest.base.default.background,
@@ -97,8 +97,8 @@ export default function workspace(colorScheme: ColorScheme): any {
         zoomedBackground: {
             cursor: "Arrow",
             background: is_light
-                ? withOpacity(background(colorScheme.lowest), 0.8)
-                : withOpacity(background(colorScheme.highest), 0.6),
+                ? with_opacity(background(colorScheme.lowest), 0.8)
+                : with_opacity(background(colorScheme.highest), 0.6),
         },
         zoomedPaneForeground: {
             margin: 16,
@@ -181,7 +181,7 @@ export default function workspace(colorScheme: ColorScheme): any {
         }),
         disconnectedOverlay: {
             ...text(layer, "sans"),
-            background: withOpacity(background(layer), 0.8),
+            background: with_opacity(background(layer), 0.8),
         },
         notification: {
             margin: { top: 10 },
@@ -195,6 +195,6 @@ export default function workspace(colorScheme: ColorScheme): any {
             width: 400,
             margin: { right: 10, bottom: 10 },
         },
-        dropTargetOverlayColor: withOpacity(foreground(layer, "variant"), 0.5),
+        dropTargetOverlayColor: with_opacity(foreground(layer, "variant"), 0.5),
     }
 }

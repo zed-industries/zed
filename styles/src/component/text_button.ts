@@ -10,9 +10,9 @@ import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
     layer?:
-        | ColorScheme["lowest"]
-        | ColorScheme["middle"]
-        | ColorScheme["highest"]
+    | ColorScheme["lowest"]
+    | ColorScheme["middle"]
+    | ColorScheme["highest"]
     color?: keyof ColorScheme["lowest"]
     margin?: Partial<Margin>
     text_properties?: TextProperties

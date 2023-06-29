@@ -1,16 +1,14 @@
 import { ColorScheme } from "../theme/color_scheme"
-import { withOpacity } from "../theme/color"
+import { with_opacity } from "../theme/color"
 import { text, background } from "./components"
 import { toggleable } from "../element"
 
-export default function command_palette(colorScheme: ColorScheme): any {
-    const layer = colorScheme.highest
-
+export default function command_palette(theme: ColorScheme): any {
     const key = toggleable({
         base: {
-            text: text(layer, "mono", "variant", "default", { size: "xs" }),
+            text: text(theme.highest, "mono", "variant", "default", { size: "xs" }),
             corner_radius: 2,
-            background: background(layer, "on"),
+            background: background(theme.highest, "on"),
             padding: {
                 top: 1,
                 bottom: 1,
@@ -25,8 +23,8 @@ export default function command_palette(colorScheme: ColorScheme): any {
         },
         state: {
             active: {
-                text: text(layer, "mono", "on", "default", { size: "xs" }),
-                background: withOpacity(background(layer, "on"), 0.2),
+                text: text(theme.highest, "mono", "on", "default", { size: "xs" }),
+                background: with_opacity(background(theme.highest, "on"), 0.2),
             },
         },
     })
