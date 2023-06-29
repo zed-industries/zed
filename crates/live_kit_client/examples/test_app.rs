@@ -49,6 +49,10 @@ fn main() {
             let room_a = Room::new();
             room_a.connect(&live_kit_url, &user_a_token).await.unwrap();
 
+            println!("Audio input sources: {:?}", Room::audio_input_sources());
+            // TODO
+            println!("Audio output sources: {:?}", Room::audio_input_sources());
+
             let user2_token = token::create(
                 &live_kit_key,
                 &live_kit_secret,
@@ -57,6 +61,7 @@ fn main() {
             )
             .unwrap();
             let room_b = Room::new();
+
             room_b.connect(&live_kit_url, &user2_token).await.unwrap();
 
             let mut audio_track_updates = room_b.remote_audio_track_updates();

@@ -259,6 +259,18 @@ public func LKRemoteAudioTrackGetSid(track: UnsafeRawPointer) -> CFString {
     return track.sid! as CFString
 }
 
+@_cdecl("LKAudioInputSources")
+public func LKAudioInputSources(
+    data: UnsafeRawPointer,
+    callback: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool, UnsafeMutableRawPointer) -> Void
+) -> UnsafeRawPointer {
+    Room.audioDeviceModule.inputDevices.forEach { inputDevice in
+        callback(data, inputDevice.name as CFString, inputDevice.isDefault, Unmanaged.passRetained(inputDevice).toOpaque())
+    }
+    return data
+}
+
+
 @_cdecl("LKDisplaySources")
 public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFArray?, CFString?) -> Void) {
     MacOSScreenCapturer.sources(for: .display, includeCurrentApplication: false, preferredMethod: .legacy).then { displaySources in

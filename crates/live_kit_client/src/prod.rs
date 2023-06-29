@@ -101,6 +101,16 @@ extern "C" {
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
     fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
+    fn LKAudioInputSources(
+        callback_data: *mut c_void,
+        callback: extern "C" fn(
+            callback_data: *mut c_void,
+            name: CFStringRef,
+            is_default: bool,
+            native_device: *const c_void,
+        ),
+    ) -> *mut c_void;
+
     fn LKDisplaySources(
         callback_data: *mut c_void,
         callback: extern "C" fn(
@@ -190,6 +200,36 @@ impl Room {
 
     fn did_disconnect(&self) {
         *self.connection.lock().0.borrow_mut() = ConnectionState::Disconnected;
+    }
+
+    pub fn audio_input_sources() -> Vec<AudioDevice> {
+        let input_sources = Vec::<AudioDevice>::new();
+        unsafe {
+            extern "C" fn callback(
+                vec: *mut c_void,
+                name: CFStringRef,
+                is_default: bool,
+                native_device: *const c_void,
+            ) {
+                unsafe {
+                    let mut input_sources = Box::from_raw(vec as *mut Vec<AudioDevice>);
+                    let name = CFString::wrap_under_get_rule(name).to_string();
+                    input_sources.push(AudioDevice::new(name, is_default, native_device));
+                    let _ = Box::into_raw(input_sources);
+                }
+            }
+
+            let input_sources_raw =
+                LKAudioInputSources(Box::into_raw(Box::new(input_sources)) as *mut _, callback);
+
+            let input_sources = Box::from_raw(input_sources_raw as *mut Vec<AudioDevice>);
+
+            return input_sources.into_iter().collect();
+        }
+    }
+
+    pub fn audio_output_sources() -> Result<Vec<AudioDevice>> {
+        Ok(vec![])
     }
 
     pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
@@ -834,6 +874,40 @@ pub enum RemoteAudioTrackUpdate {
     MuteChanged { track_id: Sid, muted: bool },
     Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
+}
+
+pub struct AudioDevice {
+    name: String,
+    default: bool,
+    native_device: *const c_void,
+}
+
+impl AudioDevice {
+    fn new(name: String, default: bool, ptr: *const c_void) -> Self {
+        unsafe {
+            CFRetain(ptr);
+        };
+        Self {
+            name,
+            default,
+            native_device: ptr,
+        }
+    }
+}
+
+impl Drop for AudioDevice {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.native_device) }
+    }
+}
+
+impl std::fmt::Debug for AudioDevice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioDevice")
+            .field("name", &self.name)
+            .field("default", &self.default)
+            .finish()
+    }
 }
 
 pub struct MacOSDisplay(*const c_void);

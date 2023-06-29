@@ -359,6 +359,13 @@ impl Room {
         }
     }
 
+    pub fn audio_input_sources() -> Vec<AudioDevice> {
+        vec![
+            AudioDevice::new("Test Mic 1".to_string()),
+            AudioDevice::new("Test Mic 2".to_string()),
+        ]
+    }
+
     pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
         let this = self.clone();
         async move {
@@ -584,6 +591,17 @@ pub enum RemoteAudioTrackUpdate {
     MuteChanged { track_id: Sid, muted: bool },
     Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
+}
+
+#[derive(Debug)]
+pub struct AudioDevice {
+    _name: String,
+}
+
+impl AudioDevice {
+    fn new(name: String) -> Self {
+        Self { _name: name }
+    }
 }
 
 #[derive(Clone)]
