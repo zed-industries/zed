@@ -3,11 +3,12 @@ mod dense_id;
 use dense_id::DenseId;
 use parking_lot::Mutex;
 use rope::Rope;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     ops::Range,
     path::Path,
+    slice,
     sync::Arc,
 };
 use sum_tree::{Bias, SumTree, TreeMap};
@@ -286,18 +287,29 @@ struct Document {
     id: OperationId,
 }
 
+enum DocumentContent {
+    Text(Arc<str>),
+    Link(AnchorRange),
+}
+
+impl<T: Into<Arc<str>>> From<T> for DocumentContent {
+    fn from(value: T) -> Self {
+        DocumentContent::Text(value.into())
+    }
+}
+
 impl Document {
     pub fn edit<E, I, T>(&self, edits: E) -> Operation
     where
         E: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<usize>, T)>,
-        T: Into<Arc<str>>,
+        T: Into<DocumentContent>,
     {
         self.repo.update(|repo| {
             let edits = edits.into_iter();
             let mut edit_op = EditOperation {
                 id: repo.last_operation_id.tick(),
-                parent_ids: smallvec![repo.head],
+                parent_id: repo.head,
                 edits: SmallVec::with_capacity(edits.len()),
             };
             let mut new_insertions = Vec::new();
@@ -573,8 +585,8 @@ impl Operation {
 
     fn parent_ids(&self) -> &[OperationId] {
         match self {
-            Operation::CreateDocument(op) => &op.parent_ids,
-            Operation::Edit(op) => &op.parent_ids,
+            Operation::CreateDocument(op) => slice::from_ref(&op.parent_id),
+            Operation::Edit(op) => slice::from_ref(&op.parent_id),
         }
     }
 }
@@ -598,21 +610,35 @@ impl sum_tree::KeyedItem for Operation {
 #[derive(Clone, Debug)]
 struct CreateDocumentOperation {
     id: OperationId,
-    parent_ids: SmallVec<[OperationId; 2]>,
+    parent_id: OperationId,
 }
 
 #[derive(Clone, Debug)]
 struct EditOperation {
     id: OperationId,
-    parent_ids: SmallVec<[OperationId; 2]>,
-    edits: SmallVec<[(Range<Anchor>, Arc<str>); 2]>,
+    parent_id: OperationId,
+    edits: SmallVec<[(AnchorRange, Arc<str>); 2]>,
 }
 
 #[derive(Copy, Clone, Debug)]
 struct Anchor {
+    document_id: OperationId,
+    document_version: OperationId,
     insertion_id: OperationId,
     offset_in_insertion: usize,
     bias: Bias,
+}
+
+#[derive(Clone, Debug)]
+struct AnchorRange {
+    document_id: OperationId,
+    document_version: OperationId,
+    start_insertion_id: OperationId,
+    start_offset_in_insertion: usize,
+    start_bias: Bias,
+    end_insertion_id: OperationId,
+    end_offset_in_insertion: usize,
+    end_bias: Bias,
 }
 
 struct RopeBuilder<'a> {
