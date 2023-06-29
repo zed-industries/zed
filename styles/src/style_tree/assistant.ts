@@ -1,6 +1,7 @@
 import { ColorScheme, StyleSets } from "../theme/color_scheme"
 import { text, border, background, foreground, TextStyle } from "./components"
 import { Interactive, interactive } from "../element"
+import { tab_bar_button } from "../component/tab_bar_button"
 
 interface ToolbarButtonOptions {
     icon: string
@@ -23,34 +24,6 @@ type RemainingTokens = TextStyle & {
 }
 
 export default function assistant(theme: ColorScheme): any {
-    const TOOLBAR_SPACING = 8
-
-    const toolbar_button = ({ icon }: ToolbarButtonOptions) => {
-        return (
-            interactive({
-                base: {
-                    icon: {
-                        color: foreground(theme.highest, "variant"),
-                        asset: icon,
-                        dimensions: {
-                            width: 15,
-                            height: 15,
-                        },
-                    },
-                    container: {
-                        padding: { left: TOOLBAR_SPACING, right: TOOLBAR_SPACING },
-                    },
-                },
-                state: {
-                    hovered: {
-                        icon: {
-                            color: foreground(theme.highest, "hovered"),
-                        },
-                    },
-                },
-            })
-        )
-    }
 
     const interactive_role = (color: StyleSets): Interactive<RoleCycleButton> => {
         return (
@@ -93,26 +66,26 @@ export default function assistant(theme: ColorScheme): any {
             margin: { bottom: 4, top: 4 },
             background: background(theme.highest),
         },
-        hamburger_button: toolbar_button({
+        hamburger_button: tab_bar_button(theme, {
             icon: "icons/hamburger_15.svg",
         }),
 
-        split_button: toolbar_button({
+        split_button: tab_bar_button(theme, {
             icon: "icons/split_message_15.svg",
         }),
-        quote_button: toolbar_button({
+        quote_button: tab_bar_button(theme, {
             icon: "icons/radix/quote.svg",
         }),
-        assist_button: toolbar_button({
+        assist_button: tab_bar_button(theme, {
             icon: "icons/radix/magic-wand.svg",
         }),
-        zoom_in_button: toolbar_button({
+        zoom_in_button: tab_bar_button(theme, {
             icon: "icons/radix/enter-full-screen.svg",
         }),
-        zoom_out_button: toolbar_button({
+        zoom_out_button: tab_bar_button(theme, {
             icon: "icons/radix/exit-full-screen.svg",
         }),
-        plus_button: toolbar_button({
+        plus_button: tab_bar_button(theme, {
             icon: "icons/radix/plus.svg",
         }),
         title: {
@@ -158,7 +131,7 @@ export default function assistant(theme: ColorScheme): any {
                 background: background(theme.highest),
                 margin: { left: 12, right: 4, top: 12 },
                 padding: { right: 4, left: 4, top: 1, bottom: 1 },
-                corner_radius: 6,
+                corner_radius: 4,
                 ...text(theme.highest, "sans", "default", { size: "xs" }),
             },
             state: {
@@ -178,7 +151,7 @@ export default function assistant(theme: ColorScheme): any {
         },
         api_key_editor: {
             background: background(theme.highest, "on"),
-            corner_radius: 6,
+            corner_radius: 4,
             text: text(theme.highest, "mono", "on"),
             placeholder_text: text(theme.highest, "mono", "on", "disabled", {
                 size: "xs",
