@@ -40,14 +40,14 @@ export default function project_shared_notification(
             border: border(layer, { left: true, bottom: true }),
             ...text(layer, "sans", "accent", {
                 size: "xs",
-                weight: "extra_bold",
+                weight: "bold",
             }),
         },
         dismissButton: {
             border: border(layer, { left: true }),
             ...text(layer, "sans", "variant", {
                 size: "xs",
-                weight: "extra_bold",
+                weight: "bold",
             }),
         },
     }

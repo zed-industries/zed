@@ -1,6 +1,6 @@
 import {
-    fontFamilies as font_families,
-    fontSizes as font_sizes,
+    font_families,
+    font_sizes,
     FontWeight,
 } from "../common"
 import { Layer, Styles, StyleSets, Style } from "../theme/color_scheme"

@@ -1,5 +1,5 @@
 import deepmerge from "deepmerge"
-import { FontWeight, fontWeights } from "../common"
+import { FontWeight, font_weights } from "../common"
 import { ColorScheme } from "./color_scheme"
 import chroma from "chroma-js"
 
@@ -22,8 +22,8 @@ export interface Syntax {
     emphasis: SyntaxHighlightStyle
     "emphasis.strong": SyntaxHighlightStyle
     title: SyntaxHighlightStyle
-    linkUri: SyntaxHighlightStyle
-    linkText: SyntaxHighlightStyle
+    link_uri: SyntaxHighlightStyle
+    link_text: SyntaxHighlightStyle
     /** md: indented_code_block, fenced_code_block, code_span */
     "text.literal": SyntaxHighlightStyle
 
@@ -116,13 +116,13 @@ export interface Syntax {
 
 export type ThemeSyntax = Partial<Syntax>
 
-const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
+const default_syntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
     weight: "normal",
     underline: false,
     italic: false,
 }
 
-function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
+function build_default_syntax(color_scheme: ColorScheme): Syntax {
     // Make a temporary object that is allowed to be missing
     // the "color" property for each style
     const syntax: {
@@ -132,7 +132,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
     // then spread the default to each style
     for (const key of Object.keys({} as Syntax)) {
         syntax[key as keyof Syntax] = {
-            ...defaultSyntaxHighlightStyle,
+            ...default_syntaxHighlightStyle,
         }
     }
 
@@ -140,35 +140,35 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
     // predictive color distinct from any other color in the theme
     const predictive = chroma
         .mix(
-            colorScheme.ramps.neutral(0.4).hex(),
-            colorScheme.ramps.blue(0.4).hex(),
+            color_scheme.ramps.neutral(0.4).hex(),
+            color_scheme.ramps.blue(0.4).hex(),
             0.45,
             "lch"
         )
         .hex()
 
     const color = {
-        primary: colorScheme.ramps.neutral(1).hex(),
-        comment: colorScheme.ramps.neutral(0.71).hex(),
-        punctuation: colorScheme.ramps.neutral(0.86).hex(),
+        primary: color_scheme.ramps.neutral(1).hex(),
+        comment: color_scheme.ramps.neutral(0.71).hex(),
+        punctuation: color_scheme.ramps.neutral(0.86).hex(),
         predictive: predictive,
-        emphasis: colorScheme.ramps.blue(0.5).hex(),
-        string: colorScheme.ramps.orange(0.5).hex(),
-        function: colorScheme.ramps.yellow(0.5).hex(),
-        type: colorScheme.ramps.cyan(0.5).hex(),
-        constructor: colorScheme.ramps.blue(0.5).hex(),
-        variant: colorScheme.ramps.blue(0.5).hex(),
-        property: colorScheme.ramps.blue(0.5).hex(),
-        enum: colorScheme.ramps.orange(0.5).hex(),
-        operator: colorScheme.ramps.orange(0.5).hex(),
-        number: colorScheme.ramps.green(0.5).hex(),
-        boolean: colorScheme.ramps.green(0.5).hex(),
-        constant: colorScheme.ramps.green(0.5).hex(),
-        keyword: colorScheme.ramps.blue(0.5).hex(),
+        emphasis: color_scheme.ramps.blue(0.5).hex(),
+        string: color_scheme.ramps.orange(0.5).hex(),
+        function: color_scheme.ramps.yellow(0.5).hex(),
+        type: color_scheme.ramps.cyan(0.5).hex(),
+        constructor: color_scheme.ramps.blue(0.5).hex(),
+        variant: color_scheme.ramps.blue(0.5).hex(),
+        property: color_scheme.ramps.blue(0.5).hex(),
+        enum: color_scheme.ramps.orange(0.5).hex(),
+        operator: color_scheme.ramps.orange(0.5).hex(),
+        number: color_scheme.ramps.green(0.5).hex(),
+        boolean: color_scheme.ramps.green(0.5).hex(),
+        constant: color_scheme.ramps.green(0.5).hex(),
+        keyword: color_scheme.ramps.blue(0.5).hex(),
     }
 
     // Then assign colors and use Syntax to enforce each style getting it's own color
-    const defaultSyntax: Syntax = {
+    const default_syntax: Syntax = {
         ...syntax,
         comment: {
             color: color.comment,
@@ -188,18 +188,18 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         },
         "emphasis.strong": {
             color: color.emphasis,
-            weight: fontWeights.bold,
+            weight: font_weights.bold,
         },
         title: {
             color: color.primary,
-            weight: fontWeights.bold,
+            weight: font_weights.bold,
         },
-        linkUri: {
-            color: colorScheme.ramps.green(0.5).hex(),
+        link_uri: {
+            color: color_scheme.ramps.green(0.5).hex(),
             underline: true,
         },
-        linkText: {
-            color: colorScheme.ramps.orange(0.5).hex(),
+        link_text: {
+            color: color_scheme.ramps.orange(0.5).hex(),
             italic: true,
         },
         "text.literal": {
@@ -215,7 +215,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
             color: color.punctuation,
         },
         "punctuation.special": {
-            color: colorScheme.ramps.neutral(0.86).hex(),
+            color: color_scheme.ramps.neutral(0.86).hex(),
         },
         "punctuation.list_marker": {
             color: color.punctuation,
@@ -236,10 +236,10 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
             color: color.string,
         },
         constructor: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         variant: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         type: {
             color: color.type,
@@ -248,16 +248,16 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
             color: color.primary,
         },
         label: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         tag: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         attribute: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         property: {
-            color: colorScheme.ramps.blue(0.5).hex(),
+            color: color_scheme.ramps.blue(0.5).hex(),
         },
         constant: {
             color: color.constant,
@@ -288,17 +288,17 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         },
     }
 
-    return defaultSyntax
+    return default_syntax
 }
 
-function mergeSyntax(defaultSyntax: Syntax, colorScheme: ColorScheme): Syntax {
-    if (!colorScheme.syntax) {
-        return defaultSyntax
+function merge_syntax(default_syntax: Syntax, color_scheme: ColorScheme): Syntax {
+    if (!color_scheme.syntax) {
+        return default_syntax
     }
 
     return deepmerge<Syntax, Partial<ThemeSyntax>>(
-        defaultSyntax,
-        colorScheme.syntax,
+        default_syntax,
+        color_scheme.syntax,
         {
             arrayMerge: (destinationArray, sourceArray) => [
                 ...destinationArray,
@@ -308,10 +308,10 @@ function mergeSyntax(defaultSyntax: Syntax, colorScheme: ColorScheme): Syntax {
     )
 }
 
-export function buildSyntax(colorScheme: ColorScheme): Syntax {
-    const defaultSyntax: Syntax = buildDefaultSyntax(colorScheme)
+export function build_syntax(color_scheme: ColorScheme): Syntax {
+    const default_syntax: Syntax = build_default_syntax(color_scheme)
 
-    const syntax = mergeSyntax(defaultSyntax, colorScheme)
+    const syntax = merge_syntax(default_syntax, color_scheme)
 
     return syntax
 }

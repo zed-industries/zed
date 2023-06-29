@@ -238,8 +238,8 @@ const buildVariant = (variant: Variant): ThemeConfig => {
         variable: { color: colors.blue },
         property: { color: neutral[isLight ? 0 : 8] },
         embedded: { color: colors.aqua },
-        linkText: { color: colors.aqua },
-        linkUri: { color: colors.purple },
+        link_text: { color: colors.aqua },
+        link_uri: { color: colors.purple },
         title: { color: colors.green },
     }
 

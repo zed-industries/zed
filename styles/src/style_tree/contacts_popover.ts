@@ -1,14 +1,13 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, border } from "./components"
 
-export default function contacts_popover(colorScheme: ColorScheme): any {
-    const layer = colorScheme.middle
+export default function contacts_popover(theme: ColorScheme): any {
     return {
-        background: background(layer),
+        background: background(theme.middle),
         corner_radius: 6,
         padding: { top: 6, bottom: 6 },
-        shadow: colorScheme.popoverShadow,
-        border: border(layer),
+        shadow: theme.popoverShadow,
+        border: border(theme.middle),
         width: 300,
         height: 400,
     }

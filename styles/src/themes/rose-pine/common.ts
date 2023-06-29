@@ -69,7 +69,7 @@ export const syntax = (c: typeof color.default): Partial<ThemeSyntax> => {
         tag: { color: c.foam },
         "function.method": { color: c.rose },
         title: { color: c.gold },
-        linkText: { color: c.foam, italic: false },
-        linkUri: { color: c.rose },
+        link_text: { color: c.foam, italic: false },
+        link_uri: { color: c.rose },
     }
 }

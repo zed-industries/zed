@@ -39,14 +39,14 @@ export default function incoming_call_notification(
             border: border(layer, { left: true, bottom: true }),
             ...text(layer, "sans", "positive", {
                 size: "xs",
-                weight: "extra_bold",
+                weight: "bold",
             }),
         },
         declineButton: {
             border: border(layer, { left: true }),
             ...text(layer, "sans", "negative", {
                 size: "xs",
-                weight: "extra_bold",
+                weight: "bold",
             }),
         },
     }

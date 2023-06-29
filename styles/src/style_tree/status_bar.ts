@@ -41,7 +41,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
         lspStatus: interactive({
             base: {
                 ...diagnosticStatusContainer,
-                iconSpacing: 4,
+                icon_spacing: 4,
                 icon_width: 14,
                 height: 18,
                 message: text(layer, "sans"),
@@ -65,7 +65,7 @@ export default function status_bar(colorScheme: ColorScheme): any {
             base: {
                 height: 20,
                 icon_width: 16,
-                iconSpacing: 2,
+                icon_spacing: 2,
                 summarySpacing: 6,
                 text: text(layer, "sans", { size: "sm" }),
                 iconColorOk: foreground(layer, "variant"),

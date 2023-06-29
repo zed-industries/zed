@@ -9,34 +9,34 @@ const BANNER = `/*
 const dirname = __dirname
 
 async function main() {
-    const schemasPath = path.join(dirname, "../../", "crates/theme/schemas")
-    const schemaFiles = (await fs.readdir(schemasPath)).filter((x) =>
+    const schemas_path = path.join(dirname, "../../", "crates/theme/schemas")
+    const schema_files = (await fs.readdir(schemas_path)).filter((x) =>
         x.endsWith(".json")
     )
 
-    const compiledTypes = new Set()
+    const compiled_types = new Set()
 
-    for (const filename of schemaFiles) {
-        const filePath = path.join(schemasPath, filename)
-        const fileContents = await fs.readFile(filePath)
-        const schema = JSON.parse(fileContents.toString())
+    for (const filename of schema_files) {
+        const file_path = path.join(schemas_path, filename)
+        const file_contents = await fs.readFile(file_path)
+        const schema = JSON.parse(file_contents.toString())
         const compiled = await compile(schema, schema.title, {
             bannerComment: "",
         })
-        const eachType = compiled.split("export")
-        for (const type of eachType) {
+        const each_type = compiled.split("export")
+        for (const type of each_type) {
             if (!type) {
                 continue
             }
-            compiledTypes.add("export " + type.trim())
+            compiled_types.add("export " + type.trim())
         }
     }
 
-    const output = BANNER + Array.from(compiledTypes).join("\n\n")
-    const outputPath = path.join(dirname, "../../styles/src/types/zed.ts")
+    const output = BANNER + Array.from(compiled_types).join("\n\n")
+    const output_path = path.join(dirname, "../../styles/src/types/zed.ts")
 
     try {
-        const existing = await fs.readFile(outputPath)
+        const existing = await fs.readFile(output_path)
         if (existing.toString() == output) {
             // Skip writing if it hasn't changed
             console.log("Schemas are up to date")
@@ -48,12 +48,12 @@ async function main() {
         }
     }
 
-    const typesDic = path.dirname(outputPath)
-    if (!fsSync.existsSync(typesDic)) {
-        await fs.mkdir(typesDic)
+    const types_dic = path.dirname(output_path)
+    if (!fsSync.existsSync(types_dic)) {
+        await fs.mkdir(types_dic)
     }
-    await fs.writeFile(outputPath, output)
-    console.log(`Wrote Typescript types to ${outputPath}`)
+    await fs.writeFile(output_path, output)
+    console.log(`Wrote Typescript types to ${output_path}`)
 }
 
 main().catch((e) => {

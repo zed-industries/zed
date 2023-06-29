@@ -48,7 +48,7 @@ export default function project_panel(theme: ColorScheme): any {
             background: background(layer),
             iconColor: foreground(layer, "variant"),
             iconSize: 7,
-            iconSpacing: 5,
+            icon_spacing: 5,
             text: text(layer, "mono", "variant", { size: "sm" }),
             status: {
                 ...git_status,

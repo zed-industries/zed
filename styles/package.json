@@ -41,6 +41,7 @@
         "eslint": "^8.43.0",
         "eslint-import-resolver-typescript": "^3.5.5",
         "eslint-plugin-import": "^2.27.5",
+        "eslint-plugin-snakecasejs": "^2.2.0",
         "typescript": "^5.1.5"
     }
 }

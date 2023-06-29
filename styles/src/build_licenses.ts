@@ -6,7 +6,7 @@ import { ThemeConfig } from "./common"
 const ACCEPTED_LICENSES_FILE = `${__dirname}/../../script/licenses/zed-licenses.toml`
 
 // Use the cargo-about configuration file as the source of truth for supported licenses.
-function parseAcceptedToml(file: string): string[] {
+function parse_accepted_toml(file: string): string[] {
     const buffer = fs.readFileSync(file).toString()
 
     const obj = toml.parse(buffer)
@@ -18,7 +18,7 @@ function parseAcceptedToml(file: string): string[] {
     return obj.accepted
 }
 
-function checkLicenses(themes: ThemeConfig[]) {
+function check_licenses(themes: ThemeConfig[]) {
     for (const theme of themes) {
         if (!theme.licenseFile) {
             throw Error(`Theme ${theme.name} should have a LICENSE file`)
@@ -26,25 +26,25 @@ function checkLicenses(themes: ThemeConfig[]) {
     }
 }
 
-function generateLicenseFile(themes: ThemeConfig[]) {
-    checkLicenses(themes)
+function generate_license_file(themes: ThemeConfig[]) {
+    check_licenses(themes)
     for (const theme of themes) {
-        const licenseText = fs.readFileSync(theme.licenseFile).toString()
-        writeLicense(theme.name, licenseText, theme.licenseUrl)
+        const license_text = fs.readFileSync(theme.licenseFile).toString()
+        write_license(theme.name, license_text, theme.licenseUrl)
     }
 }
 
-function writeLicense(
-    themeName: string,
-    licenseText: string,
-    licenseUrl?: string
+function write_license(
+    theme_name: string,
+    license_text: string,
+    license_url?: string
 ) {
     process.stdout.write(
-        licenseUrl
-            ? `## [${themeName}](${licenseUrl})\n\n${licenseText}\n********************************************************************************\n\n`
-            : `## ${themeName}\n\n${licenseText}\n********************************************************************************\n\n`
+        license_url
+            ? `## [${theme_name}](${license_url})\n\n${license_text}\n********************************************************************************\n\n`
+            : `## ${theme_name}\n\n${license_text}\n********************************************************************************\n\n`
     )
 }
 
-const acceptedLicenses = parseAcceptedToml(ACCEPTED_LICENSES_FILE)
-generateLicenseFile(themes)
+const accepted_licenses = parse_accepted_toml(ACCEPTED_LICENSES_FILE)
+generate_license_file(themes)

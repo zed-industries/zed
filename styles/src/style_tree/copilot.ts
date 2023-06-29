@@ -1,17 +1,16 @@
 import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, svg, text } from "./components"
 import { interactive } from "../element"
-export default function copilot(colorScheme: ColorScheme): any {
-    const layer = colorScheme.middle
+export default function copilot(theme: ColorScheme): any {
 
     const content_width = 264
 
-    const ctaButton =
+    const cta_button =
         // Copied from welcome screen. FIXME: Move this into a ZDS component
         interactive({
             base: {
-                background: background(layer),
-                border: border(layer, "default"),
+                background: background(theme.middle),
+                border: border(theme.middle, "default"),
                 corner_radius: 4,
                 margin: {
                     top: 4,
@@ -25,22 +24,22 @@ export default function copilot(colorScheme: ColorScheme): any {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", { size: "sm" }),
+                ...text(theme.middle, "sans", "default", { size: "sm" }),
             },
             state: {
                 hovered: {
-                    ...text(layer, "sans", "default", { size: "sm" }),
-                    background: background(layer, "hovered"),
-                    border: border(layer, "active"),
+                    ...text(theme.middle, "sans", "default", { size: "sm" }),
+                    background: background(theme.middle, "hovered"),
+                    border: border(theme.middle, "active"),
                 },
             },
         })
 
     return {
-        outLinkIcon: interactive({
+        out_link_icon: interactive({
             base: {
                 icon: svg(
-                    foreground(layer, "variant"),
+                    foreground(theme.middle, "variant"),
                     "icons/link_out_12.svg",
                     12,
                     12
@@ -53,21 +52,21 @@ export default function copilot(colorScheme: ColorScheme): any {
             state: {
                 hovered: {
                     icon: {
-                        color: foreground(layer, "hovered"),
+                        color: foreground(theme.middle, "hovered"),
                     },
                 },
             },
         }),
 
         modal: {
-            titleText: {
+            title_text: {
                 default: {
-                    ...text(layer, "sans", { size: "xs", weight: "bold" }),
+                    ...text(theme.middle, "sans", { size: "xs", weight: "bold" }),
                 },
             },
             titlebar: {
-                background: background(colorScheme.lowest),
-                border: border(layer, "active"),
+                background: background(theme.lowest),
+                border: border(theme.middle, "active"),
                 padding: {
                     top: 4,
                     bottom: 4,
@@ -76,7 +75,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                 },
             },
             container: {
-                background: background(colorScheme.lowest),
+                background: background(theme.lowest),
                 padding: {
                     top: 0,
                     left: 0,
@@ -84,10 +83,10 @@ export default function copilot(colorScheme: ColorScheme): any {
                     bottom: 8,
                 },
             },
-            closeIcon: interactive({
+            close_icon: interactive({
                 base: {
                     icon: svg(
-                        foreground(layer, "variant"),
+                        foreground(theme.middle, "variant"),
                         "icons/x_mark_8.svg",
                         8,
                         8
@@ -108,7 +107,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                 state: {
                     hovered: {
                         icon: svg(
-                            foreground(layer, "on"),
+                            foreground(theme.middle, "on"),
                             "icons/x_mark_8.svg",
                             8,
                             8
@@ -116,7 +115,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                     },
                     clicked: {
                         icon: svg(
-                            foreground(layer, "base"),
+                            foreground(theme.middle, "base"),
                             "icons/x_mark_8.svg",
                             8,
                             8
@@ -133,11 +132,11 @@ export default function copilot(colorScheme: ColorScheme): any {
         auth: {
             content_width,
 
-            ctaButton,
+            cta_button,
 
             header: {
                 icon: svg(
-                    foreground(layer, "default"),
+                    foreground(theme.middle, "default"),
                     "icons/zed_plus_copilot_32.svg",
                     92,
                     32
@@ -154,7 +153,7 @@ export default function copilot(colorScheme: ColorScheme): any {
 
             prompting: {
                 subheading: {
-                    ...text(layer, "sans", { size: "xs" }),
+                    ...text(theme.middle, "sans", { size: "xs" }),
                     margin: {
                         top: 6,
                         bottom: 12,
@@ -164,19 +163,19 @@ export default function copilot(colorScheme: ColorScheme): any {
                 },
 
                 hint: {
-                    ...text(layer, "sans", { size: "xs", color: "#838994" }),
+                    ...text(theme.middle, "sans", { size: "xs", color: "#838994" }),
                     margin: {
                         top: 6,
                         bottom: 2,
                     },
                 },
 
-                deviceCode: {
-                    text: text(layer, "mono", { size: "sm" }),
+                device_code: {
+                    text: text(theme.middle, "mono", { size: "sm" }),
                     cta: {
-                        ...ctaButton,
-                        background: background(colorScheme.lowest),
-                        border: border(colorScheme.lowest, "inverted"),
+                        ...cta_button,
+                        background: background(theme.lowest),
+                        border: border(theme.lowest, "inverted"),
                         padding: {
                             top: 0,
                             bottom: 0,
@@ -189,7 +188,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                         },
                     },
                     left: content_width / 2,
-                    leftContainer: {
+                    left_container: {
                         padding: {
                             top: 3,
                             bottom: 3,
@@ -198,9 +197,9 @@ export default function copilot(colorScheme: ColorScheme): any {
                         },
                     },
                     right: (content_width * 1) / 3,
-                    rightContainer: interactive({
+                    right_container: interactive({
                         base: {
-                            border: border(colorScheme.lowest, "inverted", {
+                            border: border(theme.lowest, "inverted", {
                                 bottom: false,
                                 right: false,
                                 top: false,
@@ -215,7 +214,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                         },
                         state: {
                             hovered: {
-                                border: border(layer, "active", {
+                                border: border(theme.middle, "active", {
                                     bottom: false,
                                     right: false,
                                     top: false,
@@ -227,9 +226,9 @@ export default function copilot(colorScheme: ColorScheme): any {
                 },
             },
 
-            notAuthorized: {
+            not_authorized: {
                 subheading: {
-                    ...text(layer, "sans", { size: "xs" }),
+                    ...text(theme.middle, "sans", { size: "xs" }),
 
                     margin: {
                         top: 16,
@@ -240,12 +239,12 @@ export default function copilot(colorScheme: ColorScheme): any {
                 },
 
                 warning: {
-                    ...text(layer, "sans", {
+                    ...text(theme.middle, "sans", {
                         size: "xs",
-                        color: foreground(layer, "warning"),
+                        color: foreground(theme.middle, "warning"),
                     }),
-                    border: border(layer, "warning"),
-                    background: background(layer, "warning"),
+                    border: border(theme.middle, "warning"),
+                    background: background(theme.middle, "warning"),
                     corner_radius: 2,
                     padding: {
                         top: 4,
@@ -263,7 +262,7 @@ export default function copilot(colorScheme: ColorScheme): any {
 
             authorized: {
                 subheading: {
-                    ...text(layer, "sans", { size: "xs" }),
+                    ...text(theme.middle, "sans", { size: "xs" }),
 
                     margin: {
                         top: 16,
@@ -272,7 +271,7 @@ export default function copilot(colorScheme: ColorScheme): any {
                 },
 
                 hint: {
-                    ...text(layer, "sans", { size: "xs", color: "#838994" }),
+                    ...text(theme.middle, "sans", { size: "xs", color: "#838994" }),
                     margin: {
                         top: 24,
                         bottom: 4,

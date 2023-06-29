@@ -6,38 +6,38 @@ import { ColorScheme, createColorScheme } from "./theme/color_scheme"
 import snakeCase from "./utils/snake_case"
 import { themes } from "./themes"
 
-const assetsDirectory = `${__dirname}/../../assets`
-const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
+const assets_directory = `${__dirname}/../../assets`
+const temp_directory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
 
 // Clear existing themes
-function clearThemes(themeDirectory: string) {
-    if (!fs.existsSync(themeDirectory)) {
-        fs.mkdirSync(themeDirectory, { recursive: true })
+function clear_themes(theme_directory: string) {
+    if (!fs.existsSync(theme_directory)) {
+        fs.mkdirSync(theme_directory, { recursive: true })
     } else {
-        for (const file of fs.readdirSync(themeDirectory)) {
+        for (const file of fs.readdirSync(theme_directory)) {
             if (file.endsWith(".json")) {
-                fs.unlinkSync(path.join(themeDirectory, file))
+                fs.unlinkSync(path.join(theme_directory, file))
             }
         }
     }
 }
 
-function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
-    clearThemes(outputDirectory)
-    for (const colorScheme of colorSchemes) {
-        const styleTree = snakeCase(app(colorScheme))
-        const styleTreeJSON = JSON.stringify(styleTree, null, 2)
-        const tempPath = path.join(tempDirectory, `${colorScheme.name}.json`)
-        const outPath = path.join(outputDirectory, `${colorScheme.name}.json`)
-        fs.writeFileSync(tempPath, styleTreeJSON)
-        fs.renameSync(tempPath, outPath)
-        console.log(`- ${outPath} created`)
+function write_themes(color_schemes: ColorScheme[], output_directory: string) {
+    clear_themes(output_directory)
+    for (const color_scheme of color_schemes) {
+        const style_tree = snakeCase(app(color_scheme))
+        const style_tree_json = JSON.stringify(style_tree, null, 2)
+        const temp_path = path.join(temp_directory, `${color_scheme.name}.json`)
+        const out_path = path.join(output_directory, `${color_scheme.name}.json`)
+        fs.writeFileSync(temp_path, style_tree_json)
+        fs.renameSync(temp_path, out_path)
+        console.log(`- ${out_path} created`)
     }
 }
 
-const colorSchemes: ColorScheme[] = themes.map((theme) =>
+const color_schemes: ColorScheme[] = themes.map((theme) =>
     createColorScheme(theme)
 )
 
 // Write new themes to theme directory
-writeThemes(colorSchemes, `${assetsDirectory}/themes`)
+write_themes(color_schemes, `${assets_directory}/themes`)

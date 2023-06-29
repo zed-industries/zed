@@ -29,6 +29,17 @@ module.exports = {
     rules: {
         "linebreak-style": ["error", "unix"],
         semi: ["error", "never"],
+        "@typescript-eslint/naming-convention": [
+            "warn",
+            {
+                selector: ["property", "variableLike", "memberLike", "method"],
+                format: ["snake_case"],
+            },
+            {
+                selector: ["typeLike"],
+                format: ["PascalCase"],
+            },
+        ],
         "import/no-restricted-paths": [
             "error",
             {
