@@ -2631,7 +2631,7 @@ impl MultiBufferSnapshot {
                 };
             }
         }
-        panic!("excerpt not found")
+        panic!("excerpt not found");
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {

@@ -7895,6 +7895,14 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
     cx_a.foreground().start_waiting();
 
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer("/a/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    let next_call_id = Arc::new(AtomicU32::new(0));
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -7903,9 +7911,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    let next_call_id = Arc::new(AtomicU32::new(0));
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_next_call_id = Arc::clone(&next_call_id);
@@ -7938,6 +7943,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .next()
         .await
         .unwrap();
+
     cx_a.foreground().finish_waiting();
     cx_a.foreground().run_until_parked();
 

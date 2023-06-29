@@ -851,7 +851,6 @@ mod tests {
             })
         });
 
-        cx.foreground().start_waiting();
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         fake_server
@@ -890,7 +889,6 @@ mod tests {
             })
             .next()
             .await;
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         let mut edits_made = 1;
@@ -976,7 +974,6 @@ mod tests {
             })
         });
 
-        cx.foreground().start_waiting();
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         let another_lsp_request_count = Arc::clone(&lsp_request_count);
@@ -1025,7 +1022,6 @@ mod tests {
             })
             .next()
             .await;
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         let mut edits_made = 1;
@@ -1311,7 +1307,6 @@ mod tests {
             })
         });
 
-        cx.foreground().start_waiting();
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let fake_server = Arc::new(fake_server);
         let lsp_request_count = Arc::new(AtomicU32::new(0));
@@ -1353,7 +1348,6 @@ mod tests {
             expected_changes.push(change_after_opening);
         }
 
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
@@ -1444,7 +1438,6 @@ mod tests {
             })
         });
 
-        cx.foreground().start_waiting();
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
         let fake_server = Arc::new(fake_server);
         let lsp_request_count = Arc::new(AtomicU32::new(0));
@@ -1488,7 +1481,6 @@ mod tests {
         add_refresh_task(&mut initial_refresh_tasks);
         let _ = futures::future::join_all(initial_refresh_tasks).await;
 
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
@@ -1546,8 +1538,8 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 11);
-            let expected_hints = vec!["11".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 10);
+            let expected_hints = vec!["10".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
@@ -1587,8 +1579,8 @@ mod tests {
                     "Should apply all changes made"
                 );
             }
-            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 13);
-            let expected_hints = vec!["13".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Relaxed), 12);
+            let expected_hints = vec!["12".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
@@ -1641,14 +1633,22 @@ mod tests {
         .await;
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
         });
 
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/a/main.rs", cx)
+            })
+            .await
+            .unwrap();
+        cx.foreground().run_until_parked();
         cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
         let editor = workspace
             .update(cx, |workspace, cx| {
                 workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -1657,7 +1657,6 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-        let fake_server = fake_servers.next().await.unwrap();
         let lsp_request_ranges = Arc::new(Mutex::new(Vec::new()));
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         let closure_lsp_request_ranges = Arc::clone(&lsp_request_ranges);
@@ -1689,7 +1688,6 @@ mod tests {
             })
             .next()
             .await;
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
@@ -1947,7 +1945,6 @@ mod tests {
             .next()
             .await;
 
-        cx.foreground().finish_waiting();
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
@@ -2135,13 +2132,22 @@ unedited (2nd) buffer should have the same hint");
 
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
         });
 
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/a/main.rs", cx)
+            })
+            .await
+            .unwrap();
+        cx.foreground().run_until_parked();
+        cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
         let editor = workspace
             .update(cx, |workspace, cx| {
                 workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -2150,8 +2156,6 @@ unedited (2nd) buffer should have the same hint");
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-
-        let fake_server = fake_servers.next().await.unwrap();
 
         ("/a/main.rs", editor, fake_server)
     }
@@ -2173,12 +2177,12 @@ unedited (2nd) buffer should have the same hint");
     }
 
     fn visible_hint_labels(editor: &Editor, cx: &ViewContext<'_, '_, Editor>) -> Vec<String> {
-        let mut zz = editor
+        let mut hints = editor
             .visible_inlay_hints(cx)
             .into_iter()
             .map(|hint| hint.text.to_string())
             .collect::<Vec<_>>();
-        zz.sort();
-        zz
+        hints.sort();
+        hints
     }
 }

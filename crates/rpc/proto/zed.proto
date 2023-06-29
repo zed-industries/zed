@@ -137,9 +137,9 @@ message Envelope {
 
         UpdateWorktreeSettings update_worktree_settings = 113;
 
-        InlayHints inlay_hints = 114;
-        InlayHintsResponse inlay_hints_response = 115;
-        RefreshInlayHints refresh_inlay_hints = 116;
+        InlayHints inlay_hints = 116;
+        InlayHintsResponse inlay_hints_response = 117;
+        RefreshInlayHints refresh_inlay_hints = 118;
     }
 }
 

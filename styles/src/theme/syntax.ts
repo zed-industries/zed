@@ -198,7 +198,6 @@ function build_default_syntax(color_scheme: ColorScheme): Syntax {
         hint: {
             color: color.hint,
             weight: font_weights.bold,
-            // italic: true,
         },
         emphasis: {
             color: color.emphasis,

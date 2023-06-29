@@ -2827,23 +2827,23 @@ impl Project {
             })
             .detach();
 
-            language_server
-                .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
-                    move |(), mut cx| async move {
-                        let this = this
-                            .upgrade(&cx)
-                            .ok_or_else(|| anyhow!("project dropped"))?;
-                        this.update(&mut cx, |project, cx| {
-                            cx.emit(Event::RefreshInlays);
-                            project.remote_id().map(|project_id| {
-                                project.client.send(proto::RefreshInlayHints { project_id })
-                            })
+        language_server
+            .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
+                move |(), mut cx| async move {
+                    let this = this
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("project dropped"))?;
+                    this.update(&mut cx, |project, cx| {
+                        cx.emit(Event::RefreshInlays);
+                        project.remote_id().map(|project_id| {
+                            project.client.send(proto::RefreshInlayHints { project_id })
                         })
-                        .transpose()?;
-                        Ok(())
-                    }
-                })
-                .detach();
+                    })
+                    .transpose()?;
+                    Ok(())
+                }
+            })
+            .detach();
 
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
