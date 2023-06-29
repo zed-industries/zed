@@ -3071,17 +3071,20 @@ impl BackgroundScanner {
 
                 path_prefix = self.path_prefixes_to_scan_rx.recv().fuse() => {
                     let Ok(path_prefix) = path_prefix else { break };
+                    log::trace!("adding path prefix {:?}", path_prefix);
 
-                    self.forcibly_load_paths(&[path_prefix.clone()]).await;
+                    let did_scan = self.forcibly_load_paths(&[path_prefix.clone()]).await;
+                    if did_scan {
+                        let abs_path =
+                        {
+                            let mut state = self.state.lock();
+                            state.path_prefixes_to_scan.insert(path_prefix.clone());
+                            state.snapshot.abs_path.join(&path_prefix)
+                        };
 
-                    let abs_path =
-                    {
-                        let mut state = self.state.lock();
-                        state.path_prefixes_to_scan.insert(path_prefix.clone());
-                        state.snapshot.abs_path.join(path_prefix)
-                    };
-                    if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
-                        self.process_events(vec![abs_path]).await;
+                        if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
+                            self.process_events(vec![abs_path]).await;
+                        }
                     }
                 }
 
@@ -3097,10 +3100,13 @@ impl BackgroundScanner {
         }
     }
 
-    async fn process_scan_request(&self, request: ScanRequest, scanning: bool) -> bool {
+    async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
-        let root_path = self.forcibly_load_paths(&request.relative_paths).await;
+        request.relative_paths.sort_unstable();
+        self.forcibly_load_paths(&request.relative_paths).await;
+
+        let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -3108,10 +3114,9 @@ impl BackgroundScanner {
                 return false;
             }
         };
-
         let abs_paths = request
             .relative_paths
-            .into_iter()
+            .iter()
             .map(|path| {
                 if path.file_name().is_some() {
                     root_canonical_path.join(path)
@@ -3120,12 +3125,19 @@ impl BackgroundScanner {
                 }
             })
             .collect::<Vec<_>>();
-        self.reload_entries_for_paths(root_path, root_canonical_path, abs_paths, None)
-            .await;
+
+        self.reload_entries_for_paths(
+            root_path,
+            root_canonical_path,
+            &request.relative_paths,
+            abs_paths,
+            None,
+        )
+        .await;
         self.send_status_update(scanning, Some(request.done))
     }
 
-    async fn process_events(&mut self, abs_paths: Vec<PathBuf>) {
+    async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
         log::debug!("received fs events {:?}", abs_paths);
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
@@ -3137,25 +3149,61 @@ impl BackgroundScanner {
             }
         };
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        let paths = self
-            .reload_entries_for_paths(
+        let mut relative_paths = Vec::with_capacity(abs_paths.len());
+        let mut unloaded_relative_paths = Vec::new();
+        abs_paths.sort_unstable();
+        abs_paths.dedup_by(|a, b| a.starts_with(&b));
+        abs_paths.retain(|abs_path| {
+            let snapshot = &self.state.lock().snapshot;
+            {
+                let relative_path: Arc<Path> =
+                    if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
+                        path.into()
+                    } else {
+                        log::error!(
+                        "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
+                    );
+                        return false;
+                    };
+
+                let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
+                    snapshot
+                        .entry_for_path(parent)
+                        .map_or(false, |entry| entry.kind == EntryKind::Dir)
+                });
+                if !parent_dir_is_loaded {
+                    unloaded_relative_paths.push(relative_path);
+                    log::debug!("ignoring event {abs_path:?} within unloaded directory");
+                    return false;
+                }
+
+                relative_paths.push(relative_path);
+                true
+            }
+        });
+
+        if !relative_paths.is_empty() {
+            let (scan_job_tx, scan_job_rx) = channel::unbounded();
+            self.reload_entries_for_paths(
                 root_path,
                 root_canonical_path,
+                &relative_paths,
                 abs_paths,
                 Some(scan_job_tx.clone()),
             )
             .await;
-        drop(scan_job_tx);
-        self.scan_dirs(false, scan_job_rx).await;
+            drop(scan_job_tx);
+            self.scan_dirs(false, scan_job_rx).await;
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        self.update_ignore_statuses(scan_job_tx).await;
-        self.scan_dirs(false, scan_job_rx).await;
+            let (scan_job_tx, scan_job_rx) = channel::unbounded();
+            self.update_ignore_statuses(scan_job_tx).await;
+            self.scan_dirs(false, scan_job_rx).await;
+        }
 
         {
             let mut state = self.state.lock();
-            state.reload_repositories(&paths, self.fs.as_ref());
+            relative_paths.extend(unloaded_relative_paths);
+            state.reload_repositories(&relative_paths, self.fs.as_ref());
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
             for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
                 state.scanned_dirs.remove(&entry_id);
@@ -3165,12 +3213,11 @@ impl BackgroundScanner {
         self.send_status_update(false, None);
     }
 
-    async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> Arc<Path> {
-        let root_path;
+    async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
         let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
         {
             let mut state = self.state.lock();
-            root_path = state.snapshot.abs_path.clone();
+            let root_path = state.snapshot.abs_path.clone();
             for path in paths {
                 for ancestor in path.ancestors() {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
@@ -3201,8 +3248,8 @@ impl BackgroundScanner {
         while let Some(job) = scan_job_rx.next().await {
             self.scan_dir(&job).await.log_err();
         }
-        self.state.lock().paths_to_scan.clear();
-        root_path
+
+        mem::take(&mut self.state.lock().paths_to_scan).len() > 0
     }
 
     async fn scan_dirs(
@@ -3475,7 +3522,7 @@ impl BackgroundScanner {
                             .expect("channel is unbounded");
                     }
                 } else {
-                    log::debug!("defer scanning directory {:?} {:?}", entry.path, entry.kind);
+                    log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
                 }
             }
@@ -3490,26 +3537,10 @@ impl BackgroundScanner {
         &self,
         root_abs_path: Arc<Path>,
         root_canonical_path: PathBuf,
-        mut abs_paths: Vec<PathBuf>,
+        relative_paths: &[Arc<Path>],
+        abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
-    ) -> Vec<Arc<Path>> {
-        let mut event_paths = Vec::<Arc<Path>>::with_capacity(abs_paths.len());
-        abs_paths.sort_unstable();
-        abs_paths.dedup_by(|a, b| a.starts_with(&b));
-        abs_paths.retain(|abs_path| {
-            if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
-                event_paths.push(path.into());
-                true
-            } else {
-                log::error!(
-                    "unexpected event {:?} for root path {:?}",
-                    abs_path,
-                    root_canonical_path
-                );
-                false
-            }
-        });
-
+    ) {
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
@@ -3538,30 +3569,15 @@ impl BackgroundScanner {
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
-        for (path, metadata) in event_paths.iter().zip(metadata.iter()) {
+        for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
                 log::trace!("remove path {:?}", path);
                 state.remove_path(path);
             }
         }
 
-        for (path, metadata) in event_paths.iter().zip(metadata.iter()) {
-            if let (Some(parent), true) = (path.parent(), doing_recursive_update) {
-                if state
-                    .snapshot
-                    .entry_for_path(parent)
-                    .map_or(true, |entry| entry.kind != EntryKind::Dir)
-                {
-                    log::debug!(
-                        "ignoring event {path:?} within unloaded directory {:?}",
-                        parent
-                    );
-                    continue;
-                }
-            }
-
+        for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
-
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
@@ -3624,12 +3640,10 @@ impl BackgroundScanner {
 
         util::extend_sorted(
             &mut state.changed_paths,
-            event_paths.iter().cloned(),
+            relative_paths.iter().cloned(),
             usize::MAX,
             Ord::cmp,
         );
-
-        event_paths
     }
 
     fn remove_repo_path(&self, path: &Path, snapshot: &mut LocalSnapshot) -> Option<()> {
