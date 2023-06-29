@@ -28,7 +28,8 @@ use theme::{AvatarStyle, Theme};
 use util::ResultExt;
 use workspace::{FollowNextCollaborator, Workspace};
 
-// const MAX_TITLE_LENGTH: usize = 75;
+const MAX_PROJECT_NAME_LENGTH: usize = 40;
+const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 actions!(
     collab,
@@ -210,11 +211,16 @@ impl CollabTitlebarItem {
             names_and_branches.next().unwrap_or(("", None))
         };
 
-        let name = name.to_owned();
+        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
         let branch_prepended = entry
             .as_ref()
             .and_then(RepositoryEntry::branch)
-            .map(|branch| format!("/{branch}"));
+            .map(|branch| {
+                format!(
+                    "/{}",
+                    util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH)
+                )
+            });
         let text_style = theme.titlebar.title.clone();
         let item_spacing = theme.titlebar.item_spacing;
 
