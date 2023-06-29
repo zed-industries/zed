@@ -63,7 +63,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     let store = cx.add_model(|_| {
         VectorStore::new(
             fs.clone(),
-            db_path.to_string_lossy().to_string(),
+            db_path,
             Arc::new(FakeEmbeddingProvider),
             languages,
         )

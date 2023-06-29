@@ -15,11 +15,6 @@ use sha1::{Digest, Sha1};
 
 use crate::IndexedFile;
 
-// This is saving to a local database store within the users dev zed path
-// Where do we want this to sit?
-// Assuming near where the workspace DB sits.
-pub const VECTOR_DB_URL: &str = "embeddings_db";
-
 // Note this is not an appropriate document
 #[derive(Debug)]
 pub struct DocumentRecord {
@@ -109,7 +104,7 @@ pub struct VectorDatabase {
 }
 
 impl VectorDatabase {
-    pub fn new(path: &str) -> Result<Self> {
+    pub fn new(path: String) -> Result<Self> {
         let this = Self {
             db: rusqlite::Connection::open(path)?,
         };

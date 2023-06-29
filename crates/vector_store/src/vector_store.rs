@@ -6,16 +6,23 @@ mod modal;
 mod vector_store_tests;
 
 use anyhow::{anyhow, Result};
-use db::{FileSha1, VectorDatabase, VECTOR_DB_URL};
+use db::{FileSha1, VectorDatabase};
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use project::{Fs, Project, WorktreeId};
 use smol::channel;
-use std::{cmp::Ordering, collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tree_sitter::{Parser, QueryCursor};
-use util::{http::HttpClient, ResultExt, TryFutureExt};
+use util::{
+    channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt, TryFutureExt,
+};
 use workspace::{Workspace, WorkspaceCreated};
 
 #[derive(Debug)]
@@ -31,11 +38,14 @@ pub fn init(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AppContext,
 ) {
+    let db_file_path = EMBEDDINGS_DIR
+        .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
+        .join("embeddings_db");
+
     let vector_store = cx.add_model(|_| {
         VectorStore::new(
             fs,
-            VECTOR_DB_URL.to_string(),
-            // Arc::new(DummyEmbeddings {}),
+            db_file_path,
             Arc::new(OpenAIEmbeddings {
                 client: http_client,
             }),
@@ -87,7 +97,7 @@ pub struct IndexedFile {
 
 pub struct VectorStore {
     fs: Arc<dyn Fs>,
-    database_url: Arc<str>,
+    database_url: Arc<PathBuf>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     language_registry: Arc<LanguageRegistry>,
     worktree_db_ids: Vec<(WorktreeId, i64)>,
@@ -104,13 +114,13 @@ pub struct SearchResult {
 impl VectorStore {
     fn new(
         fs: Arc<dyn Fs>,
-        database_url: String,
+        database_url: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
         Self {
             fs,
-            database_url: database_url.into(),
+            database_url: Arc::new(database_url),
             embedding_provider,
             language_registry,
             worktree_db_ids: Vec::new(),
@@ -209,7 +219,10 @@ impl VectorStore {
                 .timer(std::time::Duration::from_secs(3))
                 .await;
 
-            let db = VectorDatabase::new(&database_url)?;
+            if let Some(db_directory) = database_url.parent() {
+                fs.create_dir(db_directory).await.log_err();
+            }
+            let db = VectorDatabase::new(database_url.to_string_lossy().into())?;
 
             let worktrees = project.read_with(&cx, |project, cx| {
                 project
@@ -372,7 +385,7 @@ impl VectorStore {
             let documents = cx
                 .background()
                 .spawn(async move {
-                    let database = VectorDatabase::new(database_url.as_ref())?;
+                    let database = VectorDatabase::new(database_url.to_string_lossy().into())?;
 
                     let phrase_embedding = embedding_provider
                         .embed_batch(vec![&phrase])
