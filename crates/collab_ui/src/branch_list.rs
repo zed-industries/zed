@@ -153,7 +153,7 @@ impl PickerDelegate for BranchListDelegate {
             .unwrap()
             .lock()
             .change_branch(&current_pick);
-        if let Err(err) = &status {
+        if status.is_err() {
             const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
             self.workspace.update(cx, |model, ctx| {
                 model.show_toast(
