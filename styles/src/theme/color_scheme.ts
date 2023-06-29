@@ -12,8 +12,17 @@ export interface ColorScheme {
     name: string
     is_light: boolean
 
+    /**
+    * App background, other elements that should sit directly on top of the background.
+    */
     lowest: Layer
+    /**
+    * Panels, tabs, other UI surfaces that sit on top of the background.
+    */
     middle: Layer
+    /**
+    * Editors like code buffers, conversation editors, etc.
+    */
     highest: Layer
 
     ramps: RampSet
