@@ -53,6 +53,7 @@ export default function editor(theme: ColorScheme): any {
         active_line_background: with_opacity(background(layer, "on"), 0.75),
         highlighted_line_background: background(layer, "on"),
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
+        hint: syntax.hint,
         suggestion: syntax.predictive,
         code_actions: {
             indicator: toggleable({

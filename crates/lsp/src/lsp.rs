@@ -388,6 +388,9 @@ impl LanguageServer {
                         resolve_support: None,
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
+                    inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -428,6 +431,10 @@ impl LanguageServer {
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
                         ..Default::default()
+                    }),
+                    inlay_hint: Some(InlayHintClientCapabilities {
+                        resolve_support: None,
+                        dynamic_registration: Some(false),
                     }),
                     ..Default::default()
                 }),
@@ -607,6 +614,7 @@ impl LanguageServer {
                                 })
                                 .detach();
                         }
+
                         Err(error) => {
                             log::error!(
                                 "error deserializing {} request: {:?}, message: {:?}",
@@ -708,7 +716,7 @@ impl LanguageServer {
                                         .context("failed to deserialize response"),
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
-                                let _ = tx.send(response);
+                                _ = tx.send(response);
                             })
                             .detach();
                     }),

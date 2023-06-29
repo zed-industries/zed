@@ -29,14 +29,15 @@ use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
     ModelHandle, Task, WeakModelHandle,
 };
+use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter},
+    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version,
     },
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
+    range_from_lsp, range_to_lsp, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
     Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, OffsetRangeExt,
     Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
@@ -75,6 +76,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
+use text::Anchor;
 use util::{
     debug_panic, defer, http::HttpClient, merge_json_value_into,
     paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
@@ -277,6 +279,7 @@ pub enum Event {
         new_peer_id: proto::PeerId,
     },
     CollaboratorLeft(proto::PeerId),
+    RefreshInlays,
 }
 
 pub enum LanguageServerState {
@@ -319,10 +322,61 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: ModelHandle<Buffer>,
     pub range: Range<language::Anchor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InlayHint {
+    pub buffer_id: u64,
+    pub position: language::Anchor,
+    pub label: InlayHintLabel,
+    pub kind: Option<InlayHintKind>,
+    pub padding_left: bool,
+    pub padding_right: bool,
+    pub tooltip: Option<InlayHintTooltip>,
+}
+
+impl InlayHint {
+    pub fn text(&self) -> String {
+        match &self.label {
+            InlayHintLabel::String(s) => s.to_owned(),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &part.value).join(""),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InlayHintLabel {
+    String(String),
+    LabelParts(Vec<InlayHintLabelPart>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InlayHintLabelPart {
+    pub value: String,
+    pub tooltip: Option<InlayHintLabelPartTooltip>,
+    pub location: Option<Location>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InlayHintTooltip {
+    String(String),
+    MarkupContent(MarkupContent),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InlayHintLabelPartTooltip {
+    String(String),
+    MarkupContent(MarkupContent),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MarkupContent {
+    pub kind: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone)]
@@ -485,6 +539,8 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
+        client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -2651,10 +2707,11 @@ impl Project {
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
         let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
-
         let language_server = match pending_server.task.await? {
             Some(server) => server.initialize(initialization_options).await?,
-            None => return Ok(None),
+            None => {
+                return Ok(None);
+            }
         };
 
         language_server
@@ -2767,6 +2824,24 @@ impl Project {
                 let adapter = adapter.clone();
                 move |params, cx| {
                     Self::on_lsp_workspace_edit(this, params, server_id, adapter.clone(), cx)
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
+                move |(), mut cx| async move {
+                    let this = this
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("project dropped"))?;
+                    this.update(&mut cx, |project, cx| {
+                        cx.emit(Event::RefreshInlays);
+                        project.remote_id().map(|project_id| {
+                            project.client.send(proto::RefreshInlayHints { project_id })
+                        })
+                    })
+                    .transpose()?;
+                    Ok(())
                 }
             })
             .detach();
@@ -4837,6 +4912,61 @@ impl Project {
         )
     }
 
+    pub fn inlay_hints<T: ToOffset>(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        range: Range<T>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        let range_start = range.start;
+        let range_end = range.end;
+        let buffer_id = buffer.remote_id();
+        let buffer_version = buffer.version().clone();
+        let lsp_request = InlayHints { range };
+
+        if self.is_local() {
+            let lsp_request_task = self.request_lsp(buffer_handle.clone(), lsp_request, cx);
+            cx.spawn(|_, mut cx| async move {
+                buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
+                    })
+                    .await
+                    .context("waiting for inlay hint request range edits")?;
+                lsp_request_task.await.context("inlay hints LSP request")
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::InlayHints {
+                project_id,
+                buffer_id,
+                start: Some(serialize_anchor(&range_start)),
+                end: Some(serialize_anchor(&range_end)),
+                version: serialize_version(&buffer_version),
+            };
+            cx.spawn(|project, cx| async move {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("inlay hints proto request")?;
+                let hints_request_result = LspCommand::response_from_proto(
+                    lsp_request,
+                    response,
+                    project,
+                    buffer_handle.clone(),
+                    cx,
+                )
+                .await;
+
+                hints_request_result.context("inlay hints proto response conversion")
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn search(
         &self,
@@ -5409,41 +5539,39 @@ impl Project {
 
         let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
-            if let Some(server) = self.language_servers.get(server_id) {
-                if let LanguageServerState::Running {
-                    server,
-                    watched_paths,
-                    ..
-                } = server
-                {
-                    if let Some(watched_paths) = watched_paths.get(&worktree_id) {
-                        let params = lsp::DidChangeWatchedFilesParams {
-                            changes: changes
-                                .iter()
-                                .filter_map(|(path, _, change)| {
-                                    if !watched_paths.is_match(&path) {
-                                        return None;
-                                    }
-                                    let typ = match change {
-                                        PathChange::Loaded => return None,
-                                        PathChange::Added => lsp::FileChangeType::CREATED,
-                                        PathChange::Removed => lsp::FileChangeType::DELETED,
-                                        PathChange::Updated => lsp::FileChangeType::CHANGED,
-                                        PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
-                                    };
-                                    Some(lsp::FileEvent {
-                                        uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
-                                        typ,
-                                    })
+            if let Some(LanguageServerState::Running {
+                server,
+                watched_paths,
+                ..
+            }) = self.language_servers.get(server_id)
+            {
+                if let Some(watched_paths) = watched_paths.get(&worktree_id) {
+                    let params = lsp::DidChangeWatchedFilesParams {
+                        changes: changes
+                            .iter()
+                            .filter_map(|(path, _, change)| {
+                                if !watched_paths.is_match(&path) {
+                                    return None;
+                                }
+                                let typ = match change {
+                                    PathChange::Loaded => return None,
+                                    PathChange::Added => lsp::FileChangeType::CREATED,
+                                    PathChange::Removed => lsp::FileChangeType::DELETED,
+                                    PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                    PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
+                                };
+                                Some(lsp::FileEvent {
+                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                    typ,
                                 })
-                                .collect(),
-                        };
+                            })
+                            .collect(),
+                    };
 
-                        if !params.changes.is_empty() {
-                            server
-                                .notify::<lsp::notification::DidChangeWatchedFiles>(params)
-                                .log_err();
-                        }
+                    if !params.changes.is_empty() {
+                        server
+                            .notify::<lsp::notification::DidChangeWatchedFiles>(params)
+                            .log_err();
                     }
                 }
             }
@@ -6581,6 +6709,68 @@ impl Project {
         Ok(proto::OnTypeFormattingResponse { transaction })
     }
 
+    async fn handle_inlay_hints(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::InlayHints>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::InlayHintsResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let buffer_version = deserialize_version(&envelope.payload.version);
+
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(buffer_version.clone())
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "waiting for version {:?} for buffer {}",
+                    buffer_version,
+                    buffer.id()
+                )
+            })?;
+
+        let start = envelope
+            .payload
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing range start")?;
+        let end = envelope
+            .payload
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing range end")?;
+        let buffer_hints = this
+            .update(&mut cx, |project, cx| {
+                project.inlay_hints(buffer, start..end, cx)
+            })
+            .await
+            .context("inlay hints fetch")?;
+
+        Ok(this.update(&mut cx, |project, cx| {
+            InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
+        }))
+    }
+
+    async fn handle_refresh_inlay_hints(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::RefreshInlayHints>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::RefreshInlays);
+        });
+        Ok(proto::Ack {})
+    }
+
     async fn handle_lsp_command<T: LspCommand>(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
@@ -7316,16 +7506,11 @@ impl Project {
     ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_server_ids_for_buffer(buffer, cx)
             .into_iter()
-            .filter_map(|server_id| {
-                let server = self.language_servers.get(&server_id)?;
-                if let LanguageServerState::Running {
+            .filter_map(|server_id| match self.language_servers.get(&server_id)? {
+                LanguageServerState::Running {
                     adapter, server, ..
-                } = server
-                {
-                    Some((adapter, server))
-                } else {
-                    None
-                }
+                } => Some((adapter, server)),
+                _ => None,
             })
     }
 

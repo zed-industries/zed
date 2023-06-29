@@ -1,32 +1,34 @@
 mod block_map;
 mod fold_map;
-mod suggestion_map;
+mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{Anchor, AnchorRangeExt, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
-use fold_map::{FoldMap, FoldOffset};
+use fold_map::FoldMap;
 use gpui::{
     color::Color,
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
+use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
-pub use suggestion_map::Suggestion;
-use suggestion_map::SuggestionMap;
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use text::Rope;
 use wrap_map::WrapMap;
 
 pub use block_map::{
     BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
+
+pub use self::inlay_map::{Inlay, InlayProperties};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -44,7 +46,7 @@ pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap,
-    suggestion_map: SuggestionMap,
+    inlay_map: InlayMap,
     tab_map: TabMap,
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
@@ -69,8 +71,8 @@ impl DisplayMap {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
         let tab_size = Self::tab_size(&buffer, cx);
-        let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
-        let (suggestion_map, snapshot) = SuggestionMap::new(snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
@@ -79,7 +81,7 @@ impl DisplayMap {
             buffer,
             buffer_subscription,
             fold_map,
-            suggestion_map,
+            inlay_map,
             tab_map,
             wrap_map,
             block_map,
@@ -88,16 +90,13 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
+    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let (fold_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
-        let (suggestion_snapshot, edits) = self.suggestion_map.sync(fold_snapshot.clone(), edits);
-
+        let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot.clone(), edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (tab_snapshot, edits) = self
-            .tab_map
-            .sync(suggestion_snapshot.clone(), edits, tab_size);
+        let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot.clone(), edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot.clone(), edits, cx));
@@ -106,7 +105,7 @@ impl DisplayMap {
         DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(cx),
             fold_snapshot,
-            suggestion_snapshot,
+            inlay_snapshot,
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
@@ -132,15 +131,14 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.fold(ranges);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -157,15 +155,14 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -181,8 +178,8 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -199,8 +196,8 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -231,32 +228,6 @@ impl DisplayMap {
         self.text_highlights.remove(&Some(type_id))
     }
 
-    pub fn has_suggestion(&self) -> bool {
-        self.suggestion_map.has_suggestion()
-    }
-
-    pub fn replace_suggestion<T>(
-        &self,
-        new_suggestion: Option<Suggestion<T>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Suggestion<FoldOffset>>
-    where
-        T: ToPoint,
-    {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits, old_suggestion) =
-            self.suggestion_map.replace(new_suggestion, snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
-        old_suggestion
-    }
-
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
@@ -269,6 +240,39 @@ impl DisplayMap {
     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+        self.inlay_map.current_inlays()
+    }
+
+    pub fn splice_inlays<T: Into<Rope>>(
+        &mut self,
+        to_remove: Vec<InlayId>,
+        to_insert: Vec<(InlayId, InlayProperties<T>)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if to_remove.is_empty() && to_insert.is_empty() {
+            return;
+        }
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
@@ -288,7 +292,7 @@ impl DisplayMap {
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     fold_snapshot: fold_map::FoldSnapshot,
-    suggestion_snapshot: suggestion_map::SuggestionSnapshot,
+    inlay_snapshot: inlay_map::InlaySnapshot,
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
     block_snapshot: block_map::BlockSnapshot,
@@ -316,9 +320,11 @@ impl DisplaySnapshot {
 
     pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            let mut fold_point = self.fold_snapshot.to_fold_point(point, Bias::Left);
-            *fold_point.column_mut() = 0;
-            point = fold_point.to_buffer_point(&self.fold_snapshot);
+            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
+            fold_point.0.column = 0;
+            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+            point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Left);
             *display_point.column_mut() = 0;
@@ -332,9 +338,11 @@ impl DisplaySnapshot {
 
     pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            let mut fold_point = self.fold_snapshot.to_fold_point(point, Bias::Right);
-            *fold_point.column_mut() = self.fold_snapshot.line_len(fold_point.row());
-            point = fold_point.to_buffer_point(&self.fold_snapshot);
+            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
+            fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
+            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+            point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
@@ -364,9 +372,9 @@ impl DisplaySnapshot {
     }
 
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
-        let fold_point = self.fold_snapshot.to_fold_point(point, bias);
-        let suggestion_point = self.suggestion_snapshot.to_suggestion_point(fold_point);
-        let tab_point = self.tab_snapshot.to_tab_point(suggestion_point);
+        let inlay_point = self.inlay_snapshot.to_inlay_point(point);
+        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
+        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
@@ -376,9 +384,9 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
-        let suggestion_point = self.tab_snapshot.to_suggestion_point(tab_point, bias).0;
-        let fold_point = self.suggestion_snapshot.to_fold_point(suggestion_point);
-        fold_point.to_buffer_point(&self.fold_snapshot)
+        let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
+        let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+        self.inlay_snapshot.to_buffer_point(inlay_point)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -388,7 +396,13 @@ impl DisplaySnapshot {
     /// Returns text chunks starting at the given display row until the end of the file
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.block_snapshot
-            .chunks(display_row..self.max_point().row() + 1, false, None, None)
+            .chunks(
+                display_row..self.max_point().row() + 1,
+                false,
+                None,
+                None,
+                None,
+            )
             .map(|h| h.text)
     }
 
@@ -396,7 +410,7 @@ impl DisplaySnapshot {
     pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         (0..=display_row).into_iter().rev().flat_map(|row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, None, None)
+                .chunks(row..row + 1, false, None, None, None)
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -408,13 +422,15 @@ impl DisplaySnapshot {
         &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        suggestion_highlight: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
             Some(&self.text_highlights),
-            suggestion_highlight,
+            hint_highlights,
+            suggestion_highlights,
         )
     }
 
@@ -790,9 +806,10 @@ impl DisplayPoint {
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0);
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
-        let suggestion_point = map.tab_snapshot.to_suggestion_point(tab_point, bias).0;
-        let fold_point = map.suggestion_snapshot.to_fold_point(suggestion_point);
-        fold_point.to_buffer_offset(&map.fold_snapshot)
+        let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
+        let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
+        map.inlay_snapshot
+            .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
     }
 }
 
@@ -1706,7 +1723,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None) {
+        for chunk in snapshot.chunks(rows, true, None, None) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);

@@ -73,6 +73,16 @@
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true
   },
+  // Inlay hint related settings
+  "inlay_hints": {
+    // Global switch to toggle hints on and off, switched off by default.
+    "enabled":  false,
+    // Toggle certain types of hints on and off, all switched on by default.
+    "show_type_hints": true,
+    "show_parameter_hints":  true,
+    // Corresponds to null/None LSP hint type value.
+    "show_other_hints": true
+  },
   "project_panel": {
     // Whether to show the git status in the project panel.
     "git_status": true,
