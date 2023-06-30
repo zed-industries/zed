@@ -981,6 +981,19 @@ impl LocalWorktree {
         })
     }
 
+    /// Find the lowest path in the worktree's datastructures that is an ancestor
+    fn lowest_ancestor(&self, path: &Path) -> PathBuf {
+        let mut lowest_ancestor = None;
+        for path in path.ancestors() {
+            if self.entry_for_path(path).is_some() {
+                lowest_ancestor = Some(path.to_path_buf());
+                break;
+            }
+        }
+
+        lowest_ancestor.unwrap_or_else(|| PathBuf::from(""))
+    }
+
     pub fn create_entry(
         &self,
         path: impl Into<Arc<Path>>,
@@ -988,6 +1001,7 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
         let path = path.into();
+        let lowest_ancestor = self.lowest_ancestor(&path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let write = cx.background().spawn(async move {
@@ -1001,10 +1015,31 @@ impl LocalWorktree {
 
         cx.spawn(|this, mut cx| async move {
             write.await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut().unwrap().refresh_entry(path, None, cx)
-            })
-            .await
+            let (result, refreshes) = this.update(&mut cx, |this, cx| {
+                let mut refreshes = Vec::<Task<anyhow::Result<Entry>>>::new();
+                let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
+                for refresh_path in refresh_paths.ancestors() {
+                    if refresh_path == Path::new("") {
+                        continue;
+                    }
+                    let refresh_full_path = lowest_ancestor.join(refresh_path);
+
+                    refreshes.push(this.as_local_mut().unwrap().refresh_entry(
+                        refresh_full_path.into(),
+                        None,
+                        cx,
+                    ));
+                }
+                (
+                    this.as_local_mut().unwrap().refresh_entry(path, None, cx),
+                    refreshes,
+                )
+            });
+            for refresh in refreshes {
+                refresh.await.log_err();
+            }
+
+            result.await
         })
     }
 

@@ -279,6 +279,9 @@ impl Fs for RealFs {
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in chunks(text, line_ending) {
@@ -1077,6 +1080,9 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect();
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         self.write_file_internal(path, content)?;
         Ok(())
     }
