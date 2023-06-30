@@ -1012,6 +1012,41 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
         assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
     });
+
+    // Test smallest change
+    let entry = tree_real
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .create_entry("a/b/c/e.txt".as_ref(), false, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entry.is_file());
+
+    cx.foreground().run_until_parked();
+    tree_real.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("a/b/c/e.txt").unwrap().is_file());
+    });
+
+    // Test largest change
+    let entry = tree_real
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .create_entry("d/e/f/g.txt".as_ref(), false, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entry.is_file());
+
+    cx.foreground().run_until_parked();
+    tree_real.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("d/e/f/g.txt").unwrap().is_file());
+        assert!(tree.entry_for_path("d/e/f").unwrap().is_dir());
+        assert!(tree.entry_for_path("d/e/").unwrap().is_dir());
+        assert!(tree.entry_for_path("d/").unwrap().is_dir());
+    });
 }
 
 #[gpui::test(iterations = 100)]
