@@ -7,8 +7,8 @@ use crate::{
     platform::CursorStyle,
     platform::MouseButton,
     scene::{
-        CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
-        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
+        CursorRegion, HandlerSet, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
+        MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
     AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, SceneBuilder,
     SizeConstraint, View, ViewContext,
@@ -133,6 +133,15 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
         handler: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
+        self
+    }
+
+    pub fn on_click_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_click_out(button, handler);
         self
     }
 

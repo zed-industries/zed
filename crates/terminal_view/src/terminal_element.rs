@@ -395,16 +395,17 @@ impl TerminalElement {
         // Terminal Emulator controlled behavior:
         region = region
             // Start selections
-            .on_down(
-                MouseButton::Left,
-                TerminalElement::generic_button_handler(
-                    connection,
-                    origin,
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
-                    },
-                ),
-            )
+            .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
+                cx.focus_parent();
+                v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
+                if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, cx| {
+                        terminal.mouse_down(&event, origin);
+
+                        cx.notify();
+                    })
+                }
+            })
             // Update drag selections
             .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
                 if cx.is_self_focused() {

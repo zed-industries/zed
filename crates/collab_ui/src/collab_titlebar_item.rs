@@ -317,7 +317,7 @@ impl CollabTitlebarItem {
                     ),
                 ]
             };
-            user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
+            user_menu.toggle(Default::default(), AnchorCorner::TopRight, items, cx);
         });
     }
 
@@ -683,6 +683,9 @@ impl CollabTitlebarItem {
                         .into_any()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
+                .on_down(MouseButton::Left, move |_, this, cx| {
+                    this.user_menu.update(cx, |menu, _| menu.delay_cancel());
+                })
                 .on_click(MouseButton::Left, move |_, this, cx| {
                     this.toggle_user_menu(&Default::default(), cx)
                 })
