@@ -214,11 +214,6 @@ impl VectorStore {
         cx.spawn(|this, mut cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
-            // TODO: remove this after fixing the bug in scan_complete
-            cx.background()
-                .timer(std::time::Duration::from_secs(3))
-                .await;
-
             if let Some(db_directory) = database_url.parent() {
                 fs.create_dir(db_directory).await.log_err();
             }
