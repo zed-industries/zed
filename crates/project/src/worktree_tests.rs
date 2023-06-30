@@ -1654,6 +1654,23 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
 
     }));
 
+    const A_TXT: &'static str = "a.txt";
+    const B_TXT: &'static str = "b.txt";
+    const E_TXT: &'static str = "c/d/e.txt";
+    const F_TXT: &'static str = "f.txt";
+    const DOTGITIGNORE: &'static str = ".gitignore";
+    const BUILD_FILE: &'static str = "target/build_file";
+    let project_path = Path::new("project");
+
+    // Set up git repository before creating the worktree.
+    let work_dir = root.path().join("project");
+    let mut repo = git_init(work_dir.as_path());
+    repo.add_ignore_rule(IGNORE_RULE).unwrap();
+    git_add(A_TXT, &repo);
+    git_add(E_TXT, &repo);
+    git_add(DOTGITIGNORE, &repo);
+    git_commit("Initial commit", &repo);
+
     let tree = Worktree::local(
         build_client(cx),
         root.path(),
@@ -1665,26 +1682,9 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     .await
     .unwrap();
 
+    tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
-
-    const A_TXT: &'static str = "a.txt";
-    const B_TXT: &'static str = "b.txt";
-    const E_TXT: &'static str = "c/d/e.txt";
-    const F_TXT: &'static str = "f.txt";
-    const DOTGITIGNORE: &'static str = ".gitignore";
-    const BUILD_FILE: &'static str = "target/build_file";
-    let project_path: &Path = &Path::new("project");
-
-    let work_dir = root.path().join("project");
-    let mut repo = git_init(work_dir.as_path());
-    repo.add_ignore_rule(IGNORE_RULE).unwrap();
-    git_add(Path::new(A_TXT), &repo);
-    git_add(Path::new(E_TXT), &repo);
-    git_add(Path::new(DOTGITIGNORE), &repo);
-    git_commit("Initial commit", &repo);
-
-    tree.flush_fs_events(cx).await;
     deterministic.run_until_parked();
 
     // Check that the right git state is observed on startup
@@ -1704,39 +1704,39 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
         );
     });
 
+    // Modify a file in the working copy.
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
-
     tree.flush_fs_events(cx).await;
     deterministic.run_until_parked();
 
+    // The worktree detects that the file's git status has changed.
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-
         assert_eq!(
             snapshot.status_for_file(project_path.join(A_TXT)),
             Some(GitFileStatus::Modified)
         );
     });
 
-    git_add(Path::new(A_TXT), &repo);
-    git_add(Path::new(B_TXT), &repo);
+    // Create a commit in the git repository.
+    git_add(A_TXT, &repo);
+    git_add(B_TXT, &repo);
     git_commit("Committing modified and added", &repo);
     tree.flush_fs_events(cx).await;
     deterministic.run_until_parked();
 
-    // Check that repo only changes are tracked
+    // The worktree detects that the files' git status have changed.
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
             Some(GitFileStatus::Added)
         );
-
         assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
     });
 
+    // Modify files in the working copy and perform git operations on other files.
     git_reset(0, &repo);
     git_remove_index(Path::new(B_TXT), &repo);
     git_stash(&mut repo);
