@@ -15,7 +15,7 @@ use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -201,7 +201,6 @@ impl VectorStore {
                 let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
                 async move {
                     scan_complete.await;
-                    log::info!("worktree scan completed");
                 }
             })
             .collect::<Vec<_>>();
@@ -249,6 +248,7 @@ impl VectorStore {
 
             let (paths_tx, paths_rx) =
                 channel::unbounded::<(i64, PathBuf, String, Arc<Language>)>();
+            let (delete_paths_tx, delete_paths_rx) = channel::unbounded::<(i64, PathBuf)>();
             let (indexed_files_tx, indexed_files_rx) = channel::unbounded::<(i64, IndexedFile)>();
             cx.background()
                 .spawn({
@@ -257,6 +257,8 @@ impl VectorStore {
                     async move {
                         for worktree in worktrees.into_iter() {
                             let file_hashes = &worktree_hashes[&worktree.id()];
+                            let mut files_included =
+                                file_hashes.keys().collect::<HashSet<&PathBuf>>();
                             for file in worktree.files(false, 0) {
                                 let absolute_path = worktree.absolutize(&file.path);
 
@@ -269,20 +271,16 @@ impl VectorStore {
                                     }
 
                                     if let Some(content) = fs.load(&absolute_path).await.log_err() {
-                                        log::info!("loaded file: {absolute_path:?}");
-
                                         let path_buf = file.path.to_path_buf();
-                                        let already_stored = file_hashes
-                                            .get(&path_buf)
-                                            .map_or(false, |existing_hash| {
+                                        let already_stored = file_hashes.get(&path_buf).map_or(
+                                            false,
+                                            |existing_hash| {
+                                                files_included.remove(&path_buf);
                                                 existing_hash.equals(&content)
-                                            });
+                                            },
+                                        );
 
                                         if !already_stored {
-                                            log::info!(
-                                                "File Changed (Sending to Parse): {:?}",
-                                                &path_buf
-                                            );
                                             paths_tx
                                                 .try_send((
                                                     worktree_db_ids[&worktree.id()],
@@ -295,15 +293,28 @@ impl VectorStore {
                                     }
                                 }
                             }
+                            for file in files_included {
+                                delete_paths_tx
+                                    .try_send((worktree_db_ids[&worktree.id()], file.to_owned()))
+                                    .unwrap();
+                            }
                         }
                     }
                 })
                 .detach();
 
-            let db_write_task = cx.background().spawn(
+            let db_update_task = cx.background().spawn(
                 async move {
+                    // Inserting all new files
                     while let Ok((worktree_id, indexed_file)) = indexed_files_rx.recv().await {
+                        log::info!("Inserting File: {:?}", &indexed_file.path);
                         db.insert_file(worktree_id, indexed_file).log_err();
+                    }
+
+                    // Deleting all old files
+                    while let Ok((worktree_id, delete_path)) = delete_paths_rx.recv().await {
+                        log::info!("Deleting File: {:?}", &delete_path);
+                        db.delete_file(worktree_id, delete_path).log_err();
                     }
 
                     anyhow::Ok(())
@@ -342,7 +353,7 @@ impl VectorStore {
                 .await;
             drop(indexed_files_tx);
 
-            db_write_task.await;
+            db_update_task.await;
 
             this.update(&mut cx, |this, _| {
                 this.worktree_db_ids.extend(worktree_db_ids);

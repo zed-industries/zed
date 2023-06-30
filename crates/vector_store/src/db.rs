@@ -154,9 +154,16 @@ impl VectorDatabase {
         Ok(())
     }
 
+    pub fn delete_file(&self, worktree_id: i64, delete_path: PathBuf) -> Result<()> {
+        self.db.execute(
+            "DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2",
+            params![worktree_id, delete_path.to_str()],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_file(&self, worktree_id: i64, indexed_file: IndexedFile) -> Result<()> {
         // Write to files table, and return generated id.
-        log::info!("Inserting File!");
         self.db.execute(
             "
             DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2;
