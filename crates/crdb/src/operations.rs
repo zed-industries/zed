@@ -1,4 +1,4 @@
-use crate::{AnchorRange, OperationId, RevisionId};
+use crate::{AnchorRange, Message, OperationId, RevisionId};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -24,6 +24,12 @@ impl Operation {
             Operation::Edit(op) => &op.parent,
             Operation::CreateBranch(op) => &op.parent,
         }
+    }
+}
+
+impl Message for Operation {
+    fn to_bytes(&self) -> Vec<u8> {
+        serde_
     }
 }
 

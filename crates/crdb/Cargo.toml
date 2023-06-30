@@ -10,7 +10,10 @@ doctest = false
 [dependencies]
 rope = { path = "../rope" }
 sum_tree = { path = "../sum_tree" }
+collections = { path = "../collections" }
 
+anyhow.workspace = true
+futures.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smallvec.workspace = true

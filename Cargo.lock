@@ -1734,6 +1734,9 @@ dependencies = [
 name = "crdb"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
  "gpui",
  "lazy_static",
  "parking_lot 0.11.2",
