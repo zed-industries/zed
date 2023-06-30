@@ -215,8 +215,16 @@ impl PickerDelegate for BranchListDelegate {
         let style = theme.picker.header.clone();
         if self.last_query.is_empty() {
             Some(
-                Flex::row()
-                    .with_child(Label::new("Recent branches", style))
+                Stack::new()
+                    .with_child(
+                        Flex::row()
+                            .with_child(Label::new("Recent branches", style.label.clone()))
+                            .contained()
+                            .with_style(style.container)
+                            .into_any(),
+                    )
+                    .contained()
+                    .with_style(style.container)
                     .into_any(),
             )
         } else {
@@ -224,7 +232,11 @@ impl PickerDelegate for BranchListDelegate {
                 Stack::new()
                     .with_child(
                         Flex::row()
-                            .with_child(Label::new("Branches", style.clone()).aligned().left()),
+                            .with_child(
+                                Label::new("Branches", style.label.clone()).aligned().left(),
+                            )
+                            .contained()
+                            .with_style(style.container),
                     )
                     .with_children(self.matches.is_empty().not().then(|| {
                         let suffix = if self.matches.len() == 1 { "" } else { "es" };
@@ -232,11 +244,14 @@ impl PickerDelegate for BranchListDelegate {
                             .align_children_center()
                             .with_child(Label::new(
                                 format!("{} match{}", self.matches.len(), suffix),
-                                style,
+                                style.label,
                             ))
                             .aligned()
                             .right()
                     }))
+                    .contained()
+                    .with_style(style.container)
+                    .constrained()
                     .into_any(),
             )
         }
