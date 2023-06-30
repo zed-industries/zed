@@ -1016,13 +1016,14 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             write.await?;
             let (result, refreshes) = this.update(&mut cx, |this, cx| {
-                let mut refreshes = Vec::new();
+                let mut refreshes = Vec::<Task<anyhow::Result<Entry>>>::new();
                 let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
                 for refresh_path in refresh_paths.ancestors() {
-                    let refresh_full_path = lowest_ancestor.join(refresh_path);
-                    if refresh_full_path.as_path() == path.deref() {
+                    if refresh_path == Path::new("") {
                         continue;
                     }
+                    let refresh_full_path = lowest_ancestor.join(refresh_path);
+
                     refreshes.push(this.as_local_mut().unwrap().refresh_entry(
                         refresh_full_path.into(),
                         None,
