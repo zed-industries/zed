@@ -982,7 +982,7 @@ impl LocalWorktree {
     }
 
     /// Find the lowest path in the worktree's datastructures that is an ancestor
-    pub fn lowest_ancestor(&self, path: &Path) -> PathBuf {
+    fn lowest_ancestor(&self, path: &Path) -> PathBuf {
         let mut lowest_ancestor = None;
         for path in path.ancestors() {
             if self.entry_for_path(path).is_some() {
