@@ -273,7 +273,11 @@ impl Pane {
                         Some(("New...".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_new_menu(cx),
-                        |pane, cx| pane.tab_bar_context_menu.handle.update(cx, |menu, _| menu.delay_cancel()),
+                        |pane, cx| {
+                            pane.tab_bar_context_menu
+                                .handle
+                                .update(cx, |menu, _| menu.delay_cancel())
+                        },
                         pane.tab_bar_context_menu
                             .handle_if_kind(TabBarContextMenuKind::New),
                     ))
@@ -284,7 +288,11 @@ impl Pane {
                         Some(("Split Pane".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
-                        |pane, cx| pane.tab_bar_context_menu.handle.update(cx, |menu, _| menu.delay_cancel()),
+                        |pane, cx| {
+                            pane.tab_bar_context_menu
+                                .handle
+                                .update(cx, |menu, _| menu.delay_cancel())
+                        },
                         pane.tab_bar_context_menu
                             .handle_if_kind(TabBarContextMenuKind::Split),
                     ))
@@ -1419,7 +1427,10 @@ impl Pane {
             .into_any()
     }
 
-    pub fn render_tab_bar_button<F1: 'static + Fn(&mut Pane, &mut EventContext<Pane>), F2: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
+    pub fn render_tab_bar_button<
+        F1: 'static + Fn(&mut Pane, &mut EventContext<Pane>),
+        F2: 'static + Fn(&mut Pane, &mut EventContext<Pane>),
+    >(
         index: usize,
         icon: &'static str,
         is_active: bool,
