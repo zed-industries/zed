@@ -1,14 +1,16 @@
 mod dense_id;
+mod operations;
 
 use dense_id::DenseId;
+use operations::{CreateBranch, Operation};
 use parking_lot::Mutex;
 use rope::Rope;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     cmp::{self, Ordering},
+    fmt::Debug,
     ops::Range,
     path::Path,
-    slice,
     sync::Arc,
 };
 use sum_tree::{Bias, SumTree, TreeMap};
@@ -17,6 +19,8 @@ use uuid::Uuid;
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct RepoId(Uuid);
 
+type RevisionId = SmallVec<[OperationId; 2]>;
+
 impl RepoId {
     fn new() -> Self {
         RepoId(Uuid::new_v4())
@@ -24,19 +28,26 @@ impl RepoId {
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-struct ReplicaId(u32);
+pub struct ReplicaId(u32);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct OperationCount(usize);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-struct OperationId {
+pub struct OperationId {
     replica_id: ReplicaId,
     operation_count: OperationCount,
 }
 
 impl OperationId {
-    fn tick(&mut self) -> OperationId {
+    pub fn new(replica_id: ReplicaId) -> Self {
+        Self {
+            replica_id,
+            operation_count: OperationCount::default(),
+        }
+    }
+
+    pub fn tick(&mut self) -> OperationId {
         self.operation_count.0 += 1;
         *self
     }
@@ -69,11 +80,6 @@ impl Db {
     }
 }
 
-#[derive(Clone, Default)]
-struct DbSnapshot {
-    repos: TreeMap<RepoId, RepoSnapshot>,
-}
-
 #[derive(Clone)]
 pub struct Repo {
     id: RepoId,
@@ -81,40 +87,12 @@ pub struct Repo {
 }
 
 impl Repo {
-    fn create_document(&self) -> Document {
-        self.update(|repo| {
-            let document_id = repo.last_operation_id.tick();
-
-            let mut cursor = repo.document_fragments.cursor::<OperationId>();
-            let mut new_document_fragments = cursor.slice(&document_id, Bias::Right, &());
-            new_document_fragments.push(
-                DocumentFragment {
-                    document_id,
-                    location: DenseId::min(),
-                    insertion_id: document_id,
-                    insertion_subrange: 0..0,
-                    tombstones: Default::default(),
-                    undo_count: 0,
-                },
-                &(),
-            );
-            new_document_fragments.append(cursor.suffix(&()), &());
-            drop(cursor);
-
-            repo.document_fragments = new_document_fragments;
-            repo.document_metadata.insert(
-                document_id,
-                DocumentMetadata {
-                    path: None,
-                    last_change: document_id,
-                },
-            );
-
-            Document {
-                id: document_id,
-                repo: self.clone(),
-            }
-        })
+    fn create_empty_branch(&self, name: impl Into<Arc<str>>) -> Branch {
+        let branch_id = self.update(|repo| repo.create_empty_branch(name));
+        Branch {
+            id: branch_id,
+            repo: self.clone(),
+        }
     }
 
     fn read<F, T>(&self, f: F) -> T
@@ -139,16 +117,94 @@ impl Repo {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct RepoSnapshot {
-    head: OperationId,
-    last_operation_id: OperationId,
-    document_metadata: TreeMap<OperationId, DocumentMetadata>,
-    document_fragments: SumTree<DocumentFragment>,
-    insertion_fragments: SumTree<InsertionFragment>,
-    visible_text: Rope,
-    hidden_text: Rope,
-    operations: SumTree<Operation>,
+#[derive(Clone)]
+struct Branch {
+    id: OperationId,
+    repo: Repo,
+}
+
+impl Branch {
+    pub fn create_document(&self) -> Document {
+        self.update(|document_id, parent, revision| {
+            let mut cursor = revision.document_fragments.cursor::<OperationId>();
+            let mut new_document_fragments = cursor.slice(&document_id, Bias::Right, &());
+            new_document_fragments.push(
+                DocumentFragment {
+                    document_id,
+                    location: DenseId::min(),
+                    insertion_id: document_id,
+                    insertion_subrange: 0..0,
+                    tombstones: Default::default(),
+                    undo_count: 0,
+                },
+                &(),
+            );
+            new_document_fragments.append(cursor.suffix(&()), &());
+            drop(cursor);
+
+            revision.document_fragments = new_document_fragments;
+            revision.document_metadata.insert(
+                document_id,
+                DocumentMetadata {
+                    path: None,
+                    last_change: document_id,
+                },
+            );
+
+            let operation = Operation::CreateDocument(operations::CreateDocument {
+                id: document_id,
+                parent,
+            });
+            let document = Document {
+                id: document_id,
+                branch: self.clone(),
+            };
+
+            (operation, document)
+        })
+    }
+
+    fn update<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(OperationId, RevisionId, &mut Revision) -> (Operation, T),
+    {
+        self.repo.update(|repo| {
+            let head = repo
+                .branches
+                .get(&self.id)
+                .expect("branch must exist")
+                .head
+                .clone();
+            let mut revision = repo
+                .revisions
+                .get(&head)
+                .expect("revision must exist")
+                .clone();
+            let operation_id = repo.last_operation_id.tick();
+            let (operation, result) = f(operation_id, head.clone(), &mut revision);
+            repo.branches
+                .update(&self.id, |branch| branch.head = smallvec![operation_id]);
+            repo.revisions.insert(smallvec![operation_id], revision);
+            repo.operations.insert(operation.id(), operation);
+            result
+        })
+    }
+
+    fn read<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&Revision) -> T,
+    {
+        self.repo.read(|repo| {
+            let head = &repo.branches.get(&self.id).expect("branch must exist").head;
+            let revision = repo.revisions.get(head).expect("revision must exist");
+            f(revision)
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct DbSnapshot {
+    repos: TreeMap<RepoId, RepoSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -289,28 +345,28 @@ impl sum_tree::Summary for InsertionFragmentSummary {
 }
 
 struct Document {
-    repo: Repo,
+    branch: Branch,
     id: OperationId,
 }
 
 impl Document {
-    pub fn edit<E, I, T>(&self, edits: E) -> Operation
+    pub fn edit<E, I, T>(&self, edits: E)
     where
         E: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<usize>, T)>,
         T: Into<Arc<str>>,
     {
-        self.repo.update(|repo| {
+        self.branch.update(|operation_id, parent, revision| {
             let edits = edits.into_iter();
-            let mut edit_op = EditOperation {
-                id: repo.last_operation_id.tick(),
-                parent_id: repo.head,
+            let mut edit_op = operations::Edit {
+                id: operation_id,
+                parent: parent.clone(),
                 edits: SmallVec::with_capacity(edits.len()),
             };
             let mut new_insertions = Vec::new();
             let mut insertion_offset = 0;
 
-            let mut old_fragments = repo.document_fragments.cursor::<LocalEditDimension>();
+            let mut old_fragments = revision.document_fragments.cursor::<LocalEditDimension>();
             let mut new_fragments = old_fragments.slice(&self.id, Bias::Left, &());
             let document_visible_start = old_fragments.start().visible_len;
             let mut edits = edits
@@ -324,8 +380,10 @@ impl Document {
                 })
                 .peekable();
 
-            let mut new_ropes =
-                RopeBuilder::new(repo.visible_text.cursor(0), repo.hidden_text.cursor(0));
+            let mut new_ropes = RopeBuilder::new(
+                revision.visible_text.cursor(0),
+                revision.hidden_text.cursor(0),
+            );
             new_fragments.append(
                 old_fragments.slice(&(self.id, edits.peek().unwrap().0.start), Bias::Right, &()),
                 &(),
@@ -473,7 +531,7 @@ impl Document {
                 edit_op.edits.push((
                     AnchorRange {
                         document_id: self.id,
-                        document_version: repo.head,
+                        revision_id: parent.clone(),
                         start_insertion_id: edit_start.insertion_id,
                         start_offset_in_insertion: edit_start.offset_in_insertion,
                         start_bias: edit_start.bias,
@@ -508,18 +566,18 @@ impl Document {
             let (visible_text, hidden_text) = new_ropes.finish();
             drop(old_fragments);
 
-            repo.document_fragments = new_fragments;
-            repo.insertion_fragments.edit(new_insertions, &());
-            repo.visible_text = visible_text;
-            repo.hidden_text = hidden_text;
+            revision.document_fragments = new_fragments;
+            revision.insertion_fragments.edit(new_insertions, &());
+            revision.visible_text = visible_text;
+            revision.hidden_text = hidden_text;
 
-            Operation::Edit(edit_op)
+            (Operation::Edit(edit_op), ())
         })
     }
 
     fn text(&self) -> Rope {
-        self.repo.read(|repo| {
-            let mut fragments = repo.document_fragments.cursor::<LocalEditDimension>();
+        self.branch.read(|revision| {
+            let mut fragments = revision.document_fragments.cursor::<LocalEditDimension>();
             fragments.seek(&self.id, Bias::Left, &());
             let start = fragments.start().visible_len;
 
@@ -528,7 +586,7 @@ impl Document {
             fragments.seek(&next_doc_id, Bias::Left, &());
             let end = fragments.start().visible_len;
 
-            repo.visible_text.slice(start..end)
+            revision.visible_text.slice(start..end)
         })
     }
 }
@@ -572,57 +630,6 @@ impl<'a> sum_tree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension>
     }
 }
 
-#[derive(Clone, Debug)]
-enum Operation {
-    CreateDocument(CreateDocumentOperation),
-    Edit(EditOperation),
-}
-
-impl Operation {
-    fn id(&self) -> OperationId {
-        match self {
-            Operation::CreateDocument(op) => op.id,
-            Operation::Edit(op) => op.id,
-        }
-    }
-
-    fn parent_ids(&self) -> &[OperationId] {
-        match self {
-            Operation::CreateDocument(op) => slice::from_ref(&op.parent_id),
-            Operation::Edit(op) => slice::from_ref(&op.parent_id),
-        }
-    }
-}
-
-impl sum_tree::Item for Operation {
-    type Summary = OperationId;
-
-    fn summary(&self) -> Self::Summary {
-        self.id()
-    }
-}
-
-impl sum_tree::KeyedItem for Operation {
-    type Key = OperationId;
-
-    fn key(&self) -> Self::Key {
-        self.id()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CreateDocumentOperation {
-    id: OperationId,
-    parent_id: OperationId,
-}
-
-#[derive(Clone, Debug)]
-struct EditOperation {
-    id: OperationId,
-    parent_id: OperationId,
-    edits: SmallVec<[(AnchorRange, Arc<str>); 2]>,
-}
-
 #[derive(Copy, Clone, Debug)]
 struct Anchor {
     insertion_id: OperationId,
@@ -631,9 +638,9 @@ struct Anchor {
 }
 
 #[derive(Clone, Debug)]
-struct AnchorRange {
+pub struct AnchorRange {
     document_id: OperationId,
-    document_version: OperationId,
+    revision_id: RevisionId,
     start_insertion_id: OperationId,
     start_offset_in_insertion: usize,
     start_bias: Bias,
@@ -694,6 +701,65 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
+pub trait OperationSender: Debug {
+    fn send(&self, operation: Operation);
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepoSnapshot {
+    last_operation_id: OperationId,
+    branches: TreeMap<OperationId, BranchSnapshot>,
+    operations: TreeMap<OperationId, Operation>,
+    revisions: TreeMap<RevisionId, Revision>,
+}
+
+impl RepoSnapshot {
+    fn new(replica_id: ReplicaId, sender: Arc<dyn OperationSender>) -> Self {
+        Self {
+            last_operation_id: OperationId::new(replica_id),
+            branches: Default::default(),
+            operations: Default::default(),
+            revisions: Default::default(),
+        }
+    }
+
+    fn create_empty_branch(&mut self, name: impl Into<Arc<str>>) -> OperationId {
+        let branch_id = self.last_operation_id.tick();
+        let name = name.into();
+        self.branches.insert(
+            branch_id,
+            BranchSnapshot {
+                name: name.clone(),
+                head: smallvec![branch_id],
+            },
+        );
+        self.revisions
+            .insert(smallvec![branch_id], Default::default());
+        let operation = Operation::CreateBranch(CreateBranch {
+            id: branch_id,
+            name,
+            parent: Default::default(),
+        });
+        self.operations.insert(branch_id, operation.clone());
+        branch_id
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BranchSnapshot {
+    name: Arc<str>,
+    head: RevisionId,
+}
+
+#[derive(Default, Debug, Clone)]
+struct Revision {
+    document_metadata: TreeMap<OperationId, DocumentMetadata>,
+    document_fragments: SumTree<DocumentFragment>,
+    insertion_fragments: SumTree<InsertionFragment>,
+    visible_text: Rope,
+    hidden_text: Rope,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,12 +768,13 @@ mod tests {
     fn test_repo() {
         let db = Db::default();
         let repo = db.create_repo();
+        let branch = repo.create_empty_branch("main");
 
-        let doc1 = repo.create_document();
-        let doc1_op1 = doc1.edit([(0..0, "abc")]);
+        let doc1 = branch.create_document();
+        doc1.edit([(0..0, "abc")]);
 
-        let doc2 = repo.create_document();
-        let doc2_op1 = doc2.edit([(0..0, "def")]);
+        let doc2 = branch.create_document();
+        doc2.edit([(0..0, "def")]);
 
         assert_eq!(doc1.text().to_string(), "abc");
         assert_eq!(doc2.text().to_string(), "def");
