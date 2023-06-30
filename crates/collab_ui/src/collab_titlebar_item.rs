@@ -440,6 +440,7 @@ impl CollabTitlebarItem {
                 })
                 .detach();
                 self.project_popover.take();
+                cx.focus(&view);
                 self.branch_popover = Some(view);
             }
         }
@@ -473,6 +474,7 @@ impl CollabTitlebarItem {
                         cx.notify();
                     })
                     .detach();
+                    cx.focus(&view);
                     this.branch_popover.take();
                     this.project_popover = Some(view);
                     cx.notify();
