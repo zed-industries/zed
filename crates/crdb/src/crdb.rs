@@ -93,7 +93,6 @@ impl Repo {
                     location: DenseId::min(),
                     insertion_id: document_id,
                     insertion_subrange: 0..0,
-                    visible: true,
                     tombstones: Default::default(),
                     undo_count: 0,
                 },
@@ -164,7 +163,6 @@ struct DocumentFragment {
     location: DenseId,
     insertion_id: OperationId,
     insertion_subrange: Range<usize>,
-    visible: bool,
     tombstones: SmallVec<[Tombstone; 2]>,
     undo_count: u16,
 }
@@ -173,6 +171,14 @@ impl DocumentFragment {
     fn len(&self) -> usize {
         self.insertion_subrange.end - self.insertion_subrange.start
     }
+
+    fn visible(&self) -> bool {
+        self.undo_count % 2 == 0
+            && self
+                .tombstones
+                .iter()
+                .all(|tombstone| tombstone.undo_count % 2 == 1)
+    }
 }
 
 impl sum_tree::Item for DocumentFragment {
@@ -180,8 +186,8 @@ impl sum_tree::Item for DocumentFragment {
 
     fn summary(&self) -> DocumentFragmentSummary {
         DocumentFragmentSummary {
-            visible_len: if self.visible { self.len() } else { 0 },
-            hidden_len: if self.visible { 0 } else { self.len() },
+            visible_len: if self.visible() { self.len() } else { 0 },
+            hidden_len: if self.visible() { 0 } else { self.len() },
             max_document_id: self.document_id,
             max_location: self.location.clone(),
         }
@@ -287,23 +293,12 @@ struct Document {
     id: OperationId,
 }
 
-enum DocumentContent {
-    Text(Arc<str>),
-    Link(AnchorRange),
-}
-
-impl<T: Into<Arc<str>>> From<T> for DocumentContent {
-    fn from(value: T) -> Self {
-        DocumentContent::Text(value.into())
-    }
-}
-
 impl Document {
     pub fn edit<E, I, T>(&self, edits: E) -> Operation
     where
         E: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<usize>, T)>,
-        T: Into<DocumentContent>,
+        T: Into<Arc<str>>,
     {
         self.repo.update(|repo| {
             let edits = edits.into_iter();
@@ -357,7 +352,7 @@ impl Document {
                                 fragment_start - old_fragments.start().visible_len;
                             new_insertions
                                 .push(sum_tree::Edit::Insert(InsertionFragment::new(&suffix)));
-                            new_ropes.push_fragment(&suffix, suffix.visible);
+                            new_ropes.push_fragment(&suffix, suffix.visible());
                             new_fragments.push(suffix, &());
                         }
                         old_fragments.next(&());
@@ -398,15 +393,13 @@ impl Document {
                     prefix.location =
                         DenseId::between(&new_fragments.summary().max_location, &prefix.location);
                     new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&prefix)));
-                    new_ropes.push_fragment(&prefix, prefix.visible);
+                    new_ropes.push_fragment(&prefix, prefix.visible());
                     new_fragments.push(prefix, &());
                     fragment_start = range.start;
                 }
 
                 // Insert the new text before any existing fragments within the range.
                 if !new_text.is_empty() {
-                    let new_start = new_fragments.summary().visible_len;
-
                     let fragment = DocumentFragment {
                         document_id: self.id,
                         location: DenseId::between(
@@ -417,7 +410,6 @@ impl Document {
                         insertion_id: edit_op.id,
                         insertion_subrange: insertion_offset..insertion_offset + new_text.len(),
                         tombstones: Default::default(),
-                        visible: true,
                         undo_count: 0,
                     };
                     new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&fragment)));
@@ -433,7 +425,7 @@ impl Document {
                     let fragment_end = old_fragments.end(&()).visible_len;
                     let mut intersection = fragment.clone();
                     let intersection_end = cmp::min(range.end, fragment_end);
-                    if fragment.visible {
+                    if fragment.visible() {
                         let intersection_len = intersection_end - fragment_start;
                         intersection.insertion_subrange.start +=
                             fragment_start - old_fragments.start().visible_len;
@@ -447,13 +439,12 @@ impl Document {
                             id: edit_op.id,
                             undo_count: 0,
                         });
-                        intersection.visible = false;
                     }
                     if intersection.len() > 0 {
                         new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(
                             &intersection,
                         )));
-                        new_ropes.push_fragment(&intersection, fragment.visible);
+                        new_ropes.push_fragment(&intersection, fragment.visible());
                         new_fragments.push(intersection, &());
                         fragment_start = intersection_end;
                     }
@@ -479,7 +470,19 @@ impl Document {
                         + (range.end - old_fragments.start().visible_len),
                     bias: Bias::Left,
                 };
-                edit_op.edits.push((edit_start..edit_end, new_text.clone()));
+                edit_op.edits.push((
+                    AnchorRange {
+                        document_id: self.id,
+                        document_version: repo.head,
+                        start_insertion_id: edit_start.insertion_id,
+                        start_offset_in_insertion: edit_start.offset_in_insertion,
+                        start_bias: edit_start.bias,
+                        end_insertion_id: edit_end.insertion_id,
+                        end_offset_in_insertion: edit_end.offset_in_insertion,
+                        end_bias: edit_end.bias,
+                    },
+                    new_text.clone(),
+                ));
             }
 
             // If the current fragment has been partially consumed, then consume the rest of it
@@ -493,7 +496,7 @@ impl Document {
                         fragment_start - old_fragments.start().visible_len;
                     suffix.insertion_subrange.end = suffix.insertion_subrange.start + suffix_len;
                     new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&suffix)));
-                    new_ropes.push_fragment(&suffix, suffix.visible);
+                    new_ropes.push_fragment(&suffix, suffix.visible());
                     new_fragments.push(suffix, &());
                 }
                 old_fragments.next(&());
@@ -622,8 +625,6 @@ struct EditOperation {
 
 #[derive(Copy, Clone, Debug)]
 struct Anchor {
-    document_id: OperationId,
-    document_version: OperationId,
     insertion_id: OperationId,
     offset_in_insertion: usize,
     bias: Bias,
@@ -664,7 +665,7 @@ impl<'a> RopeBuilder<'a> {
     }
 
     fn push_fragment(&mut self, fragment: &DocumentFragment, was_visible: bool) {
-        self.push(fragment.len(), was_visible, fragment.visible)
+        self.push(fragment.len(), was_visible, fragment.visible())
     }
 
     fn push(&mut self, len: usize, was_visible: bool, is_visible: bool) {
