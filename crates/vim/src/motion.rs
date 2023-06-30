@@ -525,10 +525,13 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     if line_end == point {
         line_end = map.max_point().to_point(map);
     }
-    line_end.column = line_end.column.saturating_sub(1);
 
     let line_range = map.prev_line_boundary(point).0..line_end;
-    let ranges = map.buffer_snapshot.bracket_ranges(line_range.clone());
+    let visible_line_range =
+        line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
+    let ranges = map
+        .buffer_snapshot
+        .bracket_ranges(visible_line_range.clone());
     if let Some(ranges) = ranges {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
@@ -696,5 +699,48 @@ mod test {
                 third and
                 final"})
             .await
+    }
+
+    #[gpui::test]
+    async fn test_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"func ˇ(a string) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a stringˇ) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+
+        // test it works on the last character of the line
+        cx.set_shared_state(indoc! {r"func (a string) ˇ{
+            do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a string) {
+            do(something(with<Types>.and_arrays[0, 2]))
+            ˇ}"})
+            .await;
+
+        // test it works on immediate nesting
+        cx.set_shared_state("ˇ{()}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{()ˇ}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("ˇ{()}").await;
+
+        // test it works on immediate nesting inside braces
+        cx.set_shared_state("{\n    ˇ{()}\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{\n    {()ˇ}\n}").await;
+
+        // test it jumps to the next paren on a line
+        cx.set_shared_state("func ˇboop() {\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("func boop(ˇ) {\n}").await;
     }
 }
