@@ -124,7 +124,7 @@ impl PickerDelegate for SemanticSearchDelegate {
             if let Some(retrieved) = retrieved_cached.log_err() {
                 if !retrieved {
                     let task = vector_store.update(&mut cx, |store, cx| {
-                        store.search(&project, query.to_string(), 10, cx)
+                        store.search(project.clone(), query.to_string(), 10, cx)
                     });
 
                     if let Some(results) = task.await.log_err() {

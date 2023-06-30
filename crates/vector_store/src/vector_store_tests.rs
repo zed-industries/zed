@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry};
-use project::{FakeFs, Project};
+use project::{FakeFs, Fs, Project};
 use rand::Rng;
 use serde_json::json;
 use unindent::Unindent;
@@ -60,14 +60,15 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     let db_dir = tempdir::TempDir::new("vector-store").unwrap();
     let db_path = db_dir.path().join("db.sqlite");
 
-    let store = cx.add_model(|_| {
-        VectorStore::new(
-            fs.clone(),
-            db_path,
-            Arc::new(FakeEmbeddingProvider),
-            languages,
-        )
-    });
+    let store = VectorStore::new(
+        fs.clone(),
+        db_path,
+        Arc::new(FakeEmbeddingProvider),
+        languages,
+        cx.to_async(),
+    )
+    .await
+    .unwrap();
 
     let project = Project::test(fs, ["/the-root".as_ref()], cx).await;
     let worktree_id = project.read_with(cx, |project, cx| {
@@ -75,15 +76,11 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     });
     let add_project = store.update(cx, |store, cx| store.add_project(project.clone(), cx));
 
-    // TODO - remove
-    cx.foreground()
-        .advance_clock(std::time::Duration::from_secs(3));
-
     add_project.await.unwrap();
 
     let search_results = store
         .update(cx, |store, cx| {
-            store.search(&project, "aaaa".to_string(), 5, cx)
+            store.search(project.clone(), "aaaa".to_string(), 5, cx)
         })
         .await
         .unwrap();
