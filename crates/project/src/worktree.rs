@@ -981,6 +981,19 @@ impl LocalWorktree {
         })
     }
 
+    /// Find the lowest path in the worktree's datastructures that is an ancestor
+    pub fn lowest_ancestor(&self, path: &Path) -> PathBuf {
+        let mut lowest_ancestor = None;
+        for path in path.ancestors() {
+            if self.entry_for_path(path).is_some() {
+                lowest_ancestor = Some(path.to_path_buf());
+                break;
+            }
+        }
+
+        lowest_ancestor.unwrap_or_else(|| PathBuf::from(""))
+    }
+
     pub fn create_entry(
         &self,
         path: impl Into<Arc<Path>>,
@@ -988,6 +1001,7 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
         let path = path.into();
+        let lowest_ancestor = self.lowest_ancestor(&path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let write = cx.background().spawn(async move {
@@ -1003,9 +1017,14 @@ impl LocalWorktree {
             write.await?;
             let (result, refreshes) = this.update(&mut cx, |this, cx| {
                 let mut refreshes = Vec::new();
-                for path in path.ancestors().skip(1) {
+                let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
+                for refresh_path in refresh_paths.ancestors() {
+                    let refresh_full_path = lowest_ancestor.join(refresh_path);
+                    if refresh_full_path.as_path() == path.deref() {
+                        continue;
+                    }
                     refreshes.push(this.as_local_mut().unwrap().refresh_entry(
-                        path.into(),
+                        refresh_full_path.into(),
                         None,
                         cx,
                     ));
