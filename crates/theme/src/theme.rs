@@ -585,6 +585,8 @@ pub struct Picker {
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
+    pub header: LabelStyle,
+    pub footer: LabelStyle,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]

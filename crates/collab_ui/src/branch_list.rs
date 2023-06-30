@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{elements::*, AppContext, MouseState, Task, ViewContext, ViewHandle};
 use picker::{Picker, PickerDelegate, PickerEvent};
-use std::sync::Arc;
+use std::{ops::Not, sync::Arc};
 use util::ResultExt;
 use workspace::{Toast, Workspace};
 
@@ -212,7 +212,7 @@ impl PickerDelegate for BranchListDelegate {
     }
     fn render_header(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
         let theme = &theme::current(cx);
-        let style = theme.picker.no_matches.label.clone();
+        let style = theme.picker.header.clone();
         if self.last_query.is_empty() {
             Some(
                 Flex::row()
@@ -221,28 +221,24 @@ impl PickerDelegate for BranchListDelegate {
             )
         } else {
             Some(
-                Flex::row()
-                    .with_child(Label::new("Branches", style))
+                Stack::new()
+                    .with_child(
+                        Flex::row()
+                            .with_child(Label::new("Branches", style.clone()).aligned().left()),
+                    )
+                    .with_children(self.matches.is_empty().not().then(|| {
+                        let suffix = if self.matches.len() == 1 { "" } else { "es" };
+                        Flex::row()
+                            .align_children_center()
+                            .with_child(Label::new(
+                                format!("{} match{}", self.matches.len(), suffix),
+                                style,
+                            ))
+                            .aligned()
+                            .right()
+                    }))
                     .into_any(),
             )
-        }
-    }
-    fn render_footer(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
-        if !self.last_query.is_empty() && !self.matches.is_empty() {
-            let theme = &theme::current(cx);
-            let style = theme.picker.no_matches.label.clone();
-            // Render "1 match" and "0 matches", "42 matches"etc.
-            let suffix = if self.matches.len() == 1 { "" } else { "es" };
-            Some(
-                Flex::row()
-                    .with_child(Label::new(
-                        format!("{} match{}", self.matches.len(), suffix),
-                        style,
-                    ))
-                    .into_any(),
-            )
-        } else {
-            None
         }
     }
 }

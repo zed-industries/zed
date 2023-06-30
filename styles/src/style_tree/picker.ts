@@ -108,5 +108,34 @@ export default function picker(theme: ColorScheme): any {
                 top: 8,
             },
         },
+        header: {
+            text: text(theme.lowest, "sans", "variant", { size: "xs" }),
+            padding: {
+                bottom: 4,
+                left: 12,
+                right: 12,
+                top: 4,
+            },
+            margin: {
+                top: 1,
+                left: 4,
+                right: 4,
+            },
+        },
+        footer: {
+            text: text(theme.lowest, "sans", "variant", { size: "xs" }),
+            padding: {
+                bottom: 4,
+                left: 12,
+                right: 12,
+                top: 4,
+            },
+            margin: {
+                top: 1,
+                left: 4,
+                right: 4,
+            },
+
+        }
     }
 }
