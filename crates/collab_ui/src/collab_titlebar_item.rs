@@ -481,6 +481,7 @@ impl CollabTitlebarItem {
             })
             .detach();
         }
+        cx.notify();
     }
     fn render_toggle_contacts_button(
         &self,
