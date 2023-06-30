@@ -547,7 +547,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(&filename);
+            let new_path = entry.path.join(&filename.trim_start_matches("/"));
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
@@ -2111,7 +2111,7 @@ mod tests {
 
         let confirm = panel.update(cx, |panel, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("bdir1/dir2/the-new-filename", cx)
+                editor.set_text("/bdir1/dir2/the-new-filename", cx)
             });
             panel.confirm(&Confirm, cx).unwrap()
         });
@@ -2124,7 +2124,7 @@ mod tests {
                 "    > a",
                 "    > b",
                 "    > C",
-                "      [PROCESSING: 'bdir1/dir2/the-new-filename']  <== selected",
+                "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
