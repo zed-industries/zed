@@ -38,5 +38,5 @@ tree-sitter-json = "*"
 gpui = { path = "../gpui", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 indoc.workspace = true
-pretty_assertions = "*"
+pretty_assertions.workspace = true
 unindent.workspace = true

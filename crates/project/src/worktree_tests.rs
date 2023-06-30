@@ -941,13 +941,14 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     let client_fake = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
     let fs_fake = FakeFs::new(cx.background());
-    fs_fake.insert_tree(
-        "/root",
-        json!({
-            "a": {},
-        }),
-    )
-    .await;
+    fs_fake
+        .insert_tree(
+            "/root",
+            json!({
+                "a": {},
+            }),
+        )
+        .await;
 
     let tree_fake = Worktree::local(
         client_fake,

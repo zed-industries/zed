@@ -67,7 +67,7 @@ fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-pretty_assertions = "*"
+pretty_assertions.workspace = true
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

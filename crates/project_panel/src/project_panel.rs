@@ -981,7 +981,6 @@ impl ProjectPanel {
             }
         }
 
-
         Some(())
     }
 
@@ -1158,7 +1157,6 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
-
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -2107,7 +2105,6 @@ mod tests {
                 "    > e",
             ]
         );
-
 
         let confirm = panel.update(cx, |panel, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
