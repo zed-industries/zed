@@ -220,29 +220,17 @@ impl CollabTitlebarItem {
         let branch_prepended = entry
             .as_ref()
             .and_then(RepositoryEntry::branch)
-            .map(|branch| {
-                format!(
-                    "/{}",
-                    util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH)
-                )
-            });
-        let text_style = theme.titlebar.title.clone();
+            .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH));
+        let project_style = theme.titlebar.title.clone();
+        let git_style = theme.titlebar.git_branch.clone();
+        let divider_style = theme.titlebar.project_name_divider.clone();
         let item_spacing = theme.titlebar.item_spacing;
 
-        let mut highlight = text_style.clone();
-        highlight.color = theme.titlebar.highlight_color;
-
-        let style = LabelStyle {
-            text: text_style,
-            highlight_text: Some(highlight),
-        };
-        let highlights = (0..name.len()).into_iter().collect();
         let mut ret = Flex::row().with_child(
             Stack::new()
                 .with_child(
                     MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |_, _| {
-                        Label::new(name, style.clone())
-                            .with_highlights(highlights)
+                        Label::new(name, project_style.text.clone())
                             .contained()
                             .aligned()
                             .left()
@@ -251,28 +239,43 @@ impl CollabTitlebarItem {
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, move |_, this, cx| {
                         this.toggle_project_menu(&Default::default(), cx)
-                    }),
+                    })
+                    .contained()
+                    .with_style(project_style.container),
                 )
                 .with_children(self.render_project_popover_host(&theme.titlebar, cx)),
         );
         if let Some(git_branch) = branch_prepended {
             ret = ret.with_child(
-                Stack::new()
+                Flex::row()
                     .with_child(
-                        MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |_, _| {
-                            Label::new(git_branch, style)
-                                .contained()
-                                .with_margin_right(item_spacing)
-                                .aligned()
-                                .left()
-                                .into_any_named("title-project-branch")
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, this, cx| {
-                            this.toggle_vcs_menu(&Default::default(), cx)
-                        }),
+                        Label::new("/", divider_style.text)
+                            .contained()
+                            .with_style(divider_style.container)
+                            .aligned()
+                            .left(),
                     )
-                    .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
+                    .with_child(
+                        Stack::new()
+                            .with_child(
+                                MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |_, _| {
+                                    Label::new(git_branch, git_style.text)
+                                        .contained()
+                                        .with_margin_right(item_spacing)
+                                        .aligned()
+                                        .left()
+                                        .into_any_named("title-project-branch")
+                                })
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click(
+                                    MouseButton::Left,
+                                    move |_, this, cx| {
+                                        this.toggle_vcs_menu(&Default::default(), cx)
+                                    },
+                                ),
+                            )
+                            .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
+                    ),
             )
         }
         ret.into_any()
