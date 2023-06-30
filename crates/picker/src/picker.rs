@@ -45,10 +45,16 @@ pub trait PickerDelegate: Sized + 'static {
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
-    fn render_header(&self, _cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+    fn render_header(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
         None
     }
-    fn render_footer(&self, _cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+    fn render_footer(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
         None
     }
 }

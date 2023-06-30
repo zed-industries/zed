@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{elements::*, AppContext, MouseState, Task, ViewContext, ViewHandle};
+use gpui::{
+    elements::*, platform::MouseButton, AppContext, MouseState, Task, ViewContext, ViewHandle,
+};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::{ops::Not, sync::Arc};
 use util::ResultExt;
@@ -210,50 +212,55 @@ impl PickerDelegate for BranchListDelegate {
             .with_height(theme.contact_finder.row_height)
             .into_any()
     }
-    fn render_header(&self, cx: &AppContext) -> Option<AnyElement<Picker<Self>>> {
+    fn render_header(
+        &self,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
         let theme = &theme::current(cx);
         let style = theme.picker.header.clone();
-        if self.last_query.is_empty() {
-            Some(
-                Stack::new()
-                    .with_child(
-                        Flex::row()
-                            .with_child(Label::new("Recent branches", style.label.clone()))
-                            .contained()
-                            .with_style(style.container)
-                            .into_any(),
-                    )
-                    .contained()
-                    .with_style(style.container)
-                    .into_any(),
-            )
+        let label = if self.last_query.is_empty() {
+            Stack::new()
+                .with_child(
+                    Flex::row()
+                        .with_child(Label::new("Recent branches", style.label.clone()))
+                        .contained()
+                        .with_style(style.container)
+                        .into_any(),
+                )
+                .contained()
+                .with_style(style.container)
+                .into_any()
         } else {
-            Some(
-                Stack::new()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                Label::new("Branches", style.label.clone()).aligned().left(),
-                            )
-                            .contained()
-                            .with_style(style.container),
-                    )
-                    .with_children(self.matches.is_empty().not().then(|| {
-                        let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                        Flex::row()
-                            .align_children_center()
-                            .with_child(Label::new(
-                                format!("{} match{}", self.matches.len(), suffix),
-                                style.label,
-                            ))
-                            .aligned()
-                            .right()
-                    }))
-                    .contained()
-                    .with_style(style.container)
-                    .constrained()
-                    .into_any(),
-            )
-        }
+            Stack::new()
+                .with_child(
+                    Flex::row()
+                        .with_child(Label::new("Branches", style.label.clone()).aligned().left())
+                        .contained()
+                        .with_style(style.container),
+                )
+                .with_children(self.matches.is_empty().not().then(|| {
+                    let suffix = if self.matches.len() == 1 { "" } else { "es" };
+                    Flex::row()
+                        .align_children_center()
+                        .with_child(Label::new(
+                            format!("{} match{}", self.matches.len(), suffix),
+                            style.label,
+                        ))
+                        .aligned()
+                        .right()
+                }))
+                .contained()
+                .with_style(style.container)
+                .constrained()
+                .into_any()
+        };
+        Some(
+            MouseEventHandler::<BranchList, _>::new(0, cx, move |_, _| label)
+                .on_click(MouseButton::Left, move |_, _, _| {})
+                .on_down_out(MouseButton::Left, move |_, _, cx| {
+                    cx.emit(PickerEvent::Dismiss)
+                })
+                .into_any(),
+        )
     }
 }
