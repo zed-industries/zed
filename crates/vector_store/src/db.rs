@@ -2,18 +2,17 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
+    time::SystemTime,
 };
 
 use anyhow::{anyhow, Result};
 
+use crate::IndexedFile;
+use rpc::proto::Timestamp;
 use rusqlite::{
     params,
-    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
-    ToSql,
+    types::{FromSql, FromSqlResult, ValueRef},
 };
-use sha1::{Digest, Sha1};
-
-use crate::IndexedFile;
 
 // Note this is not an appropriate document
 #[derive(Debug)]
@@ -29,60 +28,7 @@ pub struct DocumentRecord {
 pub struct FileRecord {
     pub id: usize,
     pub relative_path: String,
-    pub sha1: FileSha1,
-}
-
-#[derive(Debug)]
-pub struct FileSha1(pub Vec<u8>);
-
-impl FileSha1 {
-    pub fn from_str(content: String) -> Self {
-        let mut hasher = Sha1::new();
-        hasher.update(content);
-        let sha1 = hasher.finalize()[..]
-            .into_iter()
-            .map(|val| val.to_owned())
-            .collect::<Vec<u8>>();
-        return FileSha1(sha1);
-    }
-
-    pub fn equals(&self, content: &String) -> bool {
-        let mut hasher = Sha1::new();
-        hasher.update(content);
-        let sha1 = hasher.finalize()[..]
-            .into_iter()
-            .map(|val| val.to_owned())
-            .collect::<Vec<u8>>();
-
-        let equal = self
-            .0
-            .clone()
-            .into_iter()
-            .zip(sha1)
-            .filter(|&(a, b)| a == b)
-            .count()
-            == self.0.len();
-
-        equal
-    }
-}
-
-impl ToSql for FileSha1 {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        return self.0.to_sql();
-    }
-}
-
-impl FromSql for FileSha1 {
-    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
-        let bytes = value.as_blob()?;
-        Ok(FileSha1(
-            bytes
-                .into_iter()
-                .map(|val| val.to_owned())
-                .collect::<Vec<u8>>(),
-        ))
-    }
+    pub mtime: Timestamp,
 }
 
 #[derive(Debug)]
@@ -133,7 +79,8 @@ impl VectorDatabase {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worktree_id INTEGER NOT NULL,
                 relative_path VARCHAR NOT NULL,
-                sha1 BLOB NOT NULL,
+                mtime_seconds INTEGER NOT NULL,
+                mtime_nanos INTEGER NOT NULL,
                 FOREIGN KEY(worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE
             )",
             [],
@@ -170,11 +117,20 @@ impl VectorDatabase {
             ",
             params![worktree_id, indexed_file.path.to_str()],
         )?;
+        let mtime = Timestamp::from(indexed_file.mtime);
         self.db.execute(
             "
-            INSERT INTO files (worktree_id, relative_path, sha1) VALUES (?1, ?2, $3);
+            INSERT INTO files
+            (worktree_id, relative_path, mtime_seconds, mtime_nanos)
+            VALUES
+            (?1, ?2, $3, $4);
             ",
-            params![worktree_id, indexed_file.path.to_str(), indexed_file.sha1],
+            params![
+                worktree_id,
+                indexed_file.path.to_str(),
+                mtime.seconds,
+                mtime.nanos
+            ],
         )?;
 
         let file_id = self.db.last_insert_rowid();
@@ -224,13 +180,24 @@ impl VectorDatabase {
         Ok(self.db.last_insert_rowid())
     }
 
-    pub fn get_file_hashes(&self, worktree_id: i64) -> Result<HashMap<PathBuf, FileSha1>> {
+    pub fn get_file_mtimes(&self, worktree_id: i64) -> Result<HashMap<PathBuf, SystemTime>> {
         let mut statement = self.db.prepare(
-            "SELECT relative_path, sha1 FROM files WHERE worktree_id = ?1 ORDER BY relative_path",
+            "
+            SELECT relative_path, mtime_seconds, mtime_nanos
+            FROM files
+            WHERE worktree_id = ?1
+            ORDER BY relative_path",
         )?;
-        let mut result: HashMap<PathBuf, FileSha1> = HashMap::new();
+        let mut result: HashMap<PathBuf, SystemTime> = HashMap::new();
         for row in statement.query_map(params![worktree_id], |row| {
-            Ok((row.get::<_, String>(0)?.into(), row.get(1)?))
+            Ok((
+                row.get::<_, String>(0)?.into(),
+                Timestamp {
+                    seconds: row.get(1)?,
+                    nanos: row.get(2)?,
+                }
+                .into(),
+            ))
         })? {
             let row = row?;
             result.insert(row.0, row.1);

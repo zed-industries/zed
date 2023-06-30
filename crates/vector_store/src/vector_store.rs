@@ -6,7 +6,7 @@ mod modal;
 mod vector_store_tests;
 
 use anyhow::{anyhow, Result};
-use db::{FileSha1, VectorDatabase};
+use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task, ViewContext};
 use language::{Language, LanguageRegistry};
@@ -15,9 +15,10 @@ use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use tree_sitter::{Parser, QueryCursor};
 use util::{
@@ -46,6 +47,7 @@ pub fn init(
         VectorStore::new(
             fs,
             db_file_path,
+            // Arc::new(embedding::DummyEmbeddings {}),
             Arc::new(OpenAIEmbeddings {
                 client: http_client,
             }),
@@ -91,7 +93,7 @@ pub fn init(
 #[derive(Debug)]
 pub struct IndexedFile {
     path: PathBuf,
-    sha1: FileSha1,
+    mtime: SystemTime,
     documents: Vec<Document>,
 }
 
@@ -131,15 +133,18 @@ impl VectorStore {
         cursor: &mut QueryCursor,
         parser: &mut Parser,
         embedding_provider: &dyn EmbeddingProvider,
+        fs: &Arc<dyn Fs>,
         language: Arc<Language>,
         file_path: PathBuf,
-        content: String,
+        mtime: SystemTime,
     ) -> Result<IndexedFile> {
         let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
         let embedding_config = grammar
             .embedding_config
             .as_ref()
             .ok_or_else(|| anyhow!("no outline query"))?;
+
+        let content = fs.load(&file_path).await?;
 
         parser.set_language(grammar.ts_language).unwrap();
         let tree = parser
@@ -184,11 +189,9 @@ impl VectorStore {
             }
         }
 
-        let sha1 = FileSha1::from_str(content);
-
         return Ok(IndexedFile {
             path: file_path,
-            sha1,
+            mtime,
             documents,
         });
     }
@@ -231,38 +234,36 @@ impl VectorStore {
 
             // Here we query the worktree ids, and yet we dont have them elsewhere
             // We likely want to clean up these datastructures
-            let (db, worktree_hashes, worktree_db_ids) = cx
+            let (db, mut worktree_file_times, worktree_db_ids) = cx
                 .background()
                 .spawn({
                     let worktrees = worktrees.clone();
                     async move {
                         let mut worktree_db_ids: HashMap<WorktreeId, i64> = HashMap::new();
-                        let mut hashes: HashMap<WorktreeId, HashMap<PathBuf, FileSha1>> =
+                        let mut file_times: HashMap<WorktreeId, HashMap<PathBuf, SystemTime>> =
                             HashMap::new();
                         for worktree in worktrees {
                             let worktree_db_id =
                                 db.find_or_create_worktree(worktree.abs_path().as_ref())?;
                             worktree_db_ids.insert(worktree.id(), worktree_db_id);
-                            hashes.insert(worktree.id(), db.get_file_hashes(worktree_db_id)?);
+                            file_times.insert(worktree.id(), db.get_file_mtimes(worktree_db_id)?);
                         }
-                        anyhow::Ok((db, hashes, worktree_db_ids))
+                        anyhow::Ok((db, file_times, worktree_db_ids))
                     }
                 })
                 .await?;
 
             let (paths_tx, paths_rx) =
-                channel::unbounded::<(i64, PathBuf, String, Arc<Language>)>();
+                channel::unbounded::<(i64, PathBuf, Arc<Language>, SystemTime)>();
             let (delete_paths_tx, delete_paths_rx) = channel::unbounded::<(i64, PathBuf)>();
             let (indexed_files_tx, indexed_files_rx) = channel::unbounded::<(i64, IndexedFile)>();
             cx.background()
                 .spawn({
-                    let fs = fs.clone();
                     let worktree_db_ids = worktree_db_ids.clone();
                     async move {
                         for worktree in worktrees.into_iter() {
-                            let file_hashes = &worktree_hashes[&worktree.id()];
-                            let mut files_included =
-                                file_hashes.keys().collect::<HashSet<&PathBuf>>();
+                            let mut file_mtimes =
+                                worktree_file_times.remove(&worktree.id()).unwrap();
                             for file in worktree.files(false, 0) {
                                 let absolute_path = worktree.absolutize(&file.path);
 
@@ -278,30 +279,26 @@ impl VectorStore {
                                         continue;
                                     }
 
-                                    if let Some(content) = fs.load(&absolute_path).await.log_err() {
-                                        let path_buf = file.path.to_path_buf();
-                                        let already_stored = file_hashes.get(&path_buf).map_or(
-                                            false,
-                                            |existing_hash| {
-                                                files_included.remove(&path_buf);
-                                                existing_hash.equals(&content)
-                                            },
-                                        );
+                                    let path_buf = file.path.to_path_buf();
+                                    let stored_mtime = file_mtimes.remove(&file.path.to_path_buf());
+                                    let already_stored = stored_mtime
+                                        .map_or(false, |existing_mtime| {
+                                            existing_mtime == file.mtime
+                                        });
 
-                                        if !already_stored {
-                                            paths_tx
-                                                .try_send((
-                                                    worktree_db_ids[&worktree.id()],
-                                                    path_buf,
-                                                    content,
-                                                    language,
-                                                ))
-                                                .unwrap();
-                                        }
+                                    if !already_stored {
+                                        paths_tx
+                                            .try_send((
+                                                worktree_db_ids[&worktree.id()],
+                                                path_buf,
+                                                language,
+                                                file.mtime,
+                                            ))
+                                            .unwrap();
                                     }
                                 }
                             }
-                            for file in files_included {
+                            for file in file_mtimes.keys() {
                                 delete_paths_tx
                                     .try_send((worktree_db_ids[&worktree.id()], file.to_owned()))
                                     .unwrap();
@@ -336,16 +333,17 @@ impl VectorStore {
                         scope.spawn(async {
                             let mut parser = Parser::new();
                             let mut cursor = QueryCursor::new();
-                            while let Ok((worktree_id, file_path, content, language)) =
+                            while let Ok((worktree_id, file_path, language, mtime)) =
                                 paths_rx.recv().await
                             {
                                 if let Some(indexed_file) = Self::index_file(
                                     &mut cursor,
                                     &mut parser,
                                     embedding_provider.as_ref(),
+                                    &fs,
                                     language,
                                     file_path,
-                                    content,
+                                    mtime,
                                 )
                                 .await
                                 .log_err()
@@ -394,6 +392,8 @@ impl VectorStore {
                 })
             })
             .collect::<Vec<_>>();
+
+        log::info!("Searching for: {:?}", phrase);
 
         let embedding_provider = self.embedding_provider.clone();
         let database_url = self.database_url.clone();
