@@ -1,4 +1,5 @@
 use crate::{
+    assets::SoundRegistry,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant, RemoteVideoTrack},
     IncomingCall,
 };
@@ -18,10 +19,29 @@ use live_kit_client::{
 };
 use postage::stream::Stream;
 use project::Project;
+use rodio::{OutputStream, OutputStreamHandle, Source};
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+enum Sound {
+    Joined,
+    Leaved,
+    Mute,
+    Unmute,
+}
+
+impl Sound  {
+    fn file(&self) -> &'static str {
+        match self {
+            Self::Joined => "joined",
+            Self::Leaved => "leave",
+            Self::Mute => "mute",
+            Self::Unmute => "unmute",
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -48,6 +68,8 @@ pub enum Event {
 pub struct Room {
     id: u64,
     live_kit: Option<LiveKitRoom>,
+    _sound_output_stream: Option<OutputStream>,
+    sound_output_handle: Option<OutputStreamHandle>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModelHandle<Project>>,
     joined_projects: HashSet<WeakModelHandle<Project>>,
@@ -176,9 +198,14 @@ impl Room {
         let maintain_connection =
             cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx).log_err());
 
+        let (sound_output_stream, sound_output_handle) =
+            OutputStream::try_default().log_err().unzip();
+
         Self {
             id,
             live_kit: live_kit_room,
+            _sound_output_stream: sound_output_stream,
+            sound_output_handle,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
             joined_projects: Default::default(),
@@ -910,6 +937,18 @@ impl Room {
         })
     }
 
+    fn play_sound(&self, sound: Sound, cx: &AppContext) {
+        let Some(output_handle) = self.sound_output_handle.as_ref() else {
+            return;
+        };
+
+        let Some(source) = SoundRegistry::global(cx).get(sound.file()) else {
+            return;
+        };
+
+        output_handle.play_raw(source.convert_samples()).log_err();
+    }
+
     pub fn join_project(
         &mut self,
         id: u64,
@@ -922,6 +961,9 @@ impl Room {
         cx.spawn(|this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+
+            cx.read(|cx| this.read(cx).play_sound(Sound::Joined, cx));
+
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade(cx) {

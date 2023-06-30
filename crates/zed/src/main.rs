@@ -190,7 +190,7 @@ fn main() {
         theme_selector::init(cx);
         activity_indicator::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), Assets, cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);

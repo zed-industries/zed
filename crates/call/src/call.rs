@@ -1,24 +1,32 @@
+mod assets;
 pub mod participant;
 pub mod room;
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use assets::SoundRegistry;
 use client::{proto, Client, TypedEnvelope, User, UserStore};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
 
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
-    WeakModelHandle,
+    AppContext, AssetSource, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription,
+    Task, WeakModelHandle,
 };
 use project::Project;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
-pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
+pub fn init(
+    client: Arc<Client>,
+    user_store: ModelHandle<UserStore>,
+    source: impl AssetSource,
+    cx: &mut AppContext,
+) {
+    cx.set_global(SoundRegistry::new(source));
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }

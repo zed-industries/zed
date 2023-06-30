@@ -30,6 +30,7 @@ media = { path = "../media" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 util = { path = "../util" }
+rodio = "0.17.1"
 
 anyhow.workspace = true
 async-broadcast = "0.4"
