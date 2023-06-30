@@ -385,7 +385,11 @@ impl CollabTitlebarItem {
                     .with_height(theme.contacts_popover.height)
             })
             .on_click(MouseButton::Left, |_, _, _| {})
-            .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(()))
+            .on_down_out(MouseButton::Left, move |_, this, cx| {
+                this.branch_popover.take();
+                cx.emit(());
+                cx.notify();
+            })
             .into_any();
 
             Overlay::new(child)
@@ -415,7 +419,11 @@ impl CollabTitlebarItem {
                     .with_height(theme.contacts_popover.height)
             })
             .on_click(MouseButton::Left, |_, _, _| {})
-            .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(()))
+            .on_down_out(MouseButton::Left, move |_, this, cx| {
+                this.project_popover.take();
+                cx.emit(());
+                cx.notify();
+            })
             .into_any();
 
             Overlay::new(child)
