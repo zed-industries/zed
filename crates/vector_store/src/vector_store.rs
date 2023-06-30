@@ -136,8 +136,8 @@ impl VectorStore {
         content: String,
     ) -> Result<IndexedFile> {
         let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
-        let outline_config = grammar
-            .outline_config
+        let embedding_config = grammar
+            .embedding_config
             .as_ref()
             .ok_or_else(|| anyhow!("no outline query"))?;
 
@@ -148,13 +148,17 @@ impl VectorStore {
 
         let mut documents = Vec::new();
         let mut context_spans = Vec::new();
-        for mat in cursor.matches(&outline_config.query, tree.root_node(), content.as_bytes()) {
+        for mat in cursor.matches(
+            &embedding_config.query,
+            tree.root_node(),
+            content.as_bytes(),
+        ) {
             let mut item_range = None;
             let mut name_range = None;
             for capture in mat.captures {
-                if capture.index == outline_config.item_capture_ix {
+                if capture.index == embedding_config.item_capture_ix {
                     item_range = Some(capture.node.byte_range());
-                } else if capture.index == outline_config.name_capture_ix {
+                } else if capture.index == embedding_config.name_capture_ix {
                     name_range = Some(capture.node.byte_range());
                 }
             }
@@ -266,7 +270,11 @@ impl VectorStore {
                                     .language_for_file(&absolute_path, None)
                                     .await
                                 {
-                                    if language.name().as_ref() != "Rust" {
+                                    if language
+                                        .grammar()
+                                        .and_then(|grammar| grammar.embedding_config.as_ref())
+                                        .is_none()
+                                    {
                                         continue;
                                     }
 
@@ -358,6 +366,8 @@ impl VectorStore {
             this.update(&mut cx, |this, _| {
                 this.worktree_db_ids.extend(worktree_db_ids);
             });
+
+            log::info!("Semantic Indexing Complete!");
 
             anyhow::Ok(())
         })

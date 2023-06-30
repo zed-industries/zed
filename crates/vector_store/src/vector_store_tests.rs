@@ -46,7 +46,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
             },
             Some(tree_sitter_rust::language()),
         )
-        .with_outline_query(
+        .with_embedding_query(
             r#"
             (function_item
                 name: (identifier) @name

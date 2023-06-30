@@ -170,6 +170,7 @@ fn load_queries(name: &str) -> LanguageQueries {
         brackets: load_query(name, "/brackets"),
         indents: load_query(name, "/indents"),
         outline: load_query(name, "/outline"),
+        embedding: load_query(name, "/embedding"),
         injections: load_query(name, "/injections"),
         overrides: load_query(name, "/overrides"),
     }
