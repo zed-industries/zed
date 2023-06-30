@@ -37,6 +37,8 @@
       "$": "vim::EndOfLine",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
+      "{": "vim::StartOfParagraph",
+      "}": "vim::EndOfParagraph",
       "shift-w": [
         "vim::NextWordStart",
         {

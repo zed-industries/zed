@@ -31,6 +31,8 @@ pub enum Motion {
     CurrentLine,
     StartOfLine,
     EndOfLine,
+    StartOfParagraph,
+    EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
     Matching,
@@ -72,6 +74,8 @@ actions!(
         StartOfLine,
         EndOfLine,
         CurrentLine,
+        StartOfParagraph,
+        EndOfParagraph,
         StartOfDocument,
         EndOfDocument,
         Matching,
@@ -92,6 +96,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &StartOfLine, cx: _| motion(Motion::StartOfLine, cx));
     cx.add_action(|_: &mut Workspace, _: &EndOfLine, cx: _| motion(Motion::EndOfLine, cx));
     cx.add_action(|_: &mut Workspace, _: &CurrentLine, cx: _| motion(Motion::CurrentLine, cx));
+    cx.add_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
+        motion(Motion::StartOfParagraph, cx)
+    });
+    cx.add_action(|_: &mut Workspace, _: &EndOfParagraph, cx: _| {
+        motion(Motion::EndOfParagraph, cx)
+    });
     cx.add_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
         motion(Motion::StartOfDocument, cx)
     });
@@ -142,7 +152,8 @@ impl Motion {
     pub fn linewise(&self) -> bool {
         use Motion::*;
         match self {
-            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart => true,
+            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart
+            | StartOfParagraph | EndOfParagraph => true,
             EndOfLine
             | NextWordEnd { .. }
             | Matching
@@ -172,6 +183,8 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine
+            | StartOfParagraph
+            | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace
@@ -197,6 +210,8 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine
+            | StartOfParagraph
+            | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace
@@ -235,6 +250,14 @@ impl Motion {
             FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
             StartOfLine => (start_of_line(map, point), SelectionGoal::None),
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
+            StartOfParagraph => (
+                movement::start_of_paragraph(map, point, times),
+                SelectionGoal::None,
+            ),
+            EndOfParagraph => (
+                movement::end_of_paragraph(map, point, times),
+                SelectionGoal::None,
+            ),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
@@ -589,4 +612,97 @@ fn find_backward(
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let new_row = (point.row() + times as u32).min(map.max_buffer_row());
     map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+}
+
+#[cfg(test)]
+
+mod test {
+
+    use crate::{state::Mode, test::VimTestContext};
+    use indoc::indoc;
+
+    #[gpui::test]
+    async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let initial_state = indoc! {r"ˇabc
+            def
+
+            paragraph
+            the second
+
+
+
+            third and
+            final"};
+
+        // goes down once
+        cx.set_state(initial_state, Mode::Normal);
+        cx.simulate_keystrokes(["}"]);
+        cx.assert_state(
+            indoc! {r"abc
+            def
+            ˇ
+            paragraph
+            the second
+
+
+
+            third and
+            final"},
+            Mode::Normal,
+        );
+
+        // goes up once
+        cx.simulate_keystrokes(["{"]);
+        cx.assert_state(initial_state, Mode::Normal);
+
+        // goes down twice
+        cx.simulate_keystrokes(["2", "}"]);
+        cx.assert_state(
+            indoc! {r"abc
+            def
+
+            paragraph
+            the second
+            ˇ
+
+
+            third and
+            final"},
+            Mode::Normal,
+        );
+
+        // goes down over multiple blanks
+        cx.simulate_keystrokes(["}"]);
+        cx.assert_state(
+            indoc! {r"abc
+                def
+
+                paragraph
+                the second
+
+
+
+                third and
+                finalˇ"},
+            Mode::Normal,
+        );
+
+        // goes up twice
+        cx.simulate_keystrokes(["2", "{"]);
+        cx.assert_state(
+            indoc! {r"abc
+                def
+                ˇ
+                paragraph
+                the second
+
+
+
+                third and
+                final"},
+            Mode::Normal,
+        )
+    }
 }

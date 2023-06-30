@@ -5120,7 +5120,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_with(|map, selection| {
                 selection.collapse_to(
-                    movement::start_of_paragraph(map, selection.head()),
+                    movement::start_of_paragraph(map, selection.head(), 1),
                     SelectionGoal::None,
                 )
             });
@@ -5140,7 +5140,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_with(|map, selection| {
                 selection.collapse_to(
-                    movement::end_of_paragraph(map, selection.head()),
+                    movement::end_of_paragraph(map, selection.head(), 1),
                     SelectionGoal::None,
                 )
             });
@@ -5159,7 +5159,10 @@ impl Editor {
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (movement::start_of_paragraph(map, head), SelectionGoal::None)
+                (
+                    movement::start_of_paragraph(map, head, 1),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -5176,7 +5179,10 @@ impl Editor {
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (movement::end_of_paragraph(map, head), SelectionGoal::None)
+                (
+                    movement::end_of_paragraph(map, head, 1),
+                    SelectionGoal::None,
+                )
             });
         })
     }
