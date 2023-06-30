@@ -255,7 +255,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             EndOfParagraph => (
-                movement::end_of_paragraph(map, point, times),
+                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
@@ -618,12 +618,12 @@ fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> 
 
 mod test {
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::test::NeovimBackedTestContext;
     use indoc::indoc;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
         let initial_state = indoc! {r"ˇabc
             def
@@ -637,10 +637,9 @@ mod test {
             final"};
 
         // goes down once
-        cx.set_state(initial_state, Mode::Normal);
-        cx.simulate_keystrokes(["}"]);
-        cx.assert_state(
-            indoc! {r"abc
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
             def
             ˇ
             paragraph
@@ -649,18 +648,16 @@ mod test {
 
 
             third and
-            final"},
-            Mode::Normal,
-        );
+            final"})
+            .await;
 
         // goes up once
-        cx.simulate_keystrokes(["{"]);
-        cx.assert_state(initial_state, Mode::Normal);
+        cx.simulate_shared_keystrokes(["{"]).await;
+        cx.assert_shared_state(initial_state).await;
 
         // goes down twice
-        cx.simulate_keystrokes(["2", "}"]);
-        cx.assert_state(
-            indoc! {r"abc
+        cx.simulate_shared_keystrokes(["2", "}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
             def
 
             paragraph
@@ -669,14 +666,12 @@ mod test {
 
 
             third and
-            final"},
-            Mode::Normal,
-        );
+            final"})
+            .await;
 
         // goes down over multiple blanks
-        cx.simulate_keystrokes(["}"]);
-        cx.assert_state(
-            indoc! {r"abc
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
                 def
 
                 paragraph
@@ -685,14 +680,12 @@ mod test {
 
 
                 third and
-                finalˇ"},
-            Mode::Normal,
-        );
+                finaˇl"})
+            .await;
 
         // goes up twice
-        cx.simulate_keystrokes(["2", "{"]);
-        cx.assert_state(
-            indoc! {r"abc
+        cx.simulate_shared_keystrokes(["2", "{"]).await;
+        cx.assert_shared_state(indoc! {r"abc
                 def
                 ˇ
                 paragraph
@@ -701,8 +694,7 @@ mod test {
 
 
                 third and
-                final"},
-            Mode::Normal,
-        )
+                final"})
+            .await
     }
 }
