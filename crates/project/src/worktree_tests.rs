@@ -454,6 +454,10 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
                         "b1.js": "b1",
                         "b2.js": "b2",
                     },
+                    "c": {
+                        "c1.js": "c1",
+                        "c2.js": "c2",
+                    }
                 },
             },
             "two": {
@@ -521,6 +525,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
                 (Path::new("one/node_modules/b"), true),
                 (Path::new("one/node_modules/b/b1.js"), true),
                 (Path::new("one/node_modules/b/b2.js"), true),
+                (Path::new("one/node_modules/c"), true),
                 (Path::new("two"), false),
                 (Path::new("two/x.js"), false),
                 (Path::new("two/y.js"), false),
@@ -564,6 +569,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
                 (Path::new("one/node_modules/b"), true),
                 (Path::new("one/node_modules/b/b1.js"), true),
                 (Path::new("one/node_modules/b/b2.js"), true),
+                (Path::new("one/node_modules/c"), true),
                 (Path::new("two"), false),
                 (Path::new("two/x.js"), false),
                 (Path::new("two/y.js"), false),
@@ -578,6 +584,17 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         // Only the newly-expanded directory is scanned.
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);
     });
+
+    // No work happens when files and directories change within an unloaded directory.
+    let prev_fs_call_count = fs.read_dir_call_count() + fs.metadata_call_count();
+    fs.create_dir("/root/one/node_modules/c/lib".as_ref())
+        .await
+        .unwrap();
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count,
+        0
+    );
 }
 
 #[gpui::test]

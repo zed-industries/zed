@@ -207,16 +207,11 @@ impl ActivityIndicator {
         let mut checking_for_update = SmallVec::<[_; 3]>::new();
         let mut failed = SmallVec::<[_; 3]>::new();
         for status in &self.statuses {
+            let name = status.name.clone();
             match status.status {
-                LanguageServerBinaryStatus::CheckingForUpdate => {
-                    checking_for_update.push(status.name.clone());
-                }
-                LanguageServerBinaryStatus::Downloading => {
-                    downloading.push(status.name.clone());
-                }
-                LanguageServerBinaryStatus::Failed { .. } => {
-                    failed.push(status.name.clone());
-                }
+                LanguageServerBinaryStatus::CheckingForUpdate => checking_for_update.push(name),
+                LanguageServerBinaryStatus::Downloading => downloading.push(name),
+                LanguageServerBinaryStatus::Failed { .. } => failed.push(name),
                 LanguageServerBinaryStatus::Downloaded | LanguageServerBinaryStatus::Cached => {}
             }
         }

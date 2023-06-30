@@ -13,13 +13,14 @@ use gpui::{
 };
 use language::{Bias, Point};
 use util::ResultExt;
-use workspace::WorkspaceId;
+use workspace::{item::Item, WorkspaceId};
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
+    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayRefreshReason, MultiBufferSnapshot,
+    ToPoint,
 };
 
 use self::{
@@ -293,8 +294,19 @@ impl Editor {
         self.scroll_manager.visible_line_count
     }
 
-    pub(crate) fn set_visible_line_count(&mut self, lines: f32) {
-        self.scroll_manager.visible_line_count = Some(lines)
+    pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
+        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
+        self.scroll_manager.visible_line_count = Some(lines);
+        if opened_first_time {
+            cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.refresh_inlays(InlayRefreshReason::NewLinesShown, cx)
+                    })
+                    .ok()
+            })
+            .detach()
+        }
     }
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
@@ -320,6 +332,10 @@ impl Editor {
             workspace_id,
             cx,
         );
+
+        if !self.is_singleton(cx) {
+            self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
+        }
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {

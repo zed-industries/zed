@@ -1,11 +1,11 @@
-import { ColorScheme } from "../common"
 import { interactive, toggleable } from "../element"
 import {
     TextProperties,
     background,
     foreground,
     text,
-} from "../styleTree/components"
+} from "../style_tree/components"
+import { ColorScheme } from "../theme/color_scheme"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {

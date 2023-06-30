@@ -35,13 +35,13 @@ export function toggleable<T extends object>(
     if (!base && !state.inactive) throw new Error(NO_INACTIVE_OR_BASE_ERROR)
     if (!state.active) throw new Error(NO_ACTIVE_ERROR)
 
-    const inactiveState = base
+    const inactive_state = base
         ? ((state.inactive ? merge(base, state.inactive) : base) as T)
         : (state.inactive as T)
 
-    const toggleObj: Toggleable<T> = {
-        inactive: inactiveState,
+    const toggle_obj: Toggleable<T> = {
+        inactive: inactive_state,
         active: merge(base ?? {}, state.active) as T,
     }
-    return toggleObj
+    return toggle_obj
 }

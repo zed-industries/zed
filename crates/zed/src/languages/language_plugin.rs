@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -127,6 +128,14 @@ impl LspAdapter for PluginLspAdapter {
                 result
             })
             .await
+    }
+
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
     }
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {

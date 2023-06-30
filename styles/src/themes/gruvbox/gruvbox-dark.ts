@@ -1,1 +1,1 @@
-export { darkDefault } from "./gruvbox-common"
+export { dark_default } from "./gruvbox-common"

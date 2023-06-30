@@ -2,6 +2,7 @@ mod blink_manager;
 pub mod display_map;
 mod editor_settings;
 mod element;
+mod inlay_hint_cache;
 
 mod git;
 mod highlight_matching_bracket;
@@ -52,11 +53,12 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
-    language_settings::{self, all_language_settings},
+    language_settings::{self, all_language_settings, InlayHintSettings},
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
@@ -64,11 +66,12 @@ use language::{
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
 };
+use log::error;
+use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
-use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
@@ -85,12 +88,13 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
+use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
@@ -178,6 +182,12 @@ pub struct UnfoldAt {
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct GutterHover {
     pub hovered: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InlayId {
+    Suggestion(usize),
+    Hint(usize),
 }
 
 actions!(
@@ -535,6 +545,8 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
+    inlay_hint_cache: InlayHintCache,
+    next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1056,6 +1068,7 @@ pub struct CopilotState {
     cycled: bool,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
+    suggestion: Option<Inlay>,
 }
 
 impl Default for CopilotState {
@@ -1067,6 +1080,7 @@ impl Default for CopilotState {
             completions: Default::default(),
             active_completion_index: 0,
             cycled: false,
+            suggestion: None,
         }
     }
 }
@@ -1181,6 +1195,14 @@ enum GotoDefinitionKind {
     Type,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum InlayRefreshReason {
+    SettingsChange(InlayHintSettings),
+    NewLinesShown,
+    ExcerptEdited,
+    RefreshRequested,
+}
+
 impl Editor {
     pub fn single_line(
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
@@ -1282,14 +1304,27 @@ impl Editor {
         let soft_wrap_mode_override =
             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
 
-        let mut project_subscription = None;
-        if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
+        let mut project_subscriptions = Vec::new();
+        if mode == EditorMode::Full {
             if let Some(project) = project.as_ref() {
-                project_subscription = Some(cx.observe(project, |_, _, cx| {
-                    cx.emit(Event::TitleChanged);
-                }))
+                if buffer.read(cx).is_singleton() {
+                    project_subscriptions.push(cx.observe(project, |_, _, cx| {
+                        cx.emit(Event::TitleChanged);
+                    }));
+                }
+                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
+                    if let project::Event::RefreshInlays = event {
+                        editor.refresh_inlays(InlayRefreshReason::RefreshRequested, cx);
+                    };
+                }));
             }
         }
+
+        let inlay_hint_settings = inlay_hint_settings(
+            selections.newest_anchor().head(),
+            &buffer.read(cx).snapshot(cx),
+            cx,
+        );
 
         let mut this = Self {
             handle: cx.weak_handle(),
@@ -1324,6 +1359,7 @@ impl Editor {
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             completion_tasks: Default::default(),
             next_completion_id: 0,
+            next_inlay_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
@@ -1340,6 +1376,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
+            inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1350,9 +1387,7 @@ impl Editor {
             ],
         };
 
-        if let Some(project_subscription) = project_subscription {
-            this._subscriptions.push(project_subscription);
-        }
+        this._subscriptions.extend(project_subscriptions);
 
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
@@ -1873,7 +1908,7 @@ impl Editor {
                 s.set_pending(pending, mode);
             });
         } else {
-            log::error!("update_selection dispatched with no pending selection");
+            error!("update_selection dispatched with no pending selection");
             return;
         }
 
@@ -2577,6 +2612,106 @@ impl Editor {
         }
     }
 
+    fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
+        if self.project.is_none() || self.mode != EditorMode::Full {
+            return;
+        }
+
+        let invalidate_cache = match reason {
+            InlayRefreshReason::SettingsChange(new_settings) => {
+                match self.inlay_hint_cache.update_settings(
+                    &self.buffer,
+                    new_settings,
+                    self.visible_inlay_hints(cx),
+                    cx,
+                ) {
+                    ControlFlow::Break(Some(InlaySplice {
+                        to_remove,
+                        to_insert,
+                    })) => {
+                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        return;
+                    }
+                    ControlFlow::Break(None) => return,
+                    ControlFlow::Continue(()) => InvalidationStrategy::RefreshRequested,
+                }
+            }
+            InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
+            InlayRefreshReason::ExcerptEdited => InvalidationStrategy::ExcerptEdited,
+            InlayRefreshReason::RefreshRequested => InvalidationStrategy::RefreshRequested,
+        };
+
+        self.inlay_hint_cache.refresh_inlay_hints(
+            self.excerpt_visible_offsets(cx),
+            invalidate_cache,
+            cx,
+        )
+    }
+
+    fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(move |inlay| {
+                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn excerpt_visible_offsets(
+        &self,
+        cx: &mut ViewContext<'_, '_, Editor>,
+    ) -> HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)> {
+        let multi_buffer = self.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multi_buffer_visible_start = self
+            .scroll_manager
+            .anchor()
+            .anchor
+            .to_point(&multi_buffer_snapshot);
+        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+            multi_buffer_visible_start
+                + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+            Bias::Left,
+        );
+        let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
+        multi_buffer
+            .range_to_buffer_ranges(multi_buffer_visible_range, cx)
+            .into_iter()
+            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer, excerpt_visible_range, excerpt_id)| {
+                (excerpt_id, (buffer, excerpt_visible_range))
+            })
+            .collect()
+    }
+
+    fn splice_inlay_hints(
+        &self,
+        to_remove: Vec<InlayId>,
+        to_insert: Vec<(Anchor, InlayId, project::InlayHint)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx).read(cx);
+        let new_inlays = to_insert
+            .into_iter()
+            .map(|(position, id, hint)| {
+                let mut text = hint.text();
+                if hint.padding_right {
+                    text.push(' ');
+                }
+                if hint.padding_left {
+                    text.insert(0, ' ');
+                }
+                (id, InlayProperties { position, text })
+            })
+            .collect();
+        drop(buffer);
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_inlays(to_remove, new_inlays, cx);
+        });
+    }
+
     fn trigger_on_type_formatting(
         &self,
         input: String,
@@ -3227,10 +3362,7 @@ impl Editor {
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(suggestion) = self
-            .display_map
-            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx))
-        {
+        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
             if let Some((copilot, completion)) =
                 Copilot::global(cx).zip(self.copilot_state.active_completion())
             {
@@ -3249,7 +3381,7 @@ impl Editor {
     }
 
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.has_active_copilot_suggestion(cx) {
+        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
                 copilot
                     .update(cx, |copilot, cx| {
@@ -3260,8 +3392,9 @@ impl Editor {
                 self.report_copilot_event(None, false, cx)
             }
 
-            self.display_map
-                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+            self.display_map.update(cx, |map, cx| {
+                map.splice_inlays::<&str>(vec![suggestion.id], Vec::new(), cx)
+            });
             cx.notify();
             true
         } else {
@@ -3282,7 +3415,26 @@ impl Editor {
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
-        self.display_map.read(cx).has_suggestion()
+        if let Some(suggestion) = self.copilot_state.suggestion.as_ref() {
+            let buffer = self.buffer.read(cx).read(cx);
+            suggestion.position.is_valid(&buffer)
+        } else {
+            false
+        }
+    }
+
+    fn take_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
+        let suggestion = self.copilot_state.suggestion.take()?;
+        self.display_map.update(cx, |map, cx| {
+            map.splice_inlays::<&str>(vec![suggestion.id], Default::default(), cx);
+        });
+        let buffer = self.buffer.read(cx).read(cx);
+
+        if suggestion.position.is_valid(&buffer) {
+            Some(suggestion)
+        } else {
+            None
+        }
     }
 
     fn update_visible_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
@@ -3299,14 +3451,27 @@ impl Editor {
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
         {
+            let text = Rope::from(text);
+            let mut to_remove = Vec::new();
+            if let Some(suggestion) = self.copilot_state.suggestion.take() {
+                to_remove.push(suggestion.id);
+            }
+
+            let suggestion_inlay_id = InlayId::Suggestion(post_inc(&mut self.next_inlay_id));
+            let to_insert = vec![(
+                suggestion_inlay_id,
+                InlayProperties {
+                    position: cursor,
+                    text: text.clone(),
+                },
+            )];
             self.display_map.update(cx, move |map, cx| {
-                map.replace_suggestion(
-                    Some(Suggestion {
-                        position: cursor,
-                        text: text.trim_end().into(),
-                    }),
-                    cx,
-                )
+                map.splice_inlays(to_remove, to_insert, cx)
+            });
+            self.copilot_state.suggestion = Some(Inlay {
+                id: suggestion_inlay_id,
+                position: cursor,
+                text,
             });
             cx.notify();
         } else {
@@ -6641,7 +6806,7 @@ impl Editor {
             if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
                 *end_selections = Some(self.selections.disjoint_anchors());
             } else {
-                log::error!("unexpectedly ended a transaction that wasn't started by this editor");
+                error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
             cx.emit(Event::Edited);
@@ -7103,6 +7268,7 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
+                self.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -7127,7 +7293,7 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
             }
             _ => {}
-        }
+        };
     }
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
@@ -7136,6 +7302,14 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(true, cx);
+        self.refresh_inlays(
+            InlayRefreshReason::SettingsChange(inlay_hint_settings(
+                self.selections.newest_anchor().head(),
+                &self.buffer.read(cx).snapshot(cx),
+                cx,
+            )),
+            cx,
+        );
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -7425,6 +7599,23 @@ impl Editor {
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else { return; };
         cx.write_to_clipboard(ClipboardItem::new(lines));
     }
+
+    pub fn inlay_hint_cache(&self) -> &InlayHintCache {
+        &self.inlay_hint_cache
+    }
+}
+
+fn inlay_hint_settings(
+    location: Anchor,
+    snapshot: &MultiBufferSnapshot,
+    cx: &mut ViewContext<'_, '_, Editor>,
+) -> InlayHintSettings {
+    let file = snapshot.file_at(location);
+    let language = snapshot.language_at(location);
+    let settings = all_language_settings(file, cx);
+    settings
+        .language(language.map(|l| l.name()).as_deref())
+        .inlay_hints
 }
 
 fn consume_contiguous_rows(

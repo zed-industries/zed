@@ -14,9 +14,9 @@ export const color = {
         pine: "#31748f",
         foam: "#9ccfd8",
         iris: "#c4a7e7",
-        highlightLow: "#21202e",
-        highlightMed: "#403d52",
-        highlightHigh: "#524f67",
+        highlight_low: "#21202e",
+        highlight_med: "#403d52",
+        highlight_high: "#524f67",
     },
     moon: {
         base: "#232136",
@@ -31,9 +31,9 @@ export const color = {
         pine: "#3e8fb0",
         foam: "#9ccfd8",
         iris: "#c4a7e7",
-        highlightLow: "#2a283e",
-        highlightMed: "#44415a",
-        highlightHigh: "#56526e",
+        highlight_low: "#2a283e",
+        highlight_med: "#44415a",
+        highlight_high: "#56526e",
     },
     dawn: {
         base: "#faf4ed",
@@ -48,9 +48,9 @@ export const color = {
         pine: "#286983",
         foam: "#56949f",
         iris: "#907aa9",
-        highlightLow: "#f4ede8",
-        highlightMed: "#dfdad9",
-        highlightHigh: "#cecacd",
+        highlight_low: "#f4ede8",
+        highlight_med: "#dfdad9",
+        highlight_high: "#cecacd",
     },
 }
 
@@ -69,7 +69,7 @@ export const syntax = (c: typeof color.default): Partial<ThemeSyntax> => {
         tag: { color: c.foam },
         "function.method": { color: c.rose },
         title: { color: c.gold },
-        linkText: { color: c.foam, italic: false },
-        linkUri: { color: c.rose },
+        link_text: { color: c.foam, italic: false },
+        link_uri: { color: c.rose },
     }
 }

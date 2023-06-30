@@ -384,6 +384,12 @@ impl<'a> From<&'a str> for Rope {
     }
 }
 
+impl From<String> for Rope {
+    fn from(text: String) -> Self {
+        Rope::from(text.as_str())
+    }
+}
+
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {

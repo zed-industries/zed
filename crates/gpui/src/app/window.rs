@@ -8,8 +8,8 @@ use crate::{
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
     },
     scene::{
-        CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
-        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
+        CursorRegion, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag, MouseEvent,
+        MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
     util::post_inc,
@@ -524,6 +524,10 @@ impl<'a> WindowContext<'a> {
                     region: Default::default(),
                     platform_event: e.clone(),
                 }));
+                mouse_events.push(MouseEvent::ClickOut(MouseClickOut {
+                    region: Default::default(),
+                    platform_event: e.clone(),
+                }));
             }
 
             Event::MouseMoved(
@@ -712,7 +716,10 @@ impl<'a> WindowContext<'a> {
                     }
                 }
 
-                MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
+                MouseEvent::MoveOut(_)
+                | MouseEvent::UpOut(_)
+                | MouseEvent::DownOut(_)
+                | MouseEvent::ClickOut(_) => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
                         if !mouse_region

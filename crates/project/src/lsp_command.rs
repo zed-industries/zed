@@ -1,14 +1,15 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
-    ProjectTransaction,
+    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
+    MarkupContent, Project, ProjectTransaction,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use fs::LineEnding;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
-    language_settings::language_settings,
+    language_settings::{language_settings, InlayHintKind},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
@@ -124,6 +125,10 @@ pub(crate) struct OnTypeFormatting {
     pub trigger: String,
     pub options: FormattingOptions,
     pub push_to_history: bool,
+}
+
+pub(crate) struct InlayHints {
+    pub range: Range<Anchor>,
 }
 
 pub(crate) struct FormattingOptions {
@@ -1777,6 +1782,330 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for InlayHints {
+    type Response = Vec<InlayHint>;
+    type LspRequest = lsp::InlayHintRequest;
+    type ProtoRequest = proto::InlayHints;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else { return false };
+        match inlay_hint_provider {
+            lsp::OneOf::Left(enabled) => *enabled,
+            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
+                lsp::InlayHintServerCapabilities::Options(_) => true,
+                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
+            },
+        }
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::InlayHintParams {
+        lsp::InlayHintParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            range: range_to_lsp(self.range.to_point_utf16(buffer)),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::InlayHint>>,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        _: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<InlayHint>> {
+        cx.read(|cx| {
+            let origin_buffer = buffer.read(cx);
+            Ok(message
+                .unwrap_or_default()
+                .into_iter()
+                .map(|lsp_hint| {
+                    let kind = lsp_hint.kind.and_then(|kind| match kind {
+                        lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
+                        lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
+                        _ => None,
+                    });
+                    let position = origin_buffer
+                        .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+                    InlayHint {
+                        buffer_id: origin_buffer.remote_id(),
+                        position: if kind == Some(InlayHintKind::Parameter) {
+                            origin_buffer.anchor_before(position)
+                        } else {
+                            origin_buffer.anchor_after(position)
+                        },
+                        padding_left: lsp_hint.padding_left.unwrap_or(false),
+                        padding_right: lsp_hint.padding_right.unwrap_or(false),
+                        label: match lsp_hint.label {
+                            lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
+                            lsp::InlayHintLabel::LabelParts(lsp_parts) => {
+                                InlayHintLabel::LabelParts(
+                                    lsp_parts
+                                        .into_iter()
+                                        .map(|label_part| InlayHintLabelPart {
+                                            value: label_part.value,
+                                            tooltip: label_part.tooltip.map(
+                                                |tooltip| {
+                                                    match tooltip {
+                                        lsp::InlayHintLabelPartTooltip::String(s) => {
+                                            InlayHintLabelPartTooltip::String(s)
+                                        }
+                                        lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                            markup_content,
+                                        ) => InlayHintLabelPartTooltip::MarkupContent(
+                                            MarkupContent {
+                                                kind: format!("{:?}", markup_content.kind),
+                                                value: markup_content.value,
+                                            },
+                                        ),
+                                    }
+                                                },
+                                            ),
+                                            location: label_part.location.map(|lsp_location| {
+                                                let target_start = origin_buffer.clip_point_utf16(
+                                                    point_from_lsp(lsp_location.range.start),
+                                                    Bias::Left,
+                                                );
+                                                let target_end = origin_buffer.clip_point_utf16(
+                                                    point_from_lsp(lsp_location.range.end),
+                                                    Bias::Left,
+                                                );
+                                                Location {
+                                                    buffer: buffer.clone(),
+                                                    range: origin_buffer.anchor_after(target_start)
+                                                        ..origin_buffer.anchor_before(target_end),
+                                                }
+                                            }),
+                                        })
+                                        .collect(),
+                                )
+                            }
+                        },
+                        kind,
+                        tooltip: lsp_hint.tooltip.map(|tooltip| match tooltip {
+                            lsp::InlayHintTooltip::String(s) => InlayHintTooltip::String(s),
+                            lsp::InlayHintTooltip::MarkupContent(markup_content) => {
+                                InlayHintTooltip::MarkupContent(MarkupContent {
+                                    kind: format!("{:?}", markup_content.kind),
+                                    value: markup_content.value,
+                                })
+                            }
+                        }),
+                    }
+                })
+                .collect())
+        })
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
+        proto::InlayHints {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            start: Some(language::proto::serialize_anchor(&self.range.start)),
+            end: Some(language::proto::serialize_anchor(&self.range.end)),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::InlayHints,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let start = message
+            .start
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid start")?;
+        let end = message
+            .end
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid end")?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(Self { range: start..end })
+    }
+
+    fn response_to_proto(
+        response: Vec<InlayHint>,
+        _: &mut Project,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut AppContext,
+    ) -> proto::InlayHintsResponse {
+        proto::InlayHintsResponse {
+            hints: response
+                .into_iter()
+                .map(|response_hint| proto::InlayHint {
+                    position: Some(language::proto::serialize_anchor(&response_hint.position)),
+                    padding_left: response_hint.padding_left,
+                    padding_right: response_hint.padding_right,
+                    label: Some(proto::InlayHintLabel {
+                        label: Some(match response_hint.label {
+                            InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
+                            InlayHintLabel::LabelParts(label_parts) => {
+                                proto::inlay_hint_label::Label::LabelParts(proto::InlayHintLabelParts {
+                                    parts: label_parts.into_iter().map(|label_part| proto::InlayHintLabelPart {
+                                        value: label_part.value,
+                                        tooltip: label_part.tooltip.map(|tooltip| {
+                                            let proto_tooltip = match tooltip {
+                                                InlayHintLabelPartTooltip::String(s) => proto::inlay_hint_label_part_tooltip::Content::Value(s),
+                                                InlayHintLabelPartTooltip::MarkupContent(markup_content) => proto::inlay_hint_label_part_tooltip::Content::MarkupContent(proto::MarkupContent {
+                                                    kind: markup_content.kind,
+                                                    value: markup_content.value,
+                                                }),
+                                            };
+                                            proto::InlayHintLabelPartTooltip {content: Some(proto_tooltip)}
+                                        }),
+                                        location: label_part.location.map(|location| proto::Location {
+                                            start: Some(serialize_anchor(&location.range.start)),
+                                            end: Some(serialize_anchor(&location.range.end)),
+                                            buffer_id: location.buffer.read(cx).remote_id(),
+                                        }),
+                                    }).collect()
+                                })
+                            }
+                        }),
+                    }),
+                    kind: response_hint.kind.map(|kind| kind.name().to_string()),
+                    tooltip: response_hint.tooltip.map(|response_tooltip| {
+                        let proto_tooltip = match response_tooltip {
+                            InlayHintTooltip::String(s) => {
+                                proto::inlay_hint_tooltip::Content::Value(s)
+                            }
+                            InlayHintTooltip::MarkupContent(markup_content) => {
+                                proto::inlay_hint_tooltip::Content::MarkupContent(
+                                    proto::MarkupContent {
+                                        kind: markup_content.kind,
+                                        value: markup_content.value,
+                                    },
+                                )
+                            }
+                        };
+                        proto::InlayHintTooltip {
+                            content: Some(proto_tooltip),
+                        }
+                    }),
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::InlayHintsResponse,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<InlayHint>> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        let mut hints = Vec::new();
+        for message_hint in message.hints {
+            let buffer_id = message_hint
+                .position
+                .as_ref()
+                .and_then(|location| location.buffer_id)
+                .context("missing buffer id")?;
+            let hint = InlayHint {
+                buffer_id,
+                position: message_hint
+                    .position
+                    .and_then(language::proto::deserialize_anchor)
+                    .context("invalid position")?,
+                label: match message_hint
+                    .label
+                    .and_then(|label| label.label)
+                    .context("missing label")?
+                {
+                    proto::inlay_hint_label::Label::Value(s) => InlayHintLabel::String(s),
+                    proto::inlay_hint_label::Label::LabelParts(parts) => {
+                        let mut label_parts = Vec::new();
+                        for part in parts.parts {
+                            label_parts.push(InlayHintLabelPart {
+                                value: part.value,
+                                tooltip: part.tooltip.map(|tooltip| match tooltip.content {
+                                    Some(proto::inlay_hint_label_part_tooltip::Content::Value(s)) => InlayHintLabelPartTooltip::String(s),
+                                    Some(proto::inlay_hint_label_part_tooltip::Content::MarkupContent(markup_content)) => InlayHintLabelPartTooltip::MarkupContent(MarkupContent {
+                                        kind: markup_content.kind,
+                                        value: markup_content.value,
+                                    }),
+                                    None => InlayHintLabelPartTooltip::String(String::new()),
+                                }),
+                                location: match part.location {
+                                    Some(location) => {
+                                        let target_buffer = project
+                                            .update(&mut cx, |this, cx| {
+                                                this.wait_for_remote_buffer(location.buffer_id, cx)
+                                            })
+                                            .await?;
+                                        Some(Location {
+                                        range: location
+                                            .start
+                                            .and_then(language::proto::deserialize_anchor)
+                                            .context("invalid start")?
+                                            ..location
+                                                .end
+                                                .and_then(language::proto::deserialize_anchor)
+                                                .context("invalid end")?,
+                                        buffer: target_buffer,
+                                    })},
+                                    None => None,
+                                },
+                            });
+                        }
+
+                        InlayHintLabel::LabelParts(label_parts)
+                    }
+                },
+                padding_left: message_hint.padding_left,
+                padding_right: message_hint.padding_right,
+                kind: message_hint
+                    .kind
+                    .as_deref()
+                    .and_then(InlayHintKind::from_name),
+                tooltip: message_hint.tooltip.and_then(|tooltip| {
+                    Some(match tooltip.content? {
+                        proto::inlay_hint_tooltip::Content::Value(s) => InlayHintTooltip::String(s),
+                        proto::inlay_hint_tooltip::Content::MarkupContent(markup_content) => {
+                            InlayHintTooltip::MarkupContent(MarkupContent {
+                                kind: markup_content.kind,
+                                value: markup_content.value,
+                            })
+                        }
+                    })
+                }),
+            };
+
+            hints.push(hint);
+        }
+
+        Ok(hints)
+    }
+
+    fn buffer_id_from_proto(message: &proto::InlayHints) -> u64 {
         message.buffer_id
     }
 }

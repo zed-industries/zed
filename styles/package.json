@@ -1,24 +1,22 @@
 {
     "name": "styles",
     "version": "1.0.0",
-    "description": "",
-    "main": "index.js",
+    "description": "Typescript app that builds Zed's themes",
+    "main": "./src/build_themes.ts",
     "scripts": {
-        "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts",
-        "build-types": "ts-node ./src/buildTypes.ts",
+        "build": "ts-node ./src/build_themes.ts",
+        "build-licenses": "ts-node ./src/build_licenses.ts",
+        "build-tokens": "ts-node ./src/build_tokens.ts",
+        "build-types": "ts-node ./src/build_types.ts",
         "test": "vitest"
     },
-    "author": "",
+    "author": "Zed Industries (https://github.com/zed-industries/)",
     "license": "ISC",
     "dependencies": {
         "@tokens-studio/types": "^0.2.3",
         "@types/chroma-js": "^2.4.0",
         "@types/node": "^18.14.1",
         "ayu": "^8.0.1",
-        "bezier-easing": "^2.1.0",
-        "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
         "deepmerge": "^4.3.0",
         "json-schema-to-typescript": "^13.0.2",
@@ -26,15 +24,13 @@
         "ts-deepmerge": "^6.0.3",
         "ts-node": "^10.9.1",
         "utility-types": "^3.10.0",
-        "vitest": "^0.32.0"
-    },
-    "prettier": {
-        "semi": false,
-        "printWidth": 80,
-        "htmlWhitespaceSensitivity": "strict",
-        "tabWidth": 4
-    },
-    "devDependencies": {
-        "@vitest/coverage-v8": "^0.32.0"
+        "vitest": "^0.32.0",
+        "@typescript-eslint/eslint-plugin": "^5.60.1",
+        "@typescript-eslint/parser": "^5.60.1",
+        "@vitest/coverage-v8": "^0.32.0",
+        "eslint": "^8.43.0",
+        "eslint-import-resolver-typescript": "^3.5.5",
+        "eslint-plugin-import": "^2.27.5",
+        "typescript": "^5.1.5"
     }
 }

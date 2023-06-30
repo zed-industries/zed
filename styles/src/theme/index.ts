@@ -1,4 +1,4 @@
-export * from "./colorScheme"
+export * from "./color_scheme"
 export * from "./ramps"
 export * from "./syntax"
-export * from "./themeConfig"
+export * from "./theme_config"

@@ -3,7 +3,8 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use language::{LanguageServerBinary, LanguageServerName, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use smol::fs;
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf};
 use util::{
@@ -91,31 +92,47 @@ impl super::LspAdapter for LuaLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        async_iife!({
-            let mut last_binary_path = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_file()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .map_or(false, |name| name == "lua-language-server")
-                {
-                    last_binary_path = Some(entry.path());
-                }
-            }
-
-            if let Some(path) = last_binary_path {
-                Ok(LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                })
-            } else {
-                Err(anyhow!("no cached binary"))
-            }
-        })
-        .await
-        .log_err()
+        get_cached_server_binary(container_dir).await
     }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--version".into()];
+                binary
+            })
+    }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async_iife!({
+        let mut last_binary_path = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .map_or(false, |name| name == "lua-language-server")
+            {
+                last_binary_path = Some(entry.path());
+            }
+        }
+
+        if let Some(path) = last_binary_path {
+            Ok(LanguageServerBinary {
+                path,
+                arguments: server_binary_arguments(),
+            })
+        } else {
+            Err(anyhow!("no cached binary"))
+        }
+    })
+    .await
+    .log_err()
 }

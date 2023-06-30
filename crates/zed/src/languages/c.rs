@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
+use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
@@ -86,31 +87,19 @@ impl super::LspAdapter for CLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last_clangd_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_clangd_dir = Some(entry.path());
-                }
-            }
-            let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let clangd_bin = clangd_dir.join("bin/clangd");
-            if clangd_bin.exists() {
-                Ok(LanguageServerBinary {
-                    path: clangd_bin,
-                    arguments: vec![],
-                })
-            } else {
-                Err(anyhow!(
-                    "missing clangd binary in directory {:?}",
-                    clangd_dir
-                ))
-            }
-        })()
-        .await
-        .log_err()
+        get_cached_server_binary(container_dir).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
     }
 
     async fn label_for_completion(
@@ -248,6 +237,34 @@ impl super::LspAdapter for CLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last_clangd_dir = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_dir() {
+                last_clangd_dir = Some(entry.path());
+            }
+        }
+        let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let clangd_bin = clangd_dir.join("bin/clangd");
+        if clangd_bin.exists() {
+            Ok(LanguageServerBinary {
+                path: clangd_bin,
+                arguments: vec![],
+            })
+        } else {
+            Err(anyhow!(
+                "missing clangd binary in directory {:?}",
+                clangd_dir
+            ))
+        }
+    })()
+    .await
+    .log_err()
 }
 
 #[cfg(test)]
