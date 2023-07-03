@@ -93,7 +93,10 @@
       ],
       "ctrl-o": "pane::GoBack",
       "ctrl-]": "editor::GoToDefinition",
-      "escape": "editor::Cancel",
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
         "vim::Number",
@@ -325,7 +328,10 @@
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
-      "escape": "editor::Cancel"
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ]
     }
   }
 ]
