@@ -1,0 +1,23 @@
+[package]
+name = "audio"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/audio.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+collections = { path = "../collections" }
+util = { path = "../util" }
+
+rodio = "0.17.1"
+
+log.workspace = true
+
+anyhow.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]

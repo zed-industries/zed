@@ -3,6 +3,7 @@ use crate::{
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
+use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
     Client, TypedEnvelope, User, UserStore,
@@ -151,6 +152,7 @@ impl Room {
             let connect = room.connect(&connection_info.server_url, &connection_info.token);
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
+
                 this.update(&mut cx, |this, cx| this.share_microphone(cx))
                     .await?;
 
@@ -175,6 +177,8 @@ impl Room {
 
         let maintain_connection =
             cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx).log_err());
+
+        Audio::play_sound(Sound::Joined, cx);
 
         Self {
             id,
@@ -265,6 +269,7 @@ impl Room {
                 room.apply_room_update(room_proto, cx)?;
                 anyhow::Ok(())
             })?;
+
             Ok(room)
         })
     }
@@ -305,6 +310,8 @@ impl Room {
                 });
             }
         }
+
+        Audio::play_sound(Sound::Leave, cx);
 
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
@@ -656,6 +663,8 @@ impl Room {
                                 },
                             );
 
+                            Audio::play_sound(Sound::Joined, cx);
+
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let video_tracks =
                                     live_kit.room.remote_video_tracks(&user.id.to_string());
@@ -922,6 +931,7 @@ impl Room {
         cx.spawn(|this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade(cx) {
@@ -1227,38 +1237,20 @@ impl Room {
                 })
         })
     }
-    fn set_mute(
-        live_kit: &mut LiveKitRoom,
-        should_mute: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<()>>> {
-        if !should_mute {
-            // clear user muting state.
-            live_kit.muted_by_user = false;
-        }
-        match &mut live_kit.microphone_track {
-            LocalTrack::None => Err(anyhow!("microphone was not shared")),
-            LocalTrack::Pending { muted, .. } => {
-                *muted = should_mute;
-                cx.notify();
-                Ok(Task::Ready(Some(Ok(()))))
-            }
-            LocalTrack::Published {
-                track_publication,
-                muted,
-            } => {
-                *muted = should_mute;
-                cx.notify();
-                Ok(cx.background().spawn(track_publication.set_mute(*muted)))
-            }
-        }
-    }
+
     pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
         let should_mute = !self.is_muted();
         if let Some(live_kit) = self.live_kit.as_mut() {
-            let ret = Self::set_mute(live_kit, should_mute, cx);
+            let (ret_task, old_muted) = live_kit.set_mute(should_mute, cx)?;
             live_kit.muted_by_user = should_mute;
-            ret
+
+            if old_muted == true && live_kit.deafened == true {
+                if let Some(task) = self.toggle_deafen(cx).ok() {
+                    task.detach();
+                }
+            }
+
+            Ok(ret_task)
         } else {
             Err(anyhow!("LiveKit not started"))
         }
@@ -1274,7 +1266,7 @@ impl Room {
             // When deafening, mute user's mic as well.
             // When undeafening, unmute user's mic unless it was manually muted prior to deafening.
             if live_kit.deafened || !live_kit.muted_by_user {
-                mute_task = Some(Self::set_mute(live_kit, live_kit.deafened, cx)?);
+                mute_task = Some(live_kit.set_mute(live_kit.deafened, cx)?.0);
             };
             for participant in self.remote_participants.values() {
                 for track in live_kit
@@ -1345,6 +1337,51 @@ struct LiveKitRoom {
     next_publish_id: usize,
     _maintain_room: Task<()>,
     _maintain_tracks: [Task<()>; 2],
+}
+
+impl LiveKitRoom {
+    fn set_mute(
+        self: &mut LiveKitRoom,
+        should_mute: bool,
+        cx: &mut ModelContext<Room>,
+    ) -> Result<(Task<Result<()>>, bool)> {
+        if !should_mute {
+            // clear user muting state.
+            self.muted_by_user = false;
+        }
+
+        let (result, old_muted) = match &mut self.microphone_track {
+            LocalTrack::None => Err(anyhow!("microphone was not shared")),
+            LocalTrack::Pending { muted, .. } => {
+                let old_muted = *muted;
+                *muted = should_mute;
+                cx.notify();
+                Ok((Task::Ready(Some(Ok(()))), old_muted))
+            }
+            LocalTrack::Published {
+                track_publication,
+                muted,
+            } => {
+                let old_muted = *muted;
+                *muted = should_mute;
+                cx.notify();
+                Ok((
+                    cx.background().spawn(track_publication.set_mute(*muted)),
+                    old_muted,
+                ))
+            }
+        }?;
+
+        if old_muted != should_mute {
+            if should_mute {
+                Audio::play_sound(Sound::Mute, cx);
+            } else {
+                Audio::play_sound(Sound::Unmute, cx);
+            }
+        }
+
+        Ok((result, old_muted))
+    }
 }
 
 enum LocalTrack {
