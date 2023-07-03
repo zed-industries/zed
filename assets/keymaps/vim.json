@@ -35,6 +35,7 @@
       "l": "vim::Right",
       "right": "vim::Right",
       "$": "vim::EndOfLine",
+      "^": "vim::FirstNonWhitespace",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
       "shift-w": [
@@ -165,7 +166,6 @@
       "shift-a": "vim::InsertEndOfLine",
       "x": "vim::DeleteRight",
       "shift-x": "vim::DeleteLeft",
-      "^": "vim::FirstNonWhitespace",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
