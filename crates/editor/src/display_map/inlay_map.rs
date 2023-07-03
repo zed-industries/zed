@@ -49,6 +49,19 @@ pub struct InlayProperties<T> {
     pub text: T,
 }
 
+impl InlayProperties<String> {
+    pub fn new(position: Anchor, hint: &project::InlayHint) -> Self {
+        let mut text = hint.text();
+        if hint.padding_right && !text.ends_with(' ') {
+            text.push(' ');
+        }
+        if hint.padding_left && !text.starts_with(' ') {
+            text.insert(0, ' ');
+        }
+        Self { position, text }
+    }
+}
+
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
@@ -1095,12 +1108,88 @@ mod tests {
     use super::*;
     use crate::{InlayId, MultiBuffer};
     use gpui::AppContext;
+    use project::{InlayHint, InlayHintLabel};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
+
+    #[test]
+    fn test_inlay_properties_label_padding() {
+        assert_eq!(
+            InlayProperties::new(
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("a".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: false,
+                    padding_right: false,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text,
+            "a",
+            "Should not pad label if not requested"
+        );
+
+        assert_eq!(
+            InlayProperties::new(
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("a".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text,
+            " a ",
+            "Should pad label for every side requested"
+        );
+
+        assert_eq!(
+            InlayProperties::new(
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String(" a ".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: false,
+                    padding_right: false,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text,
+            " a ",
+            "Should not change already padded label"
+        );
+
+        assert_eq!(
+            InlayProperties::new(
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String(" a ".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text,
+            " a ",
+            "Should not change already padded label"
+        );
+    }
 
     #[gpui::test]
     fn test_basic_inlays(cx: &mut AppContext) {
