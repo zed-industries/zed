@@ -19,6 +19,7 @@ test-support = [
 ]
 
 [dependencies]
+audio = { path = "../audio" }
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
