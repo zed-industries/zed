@@ -663,6 +663,8 @@ impl Room {
                                 },
                             );
 
+                            Audio::play_sound(Sound::Joined, cx);
+
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let video_tracks =
                                     live_kit.room.remote_video_tracks(&user.id.to_string());
@@ -1363,7 +1365,10 @@ impl LiveKitRoom {
                 let old_muted = *muted;
                 *muted = should_mute;
                 cx.notify();
-                Ok((cx.background().spawn(track_publication.set_mute(*muted)), old_muted))
+                Ok((
+                    cx.background().spawn(track_publication.set_mute(*muted)),
+                    old_muted,
+                ))
             }
         }?;
 

@@ -10,19 +10,15 @@ use futures::{future::Shared, FutureExt};
 use postage::watch;
 
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription,
-    Task, WeakModelHandle,
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
+    WeakModelHandle,
 };
 use project::Project;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
-pub fn init(
-    client: Arc<Client>,
-    user_store: ModelHandle<UserStore>,
-    cx: &mut AppContext,
-) {
+pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
