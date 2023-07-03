@@ -377,8 +377,8 @@ impl CollabTitlebarItem {
             let theme = theme::current(cx).clone();
             let child = ChildView::new(child, cx);
             let child = MouseEventHandler::<BranchList, Self>::new(0, cx, |_, _| {
-                Flex::column()
-                    .with_child(child.flex(1., true))
+                child
+                    .flex(1., true)
                     .contained()
                     .constrained()
                     .with_width(theme.contacts_popover.width)
@@ -390,6 +390,7 @@ impl CollabTitlebarItem {
                 cx.emit(());
                 cx.notify();
             })
+            .contained()
             .into_any();
 
             Overlay::new(child)
@@ -411,8 +412,8 @@ impl CollabTitlebarItem {
             let theme = theme::current(cx).clone();
             let child = ChildView::new(child, cx);
             let child = MouseEventHandler::<RecentProjects, Self>::new(0, cx, |_, _| {
-                Flex::column()
-                    .with_child(child.flex(1., true))
+                child
+                    .flex(1., true)
                     .contained()
                     .constrained()
                     .with_width(theme.contacts_popover.width)
