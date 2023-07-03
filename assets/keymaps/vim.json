@@ -305,6 +305,10 @@
         "vim::PushOperator",
         "Replace"
       ],
+      "ctrl-c": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
       "> >": "editor::Indent",
       "< <": "editor::Outdent"
     }
