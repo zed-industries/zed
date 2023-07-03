@@ -180,6 +180,8 @@ fn main() {
             background_actions,
         });
         cx.set_global(Arc::downgrade(&app_state));
+
+        audio::init(Assets, cx);
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
@@ -190,7 +192,7 @@ fn main() {
         theme_selector::init(cx);
         activity_indicator::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), Assets, cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);

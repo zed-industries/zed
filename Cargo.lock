@@ -613,6 +613,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "log",
+ "parking_lot 0.11.2",
+ "rodio",
+ "util",
+]
+
+[[package]]
 name = "auto_update"
 version = "0.1.0"
 dependencies = [
@@ -1028,6 +1041,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "audio",
  "client",
  "collections",
  "fs",
@@ -1039,7 +1053,6 @@ dependencies = [
  "media",
  "postage",
  "project",
- "rodio",
  "settings",
  "util",
 ]
@@ -1392,6 +1405,7 @@ version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
+ "audio",
  "axum",
  "axum-extra",
  "base64 0.13.1",
@@ -9331,6 +9345,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "audio",
  "auto_update",
  "backtrace",
  "breadcrumbs",

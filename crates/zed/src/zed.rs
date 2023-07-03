@@ -2160,7 +2160,8 @@ mod tests {
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
             theme::init((), cx);
-            call::init(app_state.client.clone(), app_state.user_store.clone(), (), cx);
+            audio::init((), cx);
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
             language::init(cx);
