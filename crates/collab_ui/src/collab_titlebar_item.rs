@@ -444,7 +444,7 @@ impl CollabTitlebarItem {
                 cx.subscribe(&view, |this, _, event, cx| {
                     match event {
                         PickerEvent::Dismiss => {
-                            this.contacts_popover = None;
+                            this.branch_popover = None;
                         }
                     }
 

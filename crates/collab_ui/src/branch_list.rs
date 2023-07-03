@@ -60,24 +60,24 @@ impl PickerDelegate for BranchListDelegate {
                 .read_with(&mut cx, |view, cx| {
                     let delegate = view.delegate();
                     let project = delegate.workspace.read(cx).project().read(&cx);
-                    let mut cwd = project
+                    let mut cwd =
+                    project
                         .visible_worktrees(cx)
                         .next()
                         .unwrap()
                         .read(cx)
-                        .root_entry()
-                        .unwrap()
-                        .path
+                        .abs_path()
                         .to_path_buf();
                     cwd.push(".git");
                     let Some(repo) = project.fs().open_repo(&cwd) else {bail!("Project does not have associated git repository.")};
                     let mut branches = repo
                         .lock()
                         .branches()?;
-                    if query.is_empty() {
-                        const RECENT_BRANCHES_COUNT: usize = 10;
+                    const RECENT_BRANCHES_COUNT: usize = 10;
+                    if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
+                        // Truncate list of recent branches
                         // Do a partial sort to show recent-ish branches first.
-                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT, |lhs, rhs| {
+                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
                             rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
                         });
                         branches.truncate(RECENT_BRANCHES_COUNT);
@@ -145,9 +145,7 @@ impl PickerDelegate for BranchListDelegate {
                 .next()
                 .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
                 .read(cx)
-                .root_entry()
-                .ok_or_else(|| anyhow!("Worktree has no root entry."))?
-                .path
+                .abs_path()
                 .to_path_buf();
                 cwd.push(".git");
                 let status = project
