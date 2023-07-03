@@ -2712,16 +2712,7 @@ impl Editor {
         let buffer = self.buffer.read(cx).read(cx);
         let new_inlays = to_insert
             .into_iter()
-            .map(|(position, id, hint)| {
-                let mut text = hint.text();
-                if hint.padding_right {
-                    text.push(' ');
-                }
-                if hint.padding_left {
-                    text.insert(0, ' ');
-                }
-                (id, InlayProperties { position, text })
-            })
+            .map(|(position, id, hint)| (id, InlayProperties::new(position, &hint)))
             .collect();
         drop(buffer);
         self.display_map.update(cx, |display_map, cx| {
