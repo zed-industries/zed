@@ -26,7 +26,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
-use clock::ReplicaId;
+use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
@@ -1195,11 +1195,11 @@ enum GotoDefinitionKind {
     Type,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum InlayRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
-    ExcerptEdited,
+    BufferEdited(HashSet<Arc<Language>>),
     RefreshRequested,
 }
 
@@ -2617,7 +2617,7 @@ impl Editor {
             return;
         }
 
-        let invalidate_cache = match reason {
+        let (invalidate_cache, required_languages) = match reason {
             InlayRefreshReason::SettingsChange(new_settings) => {
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,
@@ -2633,16 +2633,18 @@ impl Editor {
                         return;
                     }
                     ControlFlow::Break(None) => return,
-                    ControlFlow::Continue(()) => InvalidationStrategy::RefreshRequested,
+                    ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
                 }
             }
-            InlayRefreshReason::NewLinesShown => InvalidationStrategy::None,
-            InlayRefreshReason::ExcerptEdited => InvalidationStrategy::ExcerptEdited,
-            InlayRefreshReason::RefreshRequested => InvalidationStrategy::RefreshRequested,
+            InlayRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+            InlayRefreshReason::BufferEdited(buffer_languages) => {
+                (InvalidationStrategy::BufferEdited, Some(buffer_languages))
+            }
+            InlayRefreshReason::RefreshRequested => (InvalidationStrategy::RefreshRequested, None),
         };
 
         self.inlay_hint_cache.refresh_inlay_hints(
-            self.excerpt_visible_offsets(cx),
+            self.excerpt_visible_offsets(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,
         )
@@ -2661,8 +2663,9 @@ impl Editor {
 
     fn excerpt_visible_offsets(
         &self,
+        restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut ViewContext<'_, '_, Editor>,
-    ) -> HashMap<ExcerptId, (ModelHandle<Buffer>, Range<usize>)> {
+    ) -> HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)> {
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -2680,8 +2683,22 @@ impl Editor {
             .range_to_buffer_ranges(multi_buffer_visible_range, cx)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
-            .map(|(buffer, excerpt_visible_range, excerpt_id)| {
-                (excerpt_id, (buffer, excerpt_visible_range))
+            .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
+                let buffer = buffer_handle.read(cx);
+                let language = buffer.language()?;
+                if let Some(restrict_to_languages) = restrict_to_languages {
+                    if !restrict_to_languages.contains(language) {
+                        return None;
+                    }
+                }
+                Some((
+                    excerpt_id,
+                    (
+                        buffer_handle,
+                        buffer.version().clone(),
+                        excerpt_visible_range,
+                    ),
+                ))
             })
             .collect()
     }
@@ -2695,16 +2712,7 @@ impl Editor {
         let buffer = self.buffer.read(cx).read(cx);
         let new_inlays = to_insert
             .into_iter()
-            .map(|(position, id, hint)| {
-                let mut text = hint.text();
-                if hint.padding_right {
-                    text.push(' ');
-                }
-                if hint.padding_left {
-                    text.insert(0, ' ');
-                }
-                (id, InlayProperties { position, text })
-            })
+            .map(|(position, id, hint)| (id, InlayProperties::new(position, &hint)))
             .collect();
         drop(buffer);
         self.display_map.update(cx, |display_map, cx| {
@@ -7256,7 +7264,7 @@ impl Editor {
 
     fn on_buffer_event(
         &mut self,
-        _: ModelHandle<MultiBuffer>,
+        multibuffer: ModelHandle<MultiBuffer>,
         event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -7268,7 +7276,33 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
-                self.refresh_inlays(InlayRefreshReason::ExcerptEdited, cx);
+
+                if let Some(project) = &self.project {
+                    let project = project.read(cx);
+                    let languages_affected = multibuffer
+                        .read(cx)
+                        .all_buffers()
+                        .into_iter()
+                        .filter_map(|buffer| {
+                            let buffer = buffer.read(cx);
+                            let language = buffer.language()?;
+                            if project.is_local()
+                                && project.language_servers_for_buffer(buffer, cx).count() == 0
+                            {
+                                None
+                            } else {
+                                Some(language)
+                            }
+                        })
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    if !languages_affected.is_empty() {
+                        self.refresh_inlays(
+                            InlayRefreshReason::BufferEdited(languages_affected),
+                            cx,
+                        );
+                    }
+                }
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,

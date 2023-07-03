@@ -24,9 +24,7 @@
       ],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
-      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
-      "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow"
+      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine"
     }
   },
   {

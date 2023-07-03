@@ -981,6 +981,19 @@ impl LocalWorktree {
         })
     }
 
+    /// Find the lowest path in the worktree's datastructures that is an ancestor
+    fn lowest_ancestor(&self, path: &Path) -> PathBuf {
+        let mut lowest_ancestor = None;
+        for path in path.ancestors() {
+            if self.entry_for_path(path).is_some() {
+                lowest_ancestor = Some(path.to_path_buf());
+                break;
+            }
+        }
+
+        lowest_ancestor.unwrap_or_else(|| PathBuf::from(""))
+    }
+
     pub fn create_entry(
         &self,
         path: impl Into<Arc<Path>>,
@@ -988,6 +1001,7 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
         let path = path.into();
+        let lowest_ancestor = self.lowest_ancestor(&path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let write = cx.background().spawn(async move {
@@ -1001,10 +1015,31 @@ impl LocalWorktree {
 
         cx.spawn(|this, mut cx| async move {
             write.await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut().unwrap().refresh_entry(path, None, cx)
-            })
-            .await
+            let (result, refreshes) = this.update(&mut cx, |this, cx| {
+                let mut refreshes = Vec::<Task<anyhow::Result<Entry>>>::new();
+                let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
+                for refresh_path in refresh_paths.ancestors() {
+                    if refresh_path == Path::new("") {
+                        continue;
+                    }
+                    let refresh_full_path = lowest_ancestor.join(refresh_path);
+
+                    refreshes.push(this.as_local_mut().unwrap().refresh_entry(
+                        refresh_full_path.into(),
+                        None,
+                        cx,
+                    ));
+                }
+                (
+                    this.as_local_mut().unwrap().refresh_entry(path, None, cx),
+                    refreshes,
+                )
+            });
+            for refresh in refreshes {
+                refresh.await.log_err();
+            }
+
+            result.await
         })
     }
 
@@ -2140,6 +2175,7 @@ impl LocalSnapshot {
 impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
         (!entry.is_external && !entry.is_ignored)
+            || entry.path.file_name() == Some(&*DOT_GIT)
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
                 .paths_to_scan
@@ -2319,6 +2355,7 @@ impl BackgroundScannerState {
                         .entry_for_id(entry_id)
                         .map(|entry| RepositoryWorkDirectory(entry.path.clone())) else { continue };
 
+                    log::info!("reload git repository {:?}", dot_git_dir);
                     let repository = repository.repo_ptr.lock();
                     let branch = repository.branch_name();
                     repository.reload_index();
@@ -2359,6 +2396,8 @@ impl BackgroundScannerState {
     }
 
     fn build_repository(&mut self, dot_git_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
+        log::info!("build git repository {:?}", dot_git_path);
+
         let work_dir_path: Arc<Path> = dot_git_path.parent().unwrap().into();
 
         // Guard against repositories inside the repository metadata
@@ -3138,8 +3177,6 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
-        log::debug!("received fs events {:?}", abs_paths);
-
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
@@ -3150,7 +3187,6 @@ impl BackgroundScanner {
         };
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
-        let mut unloaded_relative_paths = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(&b));
         abs_paths.retain(|abs_path| {
@@ -3173,7 +3209,6 @@ impl BackgroundScanner {
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
-                    unloaded_relative_paths.push(relative_path);
                     return false;
                 }
 
@@ -3182,27 +3217,30 @@ impl BackgroundScanner {
             }
         });
 
-        if !relative_paths.is_empty() {
-            let (scan_job_tx, scan_job_rx) = channel::unbounded();
-            self.reload_entries_for_paths(
-                root_path,
-                root_canonical_path,
-                &relative_paths,
-                abs_paths,
-                Some(scan_job_tx.clone()),
-            )
-            .await;
-            drop(scan_job_tx);
-            self.scan_dirs(false, scan_job_rx).await;
-
-            let (scan_job_tx, scan_job_rx) = channel::unbounded();
-            self.update_ignore_statuses(scan_job_tx).await;
-            self.scan_dirs(false, scan_job_rx).await;
+        if relative_paths.is_empty() {
+            return;
         }
+
+        log::debug!("received fs events {:?}", relative_paths);
+
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        self.reload_entries_for_paths(
+            root_path,
+            root_canonical_path,
+            &relative_paths,
+            abs_paths,
+            Some(scan_job_tx.clone()),
+        )
+        .await;
+        drop(scan_job_tx);
+        self.scan_dirs(false, scan_job_rx).await;
+
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        self.update_ignore_statuses(scan_job_tx).await;
+        self.scan_dirs(false, scan_job_rx).await;
 
         {
             let mut state = self.state.lock();
-            relative_paths.extend(unloaded_relative_paths);
             state.reload_repositories(&relative_paths, self.fs.as_ref());
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
             for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
@@ -3610,23 +3648,28 @@ impl BackgroundScanner {
                         }
                     }
 
-                    let fs_entry = state.insert_entry(fs_entry, self.fs.as_ref());
-
-                    if let Some(scan_queue_tx) = &scan_queue_tx {
-                        let mut ancestor_inodes = state.snapshot.ancestor_inodes_for_path(&path);
-                        if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
-                            ancestor_inodes.insert(metadata.inode);
-                            smol::block_on(scan_queue_tx.send(ScanJob {
-                                abs_path,
-                                path: path.clone(),
-                                ignore_stack,
-                                ancestor_inodes,
-                                is_external: fs_entry.is_external,
-                                scan_queue: scan_queue_tx.clone(),
-                            }))
-                            .unwrap();
+                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
+                        if state.should_scan_directory(&fs_entry) {
+                            let mut ancestor_inodes =
+                                state.snapshot.ancestor_inodes_for_path(&path);
+                            if !ancestor_inodes.contains(&metadata.inode) {
+                                ancestor_inodes.insert(metadata.inode);
+                                smol::block_on(scan_queue_tx.send(ScanJob {
+                                    abs_path,
+                                    path: path.clone(),
+                                    ignore_stack,
+                                    ancestor_inodes,
+                                    is_external: fs_entry.is_external,
+                                    scan_queue: scan_queue_tx.clone(),
+                                }))
+                                .unwrap();
+                            }
+                        } else {
+                            fs_entry.kind = EntryKind::UnloadedDir;
                         }
                     }
+
+                    state.insert_entry(fs_entry, self.fs.as_ref());
                 }
                 Ok(None) => {
                     self.remove_repo_path(&path, &mut state.snapshot);

@@ -12,8 +12,6 @@
       "ctrl-shift-d": "editor::DuplicateLine",
       "cmd-b": "editor::GoToDefinition",
       "cmd-j": "editor::ScrollCursorCenter",
-      "cmd-alt-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-l": "editor::SelectLine",
       "cmd-shift-t": "outline::Toggle",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
@@ -56,7 +54,9 @@
   },
   {
     "context": "Editor && mode == full",
-    "bindings": {}
+    "bindings": {
+      "cmd-alt-enter": "editor::NewlineAbove"
+    }
   },
   {
     "context": "BufferSearchBar",

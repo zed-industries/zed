@@ -5035,6 +5035,7 @@ dependencies = [
  "language",
  "menu",
  "postage",
+ "pretty_assertions",
  "project",
  "schemars",
  "serde",
