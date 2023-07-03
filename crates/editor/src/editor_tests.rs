@@ -6979,6 +6979,111 @@ async fn test_copilot_disabled_globs(
     assert!(copilot_requests.try_next().is_ok());
 }
 
+#[gpui::test]
+async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                disabled_scopes_by_bracket_ix: Vec::new(),
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "{".to_string(),
+                    more_trigger_character: None,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "fn main() { let a = 5; }",
+            "other.rs": "// Test file",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/a/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    cx.foreground().run_until_parked();
+    cx.foreground().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+    let editor_handle = workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+        assert_eq!(
+            params.text_document_position.text_document.uri,
+            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+        );
+        assert_eq!(
+            params.text_document_position.position,
+            lsp::Position::new(0, 21),
+        );
+
+        Ok(Some(vec![lsp::TextEdit {
+            new_text: "]".to_string(),
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+        }]))
+    });
+
+    editor_handle.update(cx, |editor, cx| {
+        cx.focus(&editor_handle);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
+        });
+        editor.handle_input("{", cx);
+    });
+
+    cx.foreground().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "fn main() { let a = {5}; }",
+            "No extra braces from on type formatting should appear in the buffer"
+        )
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point

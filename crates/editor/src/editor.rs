@@ -2026,6 +2026,7 @@ impl Editor {
         }
 
         let selections = self.selections.all_adjusted(cx);
+        let mut brace_inserted = false;
         let mut edits = Vec::new();
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
@@ -2084,6 +2085,7 @@ impl Editor {
                                     selection.range(),
                                     format!("{}{}", text, bracket_pair.end).into(),
                                 ));
+                                brace_inserted = true;
                                 continue;
                             }
                         }
@@ -2110,6 +2112,7 @@ impl Editor {
                             selection.end..selection.end,
                             bracket_pair.end.as_str().into(),
                         ));
+                        brace_inserted = true;
                         new_selections.push((
                             Selection {
                                 id: selection.id,
@@ -2177,8 +2180,7 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-            // When buffer contents is updated and caret is moved, try triggering on type formatting.
-            if settings::get::<EditorSettings>(cx).use_on_type_format {
+            if !brace_inserted && settings::get::<EditorSettings>(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
