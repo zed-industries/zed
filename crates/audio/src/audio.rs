@@ -44,6 +44,10 @@ impl Audio {
     }
 
     pub fn play_sound(sound: Sound, cx: &AppContext) {
+        if !cx.has_global::<Self>() {
+            return;
+        }
+
         let this = cx.global::<Self>();
 
         let Some(output_handle) = this.output_handle.as_ref() else {
