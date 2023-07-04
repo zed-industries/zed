@@ -4,6 +4,7 @@ import * as path from "path"
 import app from "./style_tree/app"
 import { ColorScheme, create_color_scheme } from "./theme/color_scheme"
 import { themes } from "./themes"
+import { useThemeStore } from "./theme"
 
 const assets_directory = `${__dirname}/../../assets`
 const temp_directory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
@@ -20,10 +21,17 @@ function clear_themes(theme_directory: string) {
     }
 }
 
+const all_themes: ColorScheme[] = themes.map((theme) =>
+    create_color_scheme(theme)
+)
+
 function write_themes(themes: ColorScheme[], output_directory: string) {
     clear_themes(output_directory)
     for (const color_scheme of themes) {
-        const style_tree = app(color_scheme)
+        const { setTheme } = useThemeStore.getState()
+        setTheme(color_scheme)
+
+        const style_tree = app()
         const style_tree_json = JSON.stringify(style_tree, null, 2)
         const temp_path = path.join(temp_directory, `${color_scheme.name}.json`)
         const out_path = path.join(
@@ -35,9 +43,5 @@ function write_themes(themes: ColorScheme[], output_directory: string) {
         console.log(`- ${out_path} created`)
     }
 }
-
-const all_themes: ColorScheme[] = themes.map((theme) =>
-    create_color_scheme(theme)
-)
 
 write_themes(all_themes, `${assets_directory}/themes`)

@@ -1,9 +1,11 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../common"
 
-export default function tab_bar(theme: ColorScheme): any {
+export default function tab_bar(): any {
+    const theme = useTheme()
+
     const height = 32
 
     const active_layer = theme.highest

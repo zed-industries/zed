@@ -5,7 +5,7 @@ import {
     foreground,
     text,
 } from "../style_tree/components"
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme, ColorScheme } from "../theme"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
@@ -22,10 +22,13 @@ type ToggleableTextButtonOptions = TextButtonOptions & {
     active_color?: keyof ColorScheme["lowest"]
 }
 
-export function text_button(
-    theme: ColorScheme,
-    { color, layer, margin, text_properties }: TextButtonOptions
-) {
+export function text_button({
+    color,
+    layer,
+    margin,
+    text_properties,
+}: TextButtonOptions) {
+    const theme = useTheme()
     if (!color) color = "base"
 
     const text_options: TextProperties = {
@@ -79,8 +82,8 @@ export function toggleable_text_button(
 
     return toggleable({
         state: {
-            inactive: text_button(theme, { color, margin }),
-            active: text_button(theme, {
+            inactive: text_button({ color, margin }),
+            active: text_button({
                 color: active_color ? active_color : color,
                 margin,
                 layer: theme.middle,

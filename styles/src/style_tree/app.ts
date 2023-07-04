@@ -17,45 +17,47 @@ import terminal from "./terminal"
 import contact_list from "./contact_list"
 import toolbar_dropdown_menu from "./toolbar_dropdown_menu"
 import incoming_call_notification from "./incoming_call_notification"
-import { ColorScheme } from "../theme/color_scheme"
 import welcome from "./welcome"
 import copilot from "./copilot"
 import assistant from "./assistant"
 import { titlebar } from "./titlebar"
 import editor from "./editor"
 import feedback from "./feedback"
+import { useTheme } from "../common"
 
-export default function app(theme: ColorScheme): any {
+export default function app(): any {
+    const theme = useTheme()
+
     return {
         meta: {
             name: theme.name,
             is_light: theme.is_light,
         },
-        command_palette: command_palette(theme),
-        contact_notification: contact_notification(theme),
-        project_shared_notification: project_shared_notification(theme),
-        incoming_call_notification: incoming_call_notification(theme),
-        picker: picker(theme),
-        workspace: workspace(theme),
-        titlebar: titlebar(theme),
-        copilot: copilot(theme),
-        welcome: welcome(theme),
-        context_menu: context_menu(theme),
-        editor: editor(theme),
-        project_diagnostics: project_diagnostics(theme),
-        project_panel: project_panel(theme),
-        contacts_popover: contacts_popover(theme),
-        contact_finder: contact_finder(theme),
-        contact_list: contact_list(theme),
-        toolbar_dropdown_menu: toolbar_dropdown_menu(theme),
-        search: search(theme),
-        shared_screen: shared_screen(theme),
-        update_notification: update_notification(theme),
-        simple_message_notification: simple_message_notification(theme),
-        tooltip: tooltip(theme),
-        terminal: terminal(theme),
-        assistant: assistant(theme),
-        feedback: feedback(theme),
+        command_palette: command_palette(),
+        contact_notification: contact_notification(),
+        project_shared_notification: project_shared_notification(),
+        incoming_call_notification: incoming_call_notification(),
+        picker: picker(),
+        workspace: workspace(),
+        titlebar: titlebar(),
+        copilot: copilot(),
+        welcome: welcome(),
+        context_menu: context_menu(),
+        editor: editor(),
+        project_diagnostics: project_diagnostics(),
+        project_panel: project_panel(),
+        contacts_popover: contacts_popover(),
+        contact_finder: contact_finder(),
+        contact_list: contact_list(),
+        toolbar_dropdown_menu: toolbar_dropdown_menu(),
+        search: search(),
+        shared_screen: shared_screen(),
+        update_notification: update_notification(),
+        simple_message_notification: simple_message_notification(),
+        tooltip: tooltip(),
+        terminal: terminal(),
+        assistant: assistant(),
+        feedback: feedback(),
         color_scheme: {
             ...theme,
             players: Object.values(theme.players),

@@ -1,4 +1,3 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import {
     Border,
@@ -10,7 +9,10 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 import merge from "ts-deepmerge"
-export default function project_panel(theme: ColorScheme): any {
+import { useTheme } from "../theme"
+export default function project_panel(): any {
+    const theme = useTheme()
+
     const { is_light } = theme
 
     type EntryStateProps = {
@@ -65,13 +67,12 @@ export default function project_panel(theme: ColorScheme): any {
         const unselected_hovered_style = merge(
             base_properties,
             { background: background(theme.middle, "hovered") },
-            unselected?.hovered ?? {},
+            unselected?.hovered ?? {}
         )
         const unselected_clicked_style = merge(
             base_properties,
-            { background: background(theme.middle, "pressed"), }
-            ,
-            unselected?.clicked ?? {},
+            { background: background(theme.middle, "pressed") },
+            unselected?.clicked ?? {}
         )
         const selected_default_style = merge(
             base_properties,
@@ -79,18 +80,15 @@ export default function project_panel(theme: ColorScheme): any {
                 background: background(theme.lowest),
                 text: text(theme.lowest, "sans", { size: "sm" }),
             },
-            selected_style?.default ?? {},
-
+            selected_style?.default ?? {}
         )
         const selected_hovered_style = merge(
             base_properties,
             {
                 background: background(theme.lowest, "hovered"),
                 text: text(theme.lowest, "sans", { size: "sm" }),
-
             },
-            selected_style?.hovered ?? {},
-
+            selected_style?.hovered ?? {}
         )
         const selected_clicked_style = merge(
             base_properties,
@@ -98,8 +96,7 @@ export default function project_panel(theme: ColorScheme): any {
                 background: background(theme.lowest, "pressed"),
                 text: text(theme.lowest, "sans", { size: "sm" }),
             },
-            selected_style?.clicked ?? {},
-
+            selected_style?.clicked ?? {}
         )
 
         return toggleable({

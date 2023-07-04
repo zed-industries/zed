@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme } from "../theme"
 import { background, border, foreground, text } from "./components"
 
-export default function hover_popover(theme: ColorScheme): any {
+export default function hover_popover(): any {
+    const theme = useTheme()
+
     const base_container = {
         background: background(theme.middle),
         corner_radius: 8,

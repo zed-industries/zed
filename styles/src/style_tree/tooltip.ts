@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme } from "../theme"
 import { background, border, text } from "./components"
 
-export default function tooltip(theme: ColorScheme): any {
+export default function tooltip(): any {
+    const theme = useTheme()
+
     return {
         background: background(theme.middle),
         border: border(theme.middle),

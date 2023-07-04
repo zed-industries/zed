@@ -1,9 +1,11 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../theme"
 
-export default function search(theme: ColorScheme): any {
+export default function search(): any {
+    const theme = useTheme()
+
     // Search input
     const editor = {
         background: background(theme.highest),
