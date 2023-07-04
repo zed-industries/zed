@@ -58,10 +58,10 @@ pub fn init(
         let vector_store = VectorStore::new(
             fs,
             db_file_path,
-            // Arc::new(embedding::DummyEmbeddings {}),
-            Arc::new(OpenAIEmbeddings {
-                client: http_client,
-            }),
+            Arc::new(embedding::DummyEmbeddings {}),
+            // Arc::new(OpenAIEmbeddings {
+            //     client: http_client,
+            // }),
             language_registry,
             cx.clone(),
         )
@@ -362,6 +362,8 @@ impl VectorStore {
                 .spawn({
                     let db_ids_by_worktree_id = db_ids_by_worktree_id.clone();
                     let db_update_tx = db_update_tx.clone();
+                    let language_registry = language_registry.clone();
+                    let paths_tx = paths_tx.clone();
                     async move {
                         for worktree in worktrees.into_iter() {
                             let mut file_mtimes =
@@ -449,9 +451,93 @@ impl VectorStore {
 
             this.update(&mut cx, |this, cx| {
                 let _subscription = cx.subscribe(&project, |this, project, event, cx| {
-                    if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
-                        //
-                        log::info!("worktree changes {:?}", changes);
+                    if let Some(project_state) = this.projects.get(&project.downgrade()) {
+                        let worktree_db_ids = project_state.worktree_db_ids.clone();
+
+                        if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event
+                        {
+                            // Iterate through changes
+                            let language_registry = this.language_registry.clone();
+
+                            let db =
+                                VectorDatabase::new(this.database_url.to_string_lossy().into());
+                            if db.is_err() {
+                                return;
+                            }
+                            let db = db.unwrap();
+
+                            let worktree_db_id: Option<i64> = {
+                                let mut found_db_id = None;
+                                for (w_id, db_id) in worktree_db_ids.into_iter() {
+                                    if &w_id == worktree_id {
+                                        found_db_id = Some(db_id);
+                                    }
+                                }
+
+                                found_db_id
+                            };
+
+                            if worktree_db_id.is_none() {
+                                return;
+                            }
+                            let worktree_db_id = worktree_db_id.unwrap();
+
+                            let file_mtimes = db.get_file_mtimes(worktree_db_id);
+                            if file_mtimes.is_err() {
+                                return;
+                            }
+
+                            let file_mtimes = file_mtimes.unwrap();
+
+                            smol::block_on(async move {
+                                for change in changes.into_iter() {
+                                    let change_path = change.0.clone();
+                                    log::info!("Change: {:?}", &change_path);
+                                    if let Ok(language) = language_registry
+                                        .language_for_file(&change_path.to_path_buf(), None)
+                                        .await
+                                    {
+                                        if language
+                                            .grammar()
+                                            .and_then(|grammar| grammar.embedding_config.as_ref())
+                                            .is_none()
+                                        {
+                                            continue;
+                                        }
+                                        log::info!("Language found: {:?}: ", language.name());
+
+                                        // TODO: Make this a bit more defensive
+                                        let modified_time =
+                                            change_path.metadata().unwrap().modified().unwrap();
+                                        let existing_time =
+                                            file_mtimes.get(&change_path.to_path_buf());
+                                        let already_stored =
+                                            existing_time.map_or(false, |existing_time| {
+                                                if &modified_time != existing_time
+                                                    && existing_time.elapsed().unwrap().as_secs()
+                                                        > 30
+                                                {
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            });
+
+                                        if !already_stored {
+                                            log::info!("Need to reindex: {:?}", &change_path);
+                                            // paths_tx
+                                            //     .try_send((
+                                            //         worktree_db_id,
+                                            //         change_path.to_path_buf(),
+                                            //         language,
+                                            //         modified_time,
+                                            //     ))
+                                            //     .unwrap();
+                                        }
+                                    }
+                                }
+                            })
+                        }
                     }
                 });
 
