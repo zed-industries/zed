@@ -60,7 +60,7 @@ function write_tokens(themes: ColorScheme[], tokens_directory: string) {
 
     for (const theme of themes) {
         const file_name = slugify(theme.name) + ".json"
-        const tokens = theme_tokens(theme)
+        const tokens = theme_tokens()
         const tokens_json = JSON.stringify(tokens, null, 2)
         const out_path = path.join(tokens_directory, file_name)
         fs.writeFileSync(out_path, tokens_json, { mode: 0o644 })
