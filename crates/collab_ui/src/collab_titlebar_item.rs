@@ -237,9 +237,10 @@ impl CollabTitlebarItem {
                             .into_any_named("title-project-name")
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, this, cx| {
+                    .on_down(MouseButton::Left, move |_, this, cx| {
                         this.toggle_project_menu(&Default::default(), cx)
                     })
+                    .on_click(MouseButton::Left, move |_, _, _| {})
                     .contained()
                     .with_style(project_style.container),
                 )
@@ -267,12 +268,10 @@ impl CollabTitlebarItem {
                                         .into_any_named("title-project-branch")
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
-                                .on_click(
-                                    MouseButton::Left,
-                                    move |_, this, cx| {
-                                        this.toggle_vcs_menu(&Default::default(), cx)
-                                    },
-                                ),
+                                .on_down(MouseButton::Left, move |_, this, cx| {
+                                    this.toggle_vcs_menu(&Default::default(), cx)
+                                })
+                                .on_click(MouseButton::Left, move |_, _, _| {}),
                             )
                             .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
                     ),
