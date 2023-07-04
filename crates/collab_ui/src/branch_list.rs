@@ -255,9 +255,7 @@ impl PickerDelegate for BranchListDelegate {
         Some(
             MouseEventHandler::<BranchList, _>::new(0, cx, move |_, _| label)
                 .on_click(MouseButton::Left, move |_, _, _| {})
-                .on_down_out(MouseButton::Left, move |_, _, cx| {
-                    cx.emit(PickerEvent::Dismiss)
-                })
+                .on_down_out(MouseButton::Left, move |_, _, _| {})
                 .into_any(),
         )
     }
