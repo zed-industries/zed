@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry};
-use project::{FakeFs, Fs, Project};
+use project::{FakeFs, Project};
 use rand::Rng;
 use serde_json::json;
 use unindent::Unindent;
