@@ -1,5 +1,5 @@
 import { SingleColorToken } from "@tokens-studio/types"
-import { Layer, Style, StyleSet } from "../color_scheme"
+import { Layer, Style, StyleSet } from "../create_theme"
 import { color_token } from "./token"
 
 interface StyleToken {

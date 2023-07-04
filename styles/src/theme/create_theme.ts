@@ -8,7 +8,7 @@ import {
 } from "./theme_config"
 import { get_ramps } from "./ramps"
 
-export interface ColorScheme {
+export interface Theme {
     name: string
     is_light: boolean
 
@@ -105,7 +105,7 @@ export interface Style {
     foreground: string
 }
 
-export function create_color_scheme(theme: ThemeConfig): ColorScheme {
+export function create_theme(theme: ThemeConfig): Theme {
     const {
         name,
         appearance,

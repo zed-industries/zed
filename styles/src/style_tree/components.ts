@@ -1,5 +1,5 @@
 import { font_families, font_sizes, FontWeight } from "../common"
-import { Layer, Styles, StyleSets, Style } from "../theme/color_scheme"
+import { Layer, Styles, StyleSets, Style } from "../theme/create_theme"
 
 function is_style_set(key: any): key is StyleSets {
     return [

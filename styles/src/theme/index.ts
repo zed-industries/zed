@@ -1,9 +1,9 @@
 import { create } from "zustand"
-import { ColorScheme } from "./color_scheme"
+import { Theme } from "./create_theme"
 
 type ThemeState = {
-    theme: ColorScheme | undefined
-    setTheme: (theme: ColorScheme) => void
+    theme: Theme | undefined
+    setTheme: (theme: Theme) => void
 }
 
 export const useThemeStore = create<ThemeState>((set) => ({
@@ -11,7 +11,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
     setTheme: (theme) => set(() => ({ theme })),
 }))
 
-export const useTheme = (): ColorScheme => {
+export const useTheme = (): Theme => {
     const { theme } = useThemeStore.getState()
 
     if (!theme) throw new Error("Tried to use theme before it was loaded")
@@ -19,7 +19,7 @@ export const useTheme = (): ColorScheme => {
     return theme
 }
 
-export * from "./color_scheme"
+export * from "./create_theme"
 export * from "./ramps"
 export * from "./syntax"
 export * from "./theme_config"

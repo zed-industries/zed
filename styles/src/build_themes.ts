@@ -2,7 +2,7 @@ import * as fs from "fs"
 import { tmpdir } from "os"
 import * as path from "path"
 import app from "./style_tree/app"
-import { ColorScheme, create_color_scheme } from "./theme/color_scheme"
+import { Theme, create_theme } from "./theme/create_theme"
 import { themes } from "./themes"
 import { useThemeStore } from "./theme"
 
@@ -21,22 +21,22 @@ function clear_themes(theme_directory: string) {
     }
 }
 
-const all_themes: ColorScheme[] = themes.map((theme) =>
-    create_color_scheme(theme)
+const all_themes: Theme[] = themes.map((theme) =>
+    create_theme(theme)
 )
 
-function write_themes(themes: ColorScheme[], output_directory: string) {
+function write_themes(themes: Theme[], output_directory: string) {
     clear_themes(output_directory)
-    for (const color_scheme of themes) {
+    for (const theme of themes) {
         const { setTheme } = useThemeStore.getState()
-        setTheme(color_scheme)
+        setTheme(theme)
 
         const style_tree = app()
         const style_tree_json = JSON.stringify(style_tree, null, 2)
-        const temp_path = path.join(temp_directory, `${color_scheme.name}.json`)
+        const temp_path = path.join(temp_directory, `${theme.name}.json`)
         const out_path = path.join(
             output_directory,
-            `${color_scheme.name}.json`
+            `${theme.name}.json`
         )
         fs.writeFileSync(temp_path, style_tree_json)
         fs.renameSync(temp_path, out_path)

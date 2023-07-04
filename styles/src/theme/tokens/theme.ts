@@ -5,19 +5,18 @@ import {
     TokenTypes,
 } from "@tokens-studio/types"
 import {
-    ColorScheme,
     Shadow,
     SyntaxHighlightStyle,
     ThemeSyntax,
-} from "../color_scheme"
+} from "../create_theme"
 import { LayerToken, layer_token } from "./layer"
 import { PlayersToken, players_token } from "./players"
 import { color_token } from "./token"
 import { Syntax } from "../syntax"
 import editor from "../../style_tree/editor"
-import { useTheme } from "@/src/common"
+import { useTheme } from "../../../src/common"
 
-interface ColorSchemeTokens {
+interface ThemeTokens {
     name: SingleOtherToken
     appearance: SingleOtherToken
     lowest: LayerToken
@@ -71,13 +70,13 @@ function syntax_highlight_style_color_tokens(
     }, {} as ThemeSyntaxColorTokens)
 }
 
-const syntax_tokens = (): ColorSchemeTokens["syntax"] => {
+const syntax_tokens = (): ThemeTokens["syntax"] => {
     const syntax = editor().syntax
 
     return syntax_highlight_style_color_tokens(syntax)
 }
 
-export function theme_tokens(): ColorSchemeTokens {
+export function theme_tokens(): ThemeTokens {
     const theme = useTheme()
 
     return {
