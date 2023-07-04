@@ -57,21 +57,6 @@ export default function app(): any {
         tooltip: tooltip(),
         terminal: terminal(),
         assistant: assistant(),
-        feedback: feedback(),
-        color_scheme: {
-            ...theme,
-            players: Object.values(theme.players),
-            ramps: {
-                neutral: theme.ramps.neutral.colors(100, "hex"),
-                red: theme.ramps.red.colors(100, "hex"),
-                orange: theme.ramps.orange.colors(100, "hex"),
-                yellow: theme.ramps.yellow.colors(100, "hex"),
-                green: theme.ramps.green.colors(100, "hex"),
-                cyan: theme.ramps.cyan.colors(100, "hex"),
-                blue: theme.ramps.blue.colors(100, "hex"),
-                violet: theme.ramps.violet.colors(100, "hex"),
-                magenta: theme.ramps.magenta.colors(100, "hex"),
-            },
-        },
+        feedback: feedback()
     }
 }

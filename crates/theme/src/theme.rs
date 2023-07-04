@@ -65,7 +65,6 @@ pub struct Theme {
     pub assistant: AssistantStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
-    pub color_scheme: ColorScheme,
     pub titlebar: Titlebar,
 }
 
