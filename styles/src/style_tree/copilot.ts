@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, svg, text } from "./components"
 import { interactive } from "../element"
-export default function copilot(theme: ColorScheme): any {
+import { useTheme } from "../theme"
+export default function copilot(): any {
+    const theme = useTheme()
+
     const content_width = 264
 
     const cta_button =

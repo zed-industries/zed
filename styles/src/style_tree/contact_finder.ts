@@ -1,8 +1,10 @@
 import picker from "./picker"
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
+import { useTheme } from "../theme"
 
-export default function contact_finder(theme: ColorScheme): any {
+export default function contact_finder(): any {
+    const theme = useTheme()
+
     const side_margin = 6
     const contact_button = {
         background: background(theme.middle, "variant"),
@@ -12,7 +14,7 @@ export default function contact_finder(theme: ColorScheme): any {
         corner_radius: 8,
     }
 
-    const picker_style = picker(theme)
+    const picker_style = picker()
     const picker_input = {
         background: background(theme.middle, "on"),
         corner_radius: 6,

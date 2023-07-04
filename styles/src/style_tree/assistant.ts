@@ -1,8 +1,10 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { text, border, background, foreground } from "./components"
 import { interactive } from "../element"
+import { useTheme } from "../theme"
 
-export default function assistant(theme: ColorScheme): any {
+export default function assistant(): any {
+    const theme = useTheme()
+
     return {
         container: {
             background: background(theme.highest),

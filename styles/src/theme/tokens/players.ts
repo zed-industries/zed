@@ -1,12 +1,14 @@
 import { SingleColorToken } from "@tokens-studio/types"
 import { color_token } from "./token"
-import { ColorScheme, Players } from "../color_scheme"
+import { Players } from "../color_scheme"
+import { useTheme } from "@/src/common"
 
 export type PlayerToken = Record<"selection" | "cursor", SingleColorToken>
 
 export type PlayersToken = Record<keyof Players, PlayerToken>
 
-function build_player_token(theme: ColorScheme, index: number): PlayerToken {
+function build_player_token(index: number): PlayerToken {
+    const theme = useTheme()
     const player_number = index.toString() as keyof Players
 
     return {
@@ -21,13 +23,15 @@ function build_player_token(theme: ColorScheme, index: number): PlayerToken {
     }
 }
 
-export const players_token = (theme: ColorScheme): PlayersToken => ({
-    "0": build_player_token(theme, 0),
-    "1": build_player_token(theme, 1),
-    "2": build_player_token(theme, 2),
-    "3": build_player_token(theme, 3),
-    "4": build_player_token(theme, 4),
-    "5": build_player_token(theme, 5),
-    "6": build_player_token(theme, 6),
-    "7": build_player_token(theme, 7),
-})
+export const players_token = (): PlayersToken => {
+    return {
+        "0": build_player_token(0),
+        "1": build_player_token(1),
+        "2": build_player_token(2),
+        "3": build_player_token(3),
+        "4": build_player_token(4),
+        "5": build_player_token(5),
+        "6": build_player_token(6),
+        "7": build_player_token(7),
+    }
+}

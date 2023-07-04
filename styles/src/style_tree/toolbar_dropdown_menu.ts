@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, text } from "./components"
 import { interactive, toggleable } from "../element"
-export default function dropdown_menu(theme: ColorScheme): any {
+import { useTheme } from "../theme"
+export default function dropdown_menu(): any {
+    const theme = useTheme()
+
     return {
         row_height: 30,
         background: background(theme.middle),

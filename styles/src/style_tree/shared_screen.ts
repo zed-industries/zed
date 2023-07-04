@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme } from "../theme"
 import { background } from "./components"
 
-export default function sharedScreen(theme: ColorScheme) {
+export default function sharedScreen() {
+    const theme = useTheme()
+
     return {
         background: background(theme.highest),
     }

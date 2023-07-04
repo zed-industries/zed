@@ -1,9 +1,11 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import { background, border, text } from "./components"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../theme"
 
-export default function picker(theme: ColorScheme): any {
+export default function picker(): any {
+    const theme = useTheme()
+
     const container = {
         background: background(theme.lowest),
         border: border(theme.lowest),

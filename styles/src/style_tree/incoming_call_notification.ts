@@ -1,9 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme } from "../theme"
 import { background, border, text } from "./components"
 
-export default function incoming_call_notification(
-    theme: ColorScheme
-): unknown {
+export default function incoming_call_notification(): unknown {
+    const theme = useTheme()
+
     const avatar_size = 48
     return {
         window_height: 74,

@@ -1,4 +1,3 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import {
     background,
@@ -11,9 +10,12 @@ import {
 import statusBar from "./status_bar"
 import tabBar from "./tab_bar"
 import { interactive } from "../element"
-
 import { titlebar } from "./titlebar"
-export default function workspace(theme: ColorScheme): any {
+import { useTheme } from "../theme"
+
+export default function workspace(): any {
+    const theme = useTheme()
+
     const { is_light } = theme
 
     return {
@@ -85,7 +87,7 @@ export default function workspace(theme: ColorScheme): any {
         },
         leader_border_opacity: 0.7,
         leader_border_width: 2.0,
-        tab_bar: tabBar(theme),
+        tab_bar: tabBar(),
         modal: {
             margin: {
                 bottom: 52,
@@ -123,8 +125,8 @@ export default function workspace(theme: ColorScheme): any {
             color: border_color(theme.lowest),
             width: 1,
         },
-        status_bar: statusBar(theme),
-        titlebar: titlebar(theme),
+        status_bar: statusBar(),
+        titlebar: titlebar(),
         toolbar: {
             height: 34,
             background: background(theme.highest),
