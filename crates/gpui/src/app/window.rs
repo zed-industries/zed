@@ -14,8 +14,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
-    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
-    View, ViewContext, ViewHandle, WindowInvalidation,
+    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, NoAction, SceneBuilder,
+    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -434,7 +434,11 @@ impl<'a> WindowContext<'a> {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
+                    let no_action_id = (NoAction {}).id();
                     for (view_id, action) in matches {
+                        if action.id() == no_action_id {
+                            return false;
+                        }
                         if self.dispatch_action(Some(*view_id), action.as_ref()) {
                             self.keystroke_matcher.clear_pending();
                             handled_by = Some(action.boxed_clone());
