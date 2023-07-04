@@ -1,5 +1,5 @@
 import { with_opacity } from "../theme/color"
-import { Layer, StyleSets } from "../theme/color_scheme"
+import { Layer, StyleSets } from "../theme/create_theme"
 import {
     background,
     border,
@@ -48,7 +48,7 @@ export default function editor(): any {
         }
     }
 
-    const syntax = build_syntax(theme)
+    const syntax = build_syntax()
 
     return {
         text_color: syntax.primary.color,
