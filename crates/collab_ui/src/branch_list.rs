@@ -217,25 +217,13 @@ impl PickerDelegate for BranchListDelegate {
         let theme = &theme::current(cx);
         let style = theme.picker.header.clone();
         let label = if self.last_query.is_empty() {
-            Stack::new()
-                .with_child(
-                    Flex::row()
-                        .with_child(Label::new("Recent branches", style.label.clone()))
-                        .contained()
-                        .with_style(style.container)
-                        .into_any(),
-                )
+            Flex::row()
+                .with_child(Label::new("Recent branches", style.label.clone()))
                 .contained()
                 .with_style(style.container)
-                .into_any()
         } else {
-            Stack::new()
-                .with_child(
-                    Flex::row()
-                        .with_child(Label::new("Branches", style.label.clone()).aligned().left())
-                        .contained()
-                        .with_style(style.container),
-                )
+            Flex::row()
+                .with_child(Label::new("Branches", style.label.clone()).aligned().left())
                 .with_children(self.matches.is_empty().not().then(|| {
                     let suffix = if self.matches.len() == 1 { "" } else { "es" };
                     Flex::row()
@@ -249,14 +237,7 @@ impl PickerDelegate for BranchListDelegate {
                 }))
                 .contained()
                 .with_style(style.container)
-                .constrained()
-                .into_any()
         };
-        Some(
-            MouseEventHandler::<BranchList, _>::new(0, cx, move |_, _| label)
-                .on_click(MouseButton::Left, move |_, _, _| {})
-                .on_down_out(MouseButton::Left, move |_, _, _| {})
-                .into_any(),
-        )
+        Some(label.into_any())
     }
 }
