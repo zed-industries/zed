@@ -1911,7 +1911,7 @@ impl ConversationEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(editor) = workspace.active_item(cx).and_then(|item| item.downcast::<Editor>()) else {
+        let Some(editor) = workspace.active_item(cx).and_then(|item| item.act_as::<Editor>(cx)) else {
             return;
         };
 
