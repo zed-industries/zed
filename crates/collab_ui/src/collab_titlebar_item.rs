@@ -221,17 +221,19 @@ impl CollabTitlebarItem {
             .as_ref()
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH));
-        let project_style = theme.titlebar.title.clone();
-        let git_style = theme.titlebar.git_branch.clone();
+        let project_style = theme.titlebar.project_menu_button.clone();
+        let git_style = theme.titlebar.git_menu_button.clone();
         let divider_style = theme.titlebar.project_name_divider.clone();
         let item_spacing = theme.titlebar.item_spacing;
 
         let mut ret = Flex::row().with_child(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |_, _| {
-                        Label::new(name, project_style.text.clone())
+                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |mouse_state, _| {
+                        let style = project_style.in_state(self.project_popover.is_some()).style_for(mouse_state);
+                        Label::new(name, style.text.clone())
                             .contained()
+                            .with_style(style.container)
                             .aligned()
                             .left()
                             .into_any_named("title-project-name")
@@ -241,8 +243,6 @@ impl CollabTitlebarItem {
                         this.toggle_project_menu(&Default::default(), cx)
                     })
                     .on_click(MouseButton::Left, move |_, _, _| {})
-                    .contained()
-                    .with_style(project_style.container),
                 )
                 .with_children(self.render_project_popover_host(&theme.titlebar, cx)),
         );
@@ -259,9 +259,11 @@ impl CollabTitlebarItem {
                     .with_child(
                         Stack::new()
                             .with_child(
-                                MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |_, _| {
-                                    Label::new(git_branch, git_style.text)
+                                MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |mouse_state, _| {
+                                    let style = git_style.in_state(self.branch_popover.is_some()).style_for(mouse_state);
+                                    Label::new(git_branch, style.text.clone())
                                         .contained()
+                                        .with_style(style.container.clone())
                                         .with_margin_right(item_spacing)
                                         .aligned()
                                         .left()

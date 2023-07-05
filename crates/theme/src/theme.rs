@@ -118,9 +118,9 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
-    pub title: ContainedText,
+    pub project_menu_button: Toggleable<Interactive<ContainedText>>,
     pub project_name_divider: ContainedText,
-    pub git_branch: ContainedText,
+    pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
