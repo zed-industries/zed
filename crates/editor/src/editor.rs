@@ -190,6 +190,15 @@ pub enum InlayId {
     Hint(usize),
 }
 
+impl InlayId {
+    fn id(&self) -> usize {
+        match self {
+            Self::Suggestion(id) => *id,
+            Self::Hint(id) => *id,
+        }
+    }
+}
+
 actions!(
     editor,
     [
@@ -2708,17 +2717,11 @@ impl Editor {
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(Anchor, InlayId, project::InlayHint)>,
+        to_insert: Vec<Inlay>,
         cx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.buffer.read(cx).read(cx);
-        let new_inlays = to_insert
-            .into_iter()
-            .map(|(position, id, hint)| (id, InlayProperties::new(position, &hint)))
-            .collect();
-        drop(buffer);
         self.display_map.update(cx, |display_map, cx| {
-            display_map.splice_inlays(to_remove, new_inlays, cx);
+            display_map.splice_inlays(to_remove, to_insert, cx);
         });
     }
 
@@ -3403,7 +3406,7 @@ impl Editor {
             }
 
             self.display_map.update(cx, |map, cx| {
-                map.splice_inlays::<&str>(vec![suggestion.id], Vec::new(), cx)
+                map.splice_inlays(vec![suggestion.id], Vec::new(), cx)
             });
             cx.notify();
             true
@@ -3436,7 +3439,7 @@ impl Editor {
     fn take_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
         let suggestion = self.copilot_state.suggestion.take()?;
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays::<&str>(vec![suggestion.id], Default::default(), cx);
+            map.splice_inlays(vec![suggestion.id], Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
@@ -3467,21 +3470,11 @@ impl Editor {
                 to_remove.push(suggestion.id);
             }
 
-            let suggestion_inlay_id = InlayId::Suggestion(post_inc(&mut self.next_inlay_id));
-            let to_insert = vec![(
-                suggestion_inlay_id,
-                InlayProperties {
-                    position: cursor,
-                    text: text.clone(),
-                },
-            )];
+            let suggestion_inlay =
+                Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
+            self.copilot_state.suggestion = Some(suggestion_inlay.clone());
             self.display_map.update(cx, move |map, cx| {
-                map.splice_inlays(to_remove, to_insert, cx)
-            });
-            self.copilot_state.suggestion = Some(Inlay {
-                id: suggestion_inlay_id,
-                position: cursor,
-                text,
+                map.splice_inlays(to_remove, vec![suggestion_inlay], cx)
             });
             cx.notify();
         } else {

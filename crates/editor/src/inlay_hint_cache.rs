@@ -45,7 +45,7 @@ pub enum InvalidationStrategy {
 #[derive(Debug, Default)]
 pub struct InlaySplice {
     pub to_remove: Vec<InlayId>,
-    pub to_insert: Vec<(Anchor, InlayId, InlayHint)>,
+    pub to_insert: Vec<Inlay>,
 }
 
 struct UpdateTask {
@@ -285,13 +285,13 @@ impl InlayHintCache {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
                                     {
-                                        to_insert.push((
+                                        to_insert.push(Inlay::hint(
+                                            cached_hint_id.id(),
                                             multi_buffer_snapshot.anchor_in_excerpt(
                                                 *excerpt_id,
                                                 cached_hint.position,
                                             ),
-                                            *cached_hint_id,
-                                            cached_hint.clone(),
+                                            &cached_hint,
                                         ));
                                     }
                                     excerpt_cache.next();
@@ -307,11 +307,11 @@ impl InlayHintCache {
             for (cached_hint_id, maybe_missed_cached_hint) in excerpt_cache {
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
                 if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    to_insert.push((
+                    to_insert.push(Inlay::hint(
+                        cached_hint_id.id(),
                         multi_buffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position),
-                        *cached_hint_id,
-                        maybe_missed_cached_hint.clone(),
+                        &maybe_missed_cached_hint,
                     ));
                 }
             }
@@ -657,18 +657,22 @@ async fn fetch_and_update_hints(
                 for new_hint in new_update.add_to_cache {
                     let new_hint_position = multi_buffer_snapshot
                         .anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                    let new_inlay_id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
+                    let new_inlay_id = post_inc(&mut editor.next_inlay_id);
                     if editor
                         .inlay_hint_cache
                         .allowed_hint_kinds
                         .contains(&new_hint.kind)
                     {
-                        splice
-                            .to_insert
-                            .push((new_hint_position, new_inlay_id, new_hint.clone()));
+                        splice.to_insert.push(Inlay::hint(
+                            new_inlay_id,
+                            new_hint_position,
+                            &new_hint,
+                        ));
                     }
 
-                    cached_excerpt_hints.hints.push((new_inlay_id, new_hint));
+                    cached_excerpt_hints
+                        .hints
+                        .push((InlayId::Hint(new_inlay_id), new_hint));
                 }
 
                 cached_excerpt_hints
