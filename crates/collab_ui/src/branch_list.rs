@@ -221,17 +221,14 @@ impl PickerDelegate for BranchListDelegate {
                 .with_style(style.container)
         } else {
             Flex::row()
-                .with_child(Label::new("Branches", style.label.clone()).aligned().left())
+                .with_child(Label::new("Branches", style.label.clone()))
                 .with_children(self.matches.is_empty().not().then(|| {
                     let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                    Flex::row()
-                        .align_children_center()
-                        .with_child(Label::new(
-                            format!("{} match{}", self.matches.len(), suffix),
-                            style.label,
-                        ))
-                        .aligned()
-                        .right()
+                    Label::new(
+                        format!("{} match{}", self.matches.len(), suffix),
+                        style.label,
+                    )
+                    .flex_float()
                 }))
                 .contained()
                 .with_style(style.container)
