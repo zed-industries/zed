@@ -482,20 +482,19 @@ impl<'a> WindowContext<'a> {
 
                 // If there is already clicked_button stored, don't replace it.
                 if self.window.clicked_button.is_none() {
-                    self.window.clicked_region_ids = self
-                        .window
-                        .mouse_regions
-                        .iter()
-                        .filter_map(|(region, _)| {
-                            if region.bounds.contains_point(e.position) {
-                                Some(region.id())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
+                    let window = &mut *self.window;
+                    window.clicked_region_ids.clear();
 
-                    self.window.clicked_button = Some(e.button);
+                    let mut highest_z_index = 0;
+                    for (region, z_index) in window.mouse_regions.iter() {
+                        if region.bounds.contains_point(e.position) && *z_index >= highest_z_index {
+                            highest_z_index = *z_index;
+                            window.clicked_region_ids.clear();
+                            window.clicked_region_ids.insert(region.id());
+                        }
+                    }
+
+                    window.clicked_button = Some(e.button);
                 }
 
                 mouse_events.push(MouseEvent::Down(MouseDown {
