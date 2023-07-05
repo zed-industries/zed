@@ -482,7 +482,7 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     remote_entity_subscription: Option<client::Subscription>,
-    modal: Option<AnyViewHandle>,
+    modal: Option<ActiveModal>,
     zoomed: Option<AnyWeakViewHandle>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -509,6 +509,11 @@ pub struct Workspace {
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
+}
+
+struct ActiveModal {
+    view: Box<dyn ModalHandle>,
+    previously_focused_view_id: Option<usize>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -1498,8 +1503,10 @@ impl Workspace {
         cx.notify();
         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
         // it. Otherwise, create a new modal and set it as active.
-        let already_open_modal = self.modal.take().and_then(|modal| modal.downcast::<V>());
-        if let Some(already_open_modal) = already_open_modal {
+        if let Some(already_open_modal) = self
+            .dismiss_modal(cx)
+            .and_then(|modal| modal.downcast::<V>())
+        {
             cx.focus_self();
             Some(already_open_modal)
         } else {
@@ -1510,8 +1517,12 @@ impl Workspace {
                 }
             })
             .detach();
+            let previously_focused_view_id = cx.focused_view_id();
             cx.focus(&modal);
-            self.modal = Some(modal.into_any());
+            self.modal = Some(ActiveModal {
+                view: Box::new(modal),
+                previously_focused_view_id,
+            });
             None
         }
     }
@@ -1519,13 +1530,20 @@ impl Workspace {
     pub fn modal<V: 'static + View>(&self) -> Option<ViewHandle<V>> {
         self.modal
             .as_ref()
-            .and_then(|modal| modal.clone().downcast::<V>())
+            .and_then(|modal| modal.view.as_any().clone().downcast::<V>())
     }
 
-    pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) {
-        if self.modal.take().is_some() {
-            cx.focus(&self.active_pane);
+    pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyViewHandle> {
+        if let Some(modal) = self.modal.take() {
+            if let Some(previously_focused_view_id) = modal.previously_focused_view_id {
+                if modal.view.has_focus(cx) {
+                    cx.window_context().focus(Some(previously_focused_view_id));
+                }
+            }
             cx.notify();
+            Some(modal.view.as_any().clone())
+        } else {
+            None
         }
     }
 
@@ -3512,7 +3530,7 @@ impl View for Workspace {
                                         )
                                     }))
                                     .with_children(self.modal.as_ref().map(|modal| {
-                                        ChildView::new(modal, cx)
+                                        ChildView::new(modal.view.as_any(), cx)
                                             .contained()
                                             .with_style(theme.workspace.modal)
                                             .aligned()
