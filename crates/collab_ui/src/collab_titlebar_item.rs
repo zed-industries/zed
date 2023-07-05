@@ -230,7 +230,9 @@ impl CollabTitlebarItem {
             Stack::new()
                 .with_child(
                     MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |mouse_state, _| {
-                        let style = project_style.in_state(self.project_popover.is_some()).style_for(mouse_state);
+                        let style = project_style
+                            .in_state(self.project_popover.is_some())
+                            .style_for(mouse_state);
                         Label::new(name, style.text.clone())
                             .contained()
                             .with_style(style.container)
@@ -242,7 +244,7 @@ impl CollabTitlebarItem {
                     .on_down(MouseButton::Left, move |_, this, cx| {
                         this.toggle_project_menu(&Default::default(), cx)
                     })
-                    .on_click(MouseButton::Left, move |_, _, _| {})
+                    .on_click(MouseButton::Left, move |_, _, _| {}),
                 )
                 .with_children(self.render_project_popover_host(&theme.titlebar, cx)),
         );
@@ -259,16 +261,22 @@ impl CollabTitlebarItem {
                     .with_child(
                         Stack::new()
                             .with_child(
-                                MouseEventHandler::<ToggleVcsMenu, Self>::new(0, cx, |mouse_state, _| {
-                                    let style = git_style.in_state(self.branch_popover.is_some()).style_for(mouse_state);
-                                    Label::new(git_branch, style.text.clone())
-                                        .contained()
-                                        .with_style(style.container.clone())
-                                        .with_margin_right(item_spacing)
-                                        .aligned()
-                                        .left()
-                                        .into_any_named("title-project-branch")
-                                })
+                                MouseEventHandler::<ToggleVcsMenu, Self>::new(
+                                    0,
+                                    cx,
+                                    |mouse_state, _| {
+                                        let style = git_style
+                                            .in_state(self.branch_popover.is_some())
+                                            .style_for(mouse_state);
+                                        Label::new(git_branch, style.text.clone())
+                                            .contained()
+                                            .with_style(style.container.clone())
+                                            .with_margin_right(item_spacing)
+                                            .aligned()
+                                            .left()
+                                            .into_any_named("title-project-branch")
+                                    },
+                                )
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .on_down(MouseButton::Left, move |_, this, cx| {
                                     this.toggle_vcs_menu(&Default::default(), cx)
