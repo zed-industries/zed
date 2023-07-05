@@ -5,8 +5,8 @@ use gpui::serde_json;
 use isahc::prelude::Configurable;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::sync::Arc;
+use std::{env, time::Instant};
 use util::http::{HttpClient, Request};
 
 lazy_static! {
@@ -60,9 +60,34 @@ impl EmbeddingProvider for DummyEmbeddings {
     }
 }
 
+// impl OpenAIEmbeddings {
+//     async fn truncate(span: &str) -> String {
+//         let bpe = cl100k_base().unwrap();
+//         let mut tokens = bpe.encode_with_special_tokens(span);
+//         if tokens.len() > 8192 {
+//             tokens.truncate(8192);
+//             let result = bpe.decode(tokens);
+//             if result.is_ok() {
+//                 return result.unwrap();
+//             }
+//         }
+
+//         return span.to_string();
+//     }
+// }
+
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+        // Truncate spans to 8192 if needed
+        // let t0 = Instant::now();
+        // let mut truncated_spans = vec![];
+        // for span in spans {
+        //     truncated_spans.push(Self::truncate(span));
+        // }
+        // let spans = futures::future::join_all(truncated_spans).await;
+        // log::info!("Truncated Spans in {:?}", t0.elapsed().as_secs());
+
         let api_key = OPENAI_API_KEY
             .as_ref()
             .ok_or_else(|| anyhow!("no api key"))?;
