@@ -1222,6 +1222,9 @@ impl Room {
                                 };
                                 cx.notify();
                             }
+
+                            Audio::play_sound(Sound::StartScreenshare, cx);
+
                             Ok(())
                         }
                         Err(error) => {
@@ -1311,6 +1314,8 @@ impl Room {
             } => {
                 live_kit.room.unpublish_track(track_publication);
                 cx.notify();
+
+                Audio::play_sound(Sound::StopScreenshare, cx);
                 Ok(())
             }
         }
