@@ -2,7 +2,7 @@ use crate::{
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
-use collections::{BTreeMap, BTreeSet, HashMap};
+use collections::{BTreeMap, BTreeSet};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
 use std::{
@@ -19,7 +19,6 @@ use super::TextHighlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
-    inlays_by_id: HashMap<InlayId, Inlay>,
     inlays: Vec<Inlay>,
 }
 
@@ -381,7 +380,6 @@ impl InlayMap {
         (
             Self {
                 snapshot: snapshot.clone(),
-                inlays_by_id: HashMap::default(),
                 inlays: Vec::new(),
             },
             snapshot,
@@ -531,13 +529,14 @@ impl InlayMap {
         let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
-        self.inlays.retain(|inlay| !to_remove.contains(&inlay.id));
-        for inlay_id in to_remove {
-            if let Some(inlay) = self.inlays_by_id.remove(&inlay_id) {
+        self.inlays.retain(|inlay| {
+            let retain = !to_remove.contains(&inlay.id);
+            if !retain {
                 let offset = inlay.position.to_offset(&snapshot.buffer);
                 edits.insert(offset);
             }
-        }
+            retain
+        });
 
         for (existing_id, properties) in to_insert {
             let inlay = Inlay {
@@ -551,7 +550,6 @@ impl InlayMap {
                 continue;
             }
 
-            self.inlays_by_id.insert(inlay.id, inlay.clone());
             match self
                 .inlays
                 .binary_search_by(|probe| probe.position.cmp(&inlay.position, &snapshot.buffer))
@@ -627,7 +625,13 @@ impl InlayMap {
                     },
                 ));
             } else {
-                to_remove.push(*self.inlays_by_id.keys().choose(rng).unwrap());
+                to_remove.push(
+                    self.inlays
+                        .iter()
+                        .choose(rng)
+                        .map(|inlay| inlay.id)
+                        .unwrap(),
+                );
             }
         }
         log::info!("removing inlays: {:?}", to_remove);
@@ -1478,8 +1482,10 @@ mod tests {
         );
 
         // The inlays can be manually removed.
-        let (inlay_snapshot, _) = inlay_map
-            .splice::<String>(inlay_map.inlays_by_id.keys().copied().collect(), Vec::new());
+        let (inlay_snapshot, _) = inlay_map.splice::<String>(
+            inlay_map.inlays.iter().map(|inlay| inlay.id).collect(),
+            Vec::new(),
+        );
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
 
