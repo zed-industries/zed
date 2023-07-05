@@ -14,7 +14,6 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
-audio = { path = "../audio" }
 collections = { path = "../collections" }
 live_kit_server = { path = "../live_kit_server" }
 rpc = { path = "../rpc" }
