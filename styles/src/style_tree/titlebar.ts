@@ -179,8 +179,14 @@ export function titlebar(): any {
         },
 
         // Project
-        title: text(theme.lowest, "sans", "variant"),
-        highlight_color: text(theme.lowest, "sans", "active").color,
+        project_name_divider: text(theme.lowest, "sans", "variant"),
+
+        project_menu_button: toggleable_text_button(theme, {
+            color: 'base',
+        }),
+        git_menu_button: toggleable_text_button(theme, {
+            color: 'variant',
+        }),
 
         // Collaborators
         leader_avatar: {

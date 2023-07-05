@@ -21,6 +21,7 @@ util = { path = "../util"}
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 
+futures.workspace = true
 ordered-float.workspace = true
 postage.workspace = true
 smol.workspace = true

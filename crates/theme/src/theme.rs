@@ -117,8 +117,9 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
-    pub title: TextStyle,
-    pub highlight_color: Color,
+    pub project_menu_button: Toggleable<Interactive<ContainedText>>,
+    pub project_name_divider: ContainedText,
+    pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
@@ -584,6 +585,8 @@ pub struct Picker {
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
+    pub header: ContainedLabel,
+    pub footer: ContainedLabel,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]

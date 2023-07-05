@@ -110,5 +110,23 @@ export default function picker(): any {
                 top: 8,
             },
         },
+        header: {
+            text: text(theme.lowest, "sans", "variant", { size: "xs" }),
+
+            margin: {
+                top: 1,
+                left: 8,
+                right: 8,
+            },
+        },
+        footer: {
+            text: text(theme.lowest, "sans", "variant", { size: "xs" }),
+            margin: {
+                top: 1,
+                left: 8,
+                right: 8,
+            },
+
+        }
     }
 }

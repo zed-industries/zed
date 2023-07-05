@@ -46,6 +46,8 @@ export default function contact_finder(): any {
             no_matches: picker_style.no_matches,
             input_editor: picker_input,
             empty_input_editor: picker_input,
+            header: picker_style.header,
+            footer: picker_style.footer,
         },
         row_height: 28,
         contact_avatar: {
