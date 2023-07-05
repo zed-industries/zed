@@ -675,6 +675,9 @@ impl ProjectSearchView {
         if match_ranges.is_empty() {
             self.active_match_index = None;
         } else {
+            self.active_match_index = Some(0);
+            self.select_match(Direction::Next, cx);
+            self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
