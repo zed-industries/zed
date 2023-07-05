@@ -2971,14 +2971,12 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn focus(&mut self, handle: &AnyViewHandle) {
-        self.window_context
-            .focus(handle.window_id, Some(handle.view_id));
+        self.window_context.focus(Some(handle.view_id));
     }
 
     pub fn focus_self(&mut self) {
-        let window_id = self.window_id;
         let view_id = self.view_id;
-        self.window_context.focus(window_id, Some(view_id));
+        self.window_context.focus(Some(view_id));
     }
 
     pub fn is_self_focused(&self) -> bool {
@@ -2997,8 +2995,7 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn blur(&mut self) {
-        let window_id = self.window_id;
-        self.window_context.focus(window_id, None);
+        self.window_context.focus(None);
     }
 
     pub fn on_window_should_close<F>(&mut self, mut callback: F)

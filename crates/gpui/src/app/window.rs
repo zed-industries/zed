@@ -1096,6 +1096,10 @@ impl<'a> WindowContext<'a> {
         self.window.focused_view_id
     }
 
+    pub fn focus(&mut self, view_id: Option<usize>) {
+        self.app_context.focus(self.window_id, view_id);
+    }
+
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.bounds()
     }
