@@ -57,6 +57,7 @@ tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+audio = { path = "../audio" }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 call = { path = "../call", features = ["test-support"] }

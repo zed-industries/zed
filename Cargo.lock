@@ -1405,6 +1405,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
+ "audio",
  "axum",
  "axum-extra",
  "base64 0.13.1",
