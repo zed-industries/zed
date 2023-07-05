@@ -48,7 +48,7 @@ fn toggle(
                     let workspace = cx.weak_handle();
                     cx.add_view(|cx| {
                         RecentProjects::new(
-                            RecentProjectsDelegate::new(workspace, workspace_locations),
+                            RecentProjectsDelegate::new(workspace, workspace_locations, true),
                             cx,
                         )
                         .with_max_size(800., 1200.)
@@ -69,8 +69,11 @@ pub fn build_recent_projects(
     workspaces: Vec<WorkspaceLocation>,
     cx: &mut ViewContext<RecentProjects>,
 ) -> RecentProjects {
-    Picker::new(RecentProjectsDelegate::new(workspace, workspaces), cx)
-        .with_theme(|theme| theme.picker.clone())
+    Picker::new(
+        RecentProjectsDelegate::new(workspace, workspaces, false),
+        cx,
+    )
+    .with_theme(|theme| theme.picker.clone())
 }
 
 pub type RecentProjects = Picker<RecentProjectsDelegate>;
@@ -80,18 +83,21 @@ pub struct RecentProjectsDelegate {
     workspace_locations: Vec<WorkspaceLocation>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
+    render_paths: bool,
 }
 
 impl RecentProjectsDelegate {
     fn new(
         workspace: WeakViewHandle<Workspace>,
         workspace_locations: Vec<WorkspaceLocation>,
+        render_paths: bool,
     ) -> Self {
         Self {
             workspace,
             workspace_locations,
             selected_match_index: 0,
             matches: Default::default(),
+            render_paths,
         }
     }
 }
@@ -197,6 +203,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 highlighted_location
                     .paths
                     .into_iter()
+                    .filter(|_| self.render_paths)
                     .map(|highlighted_path| highlighted_path.render(style.label.clone())),
             )
             .flex(1., false)
