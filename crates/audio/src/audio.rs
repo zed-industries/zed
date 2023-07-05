@@ -15,15 +15,19 @@ pub enum Sound {
     Leave,
     Mute,
     Unmute,
+    StartScreenshare,
+    StopScreenshare,
 }
 
 impl Sound {
     fn file(&self) -> &'static str {
         match self {
-            Self::Joined => "joined",
-            Self::Leave => "leave",
+            Self::Joined => "joined_call",
+            Self::Leave => "leave_call",
             Self::Mute => "mute",
             Self::Unmute => "unmute",
+            Self::StartScreenshare => "start_screenshare",
+            Self::StopScreenshare => "stop_screenshare",
         }
     }
 }
