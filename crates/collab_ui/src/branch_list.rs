@@ -1,8 +1,6 @@
 use anyhow::{anyhow, bail};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    elements::*, platform::MouseButton, AppContext, MouseState, Task, ViewContext, ViewHandle,
-};
+use gpui::{elements::*, AppContext, MouseState, Task, ViewContext, ViewHandle};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::{ops::Not, sync::Arc};
 use util::ResultExt;
