@@ -97,7 +97,23 @@ lazy_static! {
 }
 
 pub trait Modal: View {
+    fn has_focus(&self) -> bool;
     fn dismiss_on_event(event: &Self::Event) -> bool;
+}
+
+trait ModalHandle {
+    fn as_any(&self) -> &AnyViewHandle;
+    fn has_focus(&self, cx: &WindowContext) -> bool;
+}
+
+impl<T: Modal> ModalHandle for ViewHandle<T> {
+    fn as_any(&self) -> &AnyViewHandle {
+        self
+    }
+
+    fn has_focus(&self, cx: &WindowContext) -> bool {
+        self.read(cx).has_focus()
+    }
 }
 
 #[derive(Clone, PartialEq)]
