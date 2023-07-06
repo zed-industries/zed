@@ -833,7 +833,7 @@ mod tests {
     use crate::{
         scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
         serde_json::json,
-        ExcerptRange, InlayHintSettings,
+        ExcerptRange,
     };
     use futures::StreamExt;
     use gpui::{executor::Deterministic, TestAppContext, ViewHandle};
@@ -1087,13 +1087,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_no_hint_updates_for_unrelated_language_files(cx: &mut gpui::TestAppContext) {
-        let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
             })
         });
 
@@ -1197,10 +1196,6 @@ mod tests {
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(
-                inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-                "Cache should use editor settings to get the allowed hint kinds"
-            );
-            assert_eq!(
                 inlay_cache.version, 1,
                 "Rust editor update the cache version after every cache/view change"
             );
@@ -1258,7 +1253,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 1);
         });
 
@@ -1276,7 +1270,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, 2,
                 "Every time hint cache changes, cache version should be incremented"
@@ -1291,7 +1284,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 1);
         });
 
@@ -1309,7 +1301,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 2);
         });
         rs_editor.update(cx, |editor, cx| {
@@ -1321,7 +1312,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 2);
         });
     }
@@ -1444,7 +1434,6 @@ mod tests {
                 visible_hint_labels(editor, cx)
             );
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, edits_made,
                 "Should not update cache version due to new loaded hints being the same"
@@ -1580,7 +1569,6 @@ mod tests {
             assert!(cached_hint_labels(editor).is_empty());
             assert!(visible_hint_labels(editor, cx).is_empty());
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, another_allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, edits_made,
                 "The editor should not update the cache version after /refresh query without updates"
@@ -1654,20 +1642,18 @@ mod tests {
                 visible_hint_labels(editor, cx),
             );
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds);
             assert_eq!(inlay_cache.version, edits_made);
         });
     }
 
     #[gpui::test]
     async fn test_hint_request_cancellation(cx: &mut gpui::TestAppContext) {
-        let allowed_hint_kinds = HashSet::from_iter([None]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
             })
         });
 
@@ -1735,7 +1721,6 @@ mod tests {
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, 1,
                 "Only one update should be registered in the cache after all cancellations"
@@ -1782,7 +1767,6 @@ mod tests {
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, 2,
                 "Should update the cache version once more, for the new change"
@@ -1792,13 +1776,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
-        let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
             })
         });
 
@@ -1904,7 +1887,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(
                 inlay_cache.version, 2,
                 "Both LSP queries should've bumped the cache version"
@@ -1937,7 +1919,6 @@ mod tests {
                 "Should have hints from the new LSP response after edit");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 5, "Should update the cache for every LSP response with hints added");
         });
     }
@@ -1947,13 +1928,12 @@ mod tests {
         deterministic: Arc<Deterministic>,
         cx: &mut gpui::TestAppContext,
     ) {
-        let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
             })
         });
 
@@ -2159,7 +2139,6 @@ mod tests {
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 4, "Every visible excerpt hints should bump the verison");
         });
 
@@ -2191,7 +2170,6 @@ mod tests {
                 "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 9);
         });
 
@@ -2220,7 +2198,6 @@ mod tests {
                 "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 12);
         });
 
@@ -2249,7 +2226,6 @@ mod tests {
                 "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 12, "No updates should happen during scrolling already scolled buffer");
         });
 
@@ -2276,7 +2252,6 @@ mod tests {
 unedited (2nd) buffer should have the same hint");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
-            assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
             assert_eq!(inlay_cache.version, 16);
         });
     }
