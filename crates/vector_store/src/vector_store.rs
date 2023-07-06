@@ -418,21 +418,34 @@ impl VectorStore {
         ) {
             let mut item_range = None;
             let mut name_range = None;
+            let mut context_range = None;
             for capture in mat.captures {
                 if capture.index == embedding_config.item_capture_ix {
                     item_range = Some(capture.node.byte_range());
                 } else if capture.index == embedding_config.name_capture_ix {
                     name_range = Some(capture.node.byte_range());
                 }
+                if let Some(context_capture_ix) = embedding_config.context_capture_ix {
+                    if capture.index == context_capture_ix {
+                        context_range = Some(capture.node.byte_range());
+                    }
+                }
             }
 
             if let Some((item_range, name_range)) = item_range.zip(name_range) {
+                let mut context_data = String::new();
+                if let Some(context_range) = context_range {
+                    if let Some(context) = content.get(context_range.clone()) {
+                        context_data.push_str(context);
+                    }
+                }
+
                 if let Some((item, name)) =
                     content.get(item_range.clone()).zip(content.get(name_range))
                 {
                     context_spans.push(item.to_string());
                     documents.push(Document {
-                        name: name.to_string(),
+                        name: format!("{} {}", context_data.to_string(), name.to_string()),
                         offset: item_range.start,
                         embedding: Vec::new(),
                     });
