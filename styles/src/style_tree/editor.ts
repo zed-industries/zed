@@ -304,9 +304,7 @@ export default function editor(): any {
                     ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
                     : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
-            selections: is_light
-                ? with_opacity(theme.ramps.blue(0.5).hex(), 0.8)
-                : with_opacity(theme.ramps.blue(0.4).hex(), 0.8)
+            selections: foreground(layer, "accent")
         },
         composition_mark: {
             underline: {
