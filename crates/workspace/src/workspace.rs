@@ -4809,6 +4809,7 @@ mod tests {
             theme::init((), cx);
             language::init(cx);
             crate::init_settings(cx);
+            Project::init_settings(cx);
         });
     }
 }
