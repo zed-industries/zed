@@ -263,13 +263,13 @@ pub fn find_preceding_boundary(
 
         if let Some((prev_ch, prev_point)) = prev {
             if is_boundary(ch, prev_ch) {
-                return prev_point;
+                return map.clip_point(prev_point, Bias::Left);
             }
         }
 
         prev = Some((ch, point));
     }
-    DisplayPoint::zero()
+    map.clip_point(DisplayPoint::zero(), Bias::Left)
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
@@ -292,7 +292,7 @@ pub fn find_preceding_boundary_in_line(
     for (ch, point) in map.reverse_chars_at(from) {
         if let Some((prev_ch, prev_point)) = prev {
             if is_boundary(ch, prev_ch) {
-                return prev_point;
+                return map.clip_point(prev_point, Bias::Left);
             }
         }
 
@@ -303,7 +303,7 @@ pub fn find_preceding_boundary_in_line(
         prev = Some((ch, point));
     }
 
-    prev.map(|(_, point)| point).unwrap_or(from)
+    map.clip_point(prev.map(|(_, point)| point).unwrap_or(from), Bias::Left)
 }
 
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
