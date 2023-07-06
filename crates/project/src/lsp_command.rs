@@ -1822,11 +1822,21 @@ impl LspCommand for InlayHints {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp::InlayHint>>,
-        _: ModelHandle<Project>,
+        project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        _: LanguageServerId,
-        cx: AsyncAppContext,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<InlayHint>> {
+        let (lsp_adapter, _) = language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
+        // `typescript-language-server` adds padding to the left for type hints, turning
+        // `const foo: boolean` into `const foo : boolean` which looks odd.
+        // `rust-analyzer` does not have the padding for this case, and we have to accomodate both.
+        //
+        // We could trim the whole string, but being pessimistic on par with the situation above,
+        // there might be a hint with multiple whitespaces at the end(s) which we need to display properly.
+        // Hence let's use a heuristic first to handle the most awkward case and look for more.
+        let force_no_type_left_padding =
+            lsp_adapter.name.0.as_ref() == "typescript-language-server";
         cx.read(|cx| {
             let origin_buffer = buffer.read(cx);
             Ok(message
@@ -1840,6 +1850,12 @@ impl LspCommand for InlayHints {
                     });
                     let position = origin_buffer
                         .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+                    let padding_left =
+                        if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
+                            false
+                        } else {
+                            lsp_hint.padding_left.unwrap_or(false)
+                        };
                     InlayHint {
                         buffer_id: origin_buffer.remote_id(),
                         position: if kind == Some(InlayHintKind::Parameter) {
@@ -1847,7 +1863,7 @@ impl LspCommand for InlayHints {
                         } else {
                             origin_buffer.anchor_after(position)
                         },
-                        padding_left: lsp_hint.padding_left.unwrap_or(false),
+                        padding_left,
                         padding_right: lsp_hint.padding_right.unwrap_or(false),
                         label: match lsp_hint.label {
                             lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
