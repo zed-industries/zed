@@ -3397,6 +3397,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+            cx.emit(Event::RefreshInlays);
             status.pending_work.remove(&token);
             cx.notify();
         }
