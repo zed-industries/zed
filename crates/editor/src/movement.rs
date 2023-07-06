@@ -406,8 +406,12 @@ pub fn split_display_range_by_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
+    use crate::{
+        display_map::Inlay, test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange,
+        InlayId, MultiBuffer,
+    };
     use settings::SettingsStore;
+    use util::post_inc;
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::AppContext) {
@@ -503,6 +507,80 @@ mod tests {
                 false
             }
         });
+    }
+
+    #[gpui::test]
+    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::AppContext) {
+        init_test(cx);
+
+        let input_text = "abcdefghijklmnopqrstuvwxys";
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+        let buffer = MultiBuffer::build_simple(input_text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+
+        // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
+        let mut id = 0;
+        let inlays = (0..buffer_snapshot.len())
+            .map(|offset| {
+                [
+                    Inlay {
+                        id: InlayId::Suggestion(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Suggestion(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Hint(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Hint(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        text: format!("test").into(),
+                    },
+                ]
+            })
+            .flatten()
+            .collect();
+        let snapshot = display_map.update(cx, |map, cx| {
+            map.splice_inlays(Vec::new(), inlays, cx);
+            map.snapshot(cx)
+        });
+
+        assert_eq!(
+            find_preceding_boundary(
+                &snapshot,
+                buffer_snapshot.len().to_display_point(&snapshot),
+                |left, _| left == 'a',
+            ),
+            0.to_display_point(&snapshot),
+            "Should not stop at inlays when looking for boundaries"
+        );
+
+        assert_eq!(
+            find_preceding_boundary_in_line(
+                &snapshot,
+                buffer_snapshot.len().to_display_point(&snapshot),
+                |left, _| left == 'a',
+            ),
+            0.to_display_point(&snapshot),
+            "Should not stop at inlays when looking for boundaries in line"
+        );
     }
 
     #[gpui::test]
