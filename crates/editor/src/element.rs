@@ -1103,8 +1103,8 @@ impl EditorElement {
                     if let Some(current_end) = end_row.as_mut() {
                         if start_display.row() > *current_end + 1 {
                             push_region(start_row, end_row);
-                            start_row = None;
-                            end_row = None;
+                            start_row = Some(start_display.row());
+                            end_row = Some(end_display.row());
                         } else {
                             // Merge two hunks.
                             *current_end = end_display.row();
