@@ -1057,7 +1057,35 @@ impl EditorElement {
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
                 let end_anchor = Anchor::max();
-                let mut last_rendered_row_range = (-1., -1.);
+                let mut start_row = None;
+                let mut end_row = None;
+                let color = scrollbar_theme.selections;
+                let border = Border {
+                    width: 1.,
+                    color: style.thumb.border.color,
+                    overlay: false,
+                    top: false,
+                    right: true,
+                    bottom: false,
+                    left: true,
+                };
+                let mut push_region = |start, end| {
+                    if let (Some(start_display), Some(end_display)) = (start, end) {
+                        let start_y = y_for_row(start_display as f32);
+                        let mut end_y = y_for_row(end_display as f32);
+                        if end_y - start_y < 1. {
+                            end_y = start_y + 1.;
+                        }
+                        let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+
+                        scene.push_quad(Quad {
+                            bounds,
+                            background: Some(color),
+                            border,
+                            corner_radius: style.thumb.corner_radius,
+                        })
+                    }
+                };
                 for (row, _) in &editor.background_highlights_in_range(
                     start_anchor..end_anchor,
                     &layout.position_map.snapshot,
@@ -1065,36 +1093,28 @@ impl EditorElement {
                 ) {
                     let start_display = row.start;
                     let end_display = row.end;
-                    let start_y = y_for_row(start_display.row() as f32);
-                    let mut end_y = y_for_row((end_display.row()) as f32);
-                    if end_y - start_y < 1. {
-                        end_y = start_y + 1.;
-                    }
-                    if (start_y, end_y) == last_rendered_row_range {
+
+                    if start_row.is_none() {
+                        assert_eq!(end_row, None);
+                        start_row = Some(start_display.row());
+                        end_row = Some(end_display.row());
                         continue;
                     }
-                    last_rendered_row_range = (start_y, end_y);
-                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
-
-                    let color = scrollbar_theme.selections;
-
-                    let border = Border {
-                        width: 1.,
-                        color: style.thumb.border.color,
-                        overlay: false,
-                        top: false,
-                        right: true,
-                        bottom: false,
-                        left: true,
-                    };
-
-                    scene.push_quad(Quad {
-                        bounds,
-                        background: Some(color),
-                        border,
-                        corner_radius: style.thumb.corner_radius,
-                    })
+                    if let Some(current_end) = end_row.as_mut() {
+                        if start_display.row() > *current_end + 1 {
+                            push_region(start_row, end_row);
+                            start_row = None;
+                            end_row = None;
+                        } else {
+                            // Merge two hunks.
+                            *current_end = end_display.row();
+                        }
+                    } else {
+                        unreachable!();
+                    }
                 }
+                // We might still have a hunk that was not rendered (if there was a search hit on the last line)
+                push_region(start_row, end_row);
             }
 
             if layout.is_singleton && scrollbar_settings.git_diff {
