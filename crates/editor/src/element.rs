@@ -1071,7 +1071,6 @@ impl EditorElement {
                         end_y = start_y + 1.;
                     }
                     if (start_y, end_y) == last_rendered_row_range {
-                        skipped += 1;
                         continue;
                     }
                     last_rendered_row_range = (start_y, end_y);
