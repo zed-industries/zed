@@ -1057,6 +1057,7 @@ impl EditorElement {
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
                 let end_anchor = Anchor::max();
+                let mut last_rendered_row_range = (-1., -1.);
                 for (row, _) in &editor.background_highlights_in_range(
                     start_anchor..end_anchor,
                     &layout.position_map.snapshot,
@@ -1069,6 +1070,11 @@ impl EditorElement {
                     if end_y - start_y < 1. {
                         end_y = start_y + 1.;
                     }
+                    if (start_y, end_y) == last_rendered_row_range {
+                        skipped += 1;
+                        continue;
+                    }
+                    last_rendered_row_range = (start_y, end_y);
                     let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
 
                     let color = scrollbar_theme.selections;
