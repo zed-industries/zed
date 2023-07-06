@@ -74,7 +74,6 @@ pub fn init(
             cx.subscribe_global::<WorkspaceCreated, _>({
                 let vector_store = vector_store.clone();
                 move |event, cx| {
-                    let t0 = Instant::now();
                     let workspace = &event.0;
                     if let Some(workspace) = workspace.upgrade(cx) {
                         let project = workspace.read(cx).project().clone();
@@ -126,9 +125,7 @@ pub struct VectorStore {
     language_registry: Arc<LanguageRegistry>,
     db_update_tx: channel::Sender<DbWrite>,
     // embed_batch_tx: channel::Sender<Vec<(i64, IndexedFile, Vec<String>)>>,
-    batch_files_tx: channel::Sender<(i64, IndexedFile, Vec<String>)>,
     parsing_files_tx: channel::Sender<(i64, PathBuf, Arc<Language>, SystemTime)>,
-    parsing_files_rx: channel::Receiver<(i64, PathBuf, Arc<Language>, SystemTime)>,
     _db_update_task: Task<()>,
     _embed_batch_task: Vec<Task<()>>,
     _batch_files_task: Task<()>,
@@ -220,14 +217,13 @@ impl VectorStore {
             let (embed_batch_tx, embed_batch_rx) =
                 channel::unbounded::<Vec<(i64, IndexedFile, Vec<String>)>>();
             let mut _embed_batch_task = Vec::new();
-            for _ in 0..cx.background().num_cpus() {
+            for _ in 0..1 {
+                //cx.background().num_cpus() {
                 let db_update_tx = db_update_tx.clone();
                 let embed_batch_rx = embed_batch_rx.clone();
                 let embedding_provider = embedding_provider.clone();
                 _embed_batch_task.push(cx.background().spawn(async move {
                     while let Ok(embeddings_queue) = embed_batch_rx.recv().await {
-                        log::info!("Embedding Batch! ");
-
                         // Construct Batch
                         let mut embeddings_queue = embeddings_queue.clone();
                         let mut document_spans = vec![];
@@ -235,20 +231,20 @@ impl VectorStore {
                             document_spans.extend(document_span);
                         }
 
-                        if let Some(mut embeddings) = embedding_provider
+                        if let Ok(embeddings) = embedding_provider
                             .embed_batch(document_spans.iter().map(|x| &**x).collect())
                             .await
-                            .log_err()
                         {
                             let mut i = 0;
                             let mut j = 0;
-                            while let Some(embedding) = embeddings.pop() {
+
+                            for embedding in embeddings.iter() {
                                 while embeddings_queue[i].1.documents.len() == j {
                                     i += 1;
                                     j = 0;
                                 }
 
-                                embeddings_queue[i].1.documents[j].embedding = embedding;
+                                embeddings_queue[i].1.documents[j].embedding = embedding.to_owned();
                                 j += 1;
                             }
 
@@ -283,7 +279,6 @@ impl VectorStore {
                 while let Ok((worktree_id, indexed_file, document_spans)) =
                     batch_files_rx.recv().await
                 {
-                    log::info!("Batching File: {:?}", &indexed_file.path);
                     queue_len += &document_spans.len();
                     embeddings_queue.push((worktree_id, indexed_file, document_spans));
                     if queue_len >= EMBEDDINGS_BATCH_SIZE {
@@ -338,10 +333,7 @@ impl VectorStore {
                 embedding_provider,
                 language_registry,
                 db_update_tx,
-                // embed_batch_tx,
-                batch_files_tx,
                 parsing_files_tx,
-                parsing_files_rx,
                 _db_update_task,
                 _embed_batch_task,
                 _batch_files_task,
@@ -449,8 +441,6 @@ impl VectorStore {
         let database_url = self.database_url.clone();
         let db_update_tx = self.db_update_tx.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
-        let parsing_files_rx = self.parsing_files_rx.clone();
-        let batch_files_tx = self.batch_files_tx.clone();
 
         cx.spawn(|this, mut cx| async move {
             let t0 = Instant::now();
@@ -553,37 +543,6 @@ impl VectorStore {
                 })
                 .detach();
 
-            // cx.background()
-            //     .scoped(|scope| {
-            //         for _ in 0..cx.background().num_cpus() {
-            //             scope.spawn(async {
-            //                 let mut parser = Parser::new();
-            //                 let mut cursor = QueryCursor::new();
-            //                 while let Ok((worktree_id, file_path, language, mtime)) =
-            //                     parsing_files_rx.recv().await
-            //                 {
-            //                     log::info!("Parsing File: {:?}", &file_path);
-            //                     if let Some((indexed_file, document_spans)) = Self::index_file(
-            //                         &mut cursor,
-            //                         &mut parser,
-            //                         &fs,
-            //                         language,
-            //                         file_path.clone(),
-            //                         mtime,
-            //                     )
-            //                     .await
-            //                     .log_err()
-            //                     {
-            //                         batch_files_tx
-            //                             .try_send((worktree_id, indexed_file, document_spans))
-            //                             .unwrap();
-            //                     }
-            //                 }
-            //             });
-            //         }
-            //     })
-            //     .await;
-
             this.update(&mut cx, |this, cx| {
                 // The below is managing for updated on save
                 // Currently each time a file is saved, this code is run, and for all the files that were changed, if the current time is
@@ -592,90 +551,90 @@ impl VectorStore {
                     if let Some(project_state) = this.projects.get(&project.downgrade()) {
                         let worktree_db_ids = project_state.worktree_db_ids.clone();
 
-                        // if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event
-                        // {
-                        //     // Iterate through changes
-                        //     let language_registry = this.language_registry.clone();
+                        if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event
+                        {
+                            // Iterate through changes
+                            let language_registry = this.language_registry.clone();
 
-                        //     let db =
-                        //         VectorDatabase::new(this.database_url.to_string_lossy().into());
-                        //     if db.is_err() {
-                        //         return;
-                        //     }
-                        //     let db = db.unwrap();
+                            let db =
+                                VectorDatabase::new(this.database_url.to_string_lossy().into());
+                            if db.is_err() {
+                                return;
+                            }
+                            let db = db.unwrap();
 
-                        //     let worktree_db_id: Option<i64> = {
-                        //         let mut found_db_id = None;
-                        //         for (w_id, db_id) in worktree_db_ids.into_iter() {
-                        //             if &w_id == worktree_id {
-                        //                 found_db_id = Some(db_id);
-                        //             }
-                        //         }
+                            let worktree_db_id: Option<i64> = {
+                                let mut found_db_id = None;
+                                for (w_id, db_id) in worktree_db_ids.into_iter() {
+                                    if &w_id == worktree_id {
+                                        found_db_id = Some(db_id);
+                                    }
+                                }
 
-                        //         found_db_id
-                        //     };
+                                found_db_id
+                            };
 
-                        //     if worktree_db_id.is_none() {
-                        //         return;
-                        //     }
-                        //     let worktree_db_id = worktree_db_id.unwrap();
+                            if worktree_db_id.is_none() {
+                                return;
+                            }
+                            let worktree_db_id = worktree_db_id.unwrap();
 
-                        //     let file_mtimes = db.get_file_mtimes(worktree_db_id);
-                        //     if file_mtimes.is_err() {
-                        //         return;
-                        //     }
+                            let file_mtimes = db.get_file_mtimes(worktree_db_id);
+                            if file_mtimes.is_err() {
+                                return;
+                            }
 
-                        //     let file_mtimes = file_mtimes.unwrap();
-                        //     let paths_tx = this.paths_tx.clone();
+                            let file_mtimes = file_mtimes.unwrap();
+                            let parsing_files_tx = this.parsing_files_tx.clone();
 
-                        //     smol::block_on(async move {
-                        //         for change in changes.into_iter() {
-                        //             let change_path = change.0.clone();
-                        //             log::info!("Change: {:?}", &change_path);
-                        //             if let Ok(language) = language_registry
-                        //                 .language_for_file(&change_path.to_path_buf(), None)
-                        //                 .await
-                        //             {
-                        //                 if language
-                        //                     .grammar()
-                        //                     .and_then(|grammar| grammar.embedding_config.as_ref())
-                        //                     .is_none()
-                        //                 {
-                        //                     continue;
-                        //                 }
+                            smol::block_on(async move {
+                                for change in changes.into_iter() {
+                                    let change_path = change.0.clone();
+                                    log::info!("Change: {:?}", &change_path);
+                                    if let Ok(language) = language_registry
+                                        .language_for_file(&change_path.to_path_buf(), None)
+                                        .await
+                                    {
+                                        if language
+                                            .grammar()
+                                            .and_then(|grammar| grammar.embedding_config.as_ref())
+                                            .is_none()
+                                        {
+                                            continue;
+                                        }
 
-                        //                 // TODO: Make this a bit more defensive
-                        //                 let modified_time =
-                        //                     change_path.metadata().unwrap().modified().unwrap();
-                        //                 let existing_time =
-                        //                     file_mtimes.get(&change_path.to_path_buf());
-                        //                 let already_stored =
-                        //                     existing_time.map_or(false, |existing_time| {
-                        //                         if &modified_time != existing_time
-                        //                             && existing_time.elapsed().unwrap().as_secs()
-                        //                                 > REINDEXING_DELAY
-                        //                         {
-                        //                             false
-                        //                         } else {
-                        //                             true
-                        //                         }
-                        //                     });
+                                        // TODO: Make this a bit more defensive
+                                        let modified_time =
+                                            change_path.metadata().unwrap().modified().unwrap();
+                                        let existing_time =
+                                            file_mtimes.get(&change_path.to_path_buf());
+                                        let already_stored =
+                                            existing_time.map_or(false, |existing_time| {
+                                                if &modified_time != existing_time
+                                                    && existing_time.elapsed().unwrap().as_secs()
+                                                        > REINDEXING_DELAY
+                                                {
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            });
 
-                        //                 if !already_stored {
-                        //                     log::info!("Need to reindex: {:?}", &change_path);
-                        //                     paths_tx
-                        //                         .try_send((
-                        //                             worktree_db_id,
-                        //                             change_path.to_path_buf(),
-                        //                             language,
-                        //                             modified_time,
-                        //                         ))
-                        //                         .unwrap();
-                        //                 }
-                        //             }
-                        //         }
-                        //     })
-                        // }
+                                        if !already_stored {
+                                            log::info!("Need to reindex: {:?}", &change_path);
+                                            parsing_files_tx
+                                                .try_send((
+                                                    worktree_db_id,
+                                                    change_path.to_path_buf(),
+                                                    language,
+                                                    modified_time,
+                                                ))
+                                                .unwrap();
+                                        }
+                                    }
+                                }
+                            })
+                        }
                     }
                 });
 
