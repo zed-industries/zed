@@ -147,8 +147,9 @@ impl AssistantPanel {
                                 .await
                                 .log_err()
                                 .unwrap_or_default();
-                            this.update(&mut cx, |this, _| {
-                                this.saved_conversations = saved_conversations
+                            this.update(&mut cx, |this, cx| {
+                                this.saved_conversations = saved_conversations;
+                                cx.notify();
                             })
                             .ok();
                         }
