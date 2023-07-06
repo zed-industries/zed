@@ -31,6 +31,10 @@ serde_derive.workspace = true
 serde_json.workspace = true
 log.workspace = true
 libc = "0.2"
+time.workspace = true
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
 
 [features]
 test-support = []

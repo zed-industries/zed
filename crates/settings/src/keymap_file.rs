@@ -1,30 +1,30 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::BTreeMap;
-use gpui::{keymap_matcher::Binding, AppContext};
+use gpui::{keymap_matcher::Binding, AppContext, NoAction};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
     JsonSchema,
 };
 use serde::Deserialize;
-use serde_json::{value::RawValue, Value};
+use serde_json::Value;
 use util::{asset_str, ResultExt};
 
-#[derive(Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
 pub struct KeymapFile(Vec<KeymapBlock>);
 
-#[derive(Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 pub struct KeymapBlock {
     #[serde(default)]
     context: Option<String>,
     bindings: BTreeMap<String, KeymapAction>,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Default, Clone)]
 #[serde(transparent)]
-pub struct KeymapAction(Box<RawValue>);
+pub struct KeymapAction(Value);
 
 impl JsonSchema for KeymapAction {
     fn schema_name() -> String {
@@ -37,11 +37,12 @@ impl JsonSchema for KeymapAction {
 }
 
 #[derive(Deserialize)]
-struct ActionWithData(Box<str>, Box<RawValue>);
+struct ActionWithData(Box<str>, Value);
 
 impl KeymapFile {
     pub fn load_asset(asset_path: &str, cx: &mut AppContext) -> Result<()> {
         let content = asset_str::<SettingsAssets>(asset_path);
+
         Self::parse(content.as_ref())?.add_to_cx(cx)
     }
 
@@ -54,18 +55,28 @@ impl KeymapFile {
             let bindings = bindings
                 .into_iter()
                 .filter_map(|(keystroke, action)| {
-                    let action = action.0.get();
+                    let action = action.0;
 
                     // This is a workaround for a limitation in serde: serde-rs/json#497
                     // We want to deserialize the action data as a `RawValue` so that we can
                     // deserialize the action itself dynamically directly from the JSON
                     // string. But `RawValue` currently does not work inside of an untagged enum.
-                    if action.starts_with('[') {
-                        let ActionWithData(name, data) = serde_json::from_str(action).log_err()?;
-                        cx.deserialize_action(&name, Some(data.get()))
-                    } else {
-                        let name = serde_json::from_str(action).log_err()?;
-                        cx.deserialize_action(name, None)
+                    match action {
+                        Value::Array(items) => {
+                            let Ok([name, data]): Result<[serde_json::Value; 2], _> = items.try_into() else {
+                                return Some(Err(anyhow!("Expected array of length 2")));
+                            };
+                            let serde_json::Value::String(name) = name else {
+                                return Some(Err(anyhow!("Expected first item in array to be a string.")))
+                            };
+                            cx.deserialize_action(
+                                &name,
+                                Some(data),
+                            )
+                        },
+                        Value::String(name) => cx.deserialize_action(&name, None),
+                        Value::Null => Ok(no_action()),
+                        _ => return Some(Err(anyhow!("Expected two-element array, got {action:?}"))),
                     }
                     .with_context(|| {
                         format!(
@@ -105,6 +116,10 @@ impl KeymapFile {
                         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
                         ..Default::default()
                     }),
+                    Schema::Object(SchemaObject {
+                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Null))),
+                        ..Default::default()
+                    }),
                 ]),
                 ..Default::default()
             })),
@@ -116,5 +131,30 @@ impl KeymapFile {
             .insert("KeymapAction".to_owned(), action_schema);
 
         serde_json::to_value(root_schema).unwrap()
+    }
+}
+
+fn no_action() -> Box<dyn gpui::Action> {
+    Box::new(NoAction {})
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::KeymapFile;
+
+    #[test]
+    fn can_deserialize_keymap_with_trailing_comma() {
+        let json = indoc::indoc! {"[
+              // Standard macOS bindings
+              {
+                \"bindings\": {
+                  \"up\": \"menu::SelectPrev\",
+                },
+              },
+            ]
+                  "
+
+        };
+        KeymapFile::parse(json).unwrap();
     }
 }

@@ -100,7 +100,7 @@ impl View for DiagnosticIndicator {
                     .workspace
                     .status_bar
                     .diagnostic_summary
-                    .style_for(state, false);
+                    .style_for(state);
 
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
@@ -198,7 +198,7 @@ impl View for DiagnosticIndicator {
                 MouseEventHandler::<Message, _>::new(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
-                        message_style.style_for(state, false).text.clone(),
+                        message_style.style_for(state).text.clone(),
                     )
                     .aligned()
                     .contained()

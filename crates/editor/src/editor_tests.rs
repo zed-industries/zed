@@ -1,7 +1,11 @@
 use super::*;
-use crate::test::{
-    assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-    editor_test_context::EditorTestContext, select_ranges,
+use crate::{
+    scroll::scroll_amount::ScrollAmount,
+    test::{
+        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
+        editor_test_context::EditorTestContext, select_ranges,
+    },
+    JoinLines,
 };
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
@@ -1357,6 +1361,43 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+    cx.simulate_window_resize(cx.window_id, vec2f(1000., 4. * line_height + 0.5));
+
+    cx.set_state(
+        &r#"ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#,
+    );
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.));
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 6.));
+        editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+
+        editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.));
+        editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
+    });
+}
+
+#[gpui::test]
 async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -2322,6 +2363,137 @@ fn test_delete_line(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
         );
+    });
+}
+
+#[gpui::test]
+fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 0)..Point::new(0, 0)]
+        );
+
+        // When on single line, replace newline at end by space
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 3)..Point::new(0, 3)]
+        );
+
+        // When multiple lines are selected, remove newlines that are spanned by the selection
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 11)..Point::new(0, 11)]
+        );
+
+        // Undo should be transactional
+        editor.undo(&Undo, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
+
+        // When joining an empty line don't insert a space
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // We can remove trailing newlines
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // We don't blow up on the last line
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
+
+        // reset to test indentation
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(1, 0)..Point::new(1, 2), "  "),
+                    (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
+                ],
+                None,
+                cx,
+            )
+        });
+
+        // We remove any leading spaces
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
+
+        // We don't insert a space for a line containing only spaces
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
+
+        // We ignore any leading tabs
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
+
+        editor
+    });
+}
+
+#[gpui::test]
+fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 2)..Point::new(1, 1),
+                Point::new(1, 2)..Point::new(1, 2),
+                Point::new(3, 1)..Point::new(3, 2),
+            ])
+        });
+
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
+
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [
+                Point::new(0, 7)..Point::new(0, 7),
+                Point::new(1, 3)..Point::new(1, 3)
+            ]
+        );
+        editor
     });
 }
 
@@ -6805,6 +6977,111 @@ async fn test_copilot_disabled_globs(
 
     deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
     assert!(copilot_requests.try_next().is_ok());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                disabled_scopes_by_bracket_ix: Vec::new(),
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "{".to_string(),
+                    more_trigger_character: None,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "fn main() { let a = 5; }",
+            "other.rs": "// Test file",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/a/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    cx.foreground().run_until_parked();
+    cx.foreground().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+    let editor_handle = workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+        assert_eq!(
+            params.text_document_position.text_document.uri,
+            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+        );
+        assert_eq!(
+            params.text_document_position.position,
+            lsp::Position::new(0, 21),
+        );
+
+        Ok(Some(vec![lsp::TextEdit {
+            new_text: "]".to_string(),
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+        }]))
+    });
+
+    editor_handle.update(cx, |editor, cx| {
+        cx.focus(&editor_handle);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
+        });
+        editor.handle_input("{", cx);
+    });
+
+    cx.foreground().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "fn main() { let a = {5}; }",
+            "No extra braces from on type formatting should appear in the buffer"
+        )
+    });
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

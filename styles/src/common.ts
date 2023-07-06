@@ -2,42 +2,24 @@ import chroma from "chroma-js"
 export * from "./theme"
 export { chroma }
 
-export const fontFamilies = {
+export const font_families = {
     sans: "Zed Sans",
     mono: "Zed Mono",
 }
 
-export const fontSizes = {
-    "3xs": 8,
+export const font_sizes = {
     "2xs": 10,
     xs: 12,
     sm: 14,
     md: 16,
     lg: 18,
-    xl: 20,
 }
 
-export type FontWeight =
-    | "thin"
-    | "extra_light"
-    | "light"
-    | "normal"
-    | "medium"
-    | "semibold"
-    | "bold"
-    | "extra_bold"
-    | "black"
+export type FontWeight = "normal" | "bold"
 
-export const fontWeights: { [key: string]: FontWeight } = {
-    thin: "thin",
-    extra_light: "extra_light",
-    light: "light",
+export const font_weights: { [key: string]: FontWeight } = {
     normal: "normal",
-    medium: "medium",
-    semibold: "semibold",
     bold: "bold",
-    extra_bold: "extra_bold",
-    black: "black",
 }
 
 export const sizes = {

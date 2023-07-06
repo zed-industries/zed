@@ -162,6 +162,12 @@ define_connection! {
         ALTER TABLE workspaces ADD COLUMN right_dock_active_panel TEXT;
         ALTER TABLE workspaces ADD COLUMN bottom_dock_visible INTEGER; //bool
         ALTER TABLE workspaces ADD COLUMN bottom_dock_active_panel TEXT;
+    ),
+    // Add panel zoom persistence
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN left_dock_zoom INTEGER; //bool
+        ALTER TABLE workspaces ADD COLUMN right_dock_zoom INTEGER; //bool
+        ALTER TABLE workspaces ADD COLUMN bottom_dock_zoom INTEGER; //bool
     )];
 }
 
@@ -196,10 +202,13 @@ impl WorkspaceDb {
                     display,
                     left_dock_visible,
                     left_dock_active_panel,
+                    left_dock_zoom,
                     right_dock_visible,
                     right_dock_active_panel,
+                    right_dock_zoom,
                     bottom_dock_visible,
-                    bottom_dock_active_panel
+                    bottom_dock_active_panel,
+                    bottom_dock_zoom
                 FROM workspaces
                 WHERE workspace_location = ?
             })
@@ -244,22 +253,28 @@ impl WorkspaceDb {
                         workspace_location,
                         left_dock_visible,
                         left_dock_active_panel,
+                        left_dock_zoom,
                         right_dock_visible,
                         right_dock_active_panel,
+                        right_dock_zoom,
                         bottom_dock_visible,
                         bottom_dock_active_panel,
+                        bottom_dock_zoom,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         workspace_location = ?2,
                         left_dock_visible = ?3,
                         left_dock_active_panel = ?4,
-                        right_dock_visible = ?5,
-                        right_dock_active_panel = ?6,
-                        bottom_dock_visible = ?7,
-                        bottom_dock_active_panel = ?8,
+                        left_dock_zoom = ?5,
+                        right_dock_visible = ?6,
+                        right_dock_active_panel = ?7,
+                        right_dock_zoom = ?8,
+                        bottom_dock_visible = ?9,
+                        bottom_dock_active_panel = ?10,
+                        bottom_dock_zoom = ?11,
                         timestamp = CURRENT_TIMESTAMP
                 ))?((workspace.id, &workspace.location, workspace.docks))
                 .context("Updating workspace")?;

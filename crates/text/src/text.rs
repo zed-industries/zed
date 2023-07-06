@@ -600,7 +600,7 @@ impl Buffer {
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
         let mut new_fragments =
             old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right, &None);
-        new_ropes.push_tree(new_fragments.summary().text);
+        new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
         for (range, new_text) in edits {
@@ -625,8 +625,8 @@ impl Buffer {
                 }
 
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
-                new_ropes.push_tree(slice.summary().text);
-                new_fragments.push_tree(slice, &None);
+                new_ropes.append(slice.summary().text);
+                new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().visible;
             }
 
@@ -728,8 +728,8 @@ impl Buffer {
         }
 
         let suffix = old_fragments.suffix(&None);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
+        new_ropes.append(suffix.summary().text);
+        new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
@@ -828,7 +828,7 @@ impl Buffer {
             Bias::Left,
             &cx,
         );
-        new_ropes.push_tree(new_fragments.summary().text);
+        new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
         for (range, new_text) in edits {
@@ -854,8 +854,8 @@ impl Buffer {
 
                 let slice =
                     old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left, &cx);
-                new_ropes.push_tree(slice.summary().text);
-                new_fragments.push_tree(slice, &None);
+                new_ropes.append(slice.summary().text);
+                new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
@@ -986,8 +986,8 @@ impl Buffer {
         }
 
         let suffix = old_fragments.suffix(&cx);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
+        new_ropes.append(suffix.summary().text);
+        new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
@@ -1056,8 +1056,8 @@ impl Buffer {
 
         for fragment_id in self.fragment_ids_for_edits(undo.counts.keys()) {
             let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left, &None);
-            new_ropes.push_tree(preceding_fragments.summary().text);
-            new_fragments.push_tree(preceding_fragments, &None);
+            new_ropes.append(preceding_fragments.summary().text);
+            new_fragments.append(preceding_fragments, &None);
 
             if let Some(fragment) = old_fragments.item() {
                 let mut fragment = fragment.clone();
@@ -1087,8 +1087,8 @@ impl Buffer {
         }
 
         let suffix = old_fragments.suffix(&None);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
+        new_ropes.append(suffix.summary().text);
+        new_fragments.append(suffix, &None);
 
         drop(old_fragments);
         let (visible_text, deleted_text) = new_ropes.finish();
@@ -2070,7 +2070,7 @@ impl<'a> RopeBuilder<'a> {
         }
     }
 
-    fn push_tree(&mut self, len: FragmentTextSummary) {
+    fn append(&mut self, len: FragmentTextSummary) {
         self.push(len.visible, true, true);
         self.push(len.deleted, false, false);
     }
@@ -2489,7 +2489,12 @@ impl ToOffset for Point {
 
 impl ToOffset for usize {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        assert!(*self <= snapshot.len(), "offset {self} is out of range");
+        assert!(
+            *self <= snapshot.len(),
+            "offset {} is out of range, max allowed is {}",
+            self,
+            snapshot.len()
+        );
         *self
     }
 }

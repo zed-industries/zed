@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use std::{any::Any, path::PathBuf, sync::Arc};
-use util::http::HttpClient;
 
 pub struct RubyLanguageServer;
 
@@ -14,7 +14,7 @@ impl LspAdapter for RubyLanguageServer {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(()))
     }
@@ -22,17 +22,29 @@ impl LspAdapter for RubyLanguageServer {
     async fn fetch_server_binary(
         &self,
         _version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         _container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         Err(anyhow!("solargraph must be installed manually"))
     }
 
-    async fn cached_server_binary(&self, _container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "solargraph".into(),
             arguments: vec!["stdio".into()],
         })
+    }
+
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
     }
 
     async fn label_for_completion(

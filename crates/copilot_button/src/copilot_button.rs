@@ -71,7 +71,8 @@ impl View for CopilotButton {
                             .status_bar
                             .panel_buttons
                             .button
-                            .style_for(state, active);
+                            .in_state(active)
+                            .style_for(state);
 
                         Flex::row()
                             .with_child(
@@ -101,6 +102,9 @@ impl View for CopilotButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
+                .on_down(MouseButton::Left, |_, this, cx| {
+                    this.popup_menu.update(cx, |menu, _| menu.delay_cancel());
+                })
                 .on_click(MouseButton::Left, {
                     let status = status.clone();
                     move |_, this, cx| match status {
@@ -185,7 +189,7 @@ impl CopilotButton {
         }));
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(
+            menu.toggle(
                 Default::default(),
                 AnchorCorner::BottomRight,
                 menu_options,
@@ -255,7 +259,7 @@ impl CopilotButton {
             move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                 Flex::row()
                     .with_child(Label::new("Copilot Settings", style.label.clone()))
-                    .with_child(theme::ui::icon(icon_style.style_for(state, false)))
+                    .with_child(theme::ui::icon(icon_style.style_for(state)))
                     .align_children_center()
                     .into_any()
             },
@@ -265,7 +269,7 @@ impl CopilotButton {
         menu_options.push(ContextMenuItem::action("Sign Out", SignOut));
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(
+            menu.toggle(
                 Default::default(),
                 AnchorCorner::BottomRight,
                 menu_options,

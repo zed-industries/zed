@@ -16,6 +16,7 @@ use smol::{
     process::{self, Child},
 };
 use std::{
+    ffi::OsString,
     fmt,
     future::Future,
     io::Write,
@@ -33,8 +34,14 @@ const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(bool, &str)>;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinary {
+    pub path: PathBuf,
+    pub arguments: Vec<OsString>,
+}
 
 pub struct LanguageServer {
     server_id: LanguageServerId,
@@ -51,7 +58,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    _server: Option<Child>,
+    _server: Option<Mutex<Child>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,14 +110,14 @@ struct Notification<'a, T> {
     params: T,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     #[serde(default)]
     id: Option<usize>,
     #[serde(borrow)]
     method: &'a str,
-    #[serde(borrow)]
-    params: &'a RawValue,
+    #[serde(borrow, default)]
+    params: Option<&'a RawValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,10 +126,9 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new<T: AsRef<std::ffi::OsStr>>(
+    pub fn new(
         server_id: LanguageServerId,
-        binary_path: &Path,
-        arguments: &[T],
+        binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -133,9 +139,9 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
-        let mut server = process::Command::new(binary_path)
+        let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
-            .args(arguments)
+            .args(binary.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -157,16 +163,20 @@ impl LanguageServer {
                     "unhandled notification {}:\n{}",
                     notification.method,
                     serde_json::to_string_pretty(
-                        &Value::from_str(notification.params.get()).unwrap()
+                        &notification
+                            .params
+                            .and_then(|params| Value::from_str(params.get()).ok())
+                            .unwrap_or(Value::Null)
                     )
-                    .unwrap()
+                    .unwrap(),
                 );
             },
         );
 
-        if let Some(name) = binary_path.file_name() {
+        if let Some(name) = binary.path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
+
         Ok(server)
     }
 
@@ -228,7 +238,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            _server: server,
+            _server: server.map(|server| Mutex::new(server)),
         }
     }
 
@@ -279,7 +289,11 @@ impl LanguageServer {
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
                 if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
-                    handler(msg.id, msg.params.get(), cx.clone());
+                    handler(
+                        msg.id,
+                        &msg.params.map(|params| params.get()).unwrap_or("null"),
+                        cx.clone(),
+                    );
                 } else {
                     on_unhandled_notification(msg);
                 }
@@ -295,9 +309,9 @@ impl LanguageServer {
                     if let Some(error) = error {
                         handler(Err(error));
                     } else if let Some(result) = result {
-                        handler(Ok(result.get()));
+                        handler(Ok(result.get().into()));
                     } else {
-                        handler(Ok("null"));
+                        handler(Ok("null".into()));
                     }
                 }
             } else {
@@ -374,6 +388,9 @@ impl LanguageServer {
                         resolve_support: None,
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
+                    inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -415,6 +432,10 @@ impl LanguageServer {
                         content_format: Some(vec![MarkupKind::Markdown]),
                         ..Default::default()
                     }),
+                    inlay_hint: Some(InlayHintClientCapabilities {
+                        resolve_support: None,
+                        dynamic_registration: Some(false),
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
@@ -450,11 +471,13 @@ impl LanguageServer {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
+            let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
             let shutdown_request = Self::request_internal::<request::Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
+                &executor,
                 (),
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
@@ -591,6 +614,7 @@ impl LanguageServer {
                                 })
                                 .detach();
                         }
+
                         Err(error) => {
                             log::error!(
                                 "error deserializing {} request: {:?}, message: {:?}",
@@ -651,6 +675,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.executor,
             params,
         )
     }
@@ -659,6 +684,7 @@ impl LanguageServer {
         next_id: &AtomicUsize,
         response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        executor: &Arc<executor::Background>,
         params: T::Params,
     ) -> impl 'static + Future<Output = Result<T::Result>>
     where
@@ -679,15 +705,20 @@ impl LanguageServer {
             .as_mut()
             .ok_or_else(|| anyhow!("server shut down"))
             .map(|handlers| {
+                let executor = executor.clone();
                 handlers.insert(
                     id,
                     Box::new(move |result| {
-                        let response = match result {
-                            Ok(response) => serde_json::from_str(response)
-                                .context("failed to deserialize response"),
-                            Err(error) => Err(anyhow!("{}", error.message)),
-                        };
-                        let _ = tx.send(response);
+                        executor
+                            .spawn(async move {
+                                let response = match result {
+                                    Ok(response) => serde_json::from_str(&response)
+                                        .context("failed to deserialize response"),
+                                    Err(error) => Err(anyhow!("{}", error.message)),
+                                };
+                                _ = tx.send(response);
+                            })
+                            .detach();
                     }),
                 );
             });
@@ -828,7 +859,13 @@ impl LanguageServer {
                 cx,
                 move |msg| {
                     notifications_tx
-                        .try_send((msg.method.to_string(), msg.params.get().to_string()))
+                        .try_send((
+                            msg.method.to_string(),
+                            msg.params
+                                .map(|raw_value| raw_value.get())
+                                .unwrap_or("null")
+                                .to_string(),
+                        ))
                         .ok();
                 },
             )),

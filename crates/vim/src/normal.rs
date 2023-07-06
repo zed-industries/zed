@@ -1,8 +1,11 @@
+mod case;
 mod change;
 mod delete;
+mod scroll;
+mod substitute;
 mod yank;
 
-use std::{borrow::Cow, cmp::Ordering, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     motion::Motion,
@@ -12,24 +15,21 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint,
-    scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
-    Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
+    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, Bias, ClipboardSelection,
+    DisplayPoint,
 };
-use gpui::{actions, impl_actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use log::error;
-use serde::Deserialize;
 use workspace::Workspace;
 
 use self::{
+    case::change_case,
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    substitute::substitute,
     yank::{yank_motion, yank_object},
 };
-
-#[derive(Clone, PartialEq, Deserialize)]
-struct Scroll(ScrollAmount);
 
 actions!(
     vim,
@@ -45,10 +45,10 @@ actions!(
         DeleteToEndOfLine,
         Paste,
         Yank,
+        Substitute,
+        ChangeCase,
     ]
 );
-
-impl_actions!(vim, [Scroll]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_after);
@@ -56,6 +56,13 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_end_of_line);
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
+    cx.add_action(change_case);
+    cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
+        Vim::update(cx, |vim, cx| {
+            let times = vim.pop_number_operator(cx);
+            substitute(vim, times, cx);
+        })
+    });
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
@@ -81,19 +88,14 @@ pub fn init(cx: &mut AppContext) {
         })
     });
     cx.add_action(paste);
-    cx.add_action(|_: &mut Workspace, Scroll(amount): &Scroll, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |editor, cx| {
-                scroll(editor, amount, cx);
-            })
-        })
-    });
+
+    scroll::init(cx);
 }
 
 pub fn normal_motion(
     motion: Motion,
     operator: Option<Operator>,
-    times: usize,
+    times: Option<usize>,
     cx: &mut WindowContext,
 ) {
     Vim::update(cx, |vim, cx| {
@@ -129,7 +131,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
+fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -147,7 +149,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::Right.move_point(map, cursor, goal, 1)
+                    Motion::Right.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -164,7 +166,7 @@ fn insert_first_non_whitespace(
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, 1)
+                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -177,7 +179,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::EndOfLine.move_point(map, cursor, goal, 1)
+                    Motion::EndOfLine.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -237,7 +239,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
-                        Motion::EndOfLine.move_point(map, cursor, goal, 1)
+                        Motion::EndOfLine.move_point(map, cursor, goal, None)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
@@ -382,46 +384,6 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
             });
         });
     });
-}
-
-fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
-    let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    editor.scroll_screen(amount, cx);
-    if should_move_cursor {
-        let selection_ordering = editor.newest_selection_on_screen(cx);
-        if selection_ordering.is_eq() {
-            return;
-        }
-
-        let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {
-            visible_rows as u32
-        } else {
-            return;
-        };
-
-        let scroll_margin_rows = editor.vertical_scroll_margin() as u32;
-        let top_anchor = editor.scroll_manager.anchor().anchor;
-
-        editor.change_selections(None, cx, |s| {
-            s.replace_cursors_with(|snapshot| {
-                let mut new_point = top_anchor.to_display_point(&snapshot);
-
-                match selection_ordering {
-                    Ordering::Less => {
-                        *new_point.row_mut() += scroll_margin_rows;
-                        new_point = snapshot.clip_point(new_point, Bias::Right);
-                    }
-                    Ordering::Greater => {
-                        *new_point.row_mut() += visible_rows - scroll_margin_rows as u32;
-                        new_point = snapshot.clip_point(new_point, Bias::Left);
-                    }
-                    Ordering::Equal => unreachable!(),
-                }
-
-                vec![new_point]
-            })
-        });
-    }
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {

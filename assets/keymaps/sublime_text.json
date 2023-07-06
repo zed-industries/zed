@@ -24,9 +24,7 @@
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow"
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
   },
   {

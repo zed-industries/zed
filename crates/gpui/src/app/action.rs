@@ -11,7 +11,7 @@ pub trait Action: 'static {
     fn qualified_name() -> &'static str
     where
         Self: Sized;
-    fn from_json_str(json: &str) -> anyhow::Result<Box<dyn Action>>
+    fn from_json_str(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
     where
         Self: Sized;
 }
@@ -38,7 +38,7 @@ macro_rules! actions {
             $crate::__impl_action! {
                 $namespace,
                 $name,
-                fn from_json_str(_: &str) -> $crate::anyhow::Result<Box<dyn $crate::Action>> {
+                fn from_json_str(_: $crate::serde_json::Value) -> $crate::anyhow::Result<Box<dyn $crate::Action>> {
                     Ok(Box::new(Self))
                 }
             }
@@ -58,8 +58,8 @@ macro_rules! impl_actions {
             $crate::__impl_action! {
                 $namespace,
                 $name,
-                fn from_json_str(json: &str) -> $crate::anyhow::Result<Box<dyn $crate::Action>> {
-                    Ok(Box::new($crate::serde_json::from_str::<Self>(json)?))
+                fn from_json_str(json: $crate::serde_json::Value) -> $crate::anyhow::Result<Box<dyn $crate::Action>> {
+                    Ok(Box::new($crate::serde_json::from_value::<Self>(json)?))
                 }
             }
         )*

@@ -238,13 +238,12 @@ impl Vim {
         popped_operator
     }
 
-    fn pop_number_operator(&mut self, cx: &mut WindowContext) -> usize {
-        let mut times = 1;
+    fn pop_number_operator(&mut self, cx: &mut WindowContext) -> Option<usize> {
         if let Some(Operator::Number(number)) = self.active_operator() {
-            times = number;
             self.pop_operator(cx);
+            return Some(number);
         }
-        times
+        None
     }
 
     fn clear_operator(&mut self, cx: &mut WindowContext) {

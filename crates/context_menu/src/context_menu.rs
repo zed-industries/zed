@@ -124,6 +124,7 @@ pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
     visible: bool,
+    delay_cancel: bool,
     previously_focused_view_id: Option<usize>,
     parent_view_id: usize,
     _actions_observation: Subscription,
@@ -178,6 +179,7 @@ impl ContextMenu {
     pub fn new(parent_view_id: usize, cx: &mut ViewContext<Self>) -> Self {
         Self {
             show_count: 0,
+            delay_cancel: false,
             anchor_position: Default::default(),
             anchor_corner: AnchorCorner::TopLeft,
             position_mode: OverlayPositionMode::Window,
@@ -232,15 +234,22 @@ impl ContextMenu {
         }
     }
 
+    pub fn delay_cancel(&mut self) {
+        self.delay_cancel = true;
+    }
+
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        self.reset(cx);
-        let show_count = self.show_count;
-        cx.defer(move |this, cx| {
-            if cx.handle().is_focused(cx) && this.show_count == show_count {
-                let window_id = cx.window_id();
-                (**cx).focus(window_id, this.previously_focused_view_id.take());
-            }
-        });
+        if !self.delay_cancel {
+            self.reset(cx);
+            let show_count = self.show_count;
+            cx.defer(move |this, cx| {
+                if cx.handle().is_focused(cx) && this.show_count == show_count {
+                    (**cx).focus(this.previously_focused_view_id.take());
+                }
+            });
+        } else {
+            self.delay_cancel = false;
+        }
     }
 
     fn reset(&mut self, cx: &mut ViewContext<Self>) {
@@ -293,6 +302,34 @@ impl ContextMenu {
         }
     }
 
+    pub fn toggle(
+        &mut self,
+        anchor_position: Vector2F,
+        anchor_corner: AnchorCorner,
+        items: Vec<ContextMenuItem>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.visible() {
+            self.cancel(&Cancel, cx);
+        } else {
+            let mut items = items.into_iter().peekable();
+            if items.peek().is_some() {
+                self.items = items.collect();
+                self.anchor_position = anchor_position;
+                self.anchor_corner = anchor_corner;
+                self.visible = true;
+                self.show_count += 1;
+                if !cx.is_self_focused() {
+                    self.previously_focused_view_id = cx.focused_view_id();
+                }
+                cx.focus_self();
+            } else {
+                self.visible = false;
+            }
+        }
+        cx.notify();
+    }
+
     pub fn show(
         &mut self,
         anchor_position: Vector2F,
@@ -328,10 +365,8 @@ impl ContextMenu {
                 Flex::column().with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, .. } => {
-                            let style = style.item.style_for(
-                                &mut Default::default(),
-                                Some(ix) == self.selected_index,
-                            );
+                            let style = style.item.in_state(self.selected_index == Some(ix));
+                            let style = style.style_for(&mut Default::default());
 
                             match label {
                                 ContextMenuItemLabel::String(label) => {
@@ -363,10 +398,8 @@ impl ContextMenu {
                     .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                         match item {
                             ContextMenuItem::Item { action, .. } => {
-                                let style = style.item.style_for(
-                                    &mut Default::default(),
-                                    Some(ix) == self.selected_index,
-                                );
+                                let style = style.item.in_state(self.selected_index == Some(ix));
+                                let style = style.style_for(&mut Default::default());
 
                                 match action {
                                     ContextMenuItemAction::Action(action) => KeystrokeLabel::new(
@@ -412,8 +445,8 @@ impl ContextMenu {
                             let action = action.clone();
                             let view_id = self.parent_view_id;
                             MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
-                                let style =
-                                    style.item.style_for(state, Some(ix) == self.selected_index);
+                                let style = style.item.in_state(self.selected_index == Some(ix));
+                                let style = style.style_for(state);
                                 let keystroke = match &action {
                                     ContextMenuItemAction::Action(action) => Some(
                                         KeystrokeLabel::new(

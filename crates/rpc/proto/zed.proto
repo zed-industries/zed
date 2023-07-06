@@ -63,6 +63,8 @@ message Envelope {
         CopyProjectEntry copy_project_entry = 47;
         DeleteProjectEntry delete_project_entry = 48;
         ProjectEntryResponse project_entry_response = 49;
+        ExpandProjectEntry expand_project_entry = 114;
+        ExpandProjectEntryResponse expand_project_entry_response = 115;
 
         UpdateDiagnosticSummary update_diagnostic_summary = 50;
         StartLanguageServer start_language_server = 51;
@@ -134,6 +136,10 @@ message Envelope {
         OnTypeFormattingResponse on_type_formatting_response = 112;
 
         UpdateWorktreeSettings update_worktree_settings = 113;
+
+        InlayHints inlay_hints = 116;
+        InlayHintsResponse inlay_hints_response = 117;
+        RefreshInlayHints refresh_inlay_hints = 118;
     }
 }
 
@@ -370,6 +376,15 @@ message CopyProjectEntry {
 message DeleteProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
+}
+
+message ExpandProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
 }
 
 message ProjectEntryResponse {
@@ -694,6 +709,68 @@ message OnTypeFormattingResponse {
     Transaction transaction = 1;
 }
 
+message InlayHints {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message InlayHintsResponse {
+    repeated InlayHint hints = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message InlayHint {
+    Anchor position = 1;
+    InlayHintLabel label = 2;
+    optional string kind = 3;
+    bool padding_left = 4;
+    bool padding_right = 5;
+    InlayHintTooltip tooltip = 6;
+}
+
+message InlayHintLabel {
+    oneof label {
+        string value = 1;
+        InlayHintLabelParts label_parts = 2;
+    }
+}
+
+message InlayHintLabelParts {
+    repeated InlayHintLabelPart parts = 1;
+}
+
+message InlayHintLabelPart {
+    string value = 1;
+    InlayHintLabelPartTooltip tooltip = 2;
+    Location location = 3;
+}
+
+message InlayHintTooltip {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+message InlayHintLabelPartTooltip {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+message RefreshInlayHints {
+    uint64 project_id = 1;
+}
+
+message MarkupContent {
+    string kind = 1;
+    string value = 2;
+}
+
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
 }
@@ -1005,7 +1082,8 @@ message Entry {
     Timestamp mtime = 5;
     bool is_symlink = 6;
     bool is_ignored = 7;
-    optional GitStatus git_status = 8;
+    bool is_external = 8;
+    optional GitStatus git_status = 9;
 }
 
 message RepositoryEntry {

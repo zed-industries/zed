@@ -67,7 +67,7 @@ impl TestServer {
         }
     }
 
-    async fn create_room(&self, room: String) -> Result<()> {
+    pub async fn create_room(&self, room: String) -> Result<()> {
         self.background.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         if server_rooms.contains_key(&room) {
@@ -104,7 +104,7 @@ impl TestServer {
                 room_name
             ))
         } else {
-            for track in &room.tracks {
+            for track in &room.video_tracks {
                 client_room
                     .0
                     .lock()
@@ -182,7 +182,7 @@ impl TestServer {
             frames_rx: local_track.frames_rx.clone(),
         });
 
-        room.tracks.push(track.clone());
+        room.video_tracks.push(track.clone());
 
         for (id, client_room) in &room.client_rooms {
             if *id != identity {
@@ -199,6 +199,43 @@ impl TestServer {
         Ok(())
     }
 
+    async fn publish_audio_track(
+        &self,
+        token: String,
+        _local_track: &LocalAudioTrack,
+    ) -> Result<()> {
+        self.background.simulate_random_delay().await;
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let identity = claims.sub.unwrap().to_string();
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+
+        let track = Arc::new(RemoteAudioTrack {
+            sid: nanoid::nanoid!(17),
+            publisher_id: identity.clone(),
+        });
+
+        room.audio_tracks.push(track.clone());
+
+        for (id, client_room) in &room.client_rooms {
+            if *id != identity {
+                let _ = client_room
+                    .0
+                    .lock()
+                    .audio_track_updates
+                    .0
+                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(track.clone()))
+                    .unwrap();
+            }
+        }
+
+        Ok(())
+    }
+
     fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
@@ -207,14 +244,26 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
-        Ok(room.tracks.clone())
+        Ok(room.video_tracks.clone())
+    }
+
+    fn audio_tracks(&self, token: String) -> Result<Vec<Arc<RemoteAudioTrack>>> {
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+        Ok(room.audio_tracks.clone())
     }
 }
 
 #[derive(Default)]
 struct TestServerRoom {
     client_rooms: HashMap<Sid, Arc<Room>>,
-    tracks: Vec<Arc<RemoteVideoTrack>>,
+    video_tracks: Vec<Arc<RemoteVideoTrack>>,
+    audio_tracks: Vec<Arc<RemoteAudioTrack>>,
 }
 
 impl TestServerRoom {}
@@ -266,6 +315,10 @@ struct RoomState {
         watch::Receiver<ConnectionState>,
     ),
     display_sources: Vec<MacOSDisplay>,
+    audio_track_updates: (
+        async_broadcast::Sender<RemoteAudioTrackUpdate>,
+        async_broadcast::Receiver<RemoteAudioTrackUpdate>,
+    ),
     video_track_updates: (
         async_broadcast::Sender<RemoteVideoTrackUpdate>,
         async_broadcast::Receiver<RemoteVideoTrackUpdate>,
@@ -286,6 +339,7 @@ impl Room {
             connection: watch::channel_with(ConnectionState::Disconnected),
             display_sources: Default::default(),
             video_track_updates: async_broadcast::broadcast(128),
+            audio_track_updates: async_broadcast::broadcast(128),
         })))
     }
 
@@ -327,8 +381,51 @@ impl Room {
             Ok(LocalTrackPublication)
         }
     }
+    pub fn publish_audio_track(
+        self: &Arc<Self>,
+        track: &LocalAudioTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let this = self.clone();
+        let track = track.clone();
+        async move {
+            this.test_server()
+                .publish_audio_track(this.token(), &track)
+                .await?;
+            Ok(LocalTrackPublication)
+        }
+    }
 
-    pub fn unpublish_track(&self, _: LocalTrackPublication) {}
+    pub fn unpublish_track(&self, _publication: LocalTrackPublication) {}
+
+    pub fn remote_audio_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteAudioTrack>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .audio_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .collect()
+    }
+
+    pub fn remote_audio_track_publications(
+        &self,
+        publisher_id: &str,
+    ) -> Vec<Arc<RemoteTrackPublication>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .audio_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .map(|_track| Arc::new(RemoteTrackPublication {}))
+            .collect()
+    }
 
     pub fn remote_video_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
         if !self.is_connected() {
@@ -341,6 +438,10 @@ impl Room {
             .into_iter()
             .filter(|track| track.publisher_id() == publisher_id)
             .collect()
+    }
+
+    pub fn remote_audio_track_updates(&self) -> impl Stream<Item = RemoteAudioTrackUpdate> {
+        self.0.lock().audio_track_updates.1.clone()
     }
 
     pub fn remote_video_track_updates(&self) -> impl Stream<Item = RemoteVideoTrackUpdate> {
@@ -391,6 +492,20 @@ impl Drop for Room {
 
 pub struct LocalTrackPublication;
 
+impl LocalTrackPublication {
+    pub fn set_mute(&self, _mute: bool) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+}
+
+pub struct RemoteTrackPublication;
+
+impl RemoteTrackPublication {
+    pub fn set_enabled(&self, _enabled: bool) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalVideoTrack {
     frames_rx: async_broadcast::Receiver<Frame>,
@@ -401,6 +516,15 @@ impl LocalVideoTrack {
         Self {
             frames_rx: display.frames.1.clone(),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalAudioTrack;
+
+impl LocalAudioTrack {
+    pub fn create() -> Self {
+        Self
     }
 }
 
@@ -424,9 +548,41 @@ impl RemoteVideoTrack {
     }
 }
 
+#[derive(Debug)]
+pub struct RemoteAudioTrack {
+    sid: Sid,
+    publisher_id: Sid,
+}
+
+impl RemoteAudioTrack {
+    pub fn sid(&self) -> &str {
+        &self.sid
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.publisher_id
+    }
+
+    pub fn enable(&self) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+
+    pub fn disable(&self) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+}
+
 #[derive(Clone)]
 pub enum RemoteVideoTrackUpdate {
     Subscribed(Arc<RemoteVideoTrack>),
+    Unsubscribed { publisher_id: Sid, track_id: Sid },
+}
+
+#[derive(Clone)]
+pub enum RemoteAudioTrackUpdate {
+    ActiveSpeakersChanged { speakers: Vec<Sid> },
+    MuteChanged { track_id: Sid, muted: bool },
+    Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 

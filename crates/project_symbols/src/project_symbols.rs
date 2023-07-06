@@ -196,7 +196,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
     ) -> AnyElement<Picker<Self>> {
         let theme = theme::current(cx);
         let style = &theme.picker.item;
-        let current_style = style.style_for(mouse_state, selected);
+        let current_style = style.in_state(selected).style_for(mouse_state);
 
         let string_match = &self.matches[ix];
         let symbol = &self.symbols[string_match.candidate_id];
@@ -229,7 +229,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             .with_child(
                 // Avoid styling the path differently when it is selected, since
                 // the symbol's syntax highlighting doesn't change when selected.
-                Label::new(path.to_string(), style.default.label.clone()),
+                Label::new(
+                    path.to_string(),
+                    style.inactive_state().default.label.clone(),
+                ),
             )
             .contained()
             .with_style(current_style.container)

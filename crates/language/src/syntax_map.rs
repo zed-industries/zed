@@ -11,7 +11,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
-    iter,
+    fmt, iter,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -288,7 +288,7 @@ impl SyntaxSnapshot {
                 };
                 if target.cmp(&cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
-                    layers.push_tree(slice, text);
+                    layers.append(slice, text);
                 }
             }
             // If this layer follows all of the edits, then preserve it and any
@@ -303,7 +303,7 @@ impl SyntaxSnapshot {
                     Bias::Left,
                     text,
                 );
-                layers.push_tree(slice, text);
+                layers.append(slice, text);
                 continue;
             };
 
@@ -369,7 +369,7 @@ impl SyntaxSnapshot {
             cursor.next(text);
         }
 
-        layers.push_tree(cursor.suffix(&text), &text);
+        layers.append(cursor.suffix(&text), &text);
         drop(cursor);
         self.layers = layers;
     }
@@ -428,6 +428,8 @@ impl SyntaxSnapshot {
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
     ) {
+        log::trace!("reparse. invalidated ranges:{:?}", invalidated_ranges);
+
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(&text);
@@ -478,7 +480,7 @@ impl SyntaxSnapshot {
                 if bounded_position.cmp(&cursor.start(), &text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
-                        layers.push_tree(slice, &text);
+                        layers.append(slice, &text);
                         if changed_regions.prune(cursor.end(text), text) {
                             done = false;
                         }
@@ -489,6 +491,15 @@ impl SyntaxSnapshot {
                     let Some(layer) = cursor.item() else { break };
 
                     if changed_regions.intersects(&layer, text) {
+                        if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
+                            log::trace!(
+                                "discard layer. language:{}, range:{:?}. changed_regions:{:?}",
+                                language.name(),
+                                LogAnchorRange(&layer.range, text),
+                                LogChangedRegions(&changed_regions, text),
+                            );
+                        }
+
                         changed_regions.insert(
                             ChangedRegion {
                                 depth: layer.depth + 1,
@@ -541,26 +552,24 @@ impl SyntaxSnapshot {
                             .to_ts_point();
                     }
 
-                    if included_ranges.is_empty() {
-                        included_ranges.push(tree_sitter::Range {
-                            start_byte: 0,
-                            end_byte: 0,
-                            start_point: Default::default(),
-                            end_point: Default::default(),
-                        });
-                    }
-
-                    if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
-                        old_layer.map(|layer| &layer.content)
+                    if let Some((SyntaxLayerContent::Parsed { tree: old_tree, .. }, layer_start)) =
+                        old_layer.map(|layer| (&layer.content, layer.range.start))
                     {
+                        log::trace!(
+                            "existing layer. language:{}, start:{:?}, ranges:{:?}",
+                            language.name(),
+                            LogPoint(layer_start.to_point(&text)),
+                            LogIncludedRanges(&old_tree.included_ranges())
+                        );
+
                         if let ParseMode::Combined {
                             mut parent_layer_changed_ranges,
                             ..
                         } = step.mode
                         {
                             for range in &mut parent_layer_changed_ranges {
-                                range.start -= step_start_byte;
-                                range.end -= step_start_byte;
+                                range.start = range.start.saturating_sub(step_start_byte);
+                                range.end = range.end.saturating_sub(step_start_byte);
                             }
 
                             included_ranges = splice_included_ranges(
@@ -569,6 +578,22 @@ impl SyntaxSnapshot {
                                 &included_ranges,
                             );
                         }
+
+                        if included_ranges.is_empty() {
+                            included_ranges.push(tree_sitter::Range {
+                                start_byte: 0,
+                                end_byte: 0,
+                                start_point: Default::default(),
+                                end_point: Default::default(),
+                            });
+                        }
+
+                        log::trace!(
+                            "update layer. language:{}, start:{:?}, ranges:{:?}",
+                            language.name(),
+                            LogAnchorRange(&step.range, text),
+                            LogIncludedRanges(&included_ranges),
+                        );
 
                         tree = parse_text(
                             grammar,
@@ -586,6 +611,22 @@ impl SyntaxSnapshot {
                             }),
                         );
                     } else {
+                        if included_ranges.is_empty() {
+                            included_ranges.push(tree_sitter::Range {
+                                start_byte: 0,
+                                end_byte: 0,
+                                start_point: Default::default(),
+                                end_point: Default::default(),
+                            });
+                        }
+
+                        log::trace!(
+                            "create layer. language:{}, range:{:?}, included_ranges:{:?}",
+                            language.name(),
+                            LogAnchorRange(&step.range, text),
+                            LogIncludedRanges(&included_ranges),
+                        );
+
                         tree = parse_text(
                             grammar,
                             text.as_rope(),
@@ -613,6 +654,7 @@ impl SyntaxSnapshot {
                         get_injections(
                             config,
                             text,
+                            step.range.clone(),
                             tree.root_node_with_offset(
                                 step_start_byte,
                                 step_start_point.to_ts_point(),
@@ -1117,6 +1159,7 @@ fn parse_text(
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
+    outer_range: Range<Anchor>,
     node: Node,
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
@@ -1153,16 +1196,17 @@ fn get_injections(
                 continue;
             }
 
-            // Avoid duplicate matches if two changed ranges intersect the same injection.
             let content_range =
                 content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
-            if let Some((last_pattern_ix, last_range)) = &prev_match {
-                if mat.pattern_index == *last_pattern_ix && content_range == *last_range {
+
+            // Avoid duplicate matches if two changed ranges intersect the same injection.
+            if let Some((prev_pattern_ix, prev_range)) = &prev_match {
+                if mat.pattern_index == *prev_pattern_ix && content_range == *prev_range {
                     continue;
                 }
             }
-            prev_match = Some((mat.pattern_index, content_range.clone()));
 
+            prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
 
             let mut language_name = None;
@@ -1218,11 +1262,10 @@ fn get_injections(
 
     for (language, mut included_ranges) in combined_injection_ranges.drain() {
         included_ranges.sort_unstable();
-        let range = text.anchor_before(node.start_byte())..text.anchor_after(node.end_byte());
         queue.push(ParseStep {
             depth,
             language: ParseStepLanguage::Loaded { language },
-            range,
+            range: outer_range.clone(),
             included_ranges,
             mode: ParseMode::Combined {
                 parent_layer_range: node.start_byte()..node.end_byte(),
@@ -1234,72 +1277,77 @@ fn get_injections(
 
 pub(crate) fn splice_included_ranges(
     mut ranges: Vec<tree_sitter::Range>,
-    changed_ranges: &[Range<usize>],
+    removed_ranges: &[Range<usize>],
     new_ranges: &[tree_sitter::Range],
 ) -> Vec<tree_sitter::Range> {
-    let mut changed_ranges = changed_ranges.into_iter().peekable();
-    let mut new_ranges = new_ranges.into_iter().peekable();
+    let mut removed_ranges = removed_ranges.iter().cloned().peekable();
+    let mut new_ranges = new_ranges.into_iter().cloned().peekable();
     let mut ranges_ix = 0;
     loop {
-        let new_range = new_ranges.peek();
-        let mut changed_range = changed_ranges.peek();
+        let next_new_range = new_ranges.peek();
+        let next_removed_range = removed_ranges.peek();
 
-        // Remove ranges that have changed before inserting any new ranges
-        // into those ranges.
-        if let Some((changed, new)) = changed_range.zip(new_range) {
-            if new.end_byte < changed.start {
-                changed_range = None;
+        let (remove, insert) = match (next_removed_range, next_new_range) {
+            (None, None) => break,
+            (Some(_), None) => (removed_ranges.next().unwrap(), None),
+            (Some(next_removed_range), Some(next_new_range)) => {
+                if next_removed_range.end < next_new_range.start_byte {
+                    (removed_ranges.next().unwrap(), None)
+                } else {
+                    let mut start = next_new_range.start_byte;
+                    let mut end = next_new_range.end_byte;
+
+                    while let Some(next_removed_range) = removed_ranges.peek() {
+                        if next_removed_range.start > next_new_range.end_byte {
+                            break;
+                        }
+                        let next_removed_range = removed_ranges.next().unwrap();
+                        start = cmp::min(start, next_removed_range.start);
+                        end = cmp::max(end, next_removed_range.end);
+                    }
+
+                    (start..end, Some(new_ranges.next().unwrap()))
+                }
+            }
+            (None, Some(next_new_range)) => (
+                next_new_range.start_byte..next_new_range.end_byte,
+                Some(new_ranges.next().unwrap()),
+            ),
+        };
+
+        let mut start_ix = ranges_ix
+            + match ranges[ranges_ix..].binary_search_by_key(&remove.start, |r| r.end_byte) {
+                Ok(ix) => ix,
+                Err(ix) => ix,
+            };
+        let mut end_ix = ranges_ix
+            + match ranges[ranges_ix..].binary_search_by_key(&remove.end, |r| r.start_byte) {
+                Ok(ix) => ix + 1,
+                Err(ix) => ix,
+            };
+
+        // If there are empty ranges, then there may be multiple ranges with the same
+        // start or end. Expand the splice to include any adjacent ranges that touch
+        // the changed range.
+        while start_ix > 0 {
+            if ranges[start_ix - 1].end_byte == remove.start {
+                start_ix -= 1;
+            } else {
+                break;
+            }
+        }
+        while let Some(range) = ranges.get(end_ix) {
+            if range.start_byte == remove.end {
+                end_ix += 1;
+            } else {
+                break;
             }
         }
 
-        if let Some(changed) = changed_range {
-            let mut start_ix = ranges_ix
-                + match ranges[ranges_ix..].binary_search_by_key(&changed.start, |r| r.end_byte) {
-                    Ok(ix) | Err(ix) => ix,
-                };
-            let mut end_ix = ranges_ix
-                + match ranges[ranges_ix..].binary_search_by_key(&changed.end, |r| r.start_byte) {
-                    Ok(ix) => ix + 1,
-                    Err(ix) => ix,
-                };
-
-            // If there are empty ranges, then there may be multiple ranges with the same
-            // start or end. Expand the splice to include any adjacent ranges that touch
-            // the changed range.
-            while start_ix > 0 {
-                if ranges[start_ix - 1].end_byte == changed.start {
-                    start_ix -= 1;
-                } else {
-                    break;
-                }
-            }
-            while let Some(range) = ranges.get(end_ix) {
-                if range.start_byte == changed.end {
-                    end_ix += 1;
-                } else {
-                    break;
-                }
-            }
-
-            if end_ix > start_ix {
-                ranges.splice(start_ix..end_ix, []);
-            }
-            changed_ranges.next();
-            ranges_ix = start_ix;
-        } else if let Some(new_range) = new_range {
-            let ix = ranges_ix
-                + match ranges[ranges_ix..]
-                    .binary_search_by_key(&new_range.start_byte, |r| r.start_byte)
-                {
-                    Ok(ix) | Err(ix) => ix,
-                };
-            ranges.insert(ix, **new_range);
-            new_ranges.next();
-            ranges_ix = ix + 1;
-        } else {
-            break;
-        }
+        ranges.splice(start_ix..end_ix, insert);
+        ranges_ix = start_ix;
     }
+
     ranges
 }
 
@@ -1626,5 +1674,48 @@ impl ToTreeSitterPoint for Point {
 
     fn from_ts_point(point: tree_sitter::Point) -> Self {
         Point::new(point.row as u32, point.column as u32)
+    }
+}
+
+struct LogIncludedRanges<'a>(&'a [tree_sitter::Range]);
+struct LogPoint(Point);
+struct LogAnchorRange<'a>(&'a Range<Anchor>, &'a text::BufferSnapshot);
+struct LogChangedRegions<'a>(&'a ChangeRegionSet, &'a text::BufferSnapshot);
+
+impl<'a> fmt::Debug for LogIncludedRanges<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|range| {
+                let start = range.start_point;
+                let end = range.end_point;
+                (start.row, start.column)..(end.row, end.column)
+            }))
+            .finish()
+    }
+}
+
+impl<'a> fmt::Debug for LogAnchorRange<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let range = self.0.to_point(self.1);
+        (LogPoint(range.start)..LogPoint(range.end)).fmt(f)
+    }
+}
+
+impl<'a> fmt::Debug for LogChangedRegions<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(
+                self.0
+                     .0
+                    .iter()
+                    .map(|region| LogAnchorRange(&region.range, self.1)),
+            )
+            .finish()
+    }
+}
+
+impl fmt::Debug for LogPoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0.row, self.0.column).fmt(f)
     }
 }

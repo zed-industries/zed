@@ -31,7 +31,6 @@ use std::{
     ffi::OsStr,
     fs::OpenOptions,
     io::Write as _,
-    ops::Not,
     os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
@@ -49,6 +48,7 @@ use util::{
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };
+use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
@@ -69,9 +69,8 @@ fn main() {
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
 
-    init_panic_hook(&app);
-
-    app.background();
+    let installation_id = app.background().block(installation_id()).ok();
+    init_panic_hook(&app, installation_id.clone());
 
     load_embedded_fonts(&app);
 
@@ -132,7 +131,7 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = NodeRuntime::new(http.clone(), cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http.clone(), cx.background().to_owned());
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -155,7 +154,6 @@ fn main() {
         search::init(cx);
         vim::init(cx);
         terminal_view::init(cx);
-        theme_testbench::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
         ai::init(cx);
 
@@ -170,7 +168,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start();
+        client.telemetry().start(installation_id);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -182,6 +180,8 @@ fn main() {
             background_actions,
         });
         cx.set_global(Arc::downgrade(&app_state));
+
+        audio::init(Assets, cx);
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
@@ -268,6 +268,22 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
+}
+
+async fn installation_id() -> Result<String> {
+    let legacy_key_name = "device_id";
+
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
+        Ok(installation_id)
+    } else {
+        let installation_id = Uuid::new_v4().to_string();
+
+        KEY_VALUE_STORE
+            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
+            .await?;
+
+        Ok(installation_id)
+    }
 }
 
 fn open_urls(
@@ -373,7 +389,8 @@ struct Panic {
     os_version: Option<String>,
     architecture: String,
     panicked_on: u128,
-    identifying_backtrace: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    installation_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -382,7 +399,7 @@ struct PanicRequest {
     token: String,
 }
 
-fn init_panic_hook(app: &App) {
+fn init_panic_hook(app: &App, installation_id: Option<String>) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
@@ -401,61 +418,18 @@ fn init_panic_hook(app: &App) {
             .unwrap_or_else(|| "Box<Any>".to_string());
 
         let backtrace = Backtrace::new();
-        let backtrace = backtrace
+        let mut backtrace = backtrace
             .frames()
             .iter()
-            .filter_map(|frame| {
-                let symbol = frame.symbols().first()?;
-                let path = symbol.filename()?;
-                Some((path, symbol.lineno(), format!("{:#}", symbol.name()?)))
-            })
+            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
             .collect::<Vec<_>>();
 
-        let this_file_path = Path::new(file!());
-
-        // Find the first frame in the backtrace for this panic hook itself. Exclude
-        // that frame and all frames before it.
-        let mut start_frame_ix = 0;
-        let mut codebase_root_path = None;
-        for (ix, (path, _, _)) in backtrace.iter().enumerate() {
-            if path.ends_with(this_file_path) {
-                start_frame_ix = ix + 1;
-                codebase_root_path = path.ancestors().nth(this_file_path.components().count());
-                break;
-            }
-        }
-
-        // Exclude any subsequent frames inside of rust's panic handling system.
-        while let Some((path, _, _)) = backtrace.get(start_frame_ix) {
-            if path.starts_with("/rustc") {
-                start_frame_ix += 1;
-            } else {
-                break;
-            }
-        }
-
-        // Build two backtraces:
-        // * one for display, which includes symbol names for all frames, and files
-        //   and line numbers for symbols in this codebase
-        // * one for identification and de-duplication, which only includes symbol
-        //   names for symbols in this codebase.
-        let mut display_backtrace = Vec::new();
-        let mut identifying_backtrace = Vec::new();
-        for (path, line, symbol) in &backtrace[start_frame_ix..] {
-            display_backtrace.push(symbol.clone());
-
-            if let Some(codebase_root_path) = &codebase_root_path {
-                if let Ok(suffix) = path.strip_prefix(&codebase_root_path) {
-                    identifying_backtrace.push(symbol.clone());
-
-                    let display_path = suffix.to_string_lossy();
-                    if let Some(line) = line {
-                        display_backtrace.push(format!("    {display_path}:{line}"));
-                    } else {
-                        display_backtrace.push(format!("    {display_path}"));
-                    }
-                }
-            }
+        // Strip out leading stack frames for rust panic-handling.
+        if let Some(ix) = backtrace
+            .iter()
+            .position(|name| name == "rust_begin_unwind")
+        {
+            backtrace.drain(0..=ix);
         }
 
         let panic_data = Panic {
@@ -477,29 +451,28 @@ fn init_panic_hook(app: &App) {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
-            backtrace: display_backtrace,
-            identifying_backtrace: identifying_backtrace
-                .is_empty()
-                .not()
-                .then_some(identifying_backtrace),
+            backtrace,
+            installation_id: installation_id.clone(),
         };
 
-        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-            if is_pty {
+        if is_pty {
+            if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
                 eprintln!("{}", panic_data_json);
                 return;
             }
-
-            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
-            let panic_file = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&panic_file_path)
-                .log_err();
-            if let Some(mut panic_file) = panic_file {
-                write!(&mut panic_file, "{}", panic_data_json).log_err();
-                panic_file.flush().log_err();
+        } else {
+            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+                let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
+                let panic_file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&panic_file_path)
+                    .log_err();
+                if let Some(mut panic_file) = panic_file {
+                    writeln!(&mut panic_file, "{}", panic_data_json).log_err();
+                    panic_file.flush().log_err();
+                }
             }
         }
     }));
@@ -531,23 +504,45 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     }
 
                     if telemetry_settings.diagnostics {
-                        let panic_data_text = smol::fs::read_to_string(&child_path)
+                        let panic_file_content = smol::fs::read_to_string(&child_path)
                             .await
                             .context("error reading panic file")?;
 
-                        let body = serde_json::to_string(&PanicRequest {
-                            panic: serde_json::from_str(&panic_data_text)?,
-                            token: ZED_SECRET_CLIENT_TOKEN.into(),
-                        })
-                        .unwrap();
+                        let panic = serde_json::from_str(&panic_file_content)
+                            .ok()
+                            .or_else(|| {
+                                panic_file_content
+                                    .lines()
+                                    .next()
+                                    .and_then(|line| serde_json::from_str(line).ok())
+                            })
+                            .unwrap_or_else(|| {
+                                log::error!(
+                                    "failed to deserialize panic file {:?}",
+                                    panic_file_content
+                                );
+                                None
+                            });
 
-                        let request = Request::post(&panic_report_url)
-                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                            .header("Content-Type", "application/json")
-                            .body(body.into())?;
-                        let response = http.send(request).await.context("error sending panic")?;
-                        if !response.status().is_success() {
-                            log::error!("Error uploading panic to server: {}", response.status());
+                        if let Some(panic) = panic {
+                            let body = serde_json::to_string(&PanicRequest {
+                                panic,
+                                token: ZED_SECRET_CLIENT_TOKEN.into(),
+                            })
+                            .unwrap();
+
+                            let request = Request::post(&panic_report_url)
+                                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                                .header("Content-Type", "application/json")
+                                .body(body.into())?;
+                            let response =
+                                http.send(request).await.context("error sending panic")?;
+                            if !response.status().is_success() {
+                                log::error!(
+                                    "Error uploading panic to server: {}",
+                                    response.status()
+                                );
+                            }
                         }
                     }
 
@@ -896,6 +891,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
         ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &zed::OpenSettings),
+        ("Change your settings", &zed_actions::OpenSettings),
     ]
 }

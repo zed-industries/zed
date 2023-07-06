@@ -25,6 +25,7 @@ pub struct Picker<D: PickerDelegate> {
     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
     confirmed: bool,
     pending_update_matches: Task<Option<()>>,
+    has_focus: bool,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -44,6 +45,18 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> AnyElement<Picker<Self>>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
+    }
+    fn render_header(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
+        None
+    }
+    fn render_footer(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
+        None
     }
 }
 
@@ -77,6 +90,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .contained()
                     .with_style(editor_style),
             )
+            .with_children(self.delegate.render_header(cx))
             .with_children(if match_count == 0 {
                 if query.is_empty() {
                     None
@@ -118,6 +132,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .into_any(),
                 )
             })
+            .with_children(self.delegate.render_footer(cx))
             .contained()
             .with_style(container_style)
             .constrained()
@@ -132,13 +147,22 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         if cx.is_self_focused() {
             cx.focus(&self.query_editor);
         }
     }
+
+    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
 }
 
 impl<D: PickerDelegate> Modal for Picker<D> {
+    fn has_focus(&self) -> bool {
+        self.has_focus
+    }
+
     fn dismiss_on_event(event: &Self::Event) -> bool {
         matches!(event, PickerEvent::Dismiss)
     }
@@ -183,6 +207,7 @@ impl<D: PickerDelegate> Picker<D> {
             theme,
             confirmed: false,
             pending_update_matches: Task::ready(None),
+            has_focus: false,
         };
         this.update_matches(String::new(), cx);
         this

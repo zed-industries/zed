@@ -15,7 +15,7 @@ use language::{
     ToPointUtf16,
 };
 use log::{debug, error};
-use lsp::{LanguageServer, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::SettingsStore;
@@ -340,7 +340,7 @@ impl Copilot {
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let this = cx.add_model(|cx| Self {
             http: http.clone(),
-            node_runtime: NodeRuntime::new(http, cx.background().clone()),
+            node_runtime: NodeRuntime::instance(http, cx.background().clone()),
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
                 sign_in_status: SignInStatus::Authorized,
@@ -361,11 +361,14 @@ impl Copilot {
             let start_language_server = async {
                 let server_path = get_copilot_lsp(http).await?;
                 let node_path = node_runtime.binary_path().await?;
-                let arguments: &[OsString] = &[server_path.into(), "--stdio".into()];
+                let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
+                let binary = LanguageServerBinary {
+                    path: node_path,
+                    arguments,
+                };
                 let server = LanguageServer::new(
                     LanguageServerId(0),
-                    &node_path,
-                    arguments,
+                    binary,
                     Path::new("/"),
                     None,
                     cx.clone(),

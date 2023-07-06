@@ -786,7 +786,7 @@ impl platform::Platform for MacPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
-            let cursor: id = match style {
+            let new_cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
                 CursorStyle::ResizeLeftRight => {
                     msg_send![class!(NSCursor), resizeLeftRightCursor]
@@ -795,7 +795,11 @@ impl platform::Platform for MacPlatform {
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             };
-            let _: () = msg_send![cursor, set];
+
+            let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
+            if new_cursor != old_cursor {
+                let _: () = msg_send![new_cursor, set];
+            }
         }
     }
 
@@ -935,7 +939,6 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
                 }
             }
         }
-
         msg_send![super(this, class!(NSApplication)), sendEvent: native_event]
     }
 }

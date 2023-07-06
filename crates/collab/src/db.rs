@@ -1539,6 +1539,7 @@ impl Database {
                                     }),
                                     is_symlink: db_entry.is_symlink,
                                     is_ignored: db_entry.is_ignored,
+                                    is_external: db_entry.is_external,
                                     git_status: db_entry.git_status.map(|status| status as i32),
                                 });
                             }
@@ -2349,6 +2350,7 @@ impl Database {
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         is_symlink: ActiveValue::set(entry.is_symlink),
                         is_ignored: ActiveValue::set(entry.is_ignored),
+                        is_external: ActiveValue::set(entry.is_external),
                         git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
@@ -2705,6 +2707,7 @@ impl Database {
                             }),
                             is_symlink: db_entry.is_symlink,
                             is_ignored: db_entry.is_ignored,
+                            is_external: db_entry.is_external,
                             git_status: db_entry.git_status.map(|status| status as i32),
                         });
                     }

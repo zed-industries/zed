@@ -53,7 +53,7 @@ impl Rope {
             }
         }
 
-        self.chunks.push_tree(chunks.suffix(&()), &());
+        self.chunks.append(chunks.suffix(&()), &());
         self.check_invariants();
     }
 
@@ -381,6 +381,12 @@ impl<'a> From<&'a str> for Rope {
         let mut rope = Self::new();
         rope.push(text);
         rope
+    }
+}
+
+impl From<String> for Rope {
+    fn from(text: String) -> Self {
+        Rope::from(text.as_str())
     }
 }
 

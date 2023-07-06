@@ -4,6 +4,8 @@
 /plugins/bin
 /script/node_modules
 /styles/node_modules
+/styles/src/types/zed.ts
+/crates/theme/schemas/theme.json
 /crates/collab/static/styles.css
 /vendor/bin
 /assets/themes/*.json
@@ -18,4 +20,5 @@ DerivedData/
 .swiftpm/config/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+.swiftpm
 **/*.db

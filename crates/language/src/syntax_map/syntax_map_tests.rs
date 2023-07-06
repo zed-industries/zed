@@ -48,6 +48,13 @@ fn test_splice_included_ranges() {
     let new_ranges = splice_included_ranges(ranges.clone(), &[30..50], &[ts_range(25..55)]);
     assert_eq!(new_ranges, &[ts_range(25..55), ts_range(80..90)]);
 
+    // does not create overlapping ranges
+    let new_ranges = splice_included_ranges(ranges.clone(), &[0..18], &[ts_range(20..32)]);
+    assert_eq!(
+        new_ranges,
+        &[ts_range(20..32), ts_range(50..60), ts_range(80..90)]
+    );
+
     fn ts_range(range: Range<usize>) -> tree_sitter::Range {
         tree_sitter::Range {
             start_byte: range.start,
@@ -625,6 +632,26 @@ fn test_combined_injections_splitting_some_injections() {
 }
 
 #[gpui::test]
+fn test_combined_injections_editing_after_last_injection() {
+    test_edit_sequence(
+        "ERB",
+        &[
+            r#"
+                <% foo %>
+                <div></div>
+                <% bar %>
+            "#,
+            r#"
+                <% foo %>
+                <div></div>
+                <% bar %>«
+                more text»
+            "#,
+        ],
+    );
+}
+
+#[gpui::test]
 fn test_combined_injections_inside_injections() {
     let (_buffer, _syntax_map) = test_edit_sequence(
         "Markdown",
@@ -974,13 +1001,16 @@ fn test_edit_sequence(language_name: &str, steps: &[&str]) -> (Buffer, SyntaxMap
     mutated_syntax_map.reparse(language.clone(), &buffer);
 
     for (i, marked_string) in steps.into_iter().enumerate() {
-        buffer.edit_via_marked_text(&marked_string.unindent());
+        let marked_string = marked_string.unindent();
+        log::info!("incremental parse {i}: {marked_string:?}");
+        buffer.edit_via_marked_text(&marked_string);
 
         // Reparse the syntax map
         mutated_syntax_map.interpolate(&buffer);
         mutated_syntax_map.reparse(language.clone(), &buffer);
 
         // Create a second syntax map from scratch
+        log::info!("fresh parse {i}: {marked_string:?}");
         let mut reference_syntax_map = SyntaxMap::new();
         reference_syntax_map.set_language_registry(registry.clone());
         reference_syntax_map.reparse(language.clone(), &buffer);
@@ -1133,6 +1163,7 @@ fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {
     start..start + text.len()
 }
 
+#[track_caller]
 fn assert_layers_for_range(
     syntax_map: &SyntaxMap,
     buffer: &BufferSnapshot,

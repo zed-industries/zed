@@ -54,5 +54,5 @@ sleep 0.5
 # Start the two Zed child processes. Open the given paths with the first instance.
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
 ZED_IMPERSONATE=${username_1} ZED_WINDOW_POSITION=${position_1} target/debug/Zed $@ &
-ZED_IMPERSONATE=${username_2} ZED_WINDOW_POSITION=${position_2} target/debug/Zed &
+SECOND=true ZED_IMPERSONATE=${username_2} ZED_WINDOW_POSITION=${position_2} target/debug/Zed &
 wait

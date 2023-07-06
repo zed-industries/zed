@@ -1,16 +1,24 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lazy_static::lazy_static;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::{fs, process};
-use std::ffi::{OsStr, OsString};
-use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
-use util::fs::remove_matching;
-use util::github::latest_github_release;
-use util::http::HttpClient;
-use util::ResultExt;
+use std::{
+    any::Any,
+    ffi::{OsStr, OsString},
+    ops::Range,
+    path::PathBuf,
+    str,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+};
+use util::{fs::remove_matching, github::latest_github_release, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -31,9 +39,9 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("golang/tools", false, http).await?;
+        let release = latest_github_release("golang/tools", false, delegate.http_client()).await?;
         let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
@@ -44,11 +52,39 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
+    fn will_fetch_server(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str =
+            "Could not install the Go language server `gopls`, because `go` was not found.";
+
+        let delegate = delegate.clone();
+        Some(cx.spawn(|mut cx| async move {
+            let install_output = process::Command::new("go").args(["version"]).output().await;
+            if install_output.is_err() {
+                if DID_SHOW_NOTIFICATION
+                    .compare_exchange(false, true, SeqCst, SeqCst)
+                    .is_ok()
+                {
+                    cx.update(|cx| {
+                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                    })
+                }
+                return Err(anyhow!("cannot install gopls"));
+            }
+            Ok(())
+        }))
+    }
+
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
@@ -68,7 +104,10 @@ impl super::LspAdapter for GoLspAdapter {
                     });
                 }
             }
-        } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
+        } else if let Some(path) = this
+            .cached_server_binary(container_dir.clone(), delegate)
+            .await
+        {
             return Ok(path);
         }
 
@@ -105,33 +144,24 @@ impl super::LspAdapter for GoLspAdapter {
         })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last_binary_path = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_file()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .map_or(false, |name| name.starts_with("gopls_"))
-                {
-                    last_binary_path = Some(entry.path());
-                }
-            }
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
+    }
 
-            if let Some(path) = last_binary_path {
-                Ok(LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                })
-            } else {
-                Err(anyhow!("no cached binary"))
-            }
-        })()
-        .await
-        .log_err()
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
     }
 
     async fn label_for_completion(
@@ -292,6 +322,35 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last_binary_path = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .map_or(false, |name| name.starts_with("gopls_"))
+            {
+                last_binary_path = Some(entry.path());
+            }
+        }
+
+        if let Some(path) = last_binary_path {
+            Ok(LanguageServerBinary {
+                path,
+                arguments: server_binary_arguments(),
+            })
+        } else {
+            Err(anyhow!("no cached binary"))
+        }
+    })()
+    .await
+    .log_err()
 }
 
 fn adjust_runs(

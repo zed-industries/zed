@@ -1433,7 +1433,12 @@ impl EditorElement {
         } else {
             let style = &self.style;
             let chunks = snapshot
-                .chunks(rows.clone(), true, Some(style.theme.suggestion))
+                .chunks(
+                    rows.clone(),
+                    true,
+                    Some(style.theme.hint),
+                    Some(style.theme.suggestion),
+                )
                 .map(|chunk| {
                     let mut highlight_style = chunk
                         .syntax_highlight_id
@@ -1508,6 +1513,7 @@ impl EditorElement {
         editor: &mut Editor,
         cx: &mut LayoutContext<Editor>,
     ) -> (f32, Vec<BlockLayout>) {
+        let mut block_id = 0;
         let scroll_x = snapshot.scroll_anchor.offset.x();
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
@@ -1515,7 +1521,7 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => false,
                 TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
             });
-        let mut render_block = |block: &TransformBlock, width: f32| {
+        let mut render_block = |block: &TransformBlock, width: f32, block_id: usize| {
             let mut element = match block {
                 TransformBlock::Custom(block) => {
                     let align_to = block
@@ -1540,6 +1546,7 @@ impl EditorElement {
                         scroll_x,
                         gutter_width,
                         em_width,
+                        block_id,
                     })
                 }
                 TransformBlock::ExcerptHeader {
@@ -1568,7 +1575,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         MouseEventHandler::<JumpIcon, _>::new((*id).into(), cx, |state, _| {
-                            let style = style.jump_icon.style_for(state, false);
+                            let style = style.jump_icon.style_for(state);
                             Svg::new("icons/arrow_up_right_8.svg")
                                 .with_color(style.color)
                                 .constrained()
@@ -1675,7 +1682,8 @@ impl EditorElement {
         let mut fixed_block_max_width = 0f32;
         let mut blocks = Vec::new();
         for (row, block) in fixed_blocks {
-            let element = render_block(block, f32::INFINITY);
+            let element = render_block(block, f32::INFINITY, block_id);
+            block_id += 1;
             fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
             blocks.push(BlockLayout {
                 row,
@@ -1695,7 +1703,8 @@ impl EditorElement {
                     .max(gutter_width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let element = render_block(block, width);
+            let element = render_block(block, width, block_id);
+            block_id += 1;
             blocks.push(BlockLayout {
                 row,
                 element,
@@ -1958,7 +1967,7 @@ impl Element<Editor> for EditorElement {
         let em_advance = style.text.em_advance(cx.font_cache());
         let overscroll = vec2f(em_width, 0.);
         let snapshot = {
-            editor.set_visible_line_count(size.y() / line_height);
+            editor.set_visible_line_count(size.y() / line_height, cx);
 
             let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
             let wrap_width = match editor.soft_wrap_mode(cx) {
@@ -2131,7 +2140,7 @@ impl Element<Editor> for EditorElement {
                     .folds
                     .ellipses
                     .background
-                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize), false)
+                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
                     .color;
 
                 (id, fold, color)

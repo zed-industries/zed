@@ -546,7 +546,7 @@ impl PickerDelegate for FileFinderDelegate {
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
         let theme = theme::current(cx);
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
         Flex::column()

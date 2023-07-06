@@ -7,13 +7,14 @@ use crate::{
 use anyhow::{anyhow, Result};
 use ordered_float::OrderedFloat;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use schemars::JsonSchema;
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
 pub struct FamilyId(usize);
 
 struct Family {

@@ -20,7 +20,11 @@
         "noFallthroughCasesInSwitch": false,
         "experimentalDecorators": true,
         "strictPropertyInitialization": false,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "useUnknownInCatchVariables": false,
+        "baseUrl": "."
     },
-    "exclude": ["node_modules"]
+    "exclude": [
+        "node_modules"
+    ]
 }

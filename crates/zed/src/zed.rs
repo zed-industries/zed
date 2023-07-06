@@ -20,7 +20,6 @@ use feedback::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions,
     anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
@@ -50,6 +49,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
     NewWindow, Workspace, WorkspaceSettings,
 };
+use zed_actions::*;
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -57,33 +57,6 @@ pub struct OpenBrowser {
 }
 
 impl_actions!(zed, [OpenBrowser]);
-
-actions!(
-    zed,
-    [
-        About,
-        Hide,
-        HideOthers,
-        ShowAll,
-        Minimize,
-        Zoom,
-        ToggleFullScreen,
-        Quit,
-        DebugElements,
-        OpenLog,
-        OpenLicenses,
-        OpenTelemetryLog,
-        OpenKeymap,
-        OpenSettings,
-        OpenLocalSettings,
-        OpenDefaultSettings,
-        OpenDefaultKeymap,
-        IncreaseBufferFontSize,
-        DecreaseBufferFontSize,
-        ResetBufferFontSize,
-        ResetDatabase,
-    ]
-);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(about);
@@ -361,15 +334,15 @@ pub fn initialize_workspace(
 
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-        let assistant_panel = if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
-            None
-        } else {
-            Some(AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
-        };
-        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
+        let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel, assistant_panel) =
+            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
+            workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(assistant_panel, cx);
+
             if !was_deserialized
                 && workspace
                     .project()
@@ -383,11 +356,7 @@ pub fn initialize_workspace(
             {
                 workspace.toggle_dock(project_panel_position, cx);
             }
-
-            workspace.add_panel(terminal_panel, cx);
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, cx);
-            }
+            cx.focus_self();
         })?;
         Ok(())
     })
@@ -739,8 +708,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        elements::Empty, executor::Deterministic, Action, AnyElement, AppContext, AssetSource,
-        Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
+        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;
@@ -2105,6 +2074,167 @@ mod tests {
             line!(),
         );
 
+        #[track_caller]
+        fn assert_key_bindings_for<'a>(
+            window_id: usize,
+            cx: &TestAppContext,
+            actions: Vec<(&'static str, &'a dyn Action)>,
+            line: u32,
+        ) {
+            for (key, action) in actions {
+                // assert that...
+                assert!(
+                    cx.available_actions(window_id, 0)
+                        .into_iter()
+                        .any(|(_, bound_action, b)| {
+                            // action names match...
+                            bound_action.name() == action.name()
+                        && bound_action.namespace() == action.namespace()
+                        // and key strokes contain the given key
+                        && b.iter()
+                            .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
+                        }),
+                    "On {} Failed to find {} with key binding {}",
+                    line,
+                    action.name(),
+                    key
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+                Empty::new().into_any()
+            }
+        }
+
+        let executor = cx.background();
+        let fs = FakeFs::new(executor.clone());
+
+        actions!(test, [A, B]);
+        // From the Atom keymap
+        actions!(workspace, [ActivatePreviousPane]);
+        // From the JetBrains keymap
+        actions!(pane, [ActivatePrevItem]);
+
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "Atom"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": "test::A"
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init(Assets, cx);
+            welcome::init(cx);
+
+            cx.add_global_action(|_: &A, _cx| {});
+            cx.add_global_action(|_: &B, _cx| {});
+            cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
+            cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
+
+            let settings_rx = watch_config_file(
+                executor.clone(),
+                fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx =
+                watch_config_file(executor.clone(), fs.clone(), PathBuf::from("/keymap.json"));
+
+            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(settings_rx, cx);
+        });
+
+        cx.foreground().run_until_parked();
+
+        let (window_id, _view) = cx.add_window(|_| TestView);
+
+        // Test loading the keymap base at all
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test disabling the key binding for the base keymap
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": null
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        assert_key_bindings_for(window_id, cx, vec![("k", &ActivatePreviousPane)], line!());
+
+        // Test modifying the base, while retaining the users keymap
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "JetBrains"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        assert_key_bindings_for(window_id, cx, vec![("[", &ActivatePrevItem)], line!());
+
+        #[track_caller]
         fn assert_key_bindings_for<'a>(
             window_id: usize,
             cx: &TestAppContext,
@@ -2175,7 +2305,7 @@ mod tests {
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let http = FakeHttpClient::with_404_response();
-        let node_runtime = NodeRuntime::new(http, cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http, cx.background().to_owned());
         languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);
@@ -2191,6 +2321,7 @@ mod tests {
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
             theme::init((), cx);
+            audio::init((), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);

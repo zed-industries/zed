@@ -1,5 +1,5 @@
 use super::{
-    suggestion_map::SuggestionBufferRows,
+    fold_map::FoldBufferRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     TextHighlights,
 };
@@ -65,7 +65,7 @@ pub struct WrapChunks<'a> {
 
 #[derive(Clone)]
 pub struct WrapBufferRows<'a> {
-    input_buffer_rows: SuggestionBufferRows<'a>,
+    input_buffer_rows: FoldBufferRows<'a>,
     input_buffer_row: Option<u32>,
     output_row: u32,
     soft_wrapped: bool,
@@ -353,7 +353,7 @@ impl WrapSnapshot {
                         }
 
                         old_cursor.next(&());
-                        new_transforms.push_tree(
+                        new_transforms.append(
                             old_cursor.slice(&next_edit.old.start, Bias::Right, &()),
                             &(),
                         );
@@ -366,7 +366,7 @@ impl WrapSnapshot {
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
-                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                    new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
         }
@@ -446,6 +446,7 @@ impl WrapSnapshot {
                     false,
                     None,
                     None,
+                    None,
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -500,7 +501,7 @@ impl WrapSnapshot {
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
                         old_cursor.next(&());
-                        new_transforms.push_tree(
+                        new_transforms.append(
                             old_cursor.slice(
                                 &TabPoint::new(next_edit.old_rows.start, 0),
                                 Bias::Right,
@@ -517,7 +518,7 @@ impl WrapSnapshot {
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
-                    new_transforms.push_tree(old_cursor.suffix(&()), &());
+                    new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
         }
@@ -575,7 +576,8 @@ impl WrapSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        suggestion_highlight: Option<HighlightStyle>,
+        hint_highlights: Option<HighlightStyle>,
+        suggestion_highlights: Option<HighlightStyle>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -593,7 +595,8 @@ impl WrapSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                suggestion_highlight,
+                hint_highlights,
+                suggestion_highlights,
             ),
             input_chunk: Default::default(),
             output_position: output_start,
@@ -757,28 +760,18 @@ impl WrapSnapshot {
             }
 
             let text = language::Rope::from(self.text().as_str());
-            let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
+            let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
             let mut expected_buffer_rows = Vec::new();
-            let mut prev_fold_row = 0;
+            let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                let suggestion_point = self
-                    .tab_snapshot
-                    .to_suggestion_point(tab_point, Bias::Left)
-                    .0;
-                let fold_point = self
-                    .tab_snapshot
-                    .suggestion_snapshot
-                    .to_fold_point(suggestion_point);
-                if fold_point.row() == prev_fold_row && display_row != 0 {
+                if tab_point.row() == prev_tab_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    let buffer_point = fold_point
-                        .to_buffer_point(&self.tab_snapshot.suggestion_snapshot.fold_snapshot);
-                    expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
-                    prev_fold_row = fold_point.row();
+                    expected_buffer_rows.push(input_buffer_rows.next().unwrap());
                 }
 
+                prev_tab_row = tab_point.row();
                 assert_eq!(self.line_len(display_row), text.line_len(display_row));
             }
 
@@ -1038,7 +1031,7 @@ fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, suggestion_map::SuggestionMap, tab_map::TabMap},
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         MultiBuffer,
     };
     use gpui::test::observe;
@@ -1089,11 +1082,11 @@ mod tests {
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (tab_map, _) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
@@ -1122,6 +1115,7 @@ mod tests {
         );
         log::info!("Wrapped text: {:?}", actual_text);
 
+        let mut next_inlay_id = 0;
         let mut edits = Vec::new();
         for _i in 0..operations {
             log::info!("{} ==============================================", _i);
@@ -1139,10 +1133,8 @@ mod tests {
                 }
                 20..=39 => {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        let (suggestion_snapshot, suggestion_edits) =
-                            suggestion_map.sync(fold_snapshot, fold_edits);
                         let (tabs_snapshot, tab_edits) =
-                            tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
+                            tab_map.sync(fold_snapshot, fold_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
@@ -1151,10 +1143,11 @@ mod tests {
                     }
                 }
                 40..=59 => {
-                    let (suggestion_snapshot, suggestion_edits) =
-                        suggestion_map.randomly_mutate(&mut rng);
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
-                        tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
+                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
                     let (mut snapshot, wrap_edits) =
                         wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                     snapshot.check_invariants();
@@ -1173,13 +1166,12 @@ mod tests {
             }
 
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (fold_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());
-            let (suggestion_snapshot, suggestion_edits) =
-                suggestion_map.sync(fold_snapshot, fold_edits);
-            log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-            let (tabs_snapshot, tab_edits) =
-                tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();
@@ -1227,7 +1219,7 @@ mod tests {
                 if tab_size.get() == 1
                     || !wrapped_snapshot
                         .tab_snapshot
-                        .suggestion_snapshot
+                        .fold_snapshot
                         .text()
                         .contains('\t')
                 {
@@ -1328,8 +1320,14 @@ mod tests {
         }
 
         pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-            self.chunks(wrap_row..self.max_point().row() + 1, false, None, None)
-                .map(|h| h.text)
+            self.chunks(
+                wrap_row..self.max_point().row() + 1,
+                false,
+                None,
+                None,
+                None,
+            )
+            .map(|h| h.text)
         }
 
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
@@ -1352,7 +1350,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, true, None, None)
+                    .chunks(start_row..end_row, true, None, None, None)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

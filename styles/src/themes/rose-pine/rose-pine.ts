@@ -1,37 +1,44 @@
 import {
     chroma,
-    colorRamp,
+    color_ramp,
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
 } from "../../common"
+import { color as c, syntax } from "./common"
+
+const color = c.default
+
+const green = chroma.mix(color.foam, "#10b981", 0.6, "lab")
+const magenta = chroma.mix(color.love, color.pine, 0.5, "lab")
 
 export const theme: ThemeConfig = {
     name: "Rosé Pine",
     author: "edunfelt",
     appearance: ThemeAppearance.Dark,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/edunfelt/base16-rose-pine-scheme",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: {
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/edunfelt/base16-rose-pine-scheme",
+    license_file: `${__dirname}/LICENSE`,
+    input_color: {
         neutral: chroma.scale([
-            "#191724",
-            "#1f1d2e",
-            "#26233A",
-            "#3E3A53",
-            "#56526C",
-            "#6E6A86",
-            "#908CAA",
-            "#E0DEF4",
+            color.base,
+            color.surface,
+            color.highlight_high,
+            color.overlay,
+            color.muted,
+            color.subtle,
+            color.text,
         ]),
-        red: colorRamp(chroma("#EB6F92")),
-        orange: colorRamp(chroma("#EBBCBA")),
-        yellow: colorRamp(chroma("#F6C177")),
-        green: colorRamp(chroma("#8DBD8D")),
-        cyan: colorRamp(chroma("#409BBE")),
-        blue: colorRamp(chroma("#9CCFD8")),
-        violet: colorRamp(chroma("#C4A7E7")),
-        magenta: colorRamp(chroma("#AB6FE9")),
+        red: color_ramp(chroma(color.love)),
+        orange: color_ramp(chroma(color.iris)),
+        yellow: color_ramp(chroma(color.gold)),
+        green: color_ramp(chroma(green)),
+        cyan: color_ramp(chroma(color.pine)),
+        blue: color_ramp(chroma(color.foam)),
+        violet: color_ramp(chroma(color.iris)),
+        magenta: color_ramp(chroma(magenta)),
     },
-    override: { syntax: {} },
+    override: {
+        syntax: syntax(color),
+    },
 }
