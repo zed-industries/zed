@@ -18,7 +18,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, Formatter, InlayHintKind, InlayHintSettings},
+    language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
 };
@@ -7843,7 +7843,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             });
         });
     });
-    let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -7956,10 +7955,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Cache should use editor settings to get the allowed hint kinds"
-        );
-        assert_eq!(
             inlay_cache.version, edits_made,
             "Host editor update the cache version after every cache/view change",
         );
@@ -7983,10 +7978,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Cache should use editor settings to get the allowed hint kinds"
-        );
-        assert_eq!(
             inlay_cache.version, edits_made,
             "Guest editor update the cache version after every cache/view change"
         );
@@ -8007,10 +7998,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Host should get hints from the 1st edit and 1st LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(inlay_cache.version, edits_made);
     });
     editor_b.update(cx_b, |editor, _| {
@@ -8025,10 +8012,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(inlay_cache.version, edits_made);
     });
 
@@ -8054,10 +8037,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 4th query was made by guest (but not applied) due to cache invalidation logic"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(inlay_cache.version, edits_made);
     });
     editor_b.update(cx_b, |editor, _| {
@@ -8074,10 +8053,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Guest should get hints from 3rd edit, 6th LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(inlay_cache.version, edits_made);
     });
 
@@ -8104,10 +8079,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
-        assert_eq!(
             inlay_cache.version, edits_made,
             "Host should accepted all edits and bump its cache version every time"
         );
@@ -8128,10 +8099,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Guest should get a /refresh LSP request propagated by host and get new hints from 8th LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(
             inlay_cache.version,
             edits_made,
@@ -8164,9 +8131,9 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
-                    show_type_hints: true,
+                    show_type_hints: false,
                     show_parameter_hints: false,
-                    show_other_hints: true,
+                    show_other_hints: false,
                 })
             });
         });
@@ -8177,13 +8144,12 @@ async fn test_inlay_hint_refresh_is_forwarded(
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
                     show_type_hints: true,
-                    show_parameter_hints: false,
+                    show_parameter_hints: true,
                     show_other_hints: true,
                 })
             });
         });
     });
-    let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -8300,10 +8266,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Host should have allowed hint kinds set despite hints are off"
-        );
-        assert_eq!(
             inlay_cache.version, 0,
             "Host should not increment its cache version due to no changes",
         );
@@ -8318,10 +8280,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Client should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Cache should use editor settings to get the allowed hint kinds"
-        );
         assert_eq!(
             inlay_cache.version, edits_made,
             "Guest editor update the cache version after every cache/view change"
@@ -8339,7 +8297,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Host should get nop hints due to them turned off, even after the /refresh"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.allowed_hint_kinds, allowed_hint_kinds);
         assert_eq!(
             inlay_cache.version, 0,
             "Host should not increment its cache version due to no changes",
@@ -8355,10 +8312,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
-            "Inlay kinds settings never change during the test"
-        );
         assert_eq!(
             inlay_cache.version, edits_made,
             "Guest should accepted all edits and bump its cache version every time"
