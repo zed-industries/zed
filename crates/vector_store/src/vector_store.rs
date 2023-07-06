@@ -144,12 +144,19 @@ impl ProjectState {
     fn update_pending_files(&mut self, pending_file: PendingFile, indexing_time: SystemTime) {
         // If Pending File Already Exists, Replace it with the new one
         // but keep the old indexing time
-        if let Some(old_file) = self.pending_files.remove(&pending_file.path.clone()) {
-            self.pending_files
-                .insert(pending_file.path.clone(), (pending_file, old_file.1));
+        if let Some(old_file) = self
+            .pending_files
+            .remove(&pending_file.relative_path.clone())
+        {
+            self.pending_files.insert(
+                pending_file.relative_path.clone(),
+                (pending_file, old_file.1),
+            );
         } else {
-            self.pending_files
-                .insert(pending_file.path.clone(), (pending_file, indexing_time));
+            self.pending_files.insert(
+                pending_file.relative_path.clone(),
+                (pending_file, indexing_time),
+            );
         };
     }
 
@@ -177,7 +184,8 @@ impl ProjectState {
 #[derive(Clone, Debug)]
 struct PendingFile {
     worktree_db_id: i64,
-    path: PathBuf,
+    relative_path: PathBuf,
+    absolute_path: PathBuf,
     language: Arc<Language>,
     modified_time: SystemTime,
 }
@@ -348,13 +356,14 @@ impl VectorStore {
                     let mut parser = Parser::new();
                     let mut cursor = QueryCursor::new();
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
-                        log::info!("Parsing File: {:?}", &pending_file.path);
+                        log::info!("Parsing File: {:?}", &pending_file.relative_path);
                         if let Some((indexed_file, document_spans)) = Self::index_file(
                             &mut cursor,
                             &mut parser,
                             &fs,
                             pending_file.language,
-                            pending_file.path.clone(),
+                            pending_file.relative_path.clone(),
+                            pending_file.absolute_path.clone(),
                             pending_file.modified_time,
                         )
                         .await
@@ -393,7 +402,8 @@ impl VectorStore {
         parser: &mut Parser,
         fs: &Arc<dyn Fs>,
         language: Arc<Language>,
-        file_path: PathBuf,
+        relative_file_path: PathBuf,
+        absolute_file_path: PathBuf,
         mtime: SystemTime,
     ) -> Result<(IndexedFile, Vec<String>)> {
         let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
@@ -402,7 +412,7 @@ impl VectorStore {
             .as_ref()
             .ok_or_else(|| anyhow!("no outline query"))?;
 
-        let content = fs.load(&file_path).await?;
+        let content = fs.load(&absolute_file_path).await?;
 
         parser.set_language(grammar.ts_language).unwrap();
         let tree = parser
@@ -455,7 +465,7 @@ impl VectorStore {
 
         return Ok((
             IndexedFile {
-                path: file_path,
+                path: relative_file_path,
                 mtime,
                 documents,
             },
@@ -577,7 +587,8 @@ impl VectorStore {
                                             .try_send(PendingFile {
                                                 worktree_db_id: db_ids_by_worktree_id
                                                     [&worktree.id()],
-                                                path: path_buf,
+                                                relative_path: path_buf,
+                                                absolute_path,
                                                 language,
                                                 modified_time: file.mtime,
                                             })
@@ -666,6 +677,7 @@ impl VectorStore {
                             smol::block_on(async move {
                                 for change in changes.into_iter() {
                                     let change_path = change.0.clone();
+                                    let absolute_path = worktree.read(cx).absolutize(&change_path);
                                     // Skip if git ignored or symlink
                                     if let Some(entry) = worktree.read(cx).entry_for_id(change.1) {
                                         if entry.is_ignored || entry.is_symlink {
@@ -716,7 +728,8 @@ impl VectorStore {
                                             if !already_stored {
                                                 project_state.update_pending_files(
                                                     PendingFile {
-                                                        path: change_path.to_path_buf(),
+                                                        relative_path: change_path.to_path_buf(),
+                                                        absolute_path,
                                                         modified_time,
                                                         worktree_db_id,
                                                         language: language.clone(),
