@@ -28,7 +28,6 @@ use self::{
     case::change_case,
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
-    search::{move_to_next, move_to_prev},
     substitute::substitute,
     yank::{yank_motion, yank_object},
 };
@@ -59,8 +58,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
     cx.add_action(change_case);
-    cx.add_action(move_to_next);
-    cx.add_action(move_to_prev);
+    search::init(cx);
     cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);

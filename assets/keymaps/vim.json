@@ -197,10 +197,11 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "/": [
-        "buffer_search::Deploy",
+      "/": "vim::Search",
+      "?": [
+        "vim::Search",
         {
-          "focus": true
+          "backwards": true,
         }
       ],
       "ctrl-f": "vim::PageDown",
@@ -356,7 +357,8 @@
   {
     "context": "BufferSearchBar",
     "bindings": {
-      "enter": "buffer_search::FocusEditor"
+      "enter": "buffer_search::FocusEditor",
+      "escape": "buffer_search::Dismiss"
     }
   }
 ]
