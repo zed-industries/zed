@@ -975,6 +975,117 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        fake_server
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_lsp_request_count = Arc::clone(&lsp_request_count);
+                async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                    );
+                    let current_call_id =
+                        Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: lsp::Position::new(0, current_call_id),
+                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+
+        let mut edits_made = 1;
+        editor.update(cx, |editor, cx| {
+            let expected_layers = vec!["0".to_string()];
+            assert_eq!(
+                expected_layers,
+                cached_hint_labels(editor),
+                "Should get its first hints when opening the editor"
+            );
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "The editor update the cache version after every cache/view change"
+            );
+        });
+
+        let progress_token = "test_progress_token";
+        fake_server
+            .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
+                token: lsp::ProgressToken::String(progress_token.to_string()),
+            })
+            .await
+            .expect("work done progress create request failed");
+        cx.foreground().run_until_parked();
+        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::String(progress_token.to_string()),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
+                lsp::WorkDoneProgressBegin::default(),
+            )),
+        });
+        cx.foreground().run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            let expected_layers = vec!["0".to_string()];
+            assert_eq!(
+                expected_layers,
+                cached_hint_labels(editor),
+                "Should not update hints while the work task is running"
+            );
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "Should not update the cache while the work task is running"
+            );
+        });
+
+        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::String(progress_token.to_string()),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
+                lsp::WorkDoneProgressEnd::default(),
+            )),
+        });
+        cx.foreground().run_until_parked();
+
+        edits_made += 1;
+        editor.update(cx, |editor, cx| {
+            let expected_layers = vec!["1".to_string()];
+            assert_eq!(
+                expected_layers,
+                cached_hint_labels(editor),
+                "New hints should be queried after the work task is done"
+            );
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            let inlay_cache = editor.inlay_hint_cache();
+            assert_eq!(
+                inlay_cache.version, edits_made,
+                "Cache version should udpate once after the work task is done"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_no_hint_updates_for_unrelated_language_files(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
