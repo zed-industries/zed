@@ -3517,7 +3517,6 @@ pub use test::*;
 mod test {
     use super::*;
     use gpui::executor::Background;
-    use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use sea_orm::ConnectionTrait;
     use sqlx::migrate::MigrateDatabase;
