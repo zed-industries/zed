@@ -5,13 +5,30 @@ use std::{
     time::Duration,
 };
 
-const PORT: u16 = 43739;
+use util::channel::ReleaseChannel;
+
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-const ADDRESS: SocketAddr = SocketAddr::V4(SocketAddrV4::new(LOCALHOST, PORT));
-const INSTANCE_HANDSHAKE: &str = "Zed Editor Instance Running";
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(10);
 const RECEIVE_TIMEOUT: Duration = Duration::from_millis(35);
 const SEND_TIMEOUT: Duration = Duration::from_millis(20);
+
+fn address() -> SocketAddr {
+    let port = match *util::channel::RELEASE_CHANNEL {
+        ReleaseChannel::Dev => 43737,
+        ReleaseChannel::Preview => 43738,
+        ReleaseChannel::Stable => 43739,
+    };
+
+    SocketAddr::V4(SocketAddrV4::new(LOCALHOST, port))
+}
+
+fn instance_handshake() -> &'static str {
+    match *util::channel::RELEASE_CHANNEL {
+        ReleaseChannel::Dev => "Zed Editor Dev Instance Running",
+        ReleaseChannel::Preview => "Zed Editor Preview Instance Running",
+        ReleaseChannel::Stable => "Zed Editor Stable Instance Running",
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsOnlyInstance {
@@ -24,7 +41,7 @@ pub fn ensure_only_instance() -> IsOnlyInstance {
         return IsOnlyInstance::No;
     }
 
-    let listener = match TcpListener::bind(ADDRESS) {
+    let listener = match TcpListener::bind(address()) {
         Ok(listener) => listener,
 
         Err(err) => {
@@ -50,7 +67,7 @@ pub fn ensure_only_instance() -> IsOnlyInstance {
 
             _ = stream.set_nodelay(true);
             _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
-            _ = stream.write_all(INSTANCE_HANDSHAKE.as_bytes());
+            _ = stream.write_all(instance_handshake().as_bytes());
         }
     });
 
@@ -58,9 +75,9 @@ pub fn ensure_only_instance() -> IsOnlyInstance {
 }
 
 fn check_got_handshake() -> bool {
-    match TcpStream::connect_timeout(&ADDRESS, CONNECT_TIMEOUT) {
+    match TcpStream::connect_timeout(&address(), CONNECT_TIMEOUT) {
         Ok(mut stream) => {
-            let mut buf = vec![0u8; INSTANCE_HANDSHAKE.len()];
+            let mut buf = vec![0u8; instance_handshake().len()];
 
             stream.set_read_timeout(Some(RECEIVE_TIMEOUT)).unwrap();
             if let Err(err) = stream.read_exact(&mut buf) {
@@ -68,7 +85,7 @@ fn check_got_handshake() -> bool {
                 return false;
             }
 
-            if buf == INSTANCE_HANDSHAKE.as_bytes() {
+            if buf == instance_handshake().as_bytes() {
                 log::info!("Got instance handshake");
                 return true;
             }
