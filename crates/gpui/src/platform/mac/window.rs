@@ -233,10 +233,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         yes as extern "C" fn(&Object, Sel) -> BOOL,
     );
     decl.add_method(
-        sel!(sendEvent:),
-        send_event as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
         sel!(windowDidResize:),
         window_did_resize as extern "C" fn(&Object, Sel, id),
     );
@@ -299,7 +295,7 @@ struct WindowState {
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<Box<dyn InputHandler>>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
-    performed_key_equivalent: bool,
+    last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
@@ -521,7 +517,7 @@ impl Window {
                 appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
-                performed_key_equivalent: false,
+                last_key_equivalent: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -965,36 +961,34 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let window_height = window_state_borrow.content_size().y();
     let event = unsafe { Event::from_native(native_event, Some(window_height)) };
 
-    if let Some(event) = event {
+    if let Some(Event::KeyDown(event)) = event {
+        // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
+        // If that event isn't handled, it will then dispatch a "key down" event. GPUI
+        // makes no distinction between these two types of events, so we need to ignore
+        // the "key down" event if we've already just processed its "key equivalent" version.
         if key_equivalent {
-            window_state_borrow.performed_key_equivalent = true;
-        } else if window_state_borrow.performed_key_equivalent {
+            window_state_borrow.last_key_equivalent = Some(event.clone());
+        } else if window_state_borrow.last_key_equivalent.take().as_ref() == Some(&event) {
             return NO;
         }
 
-        let function_is_held;
-        window_state_borrow.pending_key_down = match event {
-            Event::KeyDown(event) => {
-                let keydown = event.keystroke.clone();
-                // Ignore events from held-down keys after some of the initially-pressed keys
-                // were released.
-                if event.is_held {
-                    if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
-                        return YES;
-                    }
-                } else {
-                    window_state_borrow.last_fresh_keydown = Some(keydown);
-                }
-                function_is_held = event.keystroke.function;
-                Some((event, None))
+        let keydown = event.keystroke.clone();
+        let fn_modifier = keydown.function;
+        // Ignore events from held-down keys after some of the initially-pressed keys
+        // were released.
+        if event.is_held {
+            if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
+                return YES;
             }
-
-            _ => return NO,
-        };
-
+        } else {
+            window_state_borrow.last_fresh_keydown = Some(keydown);
+        }
+        window_state_borrow.pending_key_down = Some((event, None));
         drop(window_state_borrow);
 
-        if !function_is_held {
+        // Send the event to the input context for IME handling, unless the `fn` modifier is
+        // being pressed.
+        if !fn_modifier {
             unsafe {
                 let input_context: id = msg_send![this, inputContext];
                 let _: BOOL = msg_send![input_context, handleEvent: native_event];
@@ -1140,13 +1134,6 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         drop(window_state_borrow);
         callback(event);
         window_state.borrow_mut().event_callback = Some(callback);
-    }
-}
-
-extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
-    unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
-        get_window_state(this).borrow_mut().performed_key_equivalent = false;
     }
 }
 
