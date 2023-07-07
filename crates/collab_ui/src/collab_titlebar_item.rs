@@ -229,15 +229,23 @@ impl CollabTitlebarItem {
         let mut ret = Flex::row().with_child(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |mouse_state, _| {
+                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |mouse_state, cx| {
                         let style = project_style
                             .in_state(self.project_popover.is_some())
                             .style_for(mouse_state);
+                        enum RecentProjectsTooltip {}
                         Label::new(name, style.text.clone())
                             .contained()
                             .with_style(style.container)
                             .aligned()
                             .left()
+                            .with_tooltip::<RecentProjectsTooltip>(
+                                0,
+                                "Recent projects".into(),
+                                None,
+                                theme.tooltip.clone(),
+                                cx,
+                            )
                             .into_any_named("title-project-name")
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
