@@ -82,13 +82,18 @@ pub fn move_to_internal(
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use editor::DisplayPoint;
     use search::BufferSearchBar;
 
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
+    async fn test_move_to_next(
+        cx: &mut gpui::TestAppContext,
+        deterministic: Arc<gpui::executor::Deterministic>,
+    ) {
         let mut cx = VimTestContext::new(cx, true).await;
         let search_bar = cx.workspace(|workspace, cx| {
             workspace
@@ -102,30 +107,30 @@ mod test {
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["*"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["*"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["#"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["#"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["g", "*"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["n"]);
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["g", "#"]);
-        search_bar.next_notification(&cx).await;
+        deterministic.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
     }
 
