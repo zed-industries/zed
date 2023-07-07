@@ -264,7 +264,8 @@ impl CollabTitlebarItem {
                                 MouseEventHandler::<ToggleVcsMenu, Self>::new(
                                     0,
                                     cx,
-                                    |mouse_state, _| {
+                                    |mouse_state, cx| {
+                                        enum BranchPopoverTooltip {}
                                         let style = git_style
                                             .in_state(self.branch_popover.is_some())
                                             .style_for(mouse_state);
@@ -274,6 +275,13 @@ impl CollabTitlebarItem {
                                             .with_margin_right(item_spacing)
                                             .aligned()
                                             .left()
+                                            .with_tooltip::<BranchPopoverTooltip>(
+                                                0,
+                                                "Recent branches".into(),
+                                                None,
+                                                theme.tooltip.clone(),
+                                                cx,
+                                            )
                                             .into_any_named("title-project-branch")
                                     },
                                 )
