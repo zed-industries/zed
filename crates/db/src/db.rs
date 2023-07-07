@@ -41,8 +41,7 @@ const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
-    // !!!!!!! CHANGE BACK TO DEFAULT FALSE BEFORE SHIPPING
-    static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
+    pub static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
 }
