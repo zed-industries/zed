@@ -4,7 +4,7 @@ use pathfinder_geometry::vector::vec2f;
 
 use crate::{geometry::vector::Vector2F, keymap_matcher::Keystroke};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
     pub keystroke: Keystroke,
     pub is_held: bool,
