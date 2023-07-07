@@ -3517,7 +3517,6 @@ pub use test::*;
 mod test {
     use super::*;
     use gpui::executor::Background;
-    use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use sea_orm::ConnectionTrait;
     use sqlx::migrate::MigrateDatabase;
@@ -3566,9 +3565,7 @@ mod test {
         }
 
         pub fn postgres(background: Arc<Background>) -> Self {
-            lazy_static! {
-                static ref LOCK: Mutex<()> = Mutex::new(());
-            }
+            static LOCK: Mutex<()> = Mutex::new(());
 
             let _guard = LOCK.lock();
             let mut rng = StdRng::from_entropy();

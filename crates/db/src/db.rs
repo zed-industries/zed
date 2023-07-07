@@ -43,10 +43,10 @@ const DB_FILE_NAME: &'static str = "db.sqlite";
 lazy_static::lazy_static! {
     // !!!!!!! CHANGE BACK TO DEFAULT FALSE BEFORE SHIPPING
     static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
-    static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
 }
+static DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
 
 /// Open or create a database at the given directory path.
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
