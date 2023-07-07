@@ -31,3 +31,5 @@ pub use window::{Axis, SizeConstraint, Vector2FExt, WindowContext};
 
 pub use anyhow;
 pub use serde_json;
+
+actions!(zed, [NoAction]);

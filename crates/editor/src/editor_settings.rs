@@ -15,6 +15,7 @@ pub struct EditorSettings {
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
+    pub selections: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct EditorSettingsContent {
 pub struct ScrollbarContent {
     pub show: Option<ShowScrollbar>,
     pub git_diff: Option<bool>,
+    pub selections: Option<bool>,
 }
 
 impl Setting for EditorSettings {

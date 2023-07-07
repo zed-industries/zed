@@ -37,9 +37,9 @@ use util::ResultExt;
 lazy_static::lazy_static! {
     static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
     static ref PLAN_SAVE_PATH: Option<PathBuf> = path_env_var("SAVE_PLAN");
-    static ref LOADED_PLAN_JSON: Mutex<Option<Vec<u8>>> = Default::default();
-    static ref PLAN: Mutex<Option<Arc<Mutex<TestPlan>>>> = Default::default();
 }
+static LOADED_PLAN_JSON: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+static PLAN: Mutex<Option<Arc<Mutex<TestPlan>>>> = Mutex::new(None);
 
 #[gpui::test(iterations = 100, on_failure = "on_failure")]
 async fn test_random_collaboration(

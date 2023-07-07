@@ -36,7 +36,6 @@ workspace = { path = "../workspace" }
 [dev-dependencies]
 indoc.workspace = true
 parking_lot.workspace = true
-lazy_static.workspace = true
 
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }

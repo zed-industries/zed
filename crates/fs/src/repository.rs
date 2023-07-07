@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
-use git2::ErrorCode;
+use git2::{BranchType, ErrorCode};
 use parking_lot::Mutex;
 use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
@@ -16,6 +16,12 @@ use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
 
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct Branch {
+    pub name: Box<str>,
+    /// Timestamp of most recent commit, normalized to Unix Epoch format.
+    pub unix_timestamp: Option<i64>,
+}
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
@@ -27,6 +33,12 @@ pub trait GitRepository: Send {
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+    fn branches(&self) -> Result<Vec<Branch>> {
+        Ok(vec![])
+    }
+    fn change_branch(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -105,6 +117,40 @@ impl GitRepository for LibGitRepository {
                 }
             }
         }
+    }
+    fn branches(&self) -> Result<Vec<Branch>> {
+        let local_branches = self.branches(Some(BranchType::Local))?;
+        let valid_branches = local_branches
+            .filter_map(|branch| {
+                branch.ok().and_then(|(branch, _)| {
+                    let name = branch.name().ok().flatten().map(Box::from)?;
+                    let timestamp = branch.get().peel_to_commit().ok()?.time();
+                    let unix_timestamp = timestamp.seconds();
+                    let timezone_offset = timestamp.offset_minutes();
+                    let utc_offset =
+                        time::UtcOffset::from_whole_seconds(timezone_offset * 60).ok()?;
+                    let unix_timestamp =
+                        time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
+                    Some(Branch {
+                        name,
+                        unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
+                    })
+                })
+            })
+            .collect();
+        Ok(valid_branches)
+    }
+    fn change_branch(&self, name: &str) -> Result<()> {
+        let revision = self.find_branch(name, BranchType::Local)?;
+        let revision = revision.get();
+        let as_tree = revision.peel_to_tree()?;
+        self.checkout_tree(as_tree.as_object(), None)?;
+        self.set_head(
+            revision
+                .name()
+                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+        )?;
+        Ok(())
     }
 }
 

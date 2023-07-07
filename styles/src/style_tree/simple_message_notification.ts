@@ -1,8 +1,10 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 import { interactive } from "../element"
+import { useTheme } from "../theme"
 
-export default function simple_message_notification(theme: ColorScheme): any {
+export default function simple_message_notification(): any {
+    const theme = useTheme()
+
     const header_padding = 8
 
     return {

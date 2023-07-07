@@ -1,9 +1,9 @@
 import * as fs from "fs"
 import * as path from "path"
-import { ColorScheme, create_color_scheme } from "./common"
+import { Theme, create_theme, useThemeStore } from "./common"
 import { themes } from "./themes"
 import { slugify } from "./utils/slugify"
-import { theme_tokens } from "./theme/tokens/color_scheme"
+import { theme_tokens } from "./theme/tokens/theme"
 
 const TOKENS_DIRECTORY = path.join(__dirname, "..", "target", "tokens")
 const TOKENS_FILE = path.join(TOKENS_DIRECTORY, "$themes.json")
@@ -27,7 +27,7 @@ type TokenSet = {
     selected_token_sets: { [key: string]: "enabled" }
 }
 
-function build_token_set_order(theme: ColorScheme[]): {
+function build_token_set_order(theme: Theme[]): {
     token_set_order: string[]
 } {
     const token_set_order: string[] = theme.map((scheme) =>
@@ -36,7 +36,7 @@ function build_token_set_order(theme: ColorScheme[]): {
     return { token_set_order }
 }
 
-function build_themes_index(theme: ColorScheme[]): TokenSet[] {
+function build_themes_index(theme: Theme[]): TokenSet[] {
     const themes_index: TokenSet[] = theme.map((scheme, index) => {
         const id = `${scheme.is_light ? "light" : "dark"}_${scheme.name
             .toLowerCase()
@@ -55,12 +55,15 @@ function build_themes_index(theme: ColorScheme[]): TokenSet[] {
     return themes_index
 }
 
-function write_tokens(themes: ColorScheme[], tokens_directory: string) {
+function write_tokens(themes: Theme[], tokens_directory: string) {
     clear_tokens(tokens_directory)
 
     for (const theme of themes) {
+        const { setTheme } = useThemeStore.getState()
+        setTheme(theme)
+
         const file_name = slugify(theme.name) + ".json"
-        const tokens = theme_tokens(theme)
+        const tokens = theme_tokens()
         const tokens_json = JSON.stringify(tokens, null, 2)
         const out_path = path.join(tokens_directory, file_name)
         fs.writeFileSync(out_path, tokens_json, { mode: 0o644 })
@@ -80,8 +83,8 @@ function write_tokens(themes: ColorScheme[], tokens_directory: string) {
     console.log(`- ${METADATA_FILE} created`)
 }
 
-const all_themes: ColorScheme[] = themes.map((theme) =>
-    create_color_scheme(theme)
+const all_themes: Theme[] = themes.map((theme) =>
+    create_theme(theme)
 )
 
 write_tokens(all_themes, TOKENS_DIRECTORY)

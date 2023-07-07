@@ -5,18 +5,18 @@ import {
     TokenTypes,
 } from "@tokens-studio/types"
 import {
-    ColorScheme,
     Shadow,
     SyntaxHighlightStyle,
     ThemeSyntax,
-} from "../color_scheme"
+} from "../create_theme"
 import { LayerToken, layer_token } from "./layer"
 import { PlayersToken, players_token } from "./players"
 import { color_token } from "./token"
 import { Syntax } from "../syntax"
 import editor from "../../style_tree/editor"
+import { useTheme } from "../../../src/common"
 
-interface ColorSchemeTokens {
+interface ThemeTokens {
     name: SingleOtherToken
     appearance: SingleOtherToken
     lowest: LayerToken
@@ -39,12 +39,14 @@ const create_shadow_token = (
     }
 }
 
-const popover_shadow_token = (theme: ColorScheme): SingleBoxShadowToken => {
+const popover_shadow_token = (): SingleBoxShadowToken => {
+    const theme = useTheme()
     const shadow = theme.popover_shadow
     return create_shadow_token(shadow, "popover_shadow")
 }
 
-const modal_shadow_token = (theme: ColorScheme): SingleBoxShadowToken => {
+const modal_shadow_token = (): SingleBoxShadowToken => {
+    const theme = useTheme()
     const shadow = theme.modal_shadow
     return create_shadow_token(shadow, "modal_shadow")
 }
@@ -68,13 +70,15 @@ function syntax_highlight_style_color_tokens(
     }, {} as ThemeSyntaxColorTokens)
 }
 
-const syntax_tokens = (theme: ColorScheme): ColorSchemeTokens["syntax"] => {
-    const syntax = editor(theme).syntax
+const syntax_tokens = (): ThemeTokens["syntax"] => {
+    const syntax = editor().syntax
 
     return syntax_highlight_style_color_tokens(syntax)
 }
 
-export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
+export function theme_tokens(): ThemeTokens {
+    const theme = useTheme()
+
     return {
         name: {
             name: "themeName",
@@ -89,9 +93,9 @@ export function theme_tokens(theme: ColorScheme): ColorSchemeTokens {
         lowest: layer_token(theme.lowest, "lowest"),
         middle: layer_token(theme.middle, "middle"),
         highest: layer_token(theme.highest, "highest"),
-        popover_shadow: popover_shadow_token(theme),
-        modal_shadow: modal_shadow_token(theme),
-        players: players_token(theme),
-        syntax: syntax_tokens(theme),
+        popover_shadow: popover_shadow_token(),
+        modal_shadow: modal_shadow_token(),
+        players: players_token(),
+        syntax: syntax_tokens(),
     }
 }

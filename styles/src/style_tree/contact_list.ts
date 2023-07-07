@@ -1,4 +1,3 @@
-import { ColorScheme } from "../theme/color_scheme"
 import {
     background,
     border,
@@ -7,7 +6,10 @@ import {
     text,
 } from "./components"
 import { interactive, toggleable } from "../element"
-export default function contacts_panel(theme: ColorScheme): any {
+import { useTheme } from "../theme"
+export default function contacts_panel(): any {
+    const theme = useTheme()
+
     const name_margin = 8
     const side_padding = 12
 

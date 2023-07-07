@@ -147,8 +147,9 @@ impl AssistantPanel {
                                 .await
                                 .log_err()
                                 .unwrap_or_default();
-                            this.update(&mut cx, |this, _| {
-                                this.saved_conversations = saved_conversations
+                            this.update(&mut cx, |this, cx| {
+                                this.saved_conversations = saved_conversations;
+                                cx.notify();
                             })
                             .ok();
                         }
@@ -1911,7 +1912,7 @@ impl ConversationEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(editor) = workspace.active_item(cx).and_then(|item| item.downcast::<Editor>()) else {
+        let Some(editor) = workspace.active_item(cx).and_then(|item| item.act_as::<Editor>(cx)) else {
             return;
         };
 

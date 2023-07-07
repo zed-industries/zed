@@ -1,6 +1,8 @@
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme } from "../theme"
 
-export default function terminal(theme: ColorScheme) {
+export default function terminal() {
+    const theme = useTheme()
+
     /**
      * Colors are controlled per-cell in the terminal grid.
      * Cells can be set to any of these more 'theme-capable' colors

@@ -65,7 +65,6 @@ pub struct Theme {
     pub assistant: AssistantStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
-    pub color_scheme: ColorScheme,
     pub titlebar: Titlebar,
 }
 
@@ -118,8 +117,9 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
-    pub title: TextStyle,
-    pub highlight_color: Color,
+    pub project_menu_button: Toggleable<Interactive<ContainedText>>,
+    pub project_name_divider: ContainedText,
+    pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
@@ -585,6 +585,8 @@ pub struct Picker {
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
+    pub header: ContainedLabel,
+    pub footer: ContainedLabel,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -720,6 +722,7 @@ pub struct Scrollbar {
     pub width: f32,
     pub min_height_factor: f32,
     pub git: GitDiffColors,
+    pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

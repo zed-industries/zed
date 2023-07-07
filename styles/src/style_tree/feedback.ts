@@ -1,8 +1,10 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, text } from "./components"
 import { interactive } from "../element"
+import { useTheme } from "../theme"
 
-export default function feedback(theme: ColorScheme): any {
+export default function feedback(): any {
+    const theme = useTheme()
+
     return {
         submit_button: interactive({
             base: {

@@ -1,7 +1,9 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
-export default function status_bar(theme: ColorScheme): any {
+import { useTheme } from "../common"
+export default function status_bar(): any {
+    const theme = useTheme()
+
     const layer = theme.lowest
 
     const status_container = {

@@ -778,20 +778,32 @@ impl Project {
         }
 
         let mut language_servers_to_stop = Vec::new();
+        let mut language_servers_to_restart = Vec::new();
         let languages = self.languages.to_vec();
+        let project_settings = settings::get::<ProjectSettings>(cx).clone();
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
-            let language = languages.iter().find(|l| {
-                l.lsp_adapters()
+            let language = languages.iter().find_map(|l| {
+                let adapter = l
+                    .lsp_adapters()
                     .iter()
-                    .any(|adapter| &adapter.name == started_lsp_name)
+                    .find(|adapter| &adapter.name == started_lsp_name)?;
+                Some((l, adapter))
             });
-            if let Some(language) = language {
+            if let Some((language, adapter)) = language {
                 let worktree = self.worktree_for_id(*worktree_id, cx);
-                let file = worktree.and_then(|tree| {
+                let file = worktree.as_ref().and_then(|tree| {
                     tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
                 });
                 if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
                     language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
+                } else if let Some(worktree) = worktree {
+                    let new_lsp_settings = project_settings
+                        .lsp
+                        .get(&adapter.name.0)
+                        .and_then(|s| s.initialization_options.as_ref());
+                    if adapter.initialization_options.as_ref() != new_lsp_settings {
+                        language_servers_to_restart.push((worktree, Arc::clone(language)));
+                    }
                 }
             }
         }
@@ -806,6 +818,11 @@ impl Project {
         for (worktree, language) in language_servers_to_start {
             let worktree_path = worktree.read(cx).abs_path();
             self.start_language_servers(&worktree, worktree_path, language, cx);
+        }
+
+        // Restart all language servers with changed initialization options.
+        for (worktree, language) in language_servers_to_restart {
+            self.restart_language_servers(worktree, language, cx);
         }
 
         if !self.copilot_enabled && Copilot::global(cx).is_some() {
@@ -3398,6 +3415,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+            cx.emit(Event::RefreshInlays);
             status.pending_work.remove(&token);
             cx.notify();
         }

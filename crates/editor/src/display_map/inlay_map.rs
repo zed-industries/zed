@@ -2,9 +2,9 @@ use crate::{
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
-use collections::{BTreeMap, BTreeSet, HashMap};
+use collections::{BTreeMap, BTreeSet};
 use gpui::fonts::HighlightStyle;
-use language::{Chunk, Edit, Point, Rope, TextSummary};
+use language::{Chunk, Edit, Point, TextSummary};
 use std::{
     any::TypeId,
     cmp,
@@ -13,13 +13,12 @@ use std::{
     vec,
 };
 use sum_tree::{Bias, Cursor, SumTree};
-use text::Patch;
+use text::{Patch, Rope};
 
 use super::TextHighlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
-    inlays_by_id: HashMap<InlayId, Inlay>,
     inlays: Vec<Inlay>,
 }
 
@@ -43,10 +42,29 @@ pub struct Inlay {
     pub text: text::Rope,
 }
 
-#[derive(Debug, Clone)]
-pub struct InlayProperties<T> {
-    pub position: Anchor,
-    pub text: T,
+impl Inlay {
+    pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
+        let mut text = hint.text();
+        if hint.padding_right && !text.ends_with(' ') {
+            text.push(' ');
+        }
+        if hint.padding_left && !text.starts_with(' ') {
+            text.insert(0, ' ');
+        }
+        Self {
+            id: InlayId::Hint(id),
+            position,
+            text: text.into(),
+        }
+    }
+
+    pub fn suggestion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+        Self {
+            id: InlayId::Suggestion(id),
+            position,
+            text: text.into(),
+        }
+    }
 }
 
 impl sum_tree::Item for Transform {
@@ -368,7 +386,6 @@ impl InlayMap {
         (
             Self {
                 snapshot: snapshot.clone(),
-                inlays_by_id: HashMap::default(),
                 inlays: Vec::new(),
             },
             snapshot,
@@ -510,45 +527,40 @@ impl InlayMap {
         }
     }
 
-    pub fn splice<T: Into<Rope>>(
+    pub fn splice(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, InlayProperties<T>)>,
+        to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
-        self.inlays.retain(|inlay| !to_remove.contains(&inlay.id));
-        for inlay_id in to_remove {
-            if let Some(inlay) = self.inlays_by_id.remove(&inlay_id) {
+        self.inlays.retain(|inlay| {
+            let retain = !to_remove.contains(&inlay.id);
+            if !retain {
                 let offset = inlay.position.to_offset(&snapshot.buffer);
                 edits.insert(offset);
             }
-        }
+            retain
+        });
 
-        for (existing_id, properties) in to_insert {
-            let inlay = Inlay {
-                id: existing_id,
-                position: properties.position,
-                text: properties.text.into(),
-            };
-
+        for inlay_to_insert in to_insert {
             // Avoid inserting empty inlays.
-            if inlay.text.is_empty() {
+            if inlay_to_insert.text.is_empty() {
                 continue;
             }
 
-            self.inlays_by_id.insert(inlay.id, inlay.clone());
-            match self
-                .inlays
-                .binary_search_by(|probe| probe.position.cmp(&inlay.position, &snapshot.buffer))
-            {
+            let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
+            match self.inlays.binary_search_by(|probe| {
+                probe
+                    .position
+                    .cmp(&inlay_to_insert.position, &snapshot.buffer)
+            }) {
                 Ok(ix) | Err(ix) => {
-                    self.inlays.insert(ix, inlay.clone());
+                    self.inlays.insert(ix, inlay_to_insert);
                 }
             }
 
-            let offset = inlay.position.to_offset(&snapshot.buffer);
             edits.insert(offset);
         }
 
@@ -606,15 +618,19 @@ impl InlayMap {
                 } else {
                     InlayId::Suggestion(post_inc(next_inlay_id))
                 };
-                to_insert.push((
-                    inlay_id,
-                    InlayProperties {
-                        position: snapshot.buffer.anchor_at(position, bias),
-                        text,
-                    },
-                ));
+                to_insert.push(Inlay {
+                    id: inlay_id,
+                    position: snapshot.buffer.anchor_at(position, bias),
+                    text: text.into(),
+                });
             } else {
-                to_remove.push(*self.inlays_by_id.keys().choose(rng).unwrap());
+                to_remove.push(
+                    self.inlays
+                        .iter()
+                        .choose(rng)
+                        .map(|inlay| inlay.id)
+                        .unwrap(),
+                );
             }
         }
         log::info!("removing inlays: {:?}", to_remove);
@@ -1095,12 +1111,96 @@ mod tests {
     use super::*;
     use crate::{InlayId, MultiBuffer};
     use gpui::AppContext;
+    use project::{InlayHint, InlayHintLabel};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
+
+    #[test]
+    fn test_inlay_properties_label_padding() {
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("a".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: false,
+                    padding_right: false,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text
+            .to_string(),
+            "a",
+            "Should not pad label if not requested"
+        );
+
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("a".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text
+            .to_string(),
+            " a ",
+            "Should pad label for every side requested"
+        );
+
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String(" a ".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: false,
+                    padding_right: false,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text
+            .to_string(),
+            " a ",
+            "Should not change already padded label"
+        );
+
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String(" a ".to_string()),
+                    buffer_id: 0,
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                },
+            )
+            .text
+            .to_string(),
+            " a ",
+            "Should not change already padded label"
+        );
+    }
 
     #[gpui::test]
     fn test_basic_inlays(cx: &mut AppContext) {
@@ -1112,13 +1212,11 @@ mod tests {
 
         let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
-            vec![(
-                InlayId::Hint(post_inc(&mut next_inlay_id)),
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                    text: "|123|",
-                },
-            )],
+            vec![Inlay {
+                id: InlayId::Hint(post_inc(&mut next_inlay_id)),
+                position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                text: "|123|".into(),
+            }],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
         assert_eq!(
@@ -1191,20 +1289,16 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![
-                (
-                    InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    InlayProperties {
-                        position: buffer.read(cx).snapshot(cx).anchor_before(3),
-                        text: "|123|",
-                    },
-                ),
-                (
-                    InlayId::Suggestion(post_inc(&mut next_inlay_id)),
-                    InlayProperties {
-                        position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                        text: "|456|",
-                    },
-                ),
+                Inlay {
+                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
+                    position: buffer.read(cx).snapshot(cx).anchor_before(3),
+                    text: "|123|".into(),
+                },
+                Inlay {
+                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                    text: "|456|".into(),
+                },
             ],
         );
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
@@ -1389,8 +1483,10 @@ mod tests {
         );
 
         // The inlays can be manually removed.
-        let (inlay_snapshot, _) = inlay_map
-            .splice::<String>(inlay_map.inlays_by_id.keys().copied().collect(), Vec::new());
+        let (inlay_snapshot, _) = inlay_map.splice(
+            inlay_map.inlays.iter().map(|inlay| inlay.id).collect(),
+            Vec::new(),
+        );
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
 
@@ -1404,27 +1500,21 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![
-                (
-                    InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    InlayProperties {
-                        position: buffer.read(cx).snapshot(cx).anchor_before(0),
-                        text: "|123|\n",
-                    },
-                ),
-                (
-                    InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    InlayProperties {
-                        position: buffer.read(cx).snapshot(cx).anchor_before(4),
-                        text: "|456|",
-                    },
-                ),
-                (
-                    InlayId::Suggestion(post_inc(&mut next_inlay_id)),
-                    InlayProperties {
-                        position: buffer.read(cx).snapshot(cx).anchor_before(7),
-                        text: "\n|567|\n",
-                    },
-                ),
+                Inlay {
+                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
+                    position: buffer.read(cx).snapshot(cx).anchor_before(0),
+                    text: "|123|\n".into(),
+                },
+                Inlay {
+                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
+                    position: buffer.read(cx).snapshot(cx).anchor_before(4),
+                    text: "|456|".into(),
+                },
+                Inlay {
+                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    position: buffer.read(cx).snapshot(cx).anchor_before(7),
+                    text: "\n|567|\n".into(),
+                },
             ],
         );
         assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");
@@ -1514,7 +1604,7 @@ mod tests {
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text = Rope::from(buffer_snapshot.text().as_str());
+            let mut expected_text = Rope::from(buffer_snapshot.text());
             for (offset, inlay) in inlays.into_iter().rev() {
                 expected_text.replace(offset..offset, &inlay.text.to_string());
             }
