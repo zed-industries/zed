@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use futures::Stream;
 use gpui::executor::Background;
 use live_kit_server::token;
@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{future::Future, mem, sync::Arc};
 
-static SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
+static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
 pub struct TestServer {
     pub url: String,
