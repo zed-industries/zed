@@ -53,7 +53,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                     Direction::Next
                 };
                 search_bar.select_match(direction, cx);
-                search_bar.show_with_options(true, false, options, cx);
+            //    search_bar.show_with_options(true, false, options, cx);
             })
         }
     })
@@ -70,9 +70,14 @@ pub fn move_to_internal(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    let mut options = SearchOptions::CASE_SENSITIVE;
-                    options.set(SearchOptions::WHOLE_WORD, whole_word);
-                    search_bar.select_word_under_cursor(direction, options, cx);
+                    // let mut options = SearchOptions::CASE_SENSITIVE;
+                    // options.set(SearchOptions::WHOLE_WORD, whole_word);
+                    // search_bar.show(false, false, cx);
+                    // let word = search_bar.query_suggestion();
+                    // search_bar.show()
+                    // search_bar.search(word, options)
+
+                    // search_bar.select_word_under_cursor(direction, options, cx);
                 });
             }
         });

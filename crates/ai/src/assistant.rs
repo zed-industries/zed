@@ -298,12 +298,22 @@ impl AssistantPanel {
     }
 
     fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
+        let mut propagate_action = true;
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, true, cx)) {
-                return;
-            }
+            search_bar.update(cx, |search_bar, cx| {
+                if search_bar.show(cx) {
+                    search_bar.search_suggested(cx);
+                    if action.focus {
+                        search_bar.select_query(cx);
+                        cx.focus_self();
+                    }
+                    propagate_action = false
+                }
+            });
         }
-        cx.propagate_action();
+        if propagate_action {
+            cx.propagate_action();
+        }
     }
 
     fn handle_editor_cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {

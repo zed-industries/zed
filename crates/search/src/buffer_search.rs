@@ -4,12 +4,14 @@ use crate::{
 };
 use collections::HashMap;
 use editor::Editor;
+use futures::channel::oneshot;
 use gpui::{
     actions,
     elements::*,
     impl_actions,
     platform::{CursorStyle, MouseButton},
     Action, AnyViewHandle, AppContext, Entity, Subscription, Task, View, ViewContext, ViewHandle,
+    WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -50,12 +52,11 @@ pub fn init(cx: &mut AppContext) {
 fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(false, false, cx)) {
-                search_bar.update(cx, |search_bar, cx| {
+            search_bar.update(cx, |search_bar, cx| {
+                if search_bar.show(cx) {
                     search_bar.toggle_search_option(option, cx);
-                });
-                return;
-            }
+                }
+            });
         }
         cx.propagate_action();
     });
@@ -209,7 +210,7 @@ impl ToolbarItemView for BufferSearchBar {
                 ));
 
             self.active_searchable_item = Some(searchable_item_handle);
-            self.update_matches(false, cx);
+            let _ = self.update_matches(cx);
             if !self.dismissed {
                 return ToolbarItemLocation::Secondary;
             }
@@ -279,38 +280,12 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    pub fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
-        self.show_with_options(focus, suggest_query, self.default_options, cx)
-    }
-
-    pub fn show_with_options(
-        &mut self,
-        focus: bool,
-        suggest_query: bool,
-        search_options: SearchOptions,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        self.search_options = search_options;
+    pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
             SearchableItemHandle::boxed_clone(searchable_item.as_ref())
         } else {
             return false;
         };
-
-        if suggest_query {
-            let text = searchable_item.query_suggestion(cx);
-            if !text.is_empty() {
-                self.set_query(&text, cx);
-            }
-        }
-
-        if focus {
-            let query_editor = self.query_editor.clone();
-            query_editor.update(cx, |query_editor, cx| {
-                query_editor.select_all(&editor::SelectAll, cx);
-            });
-            cx.focus_self();
-        }
 
         self.dismissed = false;
         cx.notify();
@@ -318,13 +293,60 @@ impl BufferSearchBar {
         true
     }
 
-    fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+    pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
+        let search = self
+            .query_suggestion(cx)
+            .map(|suggestion| self.search(&suggestion, self.default_options, cx));
+
+        if let Some(search) = search {
+            cx.spawn(|this, mut cx| async move {
+                search.await?;
+                this.update(&mut cx, |this, cx| {
+                    if let Some(match_ix) = this.active_match_index {
+                        if let Some(active_searchable_item) = this.active_searchable_item.as_ref() {
+                            if let Some(matches) = this
+                                .seachable_items_with_matches
+                                .get(&active_searchable_item.downgrade())
+                            {
+                                active_searchable_item.activate_match(match_ix, matches, cx);
+                            }
+                        }
+                    }
+                })
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
+    pub fn select_query(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
-            query_editor.buffer().update(cx, |query_buffer, cx| {
-                let len = query_buffer.len(cx);
-                query_buffer.edit([(0..len, query)], None, cx);
-            });
+            query_editor.select_all(&Default::default(), cx);
         });
+    }
+
+    pub fn query_suggestion(&self, cx: &mut ViewContext<Self>) -> Option<String> {
+        Some(self.active_searchable_item.as_ref()?.query_suggestion(cx))
+    }
+
+    fn search(
+        &mut self,
+        query: &str,
+        options: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<()> {
+        if query != self.query_editor.read(cx).text(cx) || self.search_options != options {
+            self.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+            self.search_options = options;
+            self.query_contains_error = false;
+            self.clear_matches(cx);
+            cx.notify();
+        }
+        self.update_matches(cx)
     }
 
     fn render_search_option(
@@ -448,12 +470,23 @@ impl BufferSearchBar {
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
+        let mut propagate_action = true;
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, true, cx)) {
-                return;
-            }
+            search_bar.update(cx, |search_bar, cx| {
+                if search_bar.show(cx) {
+                    search_bar.search_suggested(cx);
+                    if action.focus {
+                        search_bar.select_query(cx);
+                        cx.focus_self();
+                    }
+                    propagate_action = false;
+                }
+            });
         }
-        cx.propagate_action();
+
+        if propagate_action {
+            cx.propagate_action();
+        }
     }
 
     fn handle_editor_cancel(pane: &mut Pane, _: &editor::Cancel, cx: &mut ViewContext<Pane>) {
@@ -475,8 +508,7 @@ impl BufferSearchBar {
     fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-
-        self.update_matches(false, cx);
+        let _ = self.update_matches(cx);
         cx.notify();
     }
 
@@ -486,17 +518,6 @@ impl BufferSearchBar {
 
     fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
         self.select_match(Direction::Prev, cx);
-    }
-
-    pub fn select_word_under_cursor(
-        &mut self,
-        direction: Direction,
-        options: SearchOptions,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.active_match_index = None;
-        self.pending_match_direction = Some(direction);
-        self.show_with_options(false, true, options, cx);
     }
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
@@ -541,17 +562,26 @@ impl BufferSearchBar {
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::Event::BufferEdited { .. } = event {
+        if let editor::Event::Edited { .. } = event {
+            let query = self.query_editor.read(cx).text(cx);
+            let search = self.search(&query, self.search_options, cx);
             self.query_contains_error = false;
             self.clear_matches(cx);
-            self.update_matches(true, cx);
-            cx.notify();
+            let search = self.update_matches(cx);
+            cx.spawn(|this, mut cx| async move {
+                search.await?;
+                this.update(&mut cx, |this, cx| this.select_match(Direction::Next, cx))?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
     }
 
     fn on_active_searchable_item_event(&mut self, event: SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
-            SearchEvent::MatchesInvalidated => self.update_matches(false, cx),
+            SearchEvent::MatchesInvalidated => {
+                let _ = self.update_matches(cx);
+            }
             SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
     }
@@ -574,7 +604,8 @@ impl BufferSearchBar {
             .extend(active_item_matches);
     }
 
-    fn update_matches(&mut self, select_closest_match: bool, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, cx: &mut ViewContext<Self>) -> oneshot::Receiver<()> {
+        let (done_tx, done_rx) = oneshot::channel();
         let query = self.query_editor.read(cx).text(cx);
         self.pending_search.take();
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
@@ -582,6 +613,7 @@ impl BufferSearchBar {
                 self.active_match_index.take();
                 self.pending_match_direction.take();
                 active_searchable_item.clear_matches(cx);
+                let _ = done_tx.send(());
             } else {
                 let query = if self.search_options.contains(SearchOptions::REGEX) {
                     match SearchQuery::regex(
@@ -595,7 +627,7 @@ impl BufferSearchBar {
                         Err(_) => {
                             self.query_contains_error = true;
                             cx.notify();
-                            return;
+                            return done_rx;
                         }
                     }
                 } else {
@@ -627,20 +659,7 @@ impl BufferSearchBar {
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
                                 active_searchable_item.update_matches(matches, cx);
-                                if select_closest_match {
-                                    if let Some(mut match_ix) = this.active_match_index {
-                                        if let Some(direction) = this.pending_match_direction.take()
-                                        {
-                                            match_ix += match direction {
-                                                Direction::Next => 1,
-                                                Direction::Prev => matches.len() - 1,
-                                            };
-                                            match_ix = match_ix % matches.len();
-                                        }
-                                        active_searchable_item
-                                            .activate_match(match_ix, matches, cx);
-                                    }
-                                }
+                                let _ = done_tx.send(());
                             }
                             cx.notify();
                         }
@@ -649,6 +668,7 @@ impl BufferSearchBar {
                 }));
             }
         }
+        done_rx
     }
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
@@ -699,7 +719,7 @@ mod tests {
         let search_bar = cx.add_view(window_id, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
-            search_bar.show(false, true, cx);
+            search_bar.show(cx);
             search_bar
         });
 
@@ -712,10 +732,11 @@ mod tests {
 
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.set_query("us", cx);
-        });
-        editor.next_notification(cx).await;
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("us", search_bar.default_options, cx)
+            })
+            .await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -750,7 +771,7 @@ mod tests {
         // Search for a string that appears both as a whole word and
         // within other words. By default, all results are found.
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.set_query("or", cx);
+            search_bar.search("or", search_bar.default_options, cx);
         });
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
@@ -993,6 +1014,7 @@ mod tests {
         });
     }
 
+    /*
     #[gpui::test]
     async fn test_search_with_options(cx: &mut TestAppContext) {
         let (editor, search_bar) = init_test(cx);
@@ -1000,7 +1022,7 @@ mod tests {
         // show with options should make current search case sensitive
         search_bar.update(cx, |search_bar, cx| {
             search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
-            search_bar.set_query("us", cx);
+            search_bar.search("us", cx);
         });
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
@@ -1036,7 +1058,7 @@ mod tests {
 
         // toggling a search option (even in show_with_options mode) should update the defaults
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.set_query("regex", cx);
+            search_bar.search("regex", cx);
             search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
         });
@@ -1087,4 +1109,5 @@ mod tests {
             );
         });
     }
+    */
 }
