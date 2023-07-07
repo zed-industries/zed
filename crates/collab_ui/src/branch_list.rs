@@ -290,6 +290,7 @@ impl PickerDelegate for BranchListDelegate {
                                 this.delegate().display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
                                 status?;
                             }
+                            cx.emit(PickerEvent::Dismiss);
                             Ok::<(), anyhow::Error>(())
                 })
                     }).detach();
