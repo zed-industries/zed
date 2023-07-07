@@ -3566,9 +3566,7 @@ mod test {
         }
 
         pub fn postgres(background: Arc<Background>) -> Self {
-            lazy_static! {
-                static ref LOCK: Mutex<()> = Mutex::new(());
-            }
+            static LOCK: Mutex<()> = Mutex::new(());
 
             let _guard = LOCK.lock();
             let mut rng = StdRng::from_entropy();

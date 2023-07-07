@@ -3,16 +3,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::Stream;
 use gpui::executor::Background;
-use lazy_static::lazy_static;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use postage::watch;
 use std::{future::Future, mem, sync::Arc};
 
-lazy_static! {
-    static ref SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
-}
+static SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
 
 pub struct TestServer {
     pub url: String,
