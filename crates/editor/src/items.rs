@@ -937,7 +937,9 @@ impl SearchableItem for Editor {
     ) {
         self.unfold_ranges([matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| s.select_ranges([range]));
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.select_ranges([range]);
+        })
     }
 
     fn match_index_for_direction(
@@ -945,11 +947,12 @@ impl SearchableItem for Editor {
         matches: &Vec<Range<Anchor>>,
         mut current_index: usize,
         direction: Direction,
+        count: Option<usize>,
         cx: &mut ViewContext<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
-        if matches[current_index].start.cmp(&cursor, &buffer).is_gt() {
+        if count.is_none() && matches[current_index].start.cmp(&cursor, &buffer).is_gt() {
             if direction == Direction::Prev {
                 if current_index == 0 {
                     current_index = matches.len() - 1;
@@ -957,22 +960,19 @@ impl SearchableItem for Editor {
                     current_index -= 1;
                 }
             }
-        } else if matches[current_index].end.cmp(&cursor, &buffer).is_lt() {
+        } else if count.is_none() && matches[current_index].end.cmp(&cursor, &buffer).is_lt() {
             if direction == Direction::Next {
                 current_index = 0;
             }
         } else if direction == Direction::Prev {
-            if current_index == 0 {
-                current_index = matches.len() - 1;
+            let count = count.unwrap_or(1) % matches.len();
+            if current_index >= count {
+                current_index = current_index - count;
             } else {
-                current_index -= 1;
+                current_index = matches.len() - (count - current_index);
             }
         } else if direction == Direction::Next {
-            if current_index == matches.len() - 1 {
-                current_index = 0
-            } else {
-                current_index += 1;
-            }
+            current_index = (current_index + count.unwrap_or(1)) % matches.len()
         };
         current_index
     }

@@ -66,7 +66,6 @@ pub struct BufferSearchBar {
     pub query_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
-    pending_match_direction: Option<Direction>,
     active_searchable_item_subscription: Option<Subscription>,
     seachable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
@@ -254,7 +253,6 @@ impl BufferSearchBar {
             default_options: SearchOptions::NONE,
             search_options: SearchOptions::NONE,
             pending_search: None,
-            pending_match_direction: None,
             query_contains_error: false,
             dismissed: true,
         }
@@ -281,12 +279,9 @@ impl BufferSearchBar {
     }
 
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
-            SearchableItemHandle::boxed_clone(searchable_item.as_ref())
-        } else {
+        if self.active_searchable_item.is_none() {
             return false;
-        };
-
+        }
         self.dismissed = false;
         cx.notify();
         cx.emit(Event::UpdateLocation);
@@ -296,25 +291,27 @@ impl BufferSearchBar {
     pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
         let search = self
             .query_suggestion(cx)
-            .map(|suggestion| self.search(&suggestion, self.default_options, cx));
+            .map(|suggestion| self.search(&suggestion, Some(self.default_options), cx));
 
         if let Some(search) = search {
             cx.spawn(|this, mut cx| async move {
                 search.await?;
-                this.update(&mut cx, |this, cx| {
-                    if let Some(match_ix) = this.active_match_index {
-                        if let Some(active_searchable_item) = this.active_searchable_item.as_ref() {
-                            if let Some(matches) = this
-                                .seachable_items_with_matches
-                                .get(&active_searchable_item.downgrade())
-                            {
-                                active_searchable_item.activate_match(match_ix, matches, cx);
-                            }
-                        }
-                    }
-                })
+                this.update(&mut cx, |this, cx| this.activate_current_match(cx))
             })
             .detach_and_log_err(cx);
+        }
+    }
+
+    pub fn activate_current_match(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(match_ix) = self.active_match_index {
+            if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(matches) = self
+                    .seachable_items_with_matches
+                    .get(&active_searchable_item.downgrade())
+                {
+                    active_searchable_item.activate_match(match_ix, matches, cx)
+                }
+            }
         }
     }
 
@@ -324,16 +321,23 @@ impl BufferSearchBar {
         });
     }
 
-    pub fn query_suggestion(&self, cx: &mut ViewContext<Self>) -> Option<String> {
-        Some(self.active_searchable_item.as_ref()?.query_suggestion(cx))
+    pub fn query(&self, cx: &WindowContext) -> String {
+        self.query_editor.read(cx).text(cx)
     }
 
-    fn search(
+    pub fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
+        self.active_searchable_item
+            .as_ref()
+            .map(|searchable_item| searchable_item.query_suggestion(cx))
+    }
+
+    pub fn search(
         &mut self,
         query: &str,
-        options: SearchOptions,
+        options: Option<SearchOptions>,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<()> {
+        let options = options.unwrap_or(self.default_options);
         if query != self.query_editor.read(cx).text(cx) || self.search_options != options {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
@@ -499,7 +503,7 @@ impl BufferSearchBar {
         cx.propagate_action();
     }
 
-    fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
+    pub fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             cx.focus(active_editor.as_any());
         }
@@ -512,23 +516,37 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn set_search_options(
+        &mut self,
+        search_options: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.search_options = search_options;
+        cx.notify();
+    }
+
     fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
-        self.select_match(Direction::Next, cx);
+        self.select_match(Direction::Next, None, cx);
     }
 
     fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
-        self.select_match(Direction::Prev, cx);
+        self.select_match(Direction::Prev, None, cx);
     }
 
-    pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+    pub fn select_match(
+        &mut self,
+        direction: Direction,
+        count: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
                     .seachable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    let new_match_index =
-                        searchable_item.match_index_for_direction(matches, index, direction, cx);
+                    let new_match_index = searchable_item
+                        .match_index_for_direction(matches, index, direction, count, cx);
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
@@ -563,15 +581,12 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) {
         if let editor::Event::Edited { .. } = event {
-            let query = self.query_editor.read(cx).text(cx);
-            let search = self.search(&query, self.search_options, cx);
             self.query_contains_error = false;
             self.clear_matches(cx);
             let search = self.update_matches(cx);
             cx.spawn(|this, mut cx| async move {
                 search.await?;
-                this.update(&mut cx, |this, cx| this.select_match(Direction::Next, cx))?;
-                anyhow::Ok(())
+                this.update(&mut cx, |this, cx| this.activate_current_match(cx))
             })
             .detach_and_log_err(cx);
         }
@@ -611,7 +626,6 @@ impl BufferSearchBar {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
-                self.pending_match_direction.take();
                 active_searchable_item.clear_matches(cx);
                 let _ = done_tx.send(());
             } else {
@@ -733,10 +747,9 @@ mod tests {
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
         search_bar
-            .update(cx, |search_bar, cx| {
-                search_bar.search("us", search_bar.default_options, cx)
-            })
-            .await;
+            .update(cx, |search_bar, cx| search_bar.search("us", None, cx))
+            .await
+            .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -770,10 +783,10 @@ mod tests {
 
         // Search for a string that appears both as a whole word and
         // within other words. By default, all results are found.
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.search("or", search_bar.default_options, cx);
-        });
-        editor.next_notification(cx).await;
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("or", None, cx))
+            .await
+            .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),

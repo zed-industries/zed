@@ -50,26 +50,21 @@ pub trait SearchableItem: Item {
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Self::Match>,
-        mut current_index: usize,
+        current_index: usize,
         direction: Direction,
+        count: Option<usize>,
         _: &mut ViewContext<Self>,
     ) -> usize {
         match direction {
             Direction::Prev => {
-                if current_index == 0 {
-                    matches.len() - 1
+                let count = count.unwrap_or(1) % matches.len();
+                if current_index >= count {
+                    current_index - count
                 } else {
-                    current_index - 1
+                    matches.len() - (count - current_index)
                 }
             }
-            Direction::Next => {
-                current_index += 1;
-                if current_index == matches.len() {
-                    0
-                } else {
-                    current_index
-                }
-            }
+            Direction::Next => (current_index + count.unwrap_or(1)) % matches.len(),
         }
     }
     fn find_matches(
@@ -107,6 +102,7 @@ pub trait SearchableItemHandle: ItemHandle {
         matches: &Vec<Box<dyn Any + Send>>,
         current_index: usize,
         direction: Direction,
+        count: Option<usize>,
         cx: &mut WindowContext,
     ) -> usize;
     fn find_matches(
@@ -170,11 +166,12 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         matches: &Vec<Box<dyn Any + Send>>,
         current_index: usize,
         direction: Direction,
+        count: Option<usize>,
         cx: &mut WindowContext,
     ) -> usize {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| {
-            this.match_index_for_direction(&matches, current_index, direction, cx)
+            this.match_index_for_direction(&matches, current_index, direction, count, cx)
         })
     }
     fn find_matches(

@@ -357,7 +357,7 @@
   {
     "context": "BufferSearchBar",
     "bindings": {
-      "enter": "buffer_search::FocusEditor",
+      "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
     }
   }

@@ -627,7 +627,7 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, cx)
+                editor.match_index_for_direction(&match_ranges, index, direction, None, cx)
             });
 
             let range_to_select = match_ranges[new_index].clone();

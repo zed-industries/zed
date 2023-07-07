@@ -330,13 +330,13 @@ impl AssistantPanel {
 
     fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, cx));
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, None, cx));
         }
     }
 
     fn select_prev_match(&mut self, _: &search::SelectPrevMatch, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, cx));
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, None, cx));
         }
     }
 

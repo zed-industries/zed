@@ -1,6 +1,7 @@
 use gpui::keymap_matcher::KeymapContext;
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
+use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
@@ -38,6 +39,23 @@ pub enum Operator {
 pub struct VimState {
     pub mode: Mode,
     pub operator_stack: Vec<Operator>,
+    pub search: SearchState,
+}
+
+pub struct SearchState {
+    pub direction: Direction,
+    pub count: usize,
+    pub initial_query: String,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            direction: Direction::Next,
+            count: 1,
+            initial_query: "".to_string(),
+        }
+    }
 }
 
 impl VimState {
