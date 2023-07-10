@@ -1,105 +1,64 @@
 (comment) @comment
+(single_line_comment) @comment
 
-; Tag and attribute selectors
-[
-  (tag_name)
-  (attribute_name)
-  (property_name)
-  (property_identifier)
-  (at_keyword)
-] @tag
+(tag_name) @tag
+(nesting_selector) @tag
+(universal_selector) @tag
 
-; Operators
-(operator) @operator
-[
-  "~"
-  ">"
-  "+"
-  "-"
-  "*"
-  "/"
-  "="
-  "^="
-  "!="
-  "<="
-  ">="
-  "and"
-  "or"
-  "not"
-] @operator
+"~" @operator
+">" @operator
+"+" @operator
+"-" @operator
+"*" @operator
+"/" @operator
+"=" @operator
+"^=" @operator
+"|=" @operator
+"~=" @operator
+"$=" @operator
+"*=" @operator
 
-; Selectors
-[
-  (class_name)
-  (id_name)
-  (pseudo_element_selector (identifier))
-  (pseudo_class_selector (identifier))
-] @class
+"and" @operator
+"or" @operator
+"not" @operator
+"only" @operator
 
-; Variables
-[
-  (variable_name)
-  (nesting_selector)
-] @variable
+(attribute_selector (plain_value) @string)
+(pseudo_element_selector (tag_name) @attribute)
+(pseudo_class_selector (class_name) @attribute)
 
-; Functions and mixins
-[
-  (function_name)
-  (mixin_name)
-] @function
+(class_name) @property
+(id_name) @property
+(namespace_name) @property
+(property_name) @property
+(feature_name) @property
 
-; Special identifiers
-[
-  (feature_name)
-  (if)
-  (else)
-  (for)
-  (each)
-  (warn)
-  (error)
-  (debug)
-  (at_root)
-  (extend)
-  (return)
-] @keyword
+(attribute_name) @attribute
 
-; Values
-[
-  (color_value) @color
-  (string_value) @string
-  (number_value) @number
-  (percentage_value) @number
-  (boolean_value) @boolean
-]
+(function_name) @function
 
-[
-  "@media"
-  "@import"
-  "@charset"
-  "@namespace"
-  "@supports"
-  "@keyframes"
-  "@apply"
-  "@layer"
-  (at_keyword)
-  (to)
-  (from)
-  (important)
-]  @keyword
+((property_name) @variable
+ (match? @variable "^--"))
+((plain_value) @variable
+ (match? @variable "^--"))
 
-; Punctuation
-[
-  ","
-  ":"
-  "("
-  ")"
-  "["
-  "]"
-  "{"
-  "}"
-] @punctuation
+"@media" @keyword
+"@import" @keyword
+"@charset" @keyword
+"@namespace" @keyword
+"@supports" @keyword
+"@keyframes" @keyword
+(at_keyword) @keyword
+(to) @keyword
+(from) @keyword
+(important) @keyword
 
-[
-  ","
-  ":"
-] @punctuation.delimiter
+(string_value) @string
+(color_value) @string.special
+
+(integer_value) @number
+(float_value) @number
+(unit) @type
+
+"#" @punctuation.delimiter
+"," @punctuation.delimiter
