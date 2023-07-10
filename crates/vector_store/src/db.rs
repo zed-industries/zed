@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
@@ -14,16 +15,6 @@ use rusqlite::{
     types::{FromSql, FromSqlResult, ValueRef},
 };
 
-// Note this is not an appropriate document
-#[derive(Debug)]
-pub struct DocumentRecord {
-    pub id: usize,
-    pub file_id: usize,
-    pub offset: usize,
-    pub name: String,
-    pub embedding: Embedding,
-}
-
 #[derive(Debug)]
 pub struct FileRecord {
     pub id: usize,
@@ -32,7 +23,7 @@ pub struct FileRecord {
 }
 
 #[derive(Debug)]
-pub struct Embedding(pub Vec<f32>);
+struct Embedding(pub Vec<f32>);
 
 impl FromSql for Embedding {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
@@ -205,10 +196,35 @@ impl VectorDatabase {
         Ok(result)
     }
 
-    pub fn for_each_document(
+    pub fn top_k_search(
         &self,
         worktree_ids: &[i64],
-        mut f: impl FnMut(i64, Embedding),
+        query_embedding: &Vec<f32>,
+        limit: usize,
+    ) -> Result<Vec<(i64, PathBuf, usize, String)>> {
+        let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
+        self.for_each_document(&worktree_ids, |id, embedding| {
+            eprintln!("document {id} {embedding:?}");
+
+            let similarity = dot(&embedding, &query_embedding);
+            let ix = match results
+                .binary_search_by(|(_, s)| similarity.partial_cmp(&s).unwrap_or(Ordering::Equal))
+            {
+                Ok(ix) => ix,
+                Err(ix) => ix,
+            };
+            results.insert(ix, (id, similarity));
+            results.truncate(limit);
+        })?;
+
+        let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        self.get_documents_by_ids(&ids)
+    }
+
+    fn for_each_document(
+        &self,
+        worktree_ids: &[i64],
+        mut f: impl FnMut(i64, Vec<f32>),
     ) -> Result<()> {
         let mut query_statement = self.db.prepare(
             "
@@ -221,16 +237,20 @@ impl VectorDatabase {
                 files.worktree_id IN rarray(?)
             ",
         )?;
+
         query_statement
             .query_map(params![ids_to_sql(worktree_ids)], |row| {
-                Ok((row.get(0)?, row.get(1)?))
+                Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
             })?
             .filter_map(|row| row.ok())
-            .for_each(|row| f(row.0, row.1));
+            .for_each(|(id, embedding)| {
+                dbg!("id");
+                f(id, embedding.0)
+            });
         Ok(())
     }
 
-    pub fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, usize, String)>> {
+    fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, usize, String)>> {
         let mut statement = self.db.prepare(
             "
                 SELECT
@@ -278,4 +298,30 @@ fn ids_to_sql(ids: &[i64]) -> Rc<Vec<rusqlite::types::Value>> {
             .map(|v| rusqlite::types::Value::from(v))
             .collect::<Vec<_>>(),
     )
+}
+
+pub(crate) fn dot(vec_a: &[f32], vec_b: &[f32]) -> f32 {
+    let len = vec_a.len();
+    assert_eq!(len, vec_b.len());
+
+    let mut result = 0.0;
+    unsafe {
+        matrixmultiply::sgemm(
+            1,
+            len,
+            1,
+            1.0,
+            vec_a.as_ptr(),
+            len as isize,
+            1,
+            vec_b.as_ptr(),
+            1,
+            len as isize,
+            0.0,
+            &mut result as *mut f32,
+            1,
+            1,
+        );
+    }
+    result
 }
