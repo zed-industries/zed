@@ -242,7 +242,7 @@ impl CollabTitlebarItem {
                             .with_tooltip::<RecentProjectsTooltip>(
                                 0,
                                 "Recent projects".into(),
-                                None,
+                                Some(Box::new(recent_projects::OpenRecent)),
                                 theme.tooltip.clone(),
                                 cx,
                             )
