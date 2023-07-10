@@ -102,6 +102,9 @@ impl View for CopilotButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
+                .on_down(MouseButton::Left, |_, this, cx| {
+                    this.popup_menu.update(cx, |menu, _| menu.delay_cancel());
+                })
                 .on_click(MouseButton::Left, {
                     let status = status.clone();
                     move |_, this, cx| match status {
@@ -186,7 +189,7 @@ impl CopilotButton {
         }));
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(
+            menu.toggle(
                 Default::default(),
                 AnchorCorner::BottomRight,
                 menu_options,
@@ -266,7 +269,7 @@ impl CopilotButton {
         menu_options.push(ContextMenuItem::action("Sign Out", SignOut));
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(
+            menu.toggle(
                 Default::default(),
                 AnchorCorner::BottomRight,
                 menu_options,

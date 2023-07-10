@@ -20,7 +20,6 @@ use language::{
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use text::Rope;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -28,7 +27,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::inlay_map::{Inlay, InlayProperties};
+pub use self::inlay_map::Inlay;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -246,10 +245,10 @@ impl DisplayMap {
         self.inlay_map.current_inlays()
     }
 
-    pub fn splice_inlays<T: Into<Rope>>(
+    pub fn splice_inlays(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, InlayProperties<T>)>,
+        to_insert: Vec<Inlay>,
         cx: &mut ModelContext<Self>,
     ) {
         if to_remove.is_empty() && to_insert.is_empty() {

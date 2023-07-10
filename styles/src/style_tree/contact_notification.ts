@@ -1,8 +1,10 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, foreground, text } from "./components"
 import { interactive } from "../element"
+import { useTheme } from "../theme"
 
-export default function contact_notification(theme: ColorScheme): any {
+export default function contact_notification(): any {
+    const theme = useTheme()
+
     const avatar_size = 12
     const header_padding = 8
 

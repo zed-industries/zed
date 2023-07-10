@@ -1,8 +1,10 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { background, border, border_color, text } from "./components"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../theme"
 
-export default function context_menu(theme: ColorScheme): any {
+export default function context_menu(): any {
+    const theme = useTheme()
+
     return {
         background: background(theme.middle),
         corner_radius: 10,

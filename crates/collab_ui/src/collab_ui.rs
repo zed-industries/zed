@@ -1,3 +1,4 @@
+mod branch_list;
 mod collab_titlebar_item;
 mod contact_finder;
 mod contact_list;
@@ -28,6 +29,7 @@ actions!(
 );
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+    branch_list::init(cx);
     collab_titlebar_item::init(cx);
     contact_list::init(cx);
     contact_finder::init(cx);

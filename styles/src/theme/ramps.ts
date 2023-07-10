@@ -1,5 +1,5 @@
 import chroma, { Color, Scale } from "chroma-js"
-import { RampSet } from "./color_scheme"
+import { RampSet } from "./create_theme"
 import {
     ThemeConfigInputColors,
     ThemeConfigInputColorsKeys,

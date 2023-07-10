@@ -35,7 +35,7 @@ Match a property identifier and highlight it using the identifier `@property`. I
 ```
 
 ```ts
-function buildDefaultSyntax(colorScheme: ColorScheme): Partial<Syntax> {
+function buildDefaultSyntax(colorScheme: Theme): Partial<Syntax> {
     // ...
 }
 ```

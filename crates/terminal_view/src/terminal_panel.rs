@@ -87,6 +87,7 @@ impl TerminalPanel {
                                 }
                             })
                         },
+                        |_, _| {},
                         None,
                     ))
                     .with_child(Pane::render_tab_bar_button(
@@ -100,6 +101,7 @@ impl TerminalPanel {
                         Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                        |_, _| {},
                         None,
                     ))
                     .into_any()

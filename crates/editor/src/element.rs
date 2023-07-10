@@ -1008,6 +1008,7 @@ impl EditorElement {
         bounds: RectF,
         layout: &mut LayoutState,
         cx: &mut ViewContext<Editor>,
+        editor: &Editor,
     ) {
         enum ScrollbarMouseHandlers {}
         if layout.mode != EditorMode::Full {
@@ -1050,9 +1051,74 @@ impl EditorElement {
                 background: style.track.background_color,
                 ..Default::default()
             });
+            let scrollbar_settings = settings::get::<EditorSettings>(cx).scrollbar;
+            let theme = theme::current(cx);
+            let scrollbar_theme = &theme.editor.scrollbar;
+            if layout.is_singleton && scrollbar_settings.selections {
+                let start_anchor = Anchor::min();
+                let end_anchor = Anchor::max();
+                let mut start_row = None;
+                let mut end_row = None;
+                let color = scrollbar_theme.selections;
+                let border = Border {
+                    width: 1.,
+                    color: style.thumb.border.color,
+                    overlay: false,
+                    top: false,
+                    right: true,
+                    bottom: false,
+                    left: true,
+                };
+                let mut push_region = |start, end| {
+                    if let (Some(start_display), Some(end_display)) = (start, end) {
+                        let start_y = y_for_row(start_display as f32);
+                        let mut end_y = y_for_row(end_display as f32);
+                        if end_y - start_y < 1. {
+                            end_y = start_y + 1.;
+                        }
+                        let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
 
-            if layout.is_singleton && settings::get::<EditorSettings>(cx).scrollbar.git_diff {
-                let diff_style = theme::current(cx).editor.scrollbar.git.clone();
+                        scene.push_quad(Quad {
+                            bounds,
+                            background: Some(color),
+                            border,
+                            corner_radius: style.thumb.corner_radius,
+                        })
+                    }
+                };
+                for (row, _) in &editor.background_highlights_in_range(
+                    start_anchor..end_anchor,
+                    &layout.position_map.snapshot,
+                    &theme,
+                ) {
+                    let start_display = row.start;
+                    let end_display = row.end;
+
+                    if start_row.is_none() {
+                        assert_eq!(end_row, None);
+                        start_row = Some(start_display.row());
+                        end_row = Some(end_display.row());
+                        continue;
+                    }
+                    if let Some(current_end) = end_row.as_mut() {
+                        if start_display.row() > *current_end + 1 {
+                            push_region(start_row, end_row);
+                            start_row = Some(start_display.row());
+                            end_row = Some(end_display.row());
+                        } else {
+                            // Merge two hunks.
+                            *current_end = end_display.row();
+                        }
+                    } else {
+                        unreachable!();
+                    }
+                }
+                // We might still have a hunk that was not rendered (if there was a search hit on the last line)
+                push_region(start_row, end_row);
+            }
+
+            if layout.is_singleton && scrollbar_settings.git_diff {
+                let diff_style = scrollbar_theme.git.clone();
                 for hunk in layout
                     .position_map
                     .snapshot
@@ -2368,7 +2434,7 @@ impl Element<Editor> for EditorElement {
         if !layout.blocks.is_empty() {
             self.paint_blocks(scene, bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_scrollbar(scene, bounds, layout, cx);
+        self.paint_scrollbar(scene, bounds, layout, cx, &editor);
         scene.pop_layer();
 
         scene.pop_layer();

@@ -4,7 +4,6 @@ mod syntax_map_tests;
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
 use collections::HashMap;
 use futures::FutureExt;
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::{
     borrow::Cow,
@@ -25,9 +24,7 @@ thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
 }
 
-lazy_static! {
-    static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
-}
+static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 
 #[derive(Default)]
 pub struct SyntaxMap {

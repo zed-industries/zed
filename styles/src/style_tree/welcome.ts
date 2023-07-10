@@ -1,4 +1,3 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import {
     border,
@@ -9,8 +8,11 @@ import {
     svg,
 } from "./components"
 import { interactive } from "../element"
+import { useTheme } from "../theme"
 
-export default function welcome(theme: ColorScheme): any {
+export default function welcome(): any {
+    const theme = useTheme()
+
     const checkbox_base = {
         corner_radius: 4,
         padding: {

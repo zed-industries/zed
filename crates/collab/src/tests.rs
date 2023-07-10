@@ -203,6 +203,7 @@ impl TestServer {
             language::init(cx);
             editor::init_settings(cx);
             workspace::init(app_state.clone(), cx);
+            audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
         });
 

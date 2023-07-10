@@ -1,9 +1,11 @@
-import { ColorScheme } from "../theme/color_scheme"
 import { with_opacity } from "../theme/color"
 import { text, background } from "./components"
 import { toggleable } from "../element"
+import { useTheme } from "../theme"
 
-export default function command_palette(theme: ColorScheme): any {
+export default function command_palette(): any {
+    const theme = useTheme()
+
     const key = toggleable({
         base: {
             text: text(theme.highest, "mono", "variant", "default", {

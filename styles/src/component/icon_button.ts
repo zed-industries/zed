@@ -1,6 +1,6 @@
 import { interactive, toggleable } from "../element"
 import { background, foreground } from "../style_tree/components"
-import { ColorScheme } from "../theme/color_scheme"
+import { useTheme, Theme } from "../theme"
 
 export type Margin = {
     top: number
@@ -11,21 +11,20 @@ export type Margin = {
 
 interface IconButtonOptions {
     layer?:
-        | ColorScheme["lowest"]
-        | ColorScheme["middle"]
-        | ColorScheme["highest"]
-    color?: keyof ColorScheme["lowest"]
+    | Theme["lowest"]
+    | Theme["middle"]
+    | Theme["highest"]
+    color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
 }
 
 type ToggleableIconButtonOptions = IconButtonOptions & {
-    active_color?: keyof ColorScheme["lowest"]
+    active_color?: keyof Theme["lowest"]
 }
 
-export function icon_button(
-    theme: ColorScheme,
-    { color, margin, layer }: IconButtonOptions
-) {
+export function icon_button({ color, margin, layer }: IconButtonOptions) {
+    const theme = useTheme()
+
     if (!color) color = "base"
 
     const m = {
@@ -68,15 +67,15 @@ export function icon_button(
 }
 
 export function toggleable_icon_button(
-    theme: ColorScheme,
+    theme: Theme,
     { color, active_color, margin }: ToggleableIconButtonOptions
 ) {
     if (!color) color = "base"
 
     return toggleable({
         state: {
-            inactive: icon_button(theme, { color, margin }),
-            active: icon_button(theme, {
+            inactive: icon_button({ color, margin }),
+            active: icon_button({
                 color: active_color ? active_color : color,
                 margin,
                 layer: theme.middle,

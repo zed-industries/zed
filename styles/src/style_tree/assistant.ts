@@ -1,11 +1,7 @@
-import { ColorScheme, StyleSets } from "../theme/color_scheme"
 import { text, border, background, foreground, TextStyle } from "./components"
 import { Interactive, interactive } from "../element"
 import { tab_bar_button } from "../component/tab_bar_button"
-
-interface ToolbarButtonOptions {
-    icon: string
-}
+import { StyleSets, useTheme } from "../theme"
 
 type RoleCycleButton = TextStyle & {
     background?: string
@@ -23,7 +19,8 @@ type RemainingTokens = TextStyle & {
     corner_radius: number,
 }
 
-export default function assistant(theme: ColorScheme): any {
+export default function assistant(): any {
+    const theme = useTheme()
 
     const interactive_role = (color: StyleSets): Interactive<RoleCycleButton> => {
         return (

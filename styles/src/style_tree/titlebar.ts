@@ -1,7 +1,7 @@
-import { ColorScheme } from "../common"
 import { icon_button, toggleable_icon_button } from "../component/icon_button"
 import { toggleable_text_button } from "../component/text_button"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../theme"
 import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 
@@ -22,7 +22,9 @@ function build_spacing(
     }
 }
 
-function call_controls(theme: ColorScheme) {
+function call_controls() {
+    const theme = useTheme()
+
     const button_height = 18
 
     const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING)
@@ -69,7 +71,9 @@ function call_controls(theme: ColorScheme) {
  * When logged in shows the user's avatar and a chevron,
  * When logged out only shows a chevron.
  */
-function user_menu(theme: ColorScheme) {
+function user_menu() {
+    const theme = useTheme()
+
     const button_height = 18
 
     const space = build_spacing(TITLEBAR_HEIGHT, button_height, ITEM_SPACING)
@@ -155,7 +159,9 @@ function user_menu(theme: ColorScheme) {
     }
 }
 
-export function titlebar(theme: ColorScheme): any {
+export function titlebar(): any {
+    const theme = useTheme()
+
     const avatar_width = 15
     const avatar_outer_width = avatar_width + 4
     const follower_avatar_width = 14
@@ -173,8 +179,14 @@ export function titlebar(theme: ColorScheme): any {
         },
 
         // Project
-        title: text(theme.lowest, "sans", "variant"),
-        highlight_color: text(theme.lowest, "sans", "active").color,
+        project_name_divider: text(theme.lowest, "sans", "variant"),
+
+        project_menu_button: toggleable_text_button(theme, {
+            color: 'base',
+        }),
+        git_menu_button: toggleable_text_button(theme, {
+            color: 'variant',
+        }),
 
         // Collaborators
         leader_avatar: {
@@ -237,14 +249,14 @@ export function titlebar(theme: ColorScheme): any {
             corner_radius: 6,
         },
 
-        leave_call_button: icon_button(theme, {
+        leave_call_button: icon_button({
             margin: {
                 left: ITEM_SPACING / 2,
                 right: ITEM_SPACING,
             },
         }),
 
-        ...call_controls(theme),
+        ...call_controls(),
 
         toggle_contacts_button: toggleable_icon_button(theme, {
             margin: {
@@ -261,6 +273,6 @@ export function titlebar(theme: ColorScheme): any {
             background: foreground(theme.lowest, "accent"),
         },
         share_button: toggleable_text_button(theme, {}),
-        user_menu: user_menu(theme),
+        user_menu: user_menu(),
     }
 }

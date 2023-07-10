@@ -1,5 +1,5 @@
 import { with_opacity } from "../theme/color"
-import { ColorScheme, Layer, StyleSets } from "../theme/color_scheme"
+import { Layer, StyleSets } from "../theme/create_theme"
 import {
     background,
     border,
@@ -11,8 +11,11 @@ import hover_popover from "./hover_popover"
 
 import { build_syntax } from "../theme/syntax"
 import { interactive, toggleable } from "../element"
+import { useTheme } from "../theme"
 
-export default function editor(theme: ColorScheme): any {
+export default function editor(): any {
+    const theme = useTheme()
+
     const { is_light } = theme
 
     const layer = theme.highest
@@ -45,7 +48,7 @@ export default function editor(theme: ColorScheme): any {
         }
     }
 
-    const syntax = build_syntax(theme)
+    const syntax = build_syntax()
 
     return {
         text_color: syntax.primary.color,
@@ -248,7 +251,7 @@ export default function editor(theme: ColorScheme): any {
         invalid_hint_diagnostic: diagnostic(theme.middle, "base"),
         invalid_information_diagnostic: diagnostic(theme.middle, "base"),
         invalid_warning_diagnostic: diagnostic(theme.middle, "base"),
-        hover_popover: hover_popover(theme),
+        hover_popover: hover_popover(),
         link_definition: {
             color: syntax.link_uri.color,
             underline: syntax.link_uri.underline,
@@ -301,6 +304,7 @@ export default function editor(theme: ColorScheme): any {
                     ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
                     : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
+            selections: foreground(layer, "accent")
         },
         composition_mark: {
             underline: {
