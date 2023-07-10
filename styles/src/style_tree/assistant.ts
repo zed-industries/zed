@@ -47,7 +47,7 @@ export default function assistant(): any {
             {
                 ...text(theme.highest, "mono", color, { size: "xs" }),
                 background: background(theme.highest, "on", "default"),
-                margin: { top: 12, right: 8 },
+                margin: { top: 12, right: 20 },
                 padding: { right: 4, left: 4, top: 1, bottom: 1 },
                 corner_radius: 6,
             }
