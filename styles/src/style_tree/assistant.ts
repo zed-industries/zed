@@ -80,10 +80,10 @@ export default function assistant(theme: ColorScheme): any {
             icon: "icons/radix/magic-wand.svg",
         }),
         zoom_in_button: tab_bar_button(theme, {
-            icon: "icons/radix/enter-full-screen.svg",
+            icon: "icons/radix/maximize.svg",
         }),
         zoom_out_button: tab_bar_button(theme, {
-            icon: "icons/radix/exit-full-screen.svg",
+            icon: "icons/radix/minimize.svg",
         }),
         plus_button: tab_bar_button(theme, {
             icon: "icons/radix/plus.svg",
