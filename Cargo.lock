@@ -8053,6 +8053,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-scss"
+version = "0.0.1"
+source = "git+https://github.com/serenadeai/tree-sitter-scss.git?rev=c478c6868648eff49eb04a4df90d703dc45b312a#c478c6868648eff49eb04a4df90d703dc45b312a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-toml"
 version = "0.5.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
@@ -9437,6 +9446,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
+ "tree-sitter-scss",
  "tree-sitter-toml",
  "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
  "tree-sitter-yaml",

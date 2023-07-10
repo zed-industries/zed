@@ -1,0 +1,11 @@
+name = "SCSS"
+path_suffixes = ["scss"]
+autoclose_before = ";:.,=}])>"
+line_comment = "// "
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]

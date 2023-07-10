@@ -106,6 +106,7 @@ tree-sitter.workspace = true
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = "0.20.0"
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
+tree-sitter-scss = { git = "https://github.com/serenadeai/tree-sitter-scss.git", rev = "c478c6868648eff49eb04a4df90d703dc45b312a" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "4ba9dab6e2602960d95b2b625f3386c27e08084e" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }

@@ -49,6 +49,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![Arc::new(c::CLspAdapter)],
     );
     language("css", tree_sitter_css::language(), vec![]);
+    language("scss", tree_sitter_scss::language(), vec![]);
     language(
         "elixir",
         tree_sitter_elixir::language(),
