@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 
-use crate::IndexedFile;
+use crate::parsing::ParsedFile;
 use rpc::proto::Timestamp;
 use rusqlite::{
     params,
@@ -109,7 +109,7 @@ impl VectorDatabase {
         Ok(())
     }
 
-    pub fn insert_file(&self, worktree_id: i64, indexed_file: IndexedFile) -> Result<()> {
+    pub fn insert_file(&self, worktree_id: i64, indexed_file: ParsedFile) -> Result<()> {
         // Write to files table, and return generated id.
         self.db.execute(
             "

@@ -1,6 +1,7 @@
 mod db;
 mod embedding;
 mod modal;
+mod parsing;
 
 #[cfg(test)]
 mod vector_store_tests;
@@ -15,6 +16,7 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
+use parsing::{CodeContextRetriever, ParsedFile};
 use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
@@ -37,13 +39,6 @@ use workspace::{Workspace, WorkspaceCreated};
 
 const REINDEXING_DELAY_SECONDS: u64 = 3;
 const EMBEDDINGS_BATCH_SIZE: usize = 150;
-
-#[derive(Debug, Clone)]
-pub struct Document {
-    pub offset: usize,
-    pub name: String,
-    pub embedding: Vec<f32>,
-}
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -113,13 +108,6 @@ pub fn init(
     .detach();
 }
 
-#[derive(Debug, Clone)]
-pub struct IndexedFile {
-    path: PathBuf,
-    mtime: SystemTime,
-    documents: Vec<Document>,
-}
-
 pub struct VectorStore {
     fs: Arc<dyn Fs>,
     database_url: Arc<PathBuf>,
@@ -182,7 +170,7 @@ impl ProjectState {
 }
 
 #[derive(Clone, Debug)]
-struct PendingFile {
+pub struct PendingFile {
     worktree_db_id: i64,
     relative_path: PathBuf,
     absolute_path: PathBuf,
@@ -201,7 +189,7 @@ pub struct SearchResult {
 enum DbWrite {
     InsertFile {
         worktree_id: i64,
-        indexed_file: IndexedFile,
+        indexed_file: ParsedFile,
     },
     Delete {
         worktree_id: i64,
@@ -267,7 +255,7 @@ impl VectorStore {
 
             // embed_tx/rx: Embed Batch and Send to Database
             let (embed_batch_tx, embed_batch_rx) =
-                channel::unbounded::<Vec<(i64, IndexedFile, Vec<String>)>>();
+                channel::unbounded::<Vec<(i64, ParsedFile, Vec<String>)>>();
             let mut _embed_batch_task = Vec::new();
             for _ in 0..1 {
                 //cx.background().num_cpus() {
@@ -324,13 +312,14 @@ impl VectorStore {
 
             // batch_tx/rx: Batch Files to Send for Embeddings
             let (batch_files_tx, batch_files_rx) =
-                channel::unbounded::<(i64, IndexedFile, Vec<String>)>();
+                channel::unbounded::<(i64, ParsedFile, Vec<String>)>();
             let _batch_files_task = cx.background().spawn(async move {
                 let mut queue_len = 0;
                 let mut embeddings_queue = vec![];
                 while let Ok((worktree_id, indexed_file, document_spans)) =
                     batch_files_rx.recv().await
                 {
+                    dbg!("Batching in while loop");
                     queue_len += &document_spans.len();
                     embeddings_queue.push((worktree_id, indexed_file, document_spans));
                     if queue_len >= EMBEDDINGS_BATCH_SIZE {
@@ -339,6 +328,7 @@ impl VectorStore {
                         queue_len = 0;
                     }
                 }
+                // TODO: This is never getting called, We've gotta manage for how to clear the embedding batch if its less than the necessary batch size.
                 if queue_len > 0 {
                     embed_batch_tx.try_send(embeddings_queue).unwrap();
                 }
@@ -353,21 +343,14 @@ impl VectorStore {
                 let parsing_files_rx = parsing_files_rx.clone();
                 let batch_files_tx = batch_files_tx.clone();
                 _parsing_files_tasks.push(cx.background().spawn(async move {
-                    let mut parser = Parser::new();
-                    let mut cursor = QueryCursor::new();
+                    let parser = Parser::new();
+                    let cursor = QueryCursor::new();
+                    let mut retriever = CodeContextRetriever { parser, cursor, fs };
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
                         log::info!("Parsing File: {:?}", &pending_file.relative_path);
-                        if let Some((indexed_file, document_spans)) = Self::index_file(
-                            &mut cursor,
-                            &mut parser,
-                            &fs,
-                            pending_file.language,
-                            pending_file.relative_path.clone(),
-                            pending_file.absolute_path.clone(),
-                            pending_file.modified_time,
-                        )
-                        .await
-                        .log_err()
+
+                        if let Some((indexed_file, document_spans)) =
+                            retriever.parse_file(pending_file.clone()).await.log_err()
                         {
                             batch_files_tx
                                 .try_send((
@@ -395,82 +378,6 @@ impl VectorStore {
                 projects: HashMap::new(),
             }
         }))
-    }
-
-    async fn index_file(
-        cursor: &mut QueryCursor,
-        parser: &mut Parser,
-        fs: &Arc<dyn Fs>,
-        language: Arc<Language>,
-        relative_file_path: PathBuf,
-        absolute_file_path: PathBuf,
-        mtime: SystemTime,
-    ) -> Result<(IndexedFile, Vec<String>)> {
-        let grammar = language.grammar().ok_or_else(|| anyhow!("no grammar"))?;
-        let embedding_config = grammar
-            .embedding_config
-            .as_ref()
-            .ok_or_else(|| anyhow!("no outline query"))?;
-
-        let content = fs.load(&absolute_file_path).await?;
-
-        parser.set_language(grammar.ts_language).unwrap();
-        let tree = parser
-            .parse(&content, None)
-            .ok_or_else(|| anyhow!("parsing failed"))?;
-
-        let mut documents = Vec::new();
-        let mut context_spans = Vec::new();
-        for mat in cursor.matches(
-            &embedding_config.query,
-            tree.root_node(),
-            content.as_bytes(),
-        ) {
-            let mut item_range = None;
-            let mut name_range = None;
-            let mut context_range = None;
-            for capture in mat.captures {
-                if capture.index == embedding_config.item_capture_ix {
-                    item_range = Some(capture.node.byte_range());
-                } else if capture.index == embedding_config.name_capture_ix {
-                    name_range = Some(capture.node.byte_range());
-                }
-                if let Some(context_capture_ix) = embedding_config.context_capture_ix {
-                    if capture.index == context_capture_ix {
-                        context_range = Some(capture.node.byte_range());
-                    }
-                }
-            }
-
-            if let Some((item_range, name_range)) = item_range.zip(name_range) {
-                let mut context_data = String::new();
-                if let Some(context_range) = context_range {
-                    if let Some(context) = content.get(context_range.clone()) {
-                        context_data.push_str(context);
-                    }
-                }
-
-                if let Some((item, name)) =
-                    content.get(item_range.clone()).zip(content.get(name_range))
-                {
-                    context_spans.push(item.to_string());
-                    documents.push(Document {
-                        name: format!("{} {}", context_data.to_string(), name.to_string()),
-                        offset: item_range.start,
-                        embedding: Vec::new(),
-                    });
-                }
-            }
-        }
-
-        return Ok((
-            IndexedFile {
-                path: relative_file_path,
-                mtime,
-                documents,
-            },
-            context_spans,
-        ));
     }
 
     fn find_or_create_worktree(&self, path: PathBuf) -> impl Future<Output = Result<i64>> {
