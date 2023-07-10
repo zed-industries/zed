@@ -1,4 +1,4 @@
-import { Scale, Color } from "chroma-js"
+import chroma, { Scale, Color } from "chroma-js"
 import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
 export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 import {
@@ -32,6 +32,7 @@ export interface Theme {
 
     players: Players
     syntax?: Partial<ThemeSyntax>
+    color_family: ColorFamily
 }
 
 export interface Meta {
@@ -68,6 +69,12 @@ export interface Players {
     "6": Player
     "7": Player
 }
+
+export interface ColorFamily {
+    range: ColorFamilyRange
+}
+
+export type ColorFamilyRange = Partial<{ [K in keyof RampSet]: number }>
 
 export interface Shadow {
     blur: number
@@ -162,6 +169,10 @@ export function create_theme(theme: ThemeConfig): Theme {
         "7": player(ramps.yellow),
     }
 
+    const color_family = {
+        range: build_color_family(ramps)
+    }
+
     return {
         name,
         is_light,
@@ -177,6 +188,7 @@ export function create_theme(theme: ThemeConfig): Theme {
 
         players,
         syntax,
+        color_family,
     }
 }
 
@@ -185,6 +197,16 @@ function player(ramp: Scale): Player {
         selection: ramp(0.5).alpha(0.24).hex(),
         cursor: ramp(0.5).hex(),
     }
+}
+
+function build_color_family(ramps: RampSet): ColorFamilyRange {
+    const color_family: ColorFamilyRange = {}
+
+    for (const ramp in ramps) {
+        color_family[ramp as keyof RampSet] = chroma(ramps[ramp as keyof RampSet](0.5)).luminance()
+    }
+
+    return color_family
 }
 
 function lowest_layer(ramps: RampSet): Layer {
