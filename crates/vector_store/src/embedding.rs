@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
+use gpui::executor::Background;
 use gpui::serde_json;
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
@@ -21,6 +22,7 @@ lazy_static! {
 #[derive(Clone)]
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
+    pub executor: Arc<Background>,
 }
 
 #[derive(Serialize)]
@@ -128,7 +130,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             match response.status() {
                 StatusCode::TOO_MANY_REQUESTS => {
                     let delay = Duration::from_secs(BACKOFF_SECONDS[request_number - 1] as u64);
-                    std::thread::sleep(delay);
+                    self.executor.timer(delay).await;
                 }
                 StatusCode::BAD_REQUEST => {
                     log::info!("BAD REQUEST: {:?}", &response.status());
