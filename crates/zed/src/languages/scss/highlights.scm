@@ -42,12 +42,43 @@
 ((plain_value) @variable
  (match? @variable "^--"))
 
+; At-Rules
+
+; SCSS-Specific
+
+"@use" @keyword
+"@forward" @keyword
+"@import" @keyword
+"@mixin" @keyword
+"@include" @keyword
+"@function" @keyword
+"@extend" @keyword
+"@error" @keyword
+"@warn" @keyword
+"@debug" @keyword
+"@at-root" @keyword
+
+; Flow Control
+
+"@if" @keyword
+"@each" @keyword
+"@for" @keyword
+"@while" @keyword
+
+; CSS
+
 "@media" @keyword
 "@import" @keyword
 "@charset" @keyword
 "@namespace" @keyword
 "@supports" @keyword
 "@keyframes" @keyword
+
+; Other Common
+
+"@mixin" @keyword
+"@include" @keyword
+
 (at_keyword) @keyword
 (to) @keyword
 (from) @keyword
@@ -59,6 +90,25 @@
 (integer_value) @number
 (float_value) @number
 (unit) @type
+
+; Mixins
+
+(mixin_statement (name) @function)
+
+; Includes
+
+(include_statement
+    ("@include" @keyword
+    (identifier) @function
+    (arguments
+        "(" @punctuation
+            (argument
+                (argument_value) @variable
+            )
+        ")" @punctuation
+        )
+    )
+)
 
 "#" @punctuation.delimiter
 "," @punctuation.delimiter
