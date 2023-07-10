@@ -64,6 +64,7 @@ members = [
     "crates/theme_selector",
     "crates/util",
     "crates/vim",
+    "crates/vcs_menu",
     "crates/workspace",
     "crates/welcome",
     "crates/xtask",

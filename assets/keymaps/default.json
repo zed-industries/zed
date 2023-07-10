@@ -39,6 +39,7 @@
       "cmd-shift-n": "workspace::NewWindow",
       "cmd-o": "workspace::Open",
       "alt-cmd-o": "projects::OpenRecent",
+      "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "shift-escape": "workspace::ToggleZoom"
