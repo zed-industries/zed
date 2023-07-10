@@ -1,4 +1,4 @@
-import { ColorScheme, StyleSets } from "../common"
+import { Theme, StyleSets } from "../common"
 import { interactive } from "../element"
 import { InteractiveState } from "../element/interactive"
 import { background, foreground } from "../style_tree/components"
@@ -12,7 +12,7 @@ type TabBarButtonProps = TabBarButtonOptions & {
     state?: Partial<Record<InteractiveState, Partial<TabBarButtonOptions>>>
 }
 
-export function tab_bar_button(theme: ColorScheme, { icon, color = "base" }: TabBarButtonProps) {
+export function tab_bar_button(theme: Theme, { icon, color = "base" }: TabBarButtonProps) {
     const button_spacing = 8
 
     return (
