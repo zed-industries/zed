@@ -253,12 +253,11 @@ impl PickerDelegate for BranchListDelegate {
             let style = theme.picker.footer.clone();
             enum BranchCreateButton {}
             Some(
-                Flex::row().with_child(MouseEventHandler::<BranchCreateButton, _>::new(0, cx, |_, _| {
+                Flex::row().with_child(MouseEventHandler::<BranchCreateButton, _>::new(0, cx, |state, _| {
+                    let style = style.style_for(state);
                     Label::new("Create branch", style.label.clone())
                         .contained()
                         .with_style(style.container)
-                        .aligned()
-                        .right()
                 })
                 .on_down(MouseButton::Left, |_, _, cx| {
                     cx.spawn(|picker, mut cx| async move {
@@ -294,7 +293,7 @@ impl PickerDelegate for BranchListDelegate {
                             Ok::<(), anyhow::Error>(())
                 })
                     }).detach();
-                }))
+                })).aligned().right()
                 .into_any(),
             )
         } else {

@@ -586,7 +586,7 @@ pub struct Picker {
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
     pub header: ContainedLabel,
-    pub footer: ContainedLabel,
+    pub footer: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
