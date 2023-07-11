@@ -1086,11 +1086,13 @@ impl EditorElement {
                         })
                     }
                 };
-                for (row, _) in &editor.background_highlights_in_range(
-                    start_anchor..end_anchor,
-                    &layout.position_map.snapshot,
-                    &theme,
-                ) {
+                for (row, _) in &editor
+                    .background_highlights_in_range_for::<crate::items::BufferSearchHighlights>(
+                        start_anchor..end_anchor,
+                        &layout.position_map.snapshot,
+                        &theme,
+                    )
+                {
                     let start_display = row.start;
                     let end_display = row.end;
 

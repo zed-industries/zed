@@ -7222,6 +7222,47 @@ impl Editor {
         }
         results
     }
+    pub fn background_highlights_in_range_for<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((color_fetcher, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let color = color_fetcher(theme);
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let start = range
+                .start
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            let end = range
+                .end
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            results.push((start..end, color))
+        }
+
+        results
+    }
 
     pub fn highlight_text<T: 'static>(
         &mut self,
