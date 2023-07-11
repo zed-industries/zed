@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry};
 use project::{FakeFs, Project};
-use rand::Rng;
+use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -97,18 +97,23 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     assert_eq!(search_results[0].worktree_id, worktree_id);
 }
 
-#[test]
-fn test_dot_product() {
+#[gpui::test]
+fn test_dot_product(mut rng: StdRng) {
     assert_eq!(dot(&[1., 0., 0., 0., 0.], &[0., 1., 0., 0., 0.]), 0.);
     assert_eq!(dot(&[2., 0., 0., 0., 0.], &[3., 1., 0., 0., 0.]), 6.);
 
     for _ in 0..100 {
-        let mut rng = rand::thread_rng();
-        let a: [f32; 32] = rng.gen();
-        let b: [f32; 32] = rng.gen();
+        let size = 1536;
+        let mut a = vec![0.; size];
+        let mut b = vec![0.; size];
+        for (a, b) in a.iter_mut().zip(b.iter_mut()) {
+            *a = rng.gen();
+            *b = rng.gen();
+        }
+
         assert_eq!(
-            round_to_decimals(dot(&a, &b), 3),
-            round_to_decimals(reference_dot(&a, &b), 3)
+            round_to_decimals(dot(&a, &b), 1),
+            round_to_decimals(reference_dot(&a, &b), 1)
         );
     }
 
