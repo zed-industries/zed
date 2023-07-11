@@ -386,7 +386,8 @@ impl VectorStore {
             let (parsing_files_tx, parsing_files_rx) = channel::unbounded::<PendingFile>();
 
             let mut _parsing_files_tasks = Vec::new();
-            for _ in 0..cx.background().num_cpus() {
+            // for _ in 0..cx.background().num_cpus() {
+            for _ in 0..1 {
                 let fs = fs.clone();
                 let parsing_files_rx = parsing_files_rx.clone();
                 let batch_files_tx = batch_files_tx.clone();

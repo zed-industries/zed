@@ -1,4 +1,4 @@
-use std::{ops::Range, path::PathBuf, sync::Arc, time::SystemTime};
+use std::{path::PathBuf, sync::Arc, time::SystemTime};
 
 use anyhow::{anyhow, Ok, Result};
 use project::Fs;
@@ -61,6 +61,8 @@ impl CodeContextRetriever {
             tree.root_node(),
             content.as_bytes(),
         ) {
+            // log::info!("-----MATCH-----");
+
             let mut name: Vec<&str> = vec![];
             let mut item: Option<&str> = None;
             let mut offset: Option<usize> = None;
@@ -88,6 +90,12 @@ impl CodeContextRetriever {
                     .replace("<path>", pending_file.relative_path.to_str().unwrap())
                     .replace("<language>", &pending_file.language.name().to_lowercase())
                     .replace("<item>", item.unwrap());
+
+                let mut truncated_span = context_span.clone();
+                truncated_span.truncate(100);
+
+                // log::info!("Name:       {:?}", name);
+                // log::info!("Span:       {:?}", truncated_span);
 
                 context_spans.push(context_span);
                 documents.push(Document {
