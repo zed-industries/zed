@@ -44,14 +44,7 @@ pub fn init(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AppContext,
 ) {
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
-        return;
-    }
-
     settings::register::<VectorStoreSettings>(cx);
-    if !settings::get::<VectorStoreSettings>(cx).enable {
-        return;
-    }
 
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
@@ -60,8 +53,6 @@ pub fn init(
     SemanticSearch::init(cx);
     cx.add_action(
         |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
-            eprintln!("semantic_search::Toggle action");
-
             if cx.has_global::<ModelHandle<VectorStore>>() {
                 let vector_store = cx.global::<ModelHandle<VectorStore>>().clone();
                 workspace.toggle_modal(cx, |workspace, cx| {
@@ -77,6 +68,12 @@ pub fn init(
             }
         },
     );
+
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable
+        || !settings::get::<VectorStoreSettings>(cx).enable
+    {
+        return;
+    }
 
     cx.spawn(move |mut cx| async move {
         let vector_store = VectorStore::new(
