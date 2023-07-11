@@ -405,6 +405,7 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-t": "project_symbols::Toggle",
+      "cmd-alt-t": "semantic_search::Toggle",
       "cmd-p": "file_finder::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",

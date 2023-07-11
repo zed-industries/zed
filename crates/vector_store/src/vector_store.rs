@@ -49,7 +49,6 @@ pub fn init(
     }
 
     settings::register::<VectorStoreSettings>(cx);
-
     if !settings::get::<VectorStoreSettings>(cx).enable {
         return;
     }
@@ -57,6 +56,27 @@ pub fn init(
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
+
+    SemanticSearch::init(cx);
+    cx.add_action(
+        |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
+            eprintln!("semantic_search::Toggle action");
+
+            if cx.has_global::<ModelHandle<VectorStore>>() {
+                let vector_store = cx.global::<ModelHandle<VectorStore>>().clone();
+                workspace.toggle_modal(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let workspace = cx.weak_handle();
+                    cx.add_view(|cx| {
+                        SemanticSearch::new(
+                            SemanticSearchDelegate::new(workspace, project, vector_store),
+                            cx,
+                        )
+                    })
+                });
+            }
+        },
+    );
 
     cx.spawn(move |mut cx| async move {
         let vector_store = VectorStore::new(
@@ -73,6 +93,7 @@ pub fn init(
         .await?;
 
         cx.update(|cx| {
+            cx.set_global(vector_store.clone());
             cx.subscribe_global::<WorkspaceCreated, _>({
                 let vector_store = vector_store.clone();
                 move |event, cx| {
@@ -88,25 +109,6 @@ pub fn init(
                 }
             })
             .detach();
-
-            cx.add_action({
-                // "semantic search: Toggle"
-                move |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
-                    let vector_store = vector_store.clone();
-                    workspace.toggle_modal(cx, |workspace, cx| {
-                        let project = workspace.project().clone();
-                        let workspace = cx.weak_handle();
-                        cx.add_view(|cx| {
-                            SemanticSearch::new(
-                                SemanticSearchDelegate::new(workspace, project, vector_store),
-                                cx,
-                            )
-                        })
-                    })
-                }
-            });
-
-            SemanticSearch::init(cx);
         });
 
         anyhow::Ok(())
