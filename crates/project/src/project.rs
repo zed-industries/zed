@@ -78,8 +78,8 @@ use std::{
 use terminals::Terminals;
 use text::Anchor;
 use util::{
-    debug_panic, defer, http::HttpClient, paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt,
-    TryFutureExt as _,
+    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -800,7 +800,7 @@ impl Project {
                         .lsp
                         .get(&adapter.name.0)
                         .and_then(|s| s.initialization_options.as_ref());
-                    if adapter.update_initialization_overrides(new_lsp_settings) {
+                    if adapter.initialization_options.as_ref() != new_lsp_settings {
                         language_servers_to_restart.push((worktree, Arc::clone(language)));
                     }
                 }
@@ -2545,13 +2545,20 @@ impl Project {
         let project_settings = settings::get::<ProjectSettings>(cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
-        adapter.update_initialization_overrides(override_options.as_ref());
+
+        let mut initialization_options = adapter.initialization_options.clone();
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
 
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
             let adapter = adapter.clone();
-            let initialization_options = adapter.initialization_options();
             let server_name = adapter.name.0.clone();
             let languages = self.languages.clone();
             let language = language.clone();
