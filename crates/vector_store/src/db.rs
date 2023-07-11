@@ -9,6 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 
 use crate::parsing::ParsedFile;
+use crate::VECTOR_STORE_VERSION;
 use rpc::proto::Timestamp;
 use rusqlite::{
     params,
@@ -72,6 +73,7 @@ impl VectorDatabase {
                 relative_path VARCHAR NOT NULL,
                 mtime_seconds INTEGER NOT NULL,
                 mtime_nanos INTEGER NOT NULL,
+                vector_store_version INTEGER NOT NULL,
                 FOREIGN KEY(worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE
             )",
             [],
@@ -112,15 +114,16 @@ impl VectorDatabase {
         self.db.execute(
             "
             INSERT INTO files
-            (worktree_id, relative_path, mtime_seconds, mtime_nanos)
+            (worktree_id, relative_path, mtime_seconds, mtime_nanos, vector_store_version)
             VALUES
-            (?1, ?2, $3, $4);
+            (?1, ?2, $3, $4, $5);
             ",
             params![
                 worktree_id,
                 indexed_file.path.to_str(),
                 mtime.seconds,
-                mtime.nanos
+                mtime.nanos,
+                VECTOR_STORE_VERSION
             ],
         )?;
 

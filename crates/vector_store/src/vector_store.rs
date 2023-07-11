@@ -13,14 +13,13 @@ use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
-    ViewContext, WeakModelHandle,
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, ViewContext,
+    WeakModelHandle,
 };
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use parsing::{CodeContextRetriever, ParsedFile};
 use project::{Fs, PathChange, Project, ProjectEntryId, WorktreeId};
-use settings::SettingsStore;
 use smol::channel;
 use std::{
     collections::HashMap,
@@ -36,6 +35,8 @@ use util::{
     ResultExt,
 };
 use workspace::{Workspace, WorkspaceCreated};
+
+const VECTOR_STORE_VERSION: usize = 0;
 
 pub fn init(
     fs: Arc<dyn Fs>,
