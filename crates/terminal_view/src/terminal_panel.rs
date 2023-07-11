@@ -221,6 +221,16 @@ impl TerminalPanel {
             pane::Event::ZoomIn => cx.emit(Event::ZoomIn),
             pane::Event::ZoomOut => cx.emit(Event::ZoomOut),
             pane::Event::Focus => cx.emit(Event::Focus),
+
+            pane::Event::AddItem { item } => {
+                if let Some(workspace) = self.workspace.upgrade(cx) {
+                    let pane = self.pane.clone();
+                    workspace.update(cx, |workspace, cx| {
+                        item.added_to_pane(workspace,pane, cx)
+                    })
+                }
+            },
+
             _ => {}
         }
     }
