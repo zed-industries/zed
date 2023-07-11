@@ -635,8 +635,6 @@ impl VectorStore {
                 })
                 .await?;
 
-            dbg!(&documents);
-
             this.read_with(&cx, |this, _| {
                 let project_state = if let Some(state) = this.projects.get(&project.downgrade()) {
                     state
@@ -687,6 +685,7 @@ impl VectorStore {
             for change in changes.into_iter() {
                 let change_path = change.0.clone();
                 let absolute_path = worktree.absolutize(&change_path);
+
                 // Skip if git ignored or symlink
                 if let Some(entry) = worktree.entry_for_id(change.1) {
                     if entry.is_ignored || entry.is_symlink || entry.is_external {
@@ -694,46 +693,60 @@ impl VectorStore {
                     }
                 }
 
-                if let Ok(language) = language_registry
-                    .language_for_file(&change_path.to_path_buf(), None)
-                    .await
-                {
-                    if language
-                        .grammar()
-                        .and_then(|grammar| grammar.embedding_config.as_ref())
-                        .is_none()
-                    {
-                        continue;
-                    }
-
-                    let modified_time = change_path.metadata().log_err()?.modified().log_err()?;
-
-                    let existing_time = file_mtimes.get(&change_path.to_path_buf());
-                    let already_stored = existing_time
-                        .map_or(false, |existing_time| &modified_time != existing_time);
-
-                    if !already_stored {
-                        this.update(&mut cx, |this, _| {
-                            let reindex_time =
-                                modified_time + Duration::from_secs(REINDEXING_DELAY_SECONDS);
-
-                            let project_state = this.projects.get_mut(&project.downgrade())?;
-                            project_state.update_pending_files(
-                                PendingFile {
-                                    relative_path: change_path.to_path_buf(),
-                                    absolute_path,
-                                    modified_time,
-                                    worktree_db_id,
-                                    language: language.clone(),
-                                },
-                                reindex_time,
-                            );
-
-                            for file in project_state.get_outstanding_files() {
-                                this.parsing_files_tx.try_send(file).unwrap();
+                match change.2 {
+                    PathChange::Removed => this.update(&mut cx, |this, _| {
+                        this.db_update_tx
+                            .try_send(DbOperation::Delete {
+                                worktree_id: worktree_db_id,
+                                path: absolute_path,
+                            })
+                            .unwrap();
+                    }),
+                    _ => {
+                        if let Ok(language) = language_registry
+                            .language_for_file(&change_path.to_path_buf(), None)
+                            .await
+                        {
+                            if language
+                                .grammar()
+                                .and_then(|grammar| grammar.embedding_config.as_ref())
+                                .is_none()
+                            {
+                                continue;
                             }
-                            Some(())
-                        });
+
+                            let modified_time =
+                                change_path.metadata().log_err()?.modified().log_err()?;
+
+                            let existing_time = file_mtimes.get(&change_path.to_path_buf());
+                            let already_stored = existing_time
+                                .map_or(false, |existing_time| &modified_time != existing_time);
+
+                            if !already_stored {
+                                this.update(&mut cx, |this, _| {
+                                    let reindex_time = modified_time
+                                        + Duration::from_secs(REINDEXING_DELAY_SECONDS);
+
+                                    let project_state =
+                                        this.projects.get_mut(&project.downgrade())?;
+                                    project_state.update_pending_files(
+                                        PendingFile {
+                                            relative_path: change_path.to_path_buf(),
+                                            absolute_path,
+                                            modified_time,
+                                            worktree_db_id,
+                                            language: language.clone(),
+                                        },
+                                        reindex_time,
+                                    );
+
+                                    for file in project_state.get_outstanding_files() {
+                                        this.parsing_files_tx.try_send(file).unwrap();
+                                    }
+                                    Some(())
+                                });
+                            }
+                        }
                     }
                 }
             }
