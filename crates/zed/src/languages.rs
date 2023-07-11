@@ -137,6 +137,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_yaml::language(),
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime))],
     );
+    language("php", tree_sitter_php::language(), vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

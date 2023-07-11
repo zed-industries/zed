@@ -114,6 +114,7 @@ tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", re
 tree-sitter-rust = "0.20.3"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-python = "0.20.2"
+tree-sitter-php = { git = "https://github.com/tree-sitter/tree-sitter-php", rev = "d38adb26304d9b9d38e9a3b4aae0ec4b29bf9462" }
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-ruby = "0.20.0"
