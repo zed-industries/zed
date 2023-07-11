@@ -134,7 +134,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let combined_string = location
                     .paths()
                     .iter()
-                    .map(|path| path.to_string_lossy().to_owned())
+                    .map(|path| {
+                        let compact = util::paths::compact(&path);
+                        compact.to_string_lossy().into_owned()
+                    })
                     .collect::<Vec<_>>()
                     .join("");
                 StringMatchCandidate::new(id, combined_string)
