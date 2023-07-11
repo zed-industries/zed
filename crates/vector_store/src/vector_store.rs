@@ -37,6 +37,7 @@ use util::{
 use workspace::{Workspace, WorkspaceCreated};
 
 const VECTOR_STORE_VERSION: usize = 0;
+const EMBEDDINGS_BATCH_SIZE: usize = 150;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -70,7 +71,7 @@ pub fn init(
     );
 
     if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<VectorStoreSettings>(cx).enable
+        || !settings::get::<VectorStoreSettings>(cx).enabled
     {
         return;
     }
@@ -353,7 +354,6 @@ impl VectorStore {
             });
 
             // batch_tx/rx: Batch Files to Send for Embeddings
-            let batch_size = settings::get::<VectorStoreSettings>(cx).embedding_batch_size;
             let (batch_files_tx, batch_files_rx) = channel::unbounded::<EmbeddingJob>();
             let _batch_files_task = cx.background().spawn(async move {
                 let mut queue_len = 0;
@@ -368,7 +368,7 @@ impl VectorStore {
                         } => {
                             queue_len += &document_spans.len();
                             embeddings_queue.push((worktree_id, parsed_file, document_spans));
-                            queue_len >= batch_size
+                            queue_len >= EMBEDDINGS_BATCH_SIZE
                         }
                         EmbeddingJob::Flush => true,
                     };

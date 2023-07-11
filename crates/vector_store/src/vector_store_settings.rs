@@ -5,16 +5,14 @@ use settings::Setting;
 
 #[derive(Deserialize, Debug)]
 pub struct VectorStoreSettings {
-    pub enable: bool,
+    pub enabled: bool,
     pub reindexing_delay_seconds: usize,
-    pub embedding_batch_size: usize,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct VectorStoreSettingsContent {
-    pub enable: Option<bool>,
+    pub enabled: Option<bool>,
     pub reindexing_delay_seconds: Option<usize>,
-    pub embedding_batch_size: Option<usize>,
 }
 
 impl Setting for VectorStoreSettings {

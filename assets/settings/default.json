@@ -293,9 +293,8 @@
   },
   // Difference settings for vector_store
   "vector_store": {
-    "enable": false,
-    "reindexing_delay_seconds": 600,
-    "embedding_batch_size": 150
+    "enabled": false,
+    "reindexing_delay_seconds": 600
   },
   // Different settings for specific languages.
   "languages": {
