@@ -64,6 +64,7 @@
 "@each" @keyword
 "@for" @keyword
 "@while" @keyword
+"@return" @keyword
 
 ; CSS
 
@@ -94,6 +95,19 @@
 ; Mixins
 
 (mixin_statement (name) @function)
+
+; Functions
+
+(function_statement (name) @function)
+
+; Variables
+
+(variable_name) @variable
+(variable_value) @variable
+
+; Colors
+
+(color_value) @string
 
 ; Includes
 
