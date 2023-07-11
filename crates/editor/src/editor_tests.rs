@@ -22,7 +22,10 @@ use language::{
     BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point,
 };
 use parking_lot::Mutex;
+use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use std::sync::atomic;
+use std::sync::atomic::AtomicUsize;
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
 use unindent::Unindent;
 use util::{
@@ -1796,7 +1799,7 @@ async fn test_newline_comments(cx: &mut gpui::TestAppContext) {
     "});
     }
     // Ensure that comment continuations can be disabled.
-    update_test_settings(cx, |settings| {
+    update_test_language_settings(cx, |settings| {
         settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
@@ -4546,7 +4549,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
     // Set rust language override and assert overridden tabsize is sent to language server
-    update_test_settings(cx, |settings| {
+    update_test_language_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
             LanguageSettingsContent {
@@ -4660,7 +4663,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
     // Set rust language override and assert overridden tabsize is sent to language server
-    update_test_settings(cx, |settings| {
+    update_test_language_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
             LanguageSettingsContent {
@@ -7084,6 +7087,142 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language_name: Arc<str> = "Rust".into();
+    let mut language = Language::new(
+        LanguageConfig {
+            name: Arc::clone(&language_name),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+
+    let server_restarts = Arc::new(AtomicUsize::new(0));
+    let closure_restarts = Arc::clone(&server_restarts);
+    let language_server_name = "test language server";
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: language_server_name,
+            initialization_options: Some(json!({
+                "testOptionValue": true
+            })),
+            initializer: Some(Box::new(move |fake_server| {
+                let task_restarts = Arc::clone(&closure_restarts);
+                fake_server.handle_request::<lsp::request::Shutdown, _, _>(move |_, _| {
+                    task_restarts.fetch_add(1, atomic::Ordering::Release);
+                    futures::future::ready(Ok(()))
+                });
+            })),
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "fn main() { let a = 5; }",
+            "other.rs": "// Test file",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    let (_, _workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/a/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let _fake_server = fake_servers.next().await.unwrap();
+    update_test_language_settings(cx, |language_settings| {
+        language_settings.languages.insert(
+            Arc::clone(&language_name),
+            LanguageSettingsContent {
+                tab_size: NonZeroU32::new(8),
+                ..Default::default()
+            },
+        );
+    });
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        server_restarts.load(atomic::Ordering::Acquire),
+        0,
+        "Should not restart LSP server on an unrelated change"
+    );
+
+    update_test_project_settings(cx, |project_settings| {
+        project_settings.lsp.insert(
+            "Some other server name".into(),
+            LspSettings {
+                initialization_options: Some(json!({
+                    "some other init value": false
+                })),
+            },
+        );
+    });
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        server_restarts.load(atomic::Ordering::Acquire),
+        0,
+        "Should not restart LSP server on an unrelated LSP settings change"
+    );
+
+    update_test_project_settings(cx, |project_settings| {
+        project_settings.lsp.insert(
+            language_server_name.into(),
+            LspSettings {
+                initialization_options: Some(json!({
+                    "anotherInitValue": false
+                })),
+            },
+        );
+    });
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        server_restarts.load(atomic::Ordering::Acquire),
+        1,
+        "Should restart LSP server on a related LSP settings change"
+    );
+
+    update_test_project_settings(cx, |project_settings| {
+        project_settings.lsp.insert(
+            language_server_name.into(),
+            LspSettings {
+                initialization_options: Some(json!({
+                    "anotherInitValue": false
+                })),
+            },
+        );
+    });
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        server_restarts.load(atomic::Ordering::Acquire),
+        1,
+        "Should not restart LSP server on a related LSP settings change that is the same"
+    );
+
+    update_test_project_settings(cx, |project_settings| {
+        project_settings.lsp.insert(
+            language_server_name.into(),
+            LspSettings {
+                initialization_options: None,
+            },
+        );
+    });
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        server_restarts.load(atomic::Ordering::Acquire),
+        2,
+        "Should restart LSP server on another related LSP settings change"
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -7203,13 +7342,24 @@ fn handle_copilot_completion_request(
     });
 }
 
-pub(crate) fn update_test_settings(
+pub(crate) fn update_test_language_settings(
     cx: &mut TestAppContext,
     f: impl Fn(&mut AllLanguageSettingsContent),
 ) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
+        });
+    });
+}
+
+pub(crate) fn update_test_project_settings(
+    cx: &mut TestAppContext,
+    f: impl Fn(&mut ProjectSettings),
+) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, f);
         });
     });
 }
@@ -7227,5 +7377,5 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         crate::init(cx);
     });
 
-    update_test_settings(cx, f);
+    update_test_language_settings(cx, f);
 }
