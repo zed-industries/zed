@@ -2149,6 +2149,9 @@ impl Element<Editor> for EditorElement {
             ShowScrollbar::Auto => {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                ||
+                // Selections
+                (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
                 // Scrollmanager
                 || editor.scroll_manager.scrollbars_visible()
             }
