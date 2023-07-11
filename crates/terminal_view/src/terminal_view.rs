@@ -907,6 +907,7 @@ mod tests {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
             theme::init((), cx);
+            Project::init_settings(cx);
             language::init(cx);
         });
 

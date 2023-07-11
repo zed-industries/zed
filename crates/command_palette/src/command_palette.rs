@@ -369,6 +369,7 @@ mod tests {
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
+            Project::init_settings(cx);
             app_state
         })
     }
