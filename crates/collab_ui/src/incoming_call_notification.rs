@@ -99,8 +99,8 @@ impl IncomingCallNotification {
                 })
                 .detach_and_log_err(cx);
         } else {
-            active_call.update(cx, |active_call, _| {
-                active_call.decline_incoming().log_err();
+            active_call.update(cx, |active_call, cx| {
+                active_call.decline_incoming(cx).log_err();
             });
         }
     }

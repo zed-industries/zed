@@ -365,7 +365,7 @@ async fn apply_client_operation(
             }
 
             log::info!("{}: declining incoming call", client.username);
-            active_call.update(cx, |call, _| call.decline_incoming())?;
+            active_call.update(cx, |call, cx| call.decline_incoming(cx))?;
         }
 
         ClientOperation::LeaveCall => {
