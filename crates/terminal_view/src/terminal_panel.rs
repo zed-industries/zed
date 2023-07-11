@@ -225,11 +225,9 @@ impl TerminalPanel {
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade(cx) {
                     let pane = self.pane.clone();
-                    workspace.update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace,pane, cx)
-                    })
+                    workspace.update(cx, |workspace, cx| item.added_to_pane(workspace, pane, cx))
                 }
-            },
+            }
 
             _ => {}
         }
