@@ -18,6 +18,7 @@ picker = { path = "../picker" }
 theme = { path = "../theme" }
 editor = { path = "../editor" }
 rpc = { path = "../rpc" }
+settings = { path = "../settings" }
 anyhow.workspace = true
 futures.workspace = true
 smol.workspace = true
@@ -33,6 +34,7 @@ bincode = "1.3.3"
 matrixmultiply = "0.3.7"
 tiktoken-rs = "0.5.0"
 rand.workspace = true
+schemars.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
@@ -40,6 +42,7 @@ language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"]}
 tree-sitter-rust = "*"
 rand.workspace = true
 unindent.workspace = true

@@ -291,6 +291,12 @@
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono"
   },
+  // Difference settings for vector_store
+  "vector_store": {
+    "enable": false,
+    "reindexing_delay_seconds": 600,
+    "embedding_batch_size": 150
+  },
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {

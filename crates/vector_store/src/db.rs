@@ -204,8 +204,6 @@ impl VectorDatabase {
     ) -> Result<Vec<(i64, PathBuf, usize, String)>> {
         let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
         self.for_each_document(&worktree_ids, |id, embedding| {
-            eprintln!("document {id} {embedding:?}");
-
             let similarity = dot(&embedding, &query_embedding);
             let ix = match results
                 .binary_search_by(|(_, s)| similarity.partial_cmp(&s).unwrap_or(Ordering::Equal))
@@ -243,10 +241,7 @@ impl VectorDatabase {
                 Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
             })?
             .filter_map(|row| row.ok())
-            .for_each(|(id, embedding)| {
-                dbg!("id");
-                f(id, embedding.0)
-            });
+            .for_each(|(id, embedding)| f(id, embedding.0));
         Ok(())
     }
 

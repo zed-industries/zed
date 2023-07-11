@@ -1,4 +1,6 @@
-use crate::{db::dot, embedding::EmbeddingProvider, VectorStore};
+use crate::{
+    db::dot, embedding::EmbeddingProvider, vector_store_settings::VectorStoreSettings, VectorStore,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
@@ -6,11 +8,17 @@ use language::{Language, LanguageConfig, LanguageRegistry};
 use project::{FakeFs, Project};
 use rand::Rng;
 use serde_json::json;
+use settings::SettingsStore;
 use std::sync::Arc;
 use unindent::Unindent;
 
 #[gpui::test]
 async fn test_vector_store(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(SettingsStore::test(cx));
+        settings::register::<VectorStoreSettings>(cx);
+    });
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/the-root",

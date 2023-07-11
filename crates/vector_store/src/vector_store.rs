@@ -2,22 +2,25 @@ mod db;
 mod embedding;
 mod modal;
 mod parsing;
+mod vector_store_settings;
 
 #[cfg(test)]
 mod vector_store_tests;
 
+use crate::vector_store_settings::VectorStoreSettings;
 use anyhow::{anyhow, Result};
 use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, ViewContext,
-    WeakModelHandle,
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
+    ViewContext, WeakModelHandle,
 };
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use parsing::{CodeContextRetriever, ParsedFile};
 use project::{Fs, PathChange, Project, ProjectEntryId, WorktreeId};
+use settings::SettingsStore;
 use smol::channel;
 use std::{
     collections::HashMap,
@@ -34,9 +37,6 @@ use util::{
 };
 use workspace::{Workspace, WorkspaceCreated};
 
-const REINDEXING_DELAY_SECONDS: u64 = 3;
-const EMBEDDINGS_BATCH_SIZE: usize = 150;
-
 pub fn init(
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -44,6 +44,12 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     if *RELEASE_CHANNEL == ReleaseChannel::Stable {
+        return;
+    }
+
+    settings::register::<VectorStoreSettings>(cx);
+
+    if !settings::get::<VectorStoreSettings>(cx).enable {
         return;
     }
 
@@ -83,6 +89,7 @@ pub fn init(
             .detach();
 
             cx.add_action({
+                // "semantic search: Toggle"
                 move |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
                     let vector_store = vector_store.clone();
                     workspace.toggle_modal(cx, |workspace, cx| {
@@ -274,7 +281,6 @@ impl VectorStore {
                             worktree_id,
                             indexed_file,
                         } => {
-                            log::info!("Inserting Data for {:?}", &indexed_file.path);
                             db.insert_file(worktree_id, indexed_file).log_err();
                         }
                         DbOperation::Delete { worktree_id, path } => {
@@ -347,6 +353,7 @@ impl VectorStore {
             });
 
             // batch_tx/rx: Batch Files to Send for Embeddings
+            let batch_size = settings::get::<VectorStoreSettings>(cx).embedding_batch_size;
             let (batch_files_tx, batch_files_rx) = channel::unbounded::<EmbeddingJob>();
             let _batch_files_task = cx.background().spawn(async move {
                 let mut queue_len = 0;
@@ -361,7 +368,7 @@ impl VectorStore {
                         } => {
                             queue_len += &document_spans.len();
                             embeddings_queue.push((worktree_id, parsed_file, document_spans));
-                            queue_len >= EMBEDDINGS_BATCH_SIZE
+                            queue_len >= batch_size
                         }
                         EmbeddingJob::Flush => true,
                     };
@@ -387,8 +394,6 @@ impl VectorStore {
                     let cursor = QueryCursor::new();
                     let mut retriever = CodeContextRetriever { parser, cursor, fs };
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
-                        log::info!("Parsing File: {:?}", &pending_file.relative_path);
-
                         if let Some((indexed_file, document_spans)) =
                             retriever.parse_file(pending_file.clone()).await.log_err()
                         {
@@ -476,11 +481,9 @@ impl VectorStore {
         let parsing_files_tx = self.parsing_files_tx.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let t0 = Instant::now();
             futures::future::join_all(worktree_scans_complete).await;
 
             let worktree_db_ids = futures::future::join_all(worktree_db_ids).await;
-            log::info!("Worktree Scanning Done in {:?}", t0.elapsed().as_millis());
 
             if let Some(db_directory) = database_url.parent() {
                 fs.create_dir(db_directory).await.log_err();
@@ -665,6 +668,8 @@ impl VectorStore {
         cx: &mut ModelContext<'_, VectorStore>,
         worktree_id: &WorktreeId,
     ) -> Option<()> {
+        let reindexing_delay = settings::get::<VectorStoreSettings>(cx).reindexing_delay_seconds;
+
         let worktree = project
             .read(cx)
             .worktree_for_id(worktree_id.clone(), cx)?
@@ -725,7 +730,7 @@ impl VectorStore {
                             if !already_stored {
                                 this.update(&mut cx, |this, _| {
                                     let reindex_time = modified_time
-                                        + Duration::from_secs(REINDEXING_DELAY_SECONDS);
+                                        + Duration::from_secs(reindexing_delay as u64);
 
                                     let project_state =
                                         this.projects.get_mut(&project.downgrade())?;
