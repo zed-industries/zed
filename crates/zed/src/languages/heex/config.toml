@@ -4,4 +4,4 @@ autoclose_before = ">})"
 brackets = [
     { start = "<", end = ">", close = true, newline = true },
 ]
-block_comment = ["<%#", "%>"]
+block_comment = ["<%!--", "--%>"]

@@ -771,8 +771,10 @@ impl SyntaxSnapshot {
         range: Range<T>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = SyntaxLayerInfo> {
-        let start = buffer.anchor_before(range.start.to_offset(buffer));
-        let end = buffer.anchor_after(range.end.to_offset(buffer));
+        let start_offset = range.start.to_offset(buffer);
+        let end_offset = range.end.to_offset(buffer);
+        let start = buffer.anchor_before(start_offset);
+        let end = buffer.anchor_after(end_offset);
 
         let mut cursor = self.layers.filter::<_, ()>(move |summary| {
             if summary.max_depth > summary.min_depth {
@@ -787,20 +789,21 @@ impl SyntaxSnapshot {
         cursor.next(buffer);
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
+                let mut info = None;
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
-                    let info = SyntaxLayerInfo {
+                    let layer_start_offset = layer.range.start.to_offset(buffer);
+                    let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
+
+                    info = Some(SyntaxLayerInfo {
                         tree,
                         language,
                         depth: layer.depth,
-                        offset: (
-                            layer.range.start.to_offset(buffer),
-                            layer.range.start.to_point(buffer).to_ts_point(),
-                        ),
-                    };
-                    cursor.next(buffer);
-                    return Some(info);
-                } else {
-                    cursor.next(buffer);
+                        offset: (layer_start_offset, layer_start_point),
+                    });
+                }
+                cursor.next(buffer);
+                if info.is_some() {
+                    return info;
                 }
             }
             None
