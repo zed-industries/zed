@@ -12,7 +12,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::CommandPaletteFilter;
-use editor::{Bias, Cancel, Editor, EditorMode, Event};
+use editor::{Bias, Editor, EditorMode, Event};
 use gpui::{
     actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
     WindowContext,
@@ -64,22 +64,6 @@ pub fn init(cx: &mut AppContext) {
         Vim::update(cx, |vim, cx| vim.push_number(n, cx));
     });
 
-    // Editor Actions
-    cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
-        // If we are in aren't in normal mode or have an active operator, swap to normal mode
-        // Otherwise forward cancel on to the editor
-        let vim = Vim::read(cx);
-        if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
-            WindowContext::defer(cx, |cx| {
-                Vim::update(cx, |state, cx| {
-                    state.switch_mode(Mode::Normal, false, cx);
-                });
-            });
-        } else {
-            cx.propagate_action();
-        }
-    });
-
     cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
         Vim::active_editor_input_ignored(" ".into(), cx)
     });
@@ -109,10 +93,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
     cx.observe_keystrokes(|_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
-            // Also short circuit if it is the special cancel action
-            if handled_by.namespace() == "vim"
-                || (handled_by.namespace() == "editor" && handled_by.name() == "Cancel")
-            {
+            if handled_by.namespace() == "vim" {
                 return true;
             }
         }

@@ -90,7 +90,8 @@ pub struct LanguageServerName(pub Arc<str>);
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
-    pub initialization_options: Option<Value>,
+    initialization_options: Option<Value>,
+    initialization_overrides: Mutex<Option<Value>>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
@@ -109,6 +110,7 @@ impl CachedLspAdapter {
         Arc::new(CachedLspAdapter {
             name,
             initialization_options,
+            initialization_overrides: Mutex::new(None),
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
@@ -207,6 +209,30 @@ impl CachedLspAdapter {
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
+    }
+
+    pub fn update_initialization_overrides(&self, new: Option<&Value>) -> bool {
+        let mut current = self.initialization_overrides.lock();
+        if current.as_ref() != new {
+            *current = new.cloned();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn initialization_options(&self) -> Option<Value> {
+        let initialization_options = self.initialization_options.as_ref();
+        let override_options = self.initialization_overrides.lock().clone();
+        match (initialization_options, override_options) {
+            (None, override_options) => override_options,
+            (initialization_options, None) => initialization_options.cloned(),
+            (Some(initialization_options), Some(override_options)) => {
+                let mut initialization_options = initialization_options.clone();
+                merge_json_value_into(override_options, &mut initialization_options);
+                Some(initialization_options)
+            }
+        }
     }
 }
 
@@ -428,6 +454,7 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
+    pub initialization_options: Option<Value>,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
@@ -1681,6 +1708,7 @@ impl Default for FakeLspAdapter {
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
+            initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
         }
     }
@@ -1729,6 +1757,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         self.disk_based_diagnostics_progress_token.clone()
+    }
+
+    async fn initialization_options(&self) -> Option<Value> {
+        self.initialization_options.clone()
     }
 }
 

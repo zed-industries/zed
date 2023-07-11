@@ -167,14 +167,24 @@ impl NeovimConnection {
             .await
             .expect("Could not get neovim window");
 
-        if !selection.is_empty() {
-            panic!("Setting neovim state with non empty selection not yet supported");
-        }
         let cursor = selection.start;
         nvim_window
             .set_cursor((cursor.row as i64 + 1, cursor.column as i64))
             .await
             .expect("Could not set nvim cursor position");
+
+        if !selection.is_empty() {
+            self.nvim
+                .input("v")
+                .await
+                .expect("could not enter visual mode");
+
+            let cursor = selection.end;
+            nvim_window
+                .set_cursor((cursor.row as i64 + 1, cursor.column as i64))
+                .await
+                .expect("Could not set nvim cursor position");
+        }
 
         if let Some(NeovimData::Get { mode, state }) = self.data.back() {
             if *mode == Some(Mode::Normal) && *state == marked_text {

@@ -201,6 +201,7 @@ impl Bundle {
                     self.zed_version_string()
                 );
             }
+
             Self::LocalPath { executable, .. } => {
                 let executable_parent = executable
                     .parent()

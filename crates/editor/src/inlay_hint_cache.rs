@@ -847,7 +847,7 @@ mod tests {
     use text::Point;
     use workspace::Workspace;
 
-    use crate::editor_tests::update_test_settings;
+    use crate::editor_tests::update_test_language_settings;
 
     use super::*;
 
@@ -1476,7 +1476,7 @@ mod tests {
             ),
         ] {
             edits_made += 1;
-            update_test_settings(cx, |settings| {
+            update_test_language_settings(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
                     show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
@@ -1520,7 +1520,7 @@ mod tests {
 
         edits_made += 1;
         let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
-        update_test_settings(cx, |settings| {
+        update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
                 show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
@@ -1577,7 +1577,7 @@ mod tests {
 
         let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
         edits_made += 1;
-        update_test_settings(cx, |settings| {
+        update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
                 show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
@@ -2269,7 +2269,7 @@ unedited (2nd) buffer should have the same hint");
             crate::init(cx);
         });
 
-        update_test_settings(cx, f);
+        update_test_language_settings(cx, f);
     }
 
     async fn prepare_test_objects(

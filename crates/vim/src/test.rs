@@ -4,6 +4,7 @@ mod neovim_connection;
 mod vim_binding_test_context;
 mod vim_test_context;
 
+use command_palette::CommandPalette;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_binding_test_context::*;
@@ -138,4 +139,17 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     // works in visuial mode
     cx.simulate_keystrokes(["shift-v", "down", ">", ">"]);
     cx.assert_editor_state("aa\n    b«b\n    cˇ»c");
+}
+
+#[gpui::test]
+async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("aˇbc\n", Mode::Normal);
+    cx.simulate_keystrokes(["i", "cmd-shift-p"]);
+
+    assert!(cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
+    cx.simulate_keystroke("escape");
+    assert!(!cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
+    cx.assert_state("aˇbc\n", Mode::Insert);
 }
