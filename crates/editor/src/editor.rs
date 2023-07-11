@@ -7222,7 +7222,7 @@ impl Editor {
         }
         results
     }
-    pub fn background_highlights_in_range_for_key<T: 'static>(
+    pub fn background_highlights_in_range_for<T: 'static>(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,

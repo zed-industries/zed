@@ -1087,7 +1087,7 @@ impl EditorElement {
                     }
                 };
                 for (row, _) in &editor
-                    .background_highlights_in_range_for_key::<crate::items::BufferSearchHighlights>(
+                    .background_highlights_in_range_for::<crate::items::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         &theme,
