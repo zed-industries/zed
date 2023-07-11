@@ -359,10 +359,17 @@ impl SettingsStore {
         Ok(())
     }
 
-    /// Add or remove a set of local settings via a JSON string.
+    /// Clear local settings for a given worktree root.
     pub fn clear_local_settings(&mut self, root_id: usize, cx: &AppContext) -> Result<()> {
-        self.raw_local_settings.retain(|k, _| k.0 != root_id);
-        self.recompute_values(Some((root_id, "".as_ref())), cx)?;
+        let mut changed = false;
+        self.raw_local_settings.retain(|k, _| {
+            let retain = k.0 != root_id;
+            changed &= !retain;
+            retain
+        });
+        if changed {
+            self.recompute_values(Some((root_id, "".as_ref())), cx)?;
+        }
         Ok(())
     }
 
