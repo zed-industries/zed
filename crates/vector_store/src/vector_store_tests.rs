@@ -81,9 +81,11 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     let worktree_id = project.read_with(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
     });
-    let add_project = store.update(cx, |store, cx| store.add_project(project.clone(), cx));
-
-    add_project.await.unwrap();
+    store
+        .update(cx, |store, cx| store.add_project(project.clone(), cx))
+        .await
+        .unwrap();
+    cx.foreground().run_until_parked();
 
     let search_results = store
         .update(cx, |store, cx| {
