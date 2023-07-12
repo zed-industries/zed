@@ -2,6 +2,7 @@
   {
     "bindings": {
       "cmd-shift-o": "projects::OpenRecent",
+      "cmd-shift-b": "branches::OpenRecent",
       "cmd-alt-tab": "project_panel::ToggleFocus"
     }
   },

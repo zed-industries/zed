@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod languages;
 pub mod menus;
+pub mod only_instance;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 

@@ -1086,11 +1086,13 @@ impl EditorElement {
                         })
                     }
                 };
-                for (row, _) in &editor.background_highlights_in_range(
-                    start_anchor..end_anchor,
-                    &layout.position_map.snapshot,
-                    &theme,
-                ) {
+                for (row, _) in &editor
+                    .background_highlights_in_range_for::<crate::items::BufferSearchHighlights>(
+                        start_anchor..end_anchor,
+                        &layout.position_map.snapshot,
+                        &theme,
+                    )
+                {
                     let start_display = row.start;
                     let end_display = row.end;
 
@@ -2149,6 +2151,9 @@ impl Element<Editor> for EditorElement {
             ShowScrollbar::Auto => {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                ||
+                // Selections
+                (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
                 // Scrollmanager
                 || editor.scroll_manager.scrollbars_visible()
             }
@@ -2911,7 +2916,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{BlockDisposition, BlockProperties},
-        editor_tests::{init_test, update_test_settings},
+        editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
     use gpui::TestAppContext;
@@ -3108,7 +3113,7 @@ mod tests {
         let resize_step = 10.0;
         let mut editor_width = 200.0;
         while editor_width <= 1000.0 {
-            update_test_settings(cx, |s| {
+            update_test_language_settings(cx, |s| {
                 s.defaults.tab_size = NonZeroU32::new(tab_size);
                 s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                 s.defaults.preferred_line_length = Some(editor_width as u32);

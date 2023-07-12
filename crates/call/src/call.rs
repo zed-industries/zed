@@ -4,7 +4,7 @@ pub mod room;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use client::{proto, Client, TypedEnvelope, User, UserStore};
+use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
@@ -198,6 +198,7 @@ impl ActiveCall {
             let result = invite.await;
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
+                this.report_call_event("invite", cx);
                 cx.notify();
             });
             result
@@ -243,21 +244,26 @@ impl ActiveCall {
         };
 
         let join = Room::join(&call, self.client.clone(), self.user_store.clone(), cx);
+
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
             this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
                 .await?;
+            this.update(&mut cx, |this, cx| {
+                this.report_call_event("accept incoming", cx)
+            });
             Ok(())
         })
     }
 
-    pub fn decline_incoming(&mut self) -> Result<()> {
+    pub fn decline_incoming(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         let call = self
             .incoming_call
             .0
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
+        self.report_call_event_for_room("decline incoming", call.room_id, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -266,10 +272,26 @@ impl ActiveCall {
 
     pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
+        self.report_call_event("hang up", cx);
         if let Some((room, _)) = self.room.take() {
             room.update(cx, |room, cx| room.leave(cx))
         } else {
             Task::ready(Ok(()))
+        }
+    }
+
+    pub fn toggle_screen_sharing(&self, cx: &mut AppContext) {
+        if let Some(room) = self.room().cloned() {
+            let toggle_screen_sharing = room.update(cx, |room, cx| {
+                if room.is_screen_sharing() {
+                    self.report_call_event("disable screen share", cx);
+                    Task::ready(room.unshare_screen(cx))
+                } else {
+                    self.report_call_event("enable screen share", cx);
+                    room.share_screen(cx)
+                }
+            });
+            toggle_screen_sharing.detach_and_log_err(cx);
         }
     }
 
@@ -279,6 +301,7 @@ impl ActiveCall {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
+            self.report_call_event("share project", cx);
             room.update(cx, |room, cx| room.share_project(project, cx))
         } else {
             Task::ready(Err(anyhow!("no active call")))
@@ -291,6 +314,7 @@ impl ActiveCall {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
+            self.report_call_event("unshare project", cx);
             room.update(cx, |room, cx| room.unshare_project(project, cx))
         } else {
             Err(anyhow!("no active call"))
@@ -351,5 +375,20 @@ impl ActiveCall {
 
     pub fn pending_invites(&self) -> &HashSet<u64> {
         &self.pending_invites
+    }
+
+    fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+        if let Some(room) = self.room() {
+            self.report_call_event_for_room(operation, room.read(cx).id(), cx)
+        }
+    }
+
+    fn report_call_event_for_room(&self, operation: &'static str, room_id: u64, cx: &AppContext) {
+        let telemetry = self.client.telemetry();
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+
+        let event = ClickhouseEvent::Call { operation, room_id };
+
+        telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 }

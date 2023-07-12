@@ -50,7 +50,7 @@ use lsp::{
 };
 use lsp_command::*;
 use postage::watch;
-use project_settings::ProjectSettings;
+use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
@@ -149,6 +149,7 @@ pub struct Project {
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
     copilot_enabled: bool,
+    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
 }
 
 struct DelayedDebounced {
@@ -614,6 +615,7 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_enabled: Copilot::global(cx).is_some(),
+                current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             }
         })
     }
@@ -706,6 +708,7 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_enabled: Copilot::global(cx).is_some(),
+                current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -779,7 +782,9 @@ impl Project {
         let mut language_servers_to_stop = Vec::new();
         let mut language_servers_to_restart = Vec::new();
         let languages = self.languages.to_vec();
-        let project_settings = settings::get::<ProjectSettings>(cx).clone();
+
+        let new_lsp_settings = settings::get::<ProjectSettings>(cx).lsp.clone();
+        let current_lsp_settings = &self.current_lsp_settings;
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
                 let adapter = l
@@ -796,16 +801,25 @@ impl Project {
                 if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
                     language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                 } else if let Some(worktree) = worktree {
-                    let new_lsp_settings = project_settings
-                        .lsp
-                        .get(&adapter.name.0)
-                        .and_then(|s| s.initialization_options.as_ref());
-                    if adapter.initialization_options.as_ref() != new_lsp_settings {
-                        language_servers_to_restart.push((worktree, Arc::clone(language)));
+                    let server_name = &adapter.name.0;
+                    match (
+                        current_lsp_settings.get(server_name),
+                        new_lsp_settings.get(server_name),
+                    ) {
+                        (None, None) => {}
+                        (Some(_), None) | (None, Some(_)) => {
+                            language_servers_to_restart.push((worktree, Arc::clone(language)));
+                        }
+                        (Some(current_lsp_settings), Some(new_lsp_settings)) => {
+                            if current_lsp_settings != new_lsp_settings {
+                                language_servers_to_restart.push((worktree, Arc::clone(language)));
+                            }
+                        }
                     }
                 }
             }
         }
+        self.current_lsp_settings = new_lsp_settings;
 
         // Stop all newly-disabled language servers.
         for (worktree_id, adapter_name) in language_servers_to_stop {

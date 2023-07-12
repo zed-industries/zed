@@ -427,6 +427,7 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
+    pub initialization_options: Option<Value>,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
@@ -1637,6 +1638,7 @@ impl Default for FakeLspAdapter {
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
+            initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
         }
     }
@@ -1685,6 +1687,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         self.disk_based_diagnostics_progress_token.clone()
+    }
+
+    async fn initialization_options(&self) -> Option<Value> {
+        self.initialization_options.clone()
     }
 }
 

@@ -57,14 +57,19 @@ use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
 use zed::{
-    assets::Assets, build_window_options, handle_keymap_file_changes, initialize_workspace,
-    languages, menus,
+    assets::Assets,
+    build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
+    only_instance::{ensure_only_instance, IsOnlyInstance},
 };
 
 fn main() {
     let http = http::client();
     init_paths();
     init_logger();
+
+    if ensure_only_instance() != IsOnlyInstance::Yes {
+        return;
+    }
 
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();

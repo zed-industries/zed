@@ -5123,7 +5123,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_with(|map, selection| {
                 selection.collapse_to(
-                    movement::start_of_paragraph(map, selection.head()),
+                    movement::start_of_paragraph(map, selection.head(), 1),
                     SelectionGoal::None,
                 )
             });
@@ -5143,7 +5143,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_with(|map, selection| {
                 selection.collapse_to(
-                    movement::end_of_paragraph(map, selection.head()),
+                    movement::end_of_paragraph(map, selection.head(), 1),
                     SelectionGoal::None,
                 )
             });
@@ -5162,7 +5162,10 @@ impl Editor {
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (movement::start_of_paragraph(map, head), SelectionGoal::None)
+                (
+                    movement::start_of_paragraph(map, head, 1),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -5179,7 +5182,10 @@ impl Editor {
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (movement::end_of_paragraph(map, head), SelectionGoal::None)
+                (
+                    movement::end_of_paragraph(map, head, 1),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -7216,6 +7222,47 @@ impl Editor {
         }
         results
     }
+    pub fn background_highlights_in_range_for<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((color_fetcher, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let color = color_fetcher(theme);
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let start = range
+                .start
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            let end = range
+                .end
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            results.push((start..end, color))
+        }
+
+        results
+    }
 
     pub fn highlight_text<T: 'static>(
         &mut self,
@@ -7518,7 +7565,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        name: &'static str,
+        operation: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
@@ -7555,7 +7602,7 @@ impl Editor {
         let event = ClickhouseEvent::Editor {
             file_extension,
             vim_mode,
-            operation: name,
+            operation,
             copilot_enabled,
             copilot_enabled_for_language,
         };

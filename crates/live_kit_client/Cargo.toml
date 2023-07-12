@@ -17,7 +17,6 @@ test-support = [
     "async-trait",
     "collections/test-support",
     "gpui/test-support",
-    "lazy_static",
     "live_kit_server",
     "nanoid",
 ]
@@ -38,7 +37,6 @@ parking_lot.workspace = true
 postage.workspace = true
 
 async-trait = { workspace = true, optional = true }
-lazy_static = { workspace = true, optional = true }
 nanoid = { version ="0.4", optional = true}
 
 [dev-dependencies]
@@ -60,7 +58,6 @@ foreign-types = "0.3"
 futures.workspace = true
 hmac = "0.12"
 jwt = "0.16"
-lazy_static.workspace = true
 objc = "0.2"
 parking_lot.workspace = true
 serde.workspace = true

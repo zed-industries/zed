@@ -1,17 +1,20 @@
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    elements::*, platform::MouseButton, AppContext, MouseState, Task, ViewContext, ViewHandle,
+    actions, elements::*, platform::MouseButton, AppContext, MouseState, Task, ViewContext,
+    ViewHandle,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::{ops::Not, sync::Arc};
 use util::ResultExt;
 use workspace::{Toast, Workspace};
 
+actions!(branches, [OpenRecent]);
+
 pub fn init(cx: &mut AppContext) {
     Picker::<BranchListDelegate>::init(cx);
+    cx.add_async_action(toggle);
 }
-
 pub type BranchList = Picker<BranchListDelegate>;
 
 pub fn build_branch_list(
@@ -28,6 +31,34 @@ pub fn build_branch_list(
         cx,
     )
     .with_theme(|theme| theme.picker.clone())
+}
+
+fn toggle(
+    _: &mut Workspace,
+    _: &OpenRecent,
+    cx: &mut ViewContext<Workspace>,
+) -> Option<Task<Result<()>>> {
+    Some(cx.spawn(|workspace, mut cx| async move {
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.toggle_modal(cx, |_, cx| {
+                let workspace = cx.handle();
+                cx.add_view(|cx| {
+                    Picker::new(
+                        BranchListDelegate {
+                            matches: vec![],
+                            workspace,
+                            selected_index: 0,
+                            last_query: String::default(),
+                        },
+                        cx,
+                    )
+                    .with_theme(|theme| theme.picker.clone())
+                    .with_max_size(800., 1200.)
+                })
+            });
+        })?;
+        Ok(())
+    }))
 }
 
 pub struct BranchListDelegate {

@@ -12,8 +12,6 @@ use gpui::keymap_matcher::Keystroke;
 use language::Point;
 
 #[cfg(feature = "neovim")]
-use lazy_static::lazy_static;
-#[cfg(feature = "neovim")]
 use nvim_rs::{
     create::tokio::new_child_cmd, error::LoopError, Handler, Neovim, UiAttachOptions, Value,
 };
@@ -32,9 +30,7 @@ use collections::VecDeque;
 // Neovim doesn't like to be started simultaneously from multiple threads. We use this lock
 // to ensure we are only constructing one neovim connection at a time.
 #[cfg(feature = "neovim")]
-lazy_static! {
-    static ref NEOVIM_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
-}
+static NEOVIM_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum NeovimData {
@@ -171,14 +167,24 @@ impl NeovimConnection {
             .await
             .expect("Could not get neovim window");
 
-        if !selection.is_empty() {
-            panic!("Setting neovim state with non empty selection not yet supported");
-        }
         let cursor = selection.start;
         nvim_window
             .set_cursor((cursor.row as i64 + 1, cursor.column as i64))
             .await
             .expect("Could not set nvim cursor position");
+
+        if !selection.is_empty() {
+            self.nvim
+                .input("v")
+                .await
+                .expect("could not enter visual mode");
+
+            let cursor = selection.end;
+            nvim_window
+                .set_cursor((cursor.row as i64 + 1, cursor.column as i64))
+                .await
+                .expect("Could not set nvim cursor position");
+        }
 
         if let Some(NeovimData::Get { mode, state }) = self.data.back() {
             if *mode == Some(Mode::Normal) && *state == marked_text {

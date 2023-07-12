@@ -210,6 +210,10 @@ impl<'a> EditorTestContext<'a> {
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
+    pub fn editor_state(&mut self) -> String {
+        generate_marked_text(self.buffer_text().as_str(), &self.editor_selections(), true)
+    }
+
     #[track_caller]
     pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
@@ -248,14 +252,8 @@ impl<'a> EditorTestContext<'a> {
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
-    #[track_caller]
-    fn assert_selections(
-        &mut self,
-        expected_selections: Vec<Range<usize>>,
-        expected_marked_text: String,
-    ) {
-        let actual_selections = self
-            .editor
+    fn editor_selections(&self) -> Vec<Range<usize>> {
+        self.editor
             .read_with(self.cx, |editor, cx| editor.selections.all::<usize>(cx))
             .into_iter()
             .map(|s| {
@@ -265,12 +263,22 @@ impl<'a> EditorTestContext<'a> {
                     s.start..s.end
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    }
+
+    #[track_caller]
+    fn assert_selections(
+        &mut self,
+        expected_selections: Vec<Range<usize>>,
+        expected_marked_text: String,
+    ) {
+        let actual_selections = self.editor_selections();
         let actual_marked_text =
             generate_marked_text(&self.buffer_text(), &actual_selections, true);
         if expected_selections != actual_selections {
             panic!(
                 indoc! {"
+
                     {}Editor has unexpected selections.
 
                     Expected selections:
