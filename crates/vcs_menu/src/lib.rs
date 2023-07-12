@@ -24,6 +24,7 @@ pub fn build_branch_list(
             workspace,
             selected_index: 0,
             last_query: String::default(),
+            branch_name_trailoff_after: 29,
         },
         cx,
     )
@@ -46,6 +47,8 @@ fn toggle(
                             workspace,
                             selected_index: 0,
                             last_query: String::default(),
+                            /// Modal branch picker has a longer trailoff than a popover one.
+                            branch_name_trailoff_after: 70,
                         },
                         cx,
                     )
@@ -63,6 +66,8 @@ pub struct BranchListDelegate {
     workspace: ViewHandle<Workspace>,
     selected_index: usize,
     last_query: String,
+    /// Max length of branch name before we truncate it and add a trailing `...`.
+    branch_name_trailoff_after: usize,
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -213,15 +218,15 @@ impl PickerDelegate for BranchListDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
-        const DISPLAYED_MATCH_LEN: usize = 29;
         let theme = &theme::current(cx);
         let hit = &self.matches[ix];
-        let shortened_branch_name = util::truncate_and_trailoff(&hit.string, DISPLAYED_MATCH_LEN);
+        let shortened_branch_name =
+            util::truncate_and_trailoff(&hit.string, self.branch_name_trailoff_after);
         let highlights = hit
             .positions
             .iter()
             .copied()
-            .filter(|index| index < &DISPLAYED_MATCH_LEN)
+            .filter(|index| index < &self.branch_name_trailoff_after)
             .collect();
         let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         Flex::row()
