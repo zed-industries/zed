@@ -9,6 +9,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
+use itertools::Itertools;
 use project::Project;
 use serde::Deserialize;
 use theme::Theme;
@@ -385,40 +386,61 @@ impl PaneAxis {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        let last_member_ix = self.members.len() - 1;
-        Flex::new(self.axis)
-            .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut flex = 1.0;
-                if member.contains(active_pane) {
-                    flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+        let mut flex_container = Flex::new(self.axis);
+
+        let mut members = self.members.iter().enumerate().peekable();
+        while let Some((ix, member)) = members.next() {
+            let last = members.peek().is_none();
+
+            let mut flex = 1.0;
+            if member.contains(active_pane) {
+                flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+            }
+
+            let mut member = member.render(
+                project,
+                theme,
+                follower_state,
+                active_call,
+                active_pane,
+                zoomed,
+                app_state,
+                cx,
+            );
+            if !last {
+                let mut border = theme.workspace.pane_divider;
+                border.left = false;
+                border.right = false;
+                border.top = false;
+                border.bottom = false;
+
+                match self.axis {
+                    Axis::Vertical => border.bottom = true,
+                    Axis::Horizontal => border.right = true,
                 }
 
-                let mut member = member.render(
-                    project,
-                    theme,
-                    follower_state,
-                    active_call,
-                    active_pane,
-                    zoomed,
-                    app_state,
-                    cx,
-                );
-                if ix < last_member_ix {
-                    let mut border = theme.workspace.pane_divider;
-                    border.left = false;
-                    border.right = false;
-                    border.top = false;
-                    border.bottom = false;
-                    match self.axis {
-                        Axis::Vertical => border.bottom = true,
-                        Axis::Horizontal => border.right = true,
-                    }
-                    member = member.contained().with_border(border).into_any();
-                }
+                let side = match self.axis {
+                    Axis::Horizontal => HandleSide::Right,
+                    Axis::Vertical => HandleSide::Bottom,
+                };
 
-                FlexItem::new(member).flex(flex, true)
-            }))
-            .into_any()
+                member = member.contained().with_border(border)
+                    .resizable(side, 1., |workspace, size, cx| {
+                        dbg!("resize", size);
+                    })
+                    .into_any();
+
+
+            }
+
+            flex_container = flex_container.with_child(
+                FlexItem::new(member)
+                    .flex(flex, true)
+                    .into_any()
+            );
+        }
+
+        flex_container.into_any()
     }
 }
 

@@ -1,13 +1,10 @@
 pub mod dock;
-/// NOTE: Focus only 'takes' after an update has flushed_effects.
-///
-/// This may cause issues when you're trying to write tests that use workspace focus to add items at
-/// specific locations.
 pub mod item;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod persistence;
+mod adjustable_flex;
 pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
