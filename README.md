@@ -32,7 +32,7 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 * Set up a local `zed` database and seed it with some initial users:
 
-    Create a personal GitHub token to run `script/bootstrap` once successfully: the token needs to have an access to private repositories for the script to work (`repo` OAuth scope).
+    [Create a personal GitHub token](https://github.com/settings/tokens/new) to run `script/bootstrap` once successfully: the token needs to have an access to private repositories for the script to work (`repo` OAuth scope).
     Then delete that token.
 
     ```
