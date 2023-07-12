@@ -7518,7 +7518,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        operation: &'static str,
+        name: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
@@ -7555,7 +7555,7 @@ impl Editor {
         let event = ClickhouseEvent::Editor {
             file_extension,
             vim_mode,
-            operation,
+            operation: name,
             copilot_enabled,
             copilot_enabled_for_language,
         };

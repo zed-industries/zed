@@ -157,7 +157,7 @@ async fn test_basic_calls(
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
     assert_eq!(call_c.calling_user.github_login, "user_b");
-    active_call_c.update(cx_c, |call, cx| call.decline_incoming(cx).unwrap());
+    active_call_c.update(cx_c, |call, _| call.decline_incoming().unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
     deterministic.run_until_parked();
@@ -1080,7 +1080,7 @@ async fn test_calls_on_multiple_connections(
 
     // User B declines the call on one of the two connections, causing both connections
     // to stop ringing.
-    active_call_b2.update(cx_b2, |call, cx| call.decline_incoming(cx).unwrap());
+    active_call_b2.update(cx_b2, |call, _| call.decline_incoming().unwrap());
     deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
@@ -5945,7 +5945,7 @@ async fn test_contacts(
         [("user_b".to_string(), "online", "busy")]
     );
 
-    active_call_b.update(cx_b, |call, cx| call.decline_incoming(cx).unwrap());
+    active_call_b.update(cx_b, |call, _| call.decline_incoming().unwrap());
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
