@@ -23,9 +23,10 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
     git clone https://github.com/zed-industries/zed.dev
     ```
 
-* Initialize submodules
+* Return to Zed project directory and Initialize submodules
 
     ```
+    cd zed
     git submodule update --init --recursive
     ```
 
