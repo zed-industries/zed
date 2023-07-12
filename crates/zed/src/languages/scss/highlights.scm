@@ -111,17 +111,14 @@
 
 ; Includes
 
+[
+    "in"
+    "through"
+    "from"
+] @keyword
+
 (include_statement
-    ("@include" @keyword
     (identifier) @function
-    (arguments
-        "(" @punctuation
-            (argument
-                (argument_value) @variable
-            )
-        ")" @punctuation
-        )
-    )
 )
 
 "#" @punctuation.delimiter
