@@ -263,7 +263,7 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        self.report_call_event_for_room("decline incoming", call.room_id, cx);
+        Self::report_call_event_for_room("decline incoming", call.room_id, &self.client, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -373,22 +373,29 @@ impl ActiveCall {
         self.room.as_ref().map(|(room, _)| room)
     }
 
+    pub fn client(&self) -> Arc<Client> {
+        self.client.clone()
+    }
+
     pub fn pending_invites(&self) -> &HashSet<u64> {
         &self.pending_invites
     }
 
     fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
         if let Some(room) = self.room() {
-            self.report_call_event_for_room(operation, room.read(cx).id(), cx)
+            Self::report_call_event_for_room(operation, room.read(cx).id(), &self.client, cx)
         }
     }
 
-    fn report_call_event_for_room(&self, operation: &'static str, room_id: u64, cx: &AppContext) {
-        let telemetry = self.client.telemetry();
+    pub fn report_call_event_for_room(
+        operation: &'static str,
+        room_id: u64,
+        client: &Arc<Client>,
+        cx: &AppContext,
+    ) {
+        let telemetry = client.telemetry();
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-
         let event = ClickhouseEvent::Call { operation, room_id };
-
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 }
