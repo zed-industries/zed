@@ -29,7 +29,7 @@ jobs:
           rustup update stable
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
@@ -54,12 +54,12 @@ jobs:
           cargo install cargo-nextest
 
       - name: Install Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
@@ -104,12 +104,12 @@ jobs:
           rustup target add wasm32-wasi
 
       - name: Install Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
