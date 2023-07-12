@@ -119,14 +119,40 @@ export default function picker(): any {
                 right: 8,
             },
         },
-        footer: {
-            text: text(theme.lowest, "sans", "variant", { size: "xs" }),
-            margin: {
-                top: 1,
-                left: 8,
-                right: 8,
+        footer: interactive({
+            base: {
+                text: text(theme.lowest, "sans", "base", { size: "xs" }),
+                padding: {
+                    bottom: 4,
+                    left: 12,
+                    right: 12,
+                    top: 4,
+                },
+                margin: {
+                    top: 1,
+                    left: 4,
+                    right: 4,
+                },
+                corner_radius: 8,
+                background: with_opacity(
+                    background(theme.lowest, "active"),
+                    0.5
+                ),
             },
-
-        }
+            state: {
+                hovered: {
+                    background: with_opacity(
+                        background(theme.lowest, "hovered"),
+                        0.5
+                    ),
+                },
+                clicked: {
+                    background: with_opacity(
+                        background(theme.lowest, "pressed"),
+                        0.5
+                    ),
+                },
+            }
+        }),
     }
 }
