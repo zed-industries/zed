@@ -9339,7 +9339,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.94.3"
+version = "0.94.4"
 dependencies = [
  "activity_indicator",
  "ai",
