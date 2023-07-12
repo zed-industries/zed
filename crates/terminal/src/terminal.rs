@@ -75,11 +75,11 @@ const DEBUG_LINE_HEIGHT: f32 = 5.;
 // Regex Copied from alacritty's ui_config.rs
 
 lazy_static! {
-    static ref URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-]+").unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
@@ -88,6 +88,7 @@ pub enum Event {
     Wakeup,
     BlinkChanged,
     SelectionsChanged,
+    Open(String),
 }
 
 #[derive(Clone)]
@@ -806,6 +807,7 @@ impl Terminal {
                 term.scroll_to_point(*point);
                 self.refresh_hyperlink();
             }
+            // We need to change this to a word boundary check
             InternalEvent::FindHyperlink(position, open) => {
                 let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
 
@@ -848,7 +850,7 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, url_match))
-                } else if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
+                } else if let Some(url_match) = regex_match_at(term, point, &WORD_REGEX) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
 
                     Some((url, url_match))
@@ -858,7 +860,7 @@ impl Terminal {
 
                 if let Some((url, url_match)) = found_url {
                     if *open {
-                        cx.platform().open_url(url.as_str());
+                        cx.emit(Event::Open(url))
                     } else {
                         self.update_hyperlink(prev_hyperlink, url, url_match);
                     }
@@ -1089,7 +1091,7 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else {
+        } else if e.cmd {
             self.hyperlink_from_position(Some(position));
         }
     }
@@ -1208,7 +1210,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.platform().open_url(link.uri());
-                } else {
+                } else if e.cmd {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }

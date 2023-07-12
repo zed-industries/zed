@@ -158,7 +158,13 @@ impl TerminalView {
                         .detach();
                 }
             }
-            _ => cx.emit(*event),
+            Event::Open(url) => {
+                // Get a workspace pointer from the new() function above
+                // Guess for project path or url
+                // Either run open buffer action OR platform open depending on whatever happens
+                cx.platform().open_url(url);
+            }
+            _ => cx.emit(event.clone()),
         })
         .detach();
 
