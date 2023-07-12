@@ -2316,6 +2316,7 @@ mod tests {
             cx.set_global(SettingsStore::test(cx));
             theme::init((), cx);
             crate::init_settings(cx);
+            Project::init_settings(cx);
         });
     }
 
