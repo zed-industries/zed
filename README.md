@@ -16,11 +16,13 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
     brew install foreman
     ```
 
-* Ensure the Zed.dev website is checked out in a sibling directory:
+* Ensure the Zed.dev website is checked out in a sibling directory and install it's dependencies:
 
     ```
     cd ..
     git clone https://github.com/zed-industries/zed.dev
+    cd zed.dev && npm install
+    npm install -g vercel
     ```
 
 * Return to Zed project directory and Initialize submodules
