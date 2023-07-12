@@ -4446,11 +4446,18 @@ impl Project {
             };
 
             cx.spawn(|this, mut cx| async move {
-                let resolved_completion = lang_server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?;
+                let additional_text_edits = if let Some(edits) =
+                    completion.lsp_completion.additional_text_edits.as_ref()
+                {
+                    Some(edits.clone())
+                } else {
+                    lang_server
+                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                        .await?
+                        .additional_text_edits
+                };
 
-                if let Some(edits) = resolved_completion.additional_text_edits {
+                if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
                             this.edits_from_lsp(
