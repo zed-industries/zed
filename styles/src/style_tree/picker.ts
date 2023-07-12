@@ -121,7 +121,7 @@ export default function picker(): any {
         },
         footer: interactive({
             base: {
-                text: text(theme.lowest, "sans", "variant", { size: "xs" }),
+                text: text(theme.lowest, "sans", "base", { size: "xs" }),
                 padding: {
                     bottom: 4,
                     left: 12,

@@ -1,8 +1,10 @@
 use anyhow::{anyhow, bail, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, platform::MouseButton, AppContext, MouseState, Task, ViewContext,
-    ViewHandle,
+    actions,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    AppContext, MouseState, Task, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::{ops::Not, sync::Arc};
@@ -290,6 +292,7 @@ impl PickerDelegate for BranchListDelegate {
                         .contained()
                         .with_style(style.container)
                 })
+                .with_cursor_style(CursorStyle::PointingHand)
                 .on_down(MouseButton::Left, |_, _, cx| {
                     cx.spawn(|picker, mut cx| async move {
                         picker.update(&mut cx, |this, cx| {
