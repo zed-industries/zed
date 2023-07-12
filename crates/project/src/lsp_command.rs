@@ -1358,16 +1358,6 @@ impl LspCommand for GetCompletions {
             completions
                 .into_iter()
                 .filter_map(move |mut lsp_completion| {
-                    // For now, we can only handle additional edits if they are returned
-                    // when resolving the completion, not if they are present initially.
-                    if lsp_completion
-                        .additional_text_edits
-                        .as_ref()
-                        .map_or(false, |edits| !edits.is_empty())
-                    {
-                        return None;
-                    }
-
                     let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref() {
                         // If the language server provides a range to overwrite, then
                         // check that the range is valid.
