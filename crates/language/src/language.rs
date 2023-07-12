@@ -350,6 +350,7 @@ pub struct LanguageQueries {
     pub brackets: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
+    pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
 }
@@ -490,12 +491,13 @@ pub struct Language {
 
 pub struct Grammar {
     id: usize,
-    pub(crate) ts_language: tree_sitter::Language,
+    pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
-    pub(crate) outline_config: Option<OutlineConfig>,
+    pub outline_config: Option<OutlineConfig>,
+    pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
@@ -509,12 +511,21 @@ struct IndentConfig {
     outdent_capture_ix: Option<u32>,
 }
 
-struct OutlineConfig {
-    query: Query,
-    item_capture_ix: u32,
-    name_capture_ix: u32,
-    context_capture_ix: Option<u32>,
-    extra_context_capture_ix: Option<u32>,
+pub struct OutlineConfig {
+    pub query: Query,
+    pub item_capture_ix: u32,
+    pub name_capture_ix: u32,
+    pub context_capture_ix: Option<u32>,
+    pub extra_context_capture_ix: Option<u32>,
+}
+
+#[derive(Debug)]
+pub struct EmbeddingConfig {
+    pub query: Query,
+    pub item_capture_ix: u32,
+    pub name_capture_ix: u32,
+    pub context_capture_ix: Option<u32>,
+    pub extra_context_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1146,6 +1157,7 @@ impl Language {
                     highlights_query: None,
                     brackets_config: None,
                     outline_config: None,
+                    embedding_config: None,
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
@@ -1182,6 +1194,9 @@ impl Language {
         if let Some(query) = queries.outline {
             self = self.with_outline_query(query.as_ref())?;
         }
+        if let Some(query) = queries.embedding {
+            self = self.with_embedding_query(query.as_ref())?;
+        }
         if let Some(query) = queries.injections {
             self = self.with_injection_query(query.as_ref())?;
         }
@@ -1190,6 +1205,7 @@ impl Language {
         }
         Ok(self)
     }
+
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
         grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
@@ -1214,6 +1230,34 @@ impl Language {
         );
         if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
             grammar.outline_config = Some(OutlineConfig {
+                query,
+                item_capture_ix,
+                name_capture_ix,
+                context_capture_ix,
+                extra_context_capture_ix,
+            });
+        }
+        Ok(self)
+    }
+
+    pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut();
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut item_capture_ix = None;
+        let mut name_capture_ix = None;
+        let mut context_capture_ix = None;
+        let mut extra_context_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("item", &mut item_capture_ix),
+                ("name", &mut name_capture_ix),
+                ("context", &mut context_capture_ix),
+                ("context.extra", &mut extra_context_capture_ix),
+            ],
+        );
+        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
+            grammar.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
