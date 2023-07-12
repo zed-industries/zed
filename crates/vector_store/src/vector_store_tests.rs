@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry};
-use project::{FakeFs, Project};
+use project::{project_settings::ProjectSettings, FakeFs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
@@ -17,6 +17,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.set_global(SettingsStore::test(cx));
         settings::register::<VectorStoreSettings>(cx);
+        settings::register::<ProjectSettings>(cx);
     });
 
     let fs = FakeFs::new(cx.background());
