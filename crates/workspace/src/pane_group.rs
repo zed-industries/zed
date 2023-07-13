@@ -421,14 +421,13 @@ impl PaneAxis {
     ) -> AnyElement<Workspace> {
         debug_assert!(self.members.len() == self.flexes.borrow().len());
 
-        let mut flex_container = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
+        let mut pane_axis = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
         let mut active_pane_ix = None;
 
         let mut members = self.members.iter().enumerate().peekable();
         while let Some((ix, member)) = members.next() {
             let last = members.peek().is_none();
 
-            // TODO: Restore this
             if member.contains(active_pane) {
                 active_pane_ix = Some(ix);
             }
@@ -460,10 +459,10 @@ impl PaneAxis {
                 member = member.contained().with_border(border).into_any();
             }
 
-            flex_container = flex_container.with_child(member.into_any());
+            pane_axis = pane_axis.with_child(member.into_any());
         }
-        flex_container.set_active_pane(active_pane_ix);
-        flex_container.into_any()
+        pane_axis.set_active_pane(active_pane_ix);
+        pane_axis.into_any()
     }
 }
 
@@ -562,7 +561,7 @@ mod element {
             self.active_pane_ix = active_pane_ix;
         }
 
-        fn layout_flex_children(
+        fn layout_children(
             &mut self,
             active_pane_magnification: f32,
             constraint: SizeConstraint,
@@ -656,7 +655,7 @@ mod element {
                 panic!("flex contains flexible children but has an infinite constraint along the flex axis");
             }
 
-            self.layout_flex_children(
+            self.layout_children(
                 active_pane_magnification,
                 constraint,
                 &mut remaining_space,
@@ -846,6 +845,7 @@ mod element {
                 "type": "PaneAxis",
                 "bounds": bounds.to_json(),
                 "axis": self.axis.to_json(),
+                "flexes": *self.flexes.borrow(),
                 "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
             })
         }
