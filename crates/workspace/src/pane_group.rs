@@ -308,12 +308,24 @@ impl Member {
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
-    flexes: Rc<RefCell<Vec<f32>>>,
+    pub flexes: Rc<RefCell<Vec<f32>>>,
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
         let flexes = Rc::new(RefCell::new(vec![1.; members.len()]));
+        Self {
+            axis,
+            members,
+            flexes,
+        }
+    }
+
+    pub fn load(axis: Axis, members: Vec<Member>, flexes: Option<Vec<f32>>) -> Self {
+        let flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
+        debug_assert!(members.len() == flexes.len());
+
+        let flexes = Rc::new(RefCell::new(flexes));
         Self {
             axis,
             members,
@@ -519,23 +531,23 @@ mod element {
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
         AnyElement, Axis, CursorRegion, Element, LayoutContext, MouseRegion, RectFExt,
-        SceneBuilder, SizeConstraint, Vector2FExt, View, ViewContext,
+        SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
     };
 
     use crate::{
         pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
-        WorkspaceSettings,
+        WorkspaceSettings, Workspace,
     };
 
-    pub struct PaneAxisElement<V: View> {
+    pub struct PaneAxisElement {
         axis: Axis,
         basis: usize,
         active_pane_ix: Option<usize>,
         flexes: Rc<RefCell<Vec<f32>>>,
-        children: Vec<AnyElement<V>>,
+        children: Vec<AnyElement<Workspace>>,
     }
 
-    impl<V: View> PaneAxisElement<V> {
+    impl  PaneAxisElement {
         pub fn new(axis: Axis, basis: usize, flexes: Rc<RefCell<Vec<f32>>>) -> Self {
             Self {
                 axis,
@@ -557,8 +569,8 @@ mod element {
             remaining_space: &mut f32,
             remaining_flex: &mut f32,
             cross_axis_max: &mut f32,
-            view: &mut V,
-            cx: &mut LayoutContext<V>,
+            view: &mut Workspace,
+            cx: &mut LayoutContext<Workspace>,
         ) {
             let flexes = self.flexes.borrow();
             let cross_axis = self.axis.invert();
@@ -602,21 +614,21 @@ mod element {
         }
     }
 
-    impl<V: View> Extend<AnyElement<V>> for PaneAxisElement<V> {
-        fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
+    impl Extend<AnyElement<Workspace>> for PaneAxisElement {
+        fn extend<T: IntoIterator<Item = AnyElement<Workspace>>>(&mut self, children: T) {
             self.children.extend(children);
         }
     }
 
-    impl<V: View> Element<V> for PaneAxisElement<V> {
+    impl Element<Workspace> for PaneAxisElement {
         type LayoutState = f32;
         type PaintState = ();
 
         fn layout(
             &mut self,
             constraint: SizeConstraint,
-            view: &mut V,
-            cx: &mut LayoutContext<V>,
+            view: &mut Workspace,
+            cx: &mut LayoutContext<Workspace>,
         ) -> (Vector2F, Self::LayoutState) {
             debug_assert!(self.children.len() == self.flexes.borrow().len());
 
@@ -682,8 +694,8 @@ mod element {
             bounds: RectF,
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
-            view: &mut V,
-            cx: &mut ViewContext<V>,
+            view: &mut Workspace,
+            cx: &mut ViewContext<Workspace>,
         ) -> Self::PaintState {
             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
@@ -750,7 +762,7 @@ mod element {
                         handle_bounds,
                     );
                     mouse_region =
-                        mouse_region.on_drag(MouseButton::Left, move |drag, _: &mut V, cx| {
+                        mouse_region.on_drag(MouseButton::Left, move |drag, workspace: &mut Workspace, cx| {
                             let min_size = match axis {
                                 Axis::Horizontal => HORIZONTAL_MIN_SIZE,
                                 Axis::Vertical => VERTICAL_MIN_SIZE,
@@ -768,13 +780,15 @@ mod element {
                                 current_target_size - child_size.along(axis);
 
                             if proposed_current_pixel_change < 0. {
-                                current_target_size = current_target_size.max(min_size);
+                                current_target_size = f32::max(current_target_size, min_size);
                             } else if proposed_current_pixel_change > 0. {
-                                // TODO: cascade this size change down, collect all changes into a vec
-                                let next_target_size = (next_child_size.along(axis)
-                                    - proposed_current_pixel_change)
-                                    .max(min_size);
-                                current_target_size = current_target_size.min(
+                                // TODO: cascade this change to other children if current item is at min size
+                                let next_target_size = f32::max(
+                                    next_child_size.along(axis) - proposed_current_pixel_change,
+                                    min_size,
+                                );
+                                current_target_size = f32::min(
+                                    current_target_size,
                                     child_size.along(axis) + next_child_size.along(axis)
                                         - next_target_size,
                                 );
@@ -789,6 +803,7 @@ mod element {
                             *borrow.get_mut(ix).unwrap() = current_target_flex;
                             *borrow.get_mut(next_ix).unwrap() = next_target_flex;
 
+                            workspace.schedule_serialize(cx);
                             cx.notify();
                         });
                     scene.push_mouse_region(mouse_region);
@@ -809,8 +824,8 @@ mod element {
             _: RectF,
             _: &Self::LayoutState,
             _: &Self::PaintState,
-            view: &V,
-            cx: &ViewContext<V>,
+            view: &Workspace,
+            cx: &ViewContext<Workspace>,
         ) -> Option<RectF> {
             self.children
                 .iter()
@@ -822,8 +837,8 @@ mod element {
             bounds: RectF,
             _: &Self::LayoutState,
             _: &Self::PaintState,
-            view: &V,
-            cx: &ViewContext<V>,
+            view: &Workspace,
+            cx: &ViewContext<Workspace>,
         ) -> json::Value {
             serde_json::json!({
                 "type": "PaneAxis",

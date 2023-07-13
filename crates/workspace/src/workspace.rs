@@ -504,6 +504,7 @@ pub struct Workspace {
     subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
+    _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
 }
 
@@ -718,6 +719,7 @@ impl Workspace {
             app_state,
             _observe_current_user,
             _apply_leader_updates,
+            _schedule_serialize: None,
             leader_updates_tx,
             subscriptions,
             pane_history_timestamp,
@@ -2893,6 +2895,13 @@ impl Workspace {
         cx.notify();
     }
 
+    fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
+        self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
+            cx.background().timer(Duration::from_millis(100)).await;
+            this.read_with(&cx, |this, cx| this.serialize_workspace(cx)).ok();
+        }));
+    }
+
     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
         fn serialize_pane_handle(
             pane_handle: &ViewHandle<Pane>,
@@ -2923,12 +2932,17 @@ impl Workspace {
             cx: &AppContext,
         ) -> SerializedPaneGroup {
             match pane_group {
-                Member::Axis(PaneAxis { axis, members, .. }) => SerializedPaneGroup::Group {
+                Member::Axis(PaneAxis {
+                    axis,
+                    members,
+                    flexes,
+                }) => SerializedPaneGroup::Group {
                     axis: *axis,
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, cx))
                         .collect::<Vec<_>>(),
+                    flexes: Some(flexes.borrow().clone()),
                 },
                 Member::Pane(pane_handle) => {
                     SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
