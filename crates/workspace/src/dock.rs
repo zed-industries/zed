@@ -408,9 +408,6 @@ impl View for Dock {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-
-
-
         if let Some(active_entry) = self.visible_entry() {
             let style = self.style(cx);
             ChildView::new(active_entry.panel.as_any(), cx)

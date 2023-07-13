@@ -308,10 +308,19 @@ impl Member {
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
-    pub ratios: Rc<RefCell<Vec<f32>>>,
+    ratios: Rc<RefCell<Vec<f32>>>,
 }
 
 impl PaneAxis {
+    pub fn new(axis: Axis, members: Vec<Member>) -> Self {
+        let ratios = Rc::new(RefCell::new(vec![1.; members.len()]));
+        Self {
+            axis,
+            members,
+            ratios,
+        }
+    }
+
     fn split(
         &mut self,
         old_pane: &ViewHandle<Pane>,
@@ -397,20 +406,24 @@ impl PaneAxis {
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
         let ratios = self.ratios.clone();
-        let mut flex_container = AdjustableGroupElement::new(self.axis, 2., basis, move |new_flexes| {
-            let mut borrow = ratios.borrow_mut();
-            borrow.extend(new_flexes);
-            borrow.truncate(10);
-            dbg!(borrow);
-        });
+        let mut flex_container =
+            AdjustableGroupElement::new(self.axis, 2., basis, move |new_flexes, _, cx| {
+                let mut borrow = ratios.borrow_mut();
+                for (ix, flex) in new_flexes {
+                    if let Some(el) = borrow.get_mut(ix) {
+                        *el = flex;
+                    }
+                }
 
+                cx.notify();
+            });
+
+        let ratios_borrow = self.ratios.borrow();
         let next_basis = basis + self.members.len();
-        let mut members = self.members.iter().enumerate().peekable();
-        while let Some((_ix, member)) = members.next() {
+        let mut members = self.members.iter().zip(ratios_borrow.iter()).peekable();
+        while let Some((member, flex)) = members.next() {
             let last = members.peek().is_none();
 
-            let mut flex = 1.0;
-            // TODO: Include minimum sizes
             // TODO: Restore this
             // if member.contains(active_pane) {
             // flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
@@ -439,16 +452,11 @@ impl PaneAxis {
                     Axis::Horizontal => border.right = true,
                 }
 
-                let side = match self.axis {
-                    Axis::Horizontal => HandleSide::Right,
-                    Axis::Vertical => HandleSide::Bottom,
-                };
-
                 member = member.contained().with_border(border).into_any();
             }
 
             flex_container =
-                flex_container.with_child(AdjustableGroupItem::new(member, flex).into_any());
+                flex_container.with_child(AdjustableGroupItem::new(member, *flex).into_any());
         }
 
         flex_container.into_any()
@@ -520,10 +528,11 @@ mod adjustable_group {
         },
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
-        AnyElement, Axis, CursorRegion, Element, LayoutContext, MouseRegion, Quad, SceneBuilder,
-        SizeConstraint, Vector2FExt, View, ViewContext,
+        AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion, Quad,
+        RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, View, ViewContext,
     };
     use serde_json::Value;
+    use smallvec::SmallVec;
 
     struct AdjustableFlexData {
         flex: f32,
@@ -533,7 +542,7 @@ mod adjustable_group {
         axis: Axis,
         handle_size: f32,
         basis: usize,
-        callback: Rc<dyn Fn(Vec<f32>)>,
+        callback: Rc<dyn Fn(SmallVec<[(usize, f32); 2]>, &mut V, &mut EventContext<V>)>,
         children: Vec<AnyElement<V>>,
     }
 
@@ -542,7 +551,7 @@ mod adjustable_group {
             axis: Axis,
             handle_size: f32,
             basis: usize,
-            callback: impl Fn(Vec<f32>) + 'static,
+            callback: impl Fn(SmallVec<[(usize, f32); 2]>, &mut V, &mut EventContext<V>) + 'static,
         ) -> Self {
             Self {
                 axis,
@@ -676,8 +685,9 @@ mod adjustable_group {
 
             let mut child_origin = bounds.origin();
 
-            let last_ix = self.children.len() - 1;
-            for (ix, child) in self.children.iter_mut().enumerate() {
+            let mut children_iter = self.children.iter_mut().enumerate().peekable();
+            while let Some((ix, child)) = children_iter.next() {
+                let child_start = child_origin.clone();
                 child.paint(scene, child_origin, visible_bounds, view, cx);
 
                 match self.axis {
@@ -685,7 +695,7 @@ mod adjustable_group {
                     Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
                 }
 
-                if ix != last_ix {
+                if let Some((next_ix, next_child)) = children_iter.peek() {
                     let bounds = match self.axis {
                         Axis::Horizontal => RectF::new(
                             child_origin,
@@ -710,20 +720,66 @@ mod adjustable_group {
 
                     scene.push_cursor_region(CursorRegion { bounds, style });
 
-                    enum ResizeHandle {}
                     let callback = self.callback.clone();
                     let axis = self.axis;
+                    let child_size = child.size();
+                    let next_child_size = next_child.size();
+                    let mut drag_bounds = visible_bounds.clone();
+                    // Unsure why this should be needed....
+                    drag_bounds.set_origin_y(0.);
+                    let current_flex = child.metadata::<AdjustableFlexData>().unwrap().flex;
+                    let next_flex = next_child.metadata::<AdjustableFlexData>().unwrap().flex;
+                    let next_ix = *next_ix;
+                    const HORIZONTAL_MIN_SIZE: f32 = 80.;
+                    const VERTICAL_MIN_SIZE: f32 = 100.;
+                    enum ResizeHandle {}
                     let mut mouse_region =
                         MouseRegion::new::<ResizeHandle>(cx.view_id(), self.basis + ix, bounds);
                     mouse_region =
                         mouse_region.on_drag(MouseButton::Left, move |drag, v: &mut V, cx| {
-                            dbg!(drag);
-                            callback({
-                                match axis {
-                                    Axis::Horizontal => vec![0., 1., 2.],
-                                    Axis::Vertical => vec![3., 2., 1.],
-                                }
-                            })
+                            let min_size = match axis {
+                                Axis::Horizontal => HORIZONTAL_MIN_SIZE,
+                                Axis::Vertical => VERTICAL_MIN_SIZE,
+                            };
+                            // Don't allow resizing to less than the minimum size, if elements are already too small
+                            if min_size - 1. > child_size.along(axis)
+                                || min_size - 1. > next_child_size.along(axis)
+                            {
+                                return;
+                            }
+
+                            let flex_position = drag.position - drag_bounds.origin();
+                            let mut current_target_size = (flex_position - child_start).along(axis);
+                            let proposed_current_pixel_change =
+                                current_target_size - child_size.along(axis);
+
+                            if proposed_current_pixel_change < 0. {
+                                current_target_size = current_target_size.max(min_size);
+                            } else if proposed_current_pixel_change > 0. {
+                                // TODO: cascade this size change down, collect into a vec
+                                let next_target_size = (next_child_size.along(axis)
+                                    - proposed_current_pixel_change)
+                                    .max(min_size);
+                                current_target_size = current_target_size.min(
+                                    child_size.along(axis) + next_child_size.along(axis)
+                                        - next_target_size,
+                                );
+                            }
+
+                            let current_pixel_change = current_target_size - child_size.along(axis);
+                            let flex_change = current_pixel_change / drag_bounds.length_along(axis);
+
+                            let current_target_flex = current_flex + flex_change;
+                            let next_target_flex = next_flex - flex_change;
+
+                            callback(
+                                smallvec::smallvec![
+                                    (ix, current_target_flex),
+                                    (next_ix, next_target_flex),
+                                ],
+                                v,
+                                cx,
+                            )
                         });
                     scene.push_mouse_region(mouse_region);
 
