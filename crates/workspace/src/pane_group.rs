@@ -15,6 +15,10 @@ use project::Project;
 use serde::Deserialize;
 use theme::Theme;
 
+const HANDLE_HITBOX_SIZE: f32 = 4.0;
+const HORIZONTAL_MIN_SIZE: f32 = 80.;
+const VERTICAL_MIN_SIZE: f32 = 100.;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneGroup {
     pub(crate) root: Member,
@@ -405,21 +409,17 @@ impl PaneAxis {
     ) -> AnyElement<Workspace> {
         debug_assert!(self.members.len() == self.flexes.borrow().len());
 
-        // TODO: SImplify further by just passing in the flexes pointer directly, no need to generify!
         let mut flex_container = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
+        let mut active_pane_ix = None;
 
-        let mut members = self
-            .members
-            .iter()
-            .enumerate()
-            .peekable();
+        let mut members = self.members.iter().enumerate().peekable();
         while let Some((ix, member)) = members.next() {
             let last = members.peek().is_none();
 
             // TODO: Restore this
-            // if member.contains(active_pane) {
-            // flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
-            // }
+            if member.contains(active_pane) {
+                active_pane_ix = Some(ix);
+            }
 
             let mut member = member.render(
                 project,
@@ -450,7 +450,7 @@ impl PaneAxis {
 
             flex_container = flex_container.with_child(member.into_any());
         }
-
+        flex_container.set_active_pane(active_pane_ix);
         flex_container.into_any()
     }
 }
@@ -508,7 +508,6 @@ impl SplitDirection {
     }
 }
 
-// TODO: PaneAxis element here
 mod element {
     use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -523,9 +522,15 @@ mod element {
         SceneBuilder, SizeConstraint, Vector2FExt, View, ViewContext,
     };
 
+    use crate::{
+        pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
+        WorkspaceSettings,
+    };
+
     pub struct PaneAxisElement<V: View> {
         axis: Axis,
         basis: usize,
+        active_pane_ix: Option<usize>,
         flexes: Rc<RefCell<Vec<f32>>>,
         children: Vec<AnyElement<V>>,
     }
@@ -536,12 +541,18 @@ mod element {
                 axis,
                 basis,
                 flexes,
+                active_pane_ix: None,
                 children: Default::default(),
             }
         }
 
+        pub fn set_active_pane(&mut self, active_pane_ix: Option<usize>) {
+            self.active_pane_ix = active_pane_ix;
+        }
+
         fn layout_flex_children(
             &mut self,
+            active_pane_magnification: f32,
             constraint: SizeConstraint,
             remaining_space: &mut f32,
             remaining_flex: &mut f32,
@@ -552,7 +563,19 @@ mod element {
             let flexes = self.flexes.borrow();
             let cross_axis = self.axis.invert();
             for (ix, child) in self.children.iter_mut().enumerate() {
-                let flex = flexes[ix];
+                let flex = if active_pane_magnification != 1. {
+                    if let Some(active_pane_ix) = self.active_pane_ix {
+                        if ix == active_pane_ix {
+                            active_pane_magnification
+                        } else {
+                            1.
+                        }
+                    } else {
+                        1.
+                    }
+                } else {
+                    flexes[ix]
+                };
 
                 let child_size = if *remaining_flex == 0.0 {
                     *remaining_space
@@ -596,13 +619,25 @@ mod element {
             cx: &mut LayoutContext<V>,
         ) -> (Vector2F, Self::LayoutState) {
             debug_assert!(self.children.len() == self.flexes.borrow().len());
+
+            let active_pane_magnification =
+                settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+
             let mut remaining_flex = 0.;
 
-            let mut cross_axis_max: f32 = 0.0;
-            for flex in self.flexes.borrow().iter() {
-                remaining_flex += flex;
+            if active_pane_magnification != 1. {
+                let active_pane_flex = self
+                    .active_pane_ix
+                    .map(|_| active_pane_magnification)
+                    .unwrap_or(1.);
+                remaining_flex += self.children.len() as f32 - 1. + active_pane_flex;
+            } else {
+                for flex in self.flexes.borrow().iter() {
+                    remaining_flex += flex;
+                }
             }
 
+            let mut cross_axis_max: f32 = 0.0;
             let mut remaining_space = constraint.max_along(self.axis);
 
             if remaining_space.is_infinite() {
@@ -610,6 +645,7 @@ mod element {
             }
 
             self.layout_flex_children(
+                active_pane_magnification,
                 constraint,
                 &mut remaining_space,
                 &mut remaining_flex,
@@ -649,6 +685,7 @@ mod element {
             view: &mut V,
             cx: &mut ViewContext<V>,
         ) -> Self::PaintState {
+            let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
             let overflowing = *remaining_space < 0.;
@@ -668,8 +705,8 @@ mod element {
                     Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
                 }
 
-                const HANDLE_HITBOX_SIZE: f32 = 4.0;
-                if let Some((next_ix, next_child)) = children_iter.peek() {
+                if let Some(Some((next_ix, next_child))) = can_resize.then(|| children_iter.peek())
+                {
                     scene.push_stacking_context(None, None);
 
                     let handle_origin = match self.axis {
@@ -687,13 +724,6 @@ mod element {
                             vec2f(visible_bounds.width(), HANDLE_HITBOX_SIZE),
                         ),
                     };
-
-                    // use gpui::color::Color,
-                    // scene.push_quad(Quad {
-                    //     bounds: handle_bounds,
-                    //     background: Some(Color::red()),
-                    //     ..Default::default()
-                    // });
 
                     let style = match self.axis {
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
@@ -713,8 +743,6 @@ mod element {
                     let current_flex = flexes.borrow()[ix];
                     let next_ix = *next_ix;
                     let next_flex = flexes.borrow()[next_ix];
-                    const HORIZONTAL_MIN_SIZE: f32 = 80.;
-                    const VERTICAL_MIN_SIZE: f32 = 100.;
                     enum ResizeHandle {}
                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
                         cx.view_id(),
