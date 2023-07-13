@@ -9,11 +9,17 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry};
-use project::{project_settings::ProjectSettings, FakeFs, Project};
+use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{self, AtomicUsize},
+        Arc,
+    },
+};
 use unindent::Unindent;
 
 #[ctor::ctor]
@@ -62,29 +68,37 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     let db_dir = tempdir::TempDir::new("vector-store").unwrap();
     let db_path = db_dir.path().join("db.sqlite");
 
+    let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
     let store = VectorStore::new(
         fs.clone(),
         db_path,
-        Arc::new(FakeEmbeddingProvider),
+        embedding_provider.clone(),
         languages,
         cx.to_async(),
     )
     .await
     .unwrap();
 
-    let project = Project::test(fs, ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
     let worktree_id = project.read_with(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
     });
-    store
-        .update(cx, |store, cx| store.add_project(project.clone(), cx))
+    let file_count = store
+        .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await
         .unwrap();
+    assert_eq!(file_count, 2);
     cx.foreground().run_until_parked();
+    store.update(cx, |store, _cx| {
+        assert_eq!(
+            store.remaining_files_to_index_for_project(&project),
+            Some(0)
+        );
+    });
 
     let search_results = store
         .update(cx, |store, cx| {
-            store.search(project.clone(), "aaaa".to_string(), 5, cx)
+            store.search_project(project.clone(), "aaaa".to_string(), 5, cx)
         })
         .await
         .unwrap();
@@ -92,10 +106,45 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     assert_eq!(search_results[0].byte_range.start, 0);
     assert_eq!(search_results[0].name, "aaa");
     assert_eq!(search_results[0].worktree_id, worktree_id);
+
+    fs.save(
+        "/the-root/src/file2.rs".as_ref(),
+        &"
+            fn dddd() { println!(\"ddddd!\"); }
+            struct pqpqpqp {}
+        "
+        .unindent()
+        .into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    cx.foreground().run_until_parked();
+
+    let prev_embedding_count = embedding_provider.embedding_count();
+    let file_count = store
+        .update(cx, |store, cx| store.index_project(project.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(file_count, 1);
+
+    cx.foreground().run_until_parked();
+    store.update(cx, |store, _cx| {
+        assert_eq!(
+            store.remaining_files_to_index_for_project(&project),
+            Some(0)
+        );
+    });
+
+    assert_eq!(
+        embedding_provider.embedding_count() - prev_embedding_count,
+        2
+    );
 }
 
 #[gpui::test]
-async fn test_code_context_retrieval(cx: &mut TestAppContext) {
+async fn test_code_context_retrieval() {
     let language = rust_lang();
     let mut retriever = CodeContextRetriever::new();
 
@@ -181,11 +230,22 @@ fn test_dot_product(mut rng: StdRng) {
     }
 }
 
-struct FakeEmbeddingProvider;
+#[derive(Default)]
+struct FakeEmbeddingProvider {
+    embedding_count: AtomicUsize,
+}
+
+impl FakeEmbeddingProvider {
+    fn embedding_count(&self) -> usize {
+        self.embedding_count.load(atomic::Ordering::SeqCst)
+    }
+}
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+        self.embedding_count
+            .fetch_add(spans.len(), atomic::Ordering::SeqCst);
         Ok(spans
             .iter()
             .map(|span| {

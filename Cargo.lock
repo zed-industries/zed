@@ -8493,6 +8493,7 @@ dependencies = [
  "lazy_static",
  "log",
  "matrixmultiply",
+ "parking_lot 0.11.2",
  "picker",
  "project",
  "rand 0.8.5",
