@@ -525,7 +525,6 @@ pub struct EmbeddingConfig {
     pub item_capture_ix: u32,
     pub name_capture_ix: u32,
     pub context_capture_ix: Option<u32>,
-    pub extra_context_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1246,14 +1245,12 @@ impl Language {
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
-        let mut extra_context_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("item", &mut item_capture_ix),
                 ("name", &mut name_capture_ix),
                 ("context", &mut context_capture_ix),
-                ("context.extra", &mut extra_context_capture_ix),
             ],
         );
         if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
@@ -1262,7 +1259,6 @@ impl Language {
                 item_capture_ix,
                 name_capture_ix,
                 context_capture_ix,
-                extra_context_capture_ix,
             });
         }
         Ok(self)

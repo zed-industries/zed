@@ -53,7 +53,7 @@ impl CodeContextRetriever {
             .ok_or_else(|| anyhow!("parsing failed"))?;
 
         let mut documents = Vec::new();
-        let mut context_spans = Vec::new();
+        let mut document_texts = Vec::new();
 
         // Iterate through query matches
         for mat in self.cursor.matches(
@@ -61,11 +61,10 @@ impl CodeContextRetriever {
             tree.root_node(),
             content.as_bytes(),
         ) {
-            // log::info!("-----MATCH-----");
-
             let mut name: Vec<&str> = vec![];
             let mut item: Option<&str> = None;
             let mut offset: Option<usize> = None;
+            let mut context_spans: Vec<&str> = vec![];
             for capture in mat.captures {
                 if capture.index == embedding_config.item_capture_ix {
                     offset = Some(capture.node.byte_range().start);
@@ -79,25 +78,21 @@ impl CodeContextRetriever {
                 if let Some(context_capture_ix) = embedding_config.context_capture_ix {
                     if capture.index == context_capture_ix {
                         if let Some(context) = content.get(capture.node.byte_range()) {
-                            name.push(context);
+                            context_spans.push(context);
                         }
                     }
                 }
             }
 
             if item.is_some() && offset.is_some() && name.len() > 0 {
-                let context_span = CODE_CONTEXT_TEMPLATE
+                let item = format!("{}\n{}", context_spans.join("\n"), item.unwrap());
+
+                let document_text = CODE_CONTEXT_TEMPLATE
                     .replace("<path>", pending_file.relative_path.to_str().unwrap())
                     .replace("<language>", &pending_file.language.name().to_lowercase())
-                    .replace("<item>", item.unwrap());
+                    .replace("<item>", item.as_str());
 
-                let mut truncated_span = context_span.clone();
-                truncated_span.truncate(100);
-
-                // log::info!("Name:       {:?}", name);
-                // log::info!("Span:       {:?}", truncated_span);
-
-                context_spans.push(context_span);
+                document_texts.push(document_text);
                 documents.push(Document {
                     name: name.join(" "),
                     offset: offset.unwrap(),
@@ -112,7 +107,7 @@ impl CodeContextRetriever {
                 mtime: pending_file.modified_time,
                 documents,
             },
-            context_spans,
+            document_texts,
         ));
     }
 }
