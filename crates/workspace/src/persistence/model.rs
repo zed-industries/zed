@@ -187,6 +187,7 @@ impl SerializedPaneGroup {
                     Member::Axis(PaneAxis {
                         axis: *axis,
                         members,
+                        ratios: Default::default()
                     }),
                     current_active_pane,
                     items,

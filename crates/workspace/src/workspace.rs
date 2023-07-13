@@ -4,7 +4,6 @@ pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod persistence;
-mod adjustable_flex;
 pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
@@ -2924,7 +2923,7 @@ impl Workspace {
             cx: &AppContext,
         ) -> SerializedPaneGroup {
             match pane_group {
-                Member::Axis(PaneAxis { axis, members }) => SerializedPaneGroup::Group {
+                Member::Axis(PaneAxis { axis, members, .. }) => SerializedPaneGroup::Group {
                     axis: *axis,
                     children: members
                         .iter()

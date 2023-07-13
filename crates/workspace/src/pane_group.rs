@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use crate::{AppState, FollowerStatesByLeader, Pane, Workspace, WorkspaceSettings};
+use crate::{AppState, FollowerStatesByLeader, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
@@ -9,12 +9,13 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
-use itertools::Itertools;
 use project::Project;
 use serde::Deserialize;
 use theme::Theme;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+use self::adjustable_group::{AdjustableGroupElement, AdjustableGroupItem};
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaneGroup {
     pub(crate) root: Member,
 }
@@ -78,6 +79,7 @@ impl PaneGroup {
     ) -> AnyElement<Workspace> {
         self.root.render(
             project,
+            0,
             theme,
             follower_states,
             active_call,
@@ -95,7 +97,7 @@ impl PaneGroup {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(ViewHandle<Pane>),
@@ -120,7 +122,11 @@ impl Member {
             Down | Right => vec![Member::Pane(old_pane), Member::Pane(new_pane)],
         };
 
-        Member::Axis(PaneAxis { axis, members })
+        Member::Axis(PaneAxis {
+            axis,
+            members,
+            ratios: Default::default(),
+        })
     }
 
     fn contains(&self, needle: &ViewHandle<Pane>) -> bool {
@@ -133,6 +139,7 @@ impl Member {
     pub fn render(
         &self,
         project: &ModelHandle<Project>,
+        basis: usize,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
@@ -273,6 +280,7 @@ impl Member {
             }
             Member::Axis(axis) => axis.render(
                 project,
+                basis + 1,
                 theme,
                 follower_states,
                 active_call,
@@ -296,10 +304,11 @@ impl Member {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
+    pub ratios: Rc<RefCell<Vec<f32>>>,
 }
 
 impl PaneAxis {
@@ -378,6 +387,7 @@ impl PaneAxis {
     fn render(
         &self,
         project: &ModelHandle<Project>,
+        basis: usize,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
@@ -386,19 +396,29 @@ impl PaneAxis {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        let mut flex_container = Flex::new(self.axis);
+        let ratios = self.ratios.clone();
+        let mut flex_container = AdjustableGroupElement::new(self.axis, 2., basis, move |new_flexes| {
+            let mut borrow = ratios.borrow_mut();
+            borrow.extend(new_flexes);
+            borrow.truncate(10);
+            dbg!(borrow);
+        });
 
+        let next_basis = basis + self.members.len();
         let mut members = self.members.iter().enumerate().peekable();
-        while let Some((ix, member)) = members.next() {
+        while let Some((_ix, member)) = members.next() {
             let last = members.peek().is_none();
 
             let mut flex = 1.0;
-            if member.contains(active_pane) {
-                flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
-            }
+            // TODO: Include minimum sizes
+            // TODO: Restore this
+            // if member.contains(active_pane) {
+            // flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+            // }
 
             let mut member = member.render(
                 project,
+                next_basis,
                 theme,
                 follower_state,
                 active_call,
@@ -424,20 +444,11 @@ impl PaneAxis {
                     Axis::Vertical => HandleSide::Bottom,
                 };
 
-                member = member.contained().with_border(border)
-                    .resizable(side, 1., |workspace, size, cx| {
-                        dbg!("resize", size);
-                    })
-                    .into_any();
-
-
+                member = member.contained().with_border(border).into_any();
             }
 
-            flex_container = flex_container.with_child(
-                FlexItem::new(member)
-                    .flex(flex, true)
-                    .into_any()
-            );
+            flex_container =
+                flex_container.with_child(AdjustableGroupItem::new(member, flex).into_any());
         }
 
         flex_container.into_any()
@@ -493,6 +504,344 @@ impl SplitDirection {
         match self {
             Self::Left | Self::Up => false,
             Self::Down | Self::Right => true,
+        }
+    }
+}
+
+mod adjustable_group {
+
+    use std::{any::Any, ops::Range, rc::Rc};
+
+    use gpui::{
+        color::Color,
+        geometry::{
+            rect::RectF,
+            vector::{vec2f, Vector2F},
+        },
+        json::{self, ToJson},
+        platform::{CursorStyle, MouseButton},
+        AnyElement, Axis, CursorRegion, Element, LayoutContext, MouseRegion, Quad, SceneBuilder,
+        SizeConstraint, Vector2FExt, View, ViewContext,
+    };
+    use serde_json::Value;
+
+    struct AdjustableFlexData {
+        flex: f32,
+    }
+
+    pub struct AdjustableGroupElement<V: View> {
+        axis: Axis,
+        handle_size: f32,
+        basis: usize,
+        callback: Rc<dyn Fn(Vec<f32>)>,
+        children: Vec<AnyElement<V>>,
+    }
+
+    impl<V: View> AdjustableGroupElement<V> {
+        pub fn new(
+            axis: Axis,
+            handle_size: f32,
+            basis: usize,
+            callback: impl Fn(Vec<f32>) + 'static,
+        ) -> Self {
+            Self {
+                axis,
+                handle_size,
+                basis,
+                callback: Rc::new(callback),
+                children: Default::default(),
+            }
+        }
+
+        fn layout_flex_children(
+            &mut self,
+            constraint: SizeConstraint,
+            remaining_space: &mut f32,
+            remaining_flex: &mut f32,
+            cross_axis_max: &mut f32,
+            view: &mut V,
+            cx: &mut LayoutContext<V>,
+        ) {
+            let cross_axis = self.axis.invert();
+            let last_ix = self.children.len() - 1;
+            for (ix, child) in self.children.iter_mut().enumerate() {
+                let flex = child.metadata::<AdjustableFlexData>().unwrap().flex;
+
+                let handle_size = if ix == last_ix { 0. } else { self.handle_size };
+
+                let child_size = if *remaining_flex == 0.0 {
+                    *remaining_space
+                } else {
+                    let space_per_flex = *remaining_space / *remaining_flex;
+                    space_per_flex * flex
+                } - handle_size;
+
+                let child_constraint = match self.axis {
+                    Axis::Horizontal => SizeConstraint::new(
+                        vec2f(child_size, constraint.min.y()),
+                        vec2f(child_size, constraint.max.y()),
+                    ),
+                    Axis::Vertical => SizeConstraint::new(
+                        vec2f(constraint.min.x(), child_size),
+                        vec2f(constraint.max.x(), child_size),
+                    ),
+                };
+                let child_size = child.layout(child_constraint, view, cx);
+                *remaining_space -= child_size.along(self.axis) + handle_size;
+                *remaining_flex -= flex;
+                *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
+            }
+        }
+    }
+
+    impl<V: View> Extend<AnyElement<V>> for AdjustableGroupElement<V> {
+        fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
+            self.children.extend(children);
+        }
+    }
+
+    impl<V: View> Element<V> for AdjustableGroupElement<V> {
+        type LayoutState = f32;
+        type PaintState = ();
+
+        fn layout(
+            &mut self,
+            constraint: SizeConstraint,
+            view: &mut V,
+            cx: &mut LayoutContext<V>,
+        ) -> (Vector2F, Self::LayoutState) {
+            let mut remaining_flex = 0.;
+
+            let mut cross_axis_max: f32 = 0.0;
+            for child in &mut self.children {
+                let metadata = child.metadata::<AdjustableFlexData>();
+                let flex = metadata
+                    .map(|metadata| metadata.flex)
+                    .expect("All children of an adjustable flex must be AdjustableFlexItems");
+                remaining_flex += flex;
+            }
+
+            let mut remaining_space = constraint.max_along(self.axis);
+
+            if remaining_space.is_infinite() {
+                panic!("flex contains flexible children but has an infinite constraint along the flex axis");
+            }
+
+            self.layout_flex_children(
+                constraint,
+                &mut remaining_space,
+                &mut remaining_flex,
+                &mut cross_axis_max,
+                view,
+                cx,
+            );
+
+            let mut size = match self.axis {
+                Axis::Horizontal => vec2f(constraint.max.x() - remaining_space, cross_axis_max),
+                Axis::Vertical => vec2f(cross_axis_max, constraint.max.y() - remaining_space),
+            };
+
+            if constraint.min.x().is_finite() {
+                size.set_x(size.x().max(constraint.min.x()));
+            }
+            if constraint.min.y().is_finite() {
+                size.set_y(size.y().max(constraint.min.y()));
+            }
+
+            if size.x() > constraint.max.x() {
+                size.set_x(constraint.max.x());
+            }
+            if size.y() > constraint.max.y() {
+                size.set_y(constraint.max.y());
+            }
+
+            (size, remaining_space)
+        }
+
+        fn paint(
+            &mut self,
+            scene: &mut SceneBuilder,
+            bounds: RectF,
+            visible_bounds: RectF,
+            remaining_space: &mut Self::LayoutState,
+            view: &mut V,
+            cx: &mut ViewContext<V>,
+        ) -> Self::PaintState {
+            let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
+            let overflowing = *remaining_space < 0.;
+            if overflowing {
+                scene.push_layer(Some(visible_bounds));
+            }
+
+            let mut child_origin = bounds.origin();
+
+            let last_ix = self.children.len() - 1;
+            for (ix, child) in self.children.iter_mut().enumerate() {
+                child.paint(scene, child_origin, visible_bounds, view, cx);
+
+                match self.axis {
+                    Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
+                    Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
+                }
+
+                if ix != last_ix {
+                    let bounds = match self.axis {
+                        Axis::Horizontal => RectF::new(
+                            child_origin,
+                            vec2f(self.handle_size, visible_bounds.height()),
+                        ),
+                        Axis::Vertical => RectF::new(
+                            child_origin,
+                            vec2f(visible_bounds.width(), self.handle_size),
+                        ),
+                    };
+
+                    scene.push_quad(Quad {
+                        bounds,
+                        background: Some(Color::red()),
+                        ..Default::default()
+                    });
+
+                    let style = match self.axis {
+                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                        Axis::Vertical => CursorStyle::ResizeUpDown,
+                    };
+
+                    scene.push_cursor_region(CursorRegion { bounds, style });
+
+                    enum ResizeHandle {}
+                    let callback = self.callback.clone();
+                    let axis = self.axis;
+                    let mut mouse_region =
+                        MouseRegion::new::<ResizeHandle>(cx.view_id(), self.basis + ix, bounds);
+                    mouse_region =
+                        mouse_region.on_drag(MouseButton::Left, move |drag, v: &mut V, cx| {
+                            dbg!(drag);
+                            callback({
+                                match axis {
+                                    Axis::Horizontal => vec![0., 1., 2.],
+                                    Axis::Vertical => vec![3., 2., 1.],
+                                }
+                            })
+                        });
+                    scene.push_mouse_region(mouse_region);
+
+                    match self.axis {
+                        Axis::Horizontal => child_origin += vec2f(self.handle_size, 0.0),
+                        Axis::Vertical => child_origin += vec2f(0.0, self.handle_size),
+                    }
+                }
+            }
+
+            if overflowing {
+                scene.pop_layer();
+            }
+        }
+
+        fn rect_for_text_range(
+            &self,
+            range_utf16: Range<usize>,
+            _: RectF,
+            _: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &V,
+            cx: &ViewContext<V>,
+        ) -> Option<RectF> {
+            self.children
+                .iter()
+                .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
+        }
+
+        fn debug(
+            &self,
+            bounds: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &V,
+            cx: &ViewContext<V>,
+        ) -> json::Value {
+            serde_json::json!({
+                "type": "Flex",
+                "bounds": bounds.to_json(),
+                "axis": self.axis.to_json(),
+                "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
+            })
+        }
+    }
+
+    pub struct AdjustableGroupItem<V: View> {
+        metadata: AdjustableFlexData,
+        child: AnyElement<V>,
+    }
+
+    impl<V: View> AdjustableGroupItem<V> {
+        pub fn new(child: impl Element<V>, flex: f32) -> Self {
+            Self {
+                metadata: AdjustableFlexData { flex },
+                child: child.into_any(),
+            }
+        }
+    }
+
+    impl<V: View> Element<V> for AdjustableGroupItem<V> {
+        type LayoutState = ();
+        type PaintState = ();
+
+        fn layout(
+            &mut self,
+            constraint: SizeConstraint,
+            view: &mut V,
+            cx: &mut LayoutContext<V>,
+        ) -> (Vector2F, Self::LayoutState) {
+            let size = self.child.layout(constraint, view, cx);
+            (size, ())
+        }
+
+        fn paint(
+            &mut self,
+            scene: &mut SceneBuilder,
+            bounds: RectF,
+            visible_bounds: RectF,
+            _: &mut Self::LayoutState,
+            view: &mut V,
+            cx: &mut ViewContext<V>,
+        ) -> Self::PaintState {
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx)
+        }
+
+        fn rect_for_text_range(
+            &self,
+            range_utf16: Range<usize>,
+            _: RectF,
+            _: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &V,
+            cx: &ViewContext<V>,
+        ) -> Option<RectF> {
+            self.child.rect_for_text_range(range_utf16, view, cx)
+        }
+
+        fn metadata(&self) -> Option<&dyn Any> {
+            Some(&self.metadata)
+        }
+
+        fn debug(
+            &self,
+            _: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &V,
+            cx: &ViewContext<V>,
+        ) -> Value {
+            serde_json::json!({
+                "type": "Flexible",
+                "flex": self.metadata.flex,
+                "child": self.child.debug(view, cx)
+            })
         }
     }
 }
