@@ -1975,7 +1975,7 @@ impl Element<Editor> for EditorElement {
 
         let snapshot = editor.snapshot(cx);
         let style = self.style.clone();
-        let line_height = style.text.line_height(cx.font_cache());
+        let line_height = (style.text.font_size * style.line_height_scalar).round();
 
         let gutter_padding;
         let gutter_width;

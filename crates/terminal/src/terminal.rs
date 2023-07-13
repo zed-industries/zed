@@ -198,7 +198,7 @@ impl TerminalLineHeight {
         match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
-            TerminalLineHeight::Custom(line_height) => *line_height,
+            TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
         }
     }
 }
