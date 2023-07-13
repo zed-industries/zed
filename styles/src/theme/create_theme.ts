@@ -70,11 +70,14 @@ export interface Players {
     "7": Player
 }
 
-export interface ColorFamily {
-    range: ColorFamilyRange
-}
+export type ColorFamily = Partial<{ [K in keyof RampSet]: ColorFamilyRange }>
 
-export type ColorFamilyRange = Partial<{ [K in keyof RampSet]: number }>
+export interface ColorFamilyRange {
+    low: number
+    high: number
+    range: number
+    scaling_value: number
+}
 
 export interface Shadow {
     blur: number
@@ -169,9 +172,7 @@ export function create_theme(theme: ThemeConfig): Theme {
         "7": player(ramps.yellow),
     }
 
-    const color_family = {
-        range: build_color_family(ramps)
-    }
+    const color_family = build_color_family(ramps)
 
     return {
         name,
@@ -199,11 +200,23 @@ function player(ramp: Scale): Player {
     }
 }
 
-function build_color_family(ramps: RampSet): ColorFamilyRange {
-    const color_family: ColorFamilyRange = {}
+function build_color_family(ramps: RampSet): ColorFamily {
+    const color_family: ColorFamily = {}
 
     for (const ramp in ramps) {
-        color_family[ramp as keyof RampSet] = chroma(ramps[ramp as keyof RampSet](0.5)).luminance()
+        const ramp_value = ramps[ramp as keyof RampSet]
+
+        const lightnessValues = [ramp_value(0).get('hsl.l') * 100, ramp_value(1).get('hsl.l') * 100]
+        const low = Math.min(...lightnessValues)
+        const high = Math.max(...lightnessValues)
+        const range = high - low
+
+        color_family[ramp as keyof RampSet] = {
+            low,
+            high,
+            range,
+            scaling_value: 100 / range,
+        }
     }
 
     return color_family
