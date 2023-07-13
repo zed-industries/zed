@@ -682,6 +682,13 @@ impl SearchableItem for TerminalView {
         cx.notify();
     }
 
+    /// Add selections for all matches given.
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.terminal()
+            .update(cx, |term, _| term.select_matches(matches));
+        cx.notify();
+    }
+
     /// Get all of the matches for this query, should be done on the background
     fn find_matches(
         &mut self,

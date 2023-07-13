@@ -1,6 +1,6 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    CaretsToAllMatches, SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
+    ToggleRegex, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -39,8 +39,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::focus_editor);
     cx.add_action(BufferSearchBar::select_next_match);
     cx.add_action(BufferSearchBar::select_prev_match);
+    cx.add_action(BufferSearchBar::carets_to_all_matches);
     cx.add_action(BufferSearchBar::select_next_match_on_pane);
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
+    cx.add_action(BufferSearchBar::carets_to_all_matches_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
@@ -66,7 +68,7 @@ pub struct BufferSearchBar {
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
-    seachable_items_with_matches:
+    searchable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
     pending_search: Option<Task<()>>,
     case_sensitive: bool,
@@ -118,7 +120,7 @@ impl View for BufferSearchBar {
                             .with_children(self.active_searchable_item.as_ref().and_then(
                                 |searchable_item| {
                                     let matches = self
-                                        .seachable_items_with_matches
+                                        .searchable_items_with_matches
                                         .get(&searchable_item.downgrade())?;
                                     let message = if let Some(match_ix) = self.active_match_index {
                                         format!("{}/{}", match_ix + 1, matches.len())
@@ -249,7 +251,7 @@ impl BufferSearchBar {
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
-            seachable_items_with_matches: Default::default(),
+            searchable_items_with_matches: Default::default(),
             case_sensitive: false,
             whole_word: false,
             regex: false,
@@ -265,7 +267,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-        for searchable_item in self.seachable_items_with_matches.keys() {
+        for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
@@ -488,11 +490,25 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, cx);
     }
 
+    fn carets_to_all_matches(&mut self, _: &CaretsToAllMatches, cx: &mut ViewContext<Self>) {
+        if !self.dismissed {
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(matches) = self
+                    .searchable_items_with_matches
+                    .get(&searchable_item.downgrade())
+                {
+                    searchable_item.select_matches(matches, cx);
+                    self.focus_editor(&FocusEditor, cx);
+                }
+            }
+        }
+    }
+
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
-                    .seachable_items_with_matches
+                    .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
                     let new_match_index =
@@ -524,6 +540,16 @@ impl BufferSearchBar {
         }
     }
 
+    fn carets_to_all_matches_on_pane(
+        pane: &mut Pane,
+        action: &CaretsToAllMatches,
+        cx: &mut ViewContext<Pane>,
+    ) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.carets_to_all_matches(action, cx));
+        }
+    }
+
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
@@ -547,7 +573,7 @@ impl BufferSearchBar {
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_item_matches = None;
-        for (searchable_item, matches) in self.seachable_items_with_matches.drain() {
+        for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
@@ -559,7 +585,7 @@ impl BufferSearchBar {
             }
         }
 
-        self.seachable_items_with_matches
+        self.searchable_items_with_matches
             .extend(active_item_matches);
     }
 
@@ -605,13 +631,13 @@ impl BufferSearchBar {
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {
-                            this.seachable_items_with_matches
+                            this.searchable_items_with_matches
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(cx);
                             if !this.dismissed {
                                 let matches = this
-                                    .seachable_items_with_matches
+                                    .searchable_items_with_matches
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
                                 active_searchable_item.update_matches(matches, cx);
@@ -637,7 +663,7 @@ impl BufferSearchBar {
             .as_ref()
             .and_then(|searchable_item| {
                 let matches = self
-                    .seachable_items_with_matches
+                    .searchable_items_with_matches
                     .get(&searchable_item.downgrade())?;
                 searchable_item.active_match_index(matches, cx)
             });
@@ -964,6 +990,62 @@ mod tests {
         });
         search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_carets_to_all_matches(cx: &mut TestAppContext) {
+        crate::project_search::tests::init_test(cx);
+
+        let buffer_text = r#"
+        A regular expression (shortened as regex or regexp;[1] also referred to as
+        rational expression[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+        .unindent();
+        let expected_query_matches_count = buffer_text
+            .chars()
+            .filter(|c| c.to_ascii_lowercase() == 'a')
+            .count();
+        assert!(
+            expected_query_matches_count > 1,
+            "Should pick a query with multiple results"
+        );
+        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let (window_id, _root_view) = cx.add_window(|_| EmptyView);
+
+        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = cx.add_view(window_id, |cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(false, true, cx);
+            search_bar
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_query("a", cx);
+        });
+
+        editor.next_notification(cx).await;
+        editor.update(cx, |editor, cx| {
+            let initial_selections =   editor.selections.display_ranges(cx);
+            assert_eq!(
+                initial_selections.len(), 1,
+                "Expected to have only one selection before adding carets to all matches, but got: {initial_selections:?}",
+            )
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.carets_to_all_matches(&CaretsToAllMatches, cx);
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                expected_query_matches_count,
+                "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+            );
         });
     }
 }

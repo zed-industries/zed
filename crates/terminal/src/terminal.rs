@@ -908,6 +908,21 @@ impl Terminal {
         }
     }
 
+    pub fn select_matches(&mut self, matches: Vec<RangeInclusive<Point>>) {
+        let matches_to_select = self
+            .matches
+            .iter()
+            .filter(|self_match| matches.contains(self_match))
+            .cloned()
+            .collect::<Vec<_>>();
+        for match_to_select in matches_to_select {
+            self.set_selection(Some((
+                make_selection(&match_to_select),
+                *match_to_select.end(),
+            )));
+        }
+    }
+
     fn set_selection(&mut self, selection: Option<(Selection, Point)>) {
         self.events
             .push_back(InternalEvent::SetSelection(selection));

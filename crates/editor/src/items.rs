@@ -941,6 +941,11 @@ impl SearchableItem for Editor {
         });
     }
 
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.unfold_ranges(matches.clone(), false, false, cx);
+        self.change_selections(None, cx, |s| s.select_ranges(matches));
+    }
+
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,

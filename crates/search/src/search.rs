@@ -17,7 +17,8 @@ actions!(
         ToggleCaseSensitive,
         ToggleRegex,
         SelectNextMatch,
-        SelectPrevMatch
+        SelectPrevMatch,
+        CaretsToAllMatches,
     ]
 );
 
