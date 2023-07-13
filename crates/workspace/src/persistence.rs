@@ -443,7 +443,10 @@ impl WorkspaceDb {
             } => {
                 let (parent_id, position) = unzip_option(parent);
 
-                let flex_string = serde_json::json!(flexes).to_string();
+                let flex_string = flexes
+                    .as_ref()
+                    .map(|flexes| serde_json::json!(flexes).to_string());
+
                 let group_id = conn.select_row_bound::<_, i64>(sql!(
                     INSERT INTO pane_groups(
                         workspace_id,
