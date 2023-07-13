@@ -494,6 +494,7 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct EditorStyle {
     pub text: TextStyle,
+    pub line_height_scalar: f32,
     pub placeholder_text: Option<TextStyle>,
     pub theme: theme::Editor,
     pub theme_id: usize,
@@ -8101,7 +8102,7 @@ fn build_style(
     cx: &AppContext,
 ) -> EditorStyle {
     let font_cache = cx.font_cache();
-
+    let line_height_scalar = settings.line_height();
     let theme_id = settings.theme.meta.id;
     let mut theme = settings.theme.editor.clone();
     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
@@ -8115,6 +8116,7 @@ fn build_style(
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
+            line_height_scalar,
             theme,
             theme_id,
         }
@@ -8137,6 +8139,7 @@ fn build_style(
                 underline: Default::default(),
             },
             placeholder_text: None,
+            line_height_scalar,
             theme,
             theme_id,
         }
