@@ -536,7 +536,7 @@ mod element {
 
     use crate::{
         pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
-        WorkspaceSettings, Workspace,
+        Workspace, WorkspaceSettings,
     };
 
     pub struct PaneAxisElement {
@@ -547,7 +547,7 @@ mod element {
         children: Vec<AnyElement<Workspace>>,
     }
 
-    impl  PaneAxisElement {
+    impl PaneAxisElement {
         pub fn new(axis: Axis, basis: usize, flexes: Rc<RefCell<Vec<f32>>>) -> Self {
             Self {
                 axis,
@@ -761,8 +761,9 @@ mod element {
                         self.basis + ix,
                         handle_bounds,
                     );
-                    mouse_region =
-                        mouse_region.on_drag(MouseButton::Left, move |drag, workspace: &mut Workspace, cx| {
+                    mouse_region = mouse_region.on_drag(
+                        MouseButton::Left,
+                        move |drag, workspace: &mut Workspace, cx| {
                             let min_size = match axis {
                                 Axis::Horizontal => HORIZONTAL_MIN_SIZE,
                                 Axis::Vertical => VERTICAL_MIN_SIZE,
@@ -805,7 +806,8 @@ mod element {
 
                             workspace.schedule_serialize(cx);
                             cx.notify();
-                        });
+                        },
+                    );
                     scene.push_mouse_region(mouse_region);
 
                     scene.pop_stacking_context();

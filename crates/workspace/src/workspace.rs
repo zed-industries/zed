@@ -2898,7 +2898,8 @@ impl Workspace {
     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
         self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
             cx.background().timer(Duration::from_millis(100)).await;
-            this.read_with(&cx, |this, cx| this.serialize_workspace(cx)).ok();
+            this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
+                .ok();
         }));
     }
 

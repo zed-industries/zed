@@ -161,7 +161,11 @@ impl SerializedPaneGroup {
         Vec<Option<Box<dyn ItemHandle>>>,
     )> {
         match self {
-            SerializedPaneGroup::Group { axis, children, flexes } => {
+            SerializedPaneGroup::Group {
+                axis,
+                children,
+                flexes,
+            } => {
                 let mut current_active_pane = None;
                 let mut members = Vec::new();
                 let mut items = Vec::new();
