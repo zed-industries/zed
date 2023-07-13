@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use crate::{AppState, FollowerStatesByLeader, Pane, Workspace};
+use crate::{
+    pane_group::element::PaneAxisElement, AppState, FollowerStatesByLeader, Pane, Workspace,
+};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
@@ -12,8 +14,6 @@ use gpui::{
 use project::Project;
 use serde::Deserialize;
 use theme::Theme;
-
-use self::adjustable_group::{AdjustableGroupElement, AdjustableGroupItem};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneGroup {
@@ -122,11 +122,7 @@ impl Member {
             Down | Right => vec![Member::Pane(old_pane), Member::Pane(new_pane)],
         };
 
-        Member::Axis(PaneAxis {
-            axis,
-            members,
-            ratios: Default::default(),
-        })
+        Member::Axis(PaneAxis::new(axis, members))
     }
 
     fn contains(&self, needle: &ViewHandle<Pane>) -> bool {
@@ -308,16 +304,16 @@ impl Member {
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
-    ratios: Rc<RefCell<Vec<f32>>>,
+    flexes: Rc<RefCell<Vec<f32>>>,
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
-        let ratios = Rc::new(RefCell::new(vec![1.; members.len()]));
+        let flexes = Rc::new(RefCell::new(vec![1.; members.len()]));
         Self {
             axis,
             members,
-            ratios,
+            flexes,
         }
     }
 
@@ -342,6 +338,7 @@ impl PaneAxis {
                             }
 
                             self.members.insert(idx, Member::Pane(new_pane.clone()));
+                            *self.flexes.borrow_mut() = vec![1.; self.members.len()];
                         } else {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -381,6 +378,7 @@ impl PaneAxis {
         if found_pane {
             if let Some(idx) = remove_member {
                 self.members.remove(idx);
+                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
             }
 
             if self.members.len() == 1 {
@@ -405,23 +403,17 @@ impl PaneAxis {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        let ratios = self.ratios.clone();
-        let mut flex_container =
-            AdjustableGroupElement::new(self.axis, 2., basis, move |new_flexes, _, cx| {
-                let mut borrow = ratios.borrow_mut();
-                for (ix, flex) in new_flexes {
-                    if let Some(el) = borrow.get_mut(ix) {
-                        *el = flex;
-                    }
-                }
+        debug_assert!(self.members.len() == self.flexes.borrow().len());
 
-                cx.notify();
-            });
+        // TODO: SImplify further by just passing in the flexes pointer directly, no need to generify!
+        let mut flex_container = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
 
-        let ratios_borrow = self.ratios.borrow();
-        let next_basis = basis + self.members.len();
-        let mut members = self.members.iter().zip(ratios_borrow.iter()).peekable();
-        while let Some((member, flex)) = members.next() {
+        let mut members = self
+            .members
+            .iter()
+            .enumerate()
+            .peekable();
+        while let Some((ix, member)) = members.next() {
             let last = members.peek().is_none();
 
             // TODO: Restore this
@@ -431,7 +423,7 @@ impl PaneAxis {
 
             let mut member = member.render(
                 project,
-                next_basis,
+                (basis + ix) * 10,
                 theme,
                 follower_state,
                 active_call,
@@ -440,6 +432,7 @@ impl PaneAxis {
                 app_state,
                 cx,
             );
+
             if !last {
                 let mut border = theme.workspace.pane_divider;
                 border.left = false;
@@ -455,8 +448,7 @@ impl PaneAxis {
                 member = member.contained().with_border(border).into_any();
             }
 
-            flex_container =
-                flex_container.with_child(AdjustableGroupItem::new(member, *flex).into_any());
+            flex_container = flex_container.with_child(member.into_any());
         }
 
         flex_container.into_any()
@@ -516,48 +508,34 @@ impl SplitDirection {
     }
 }
 
-mod adjustable_group {
-
-    use std::{any::Any, ops::Range, rc::Rc};
+// TODO: PaneAxis element here
+mod element {
+    use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use gpui::{
-        color::Color,
         geometry::{
             rect::RectF,
             vector::{vec2f, Vector2F},
         },
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
-        AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion, Quad,
-        RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, View, ViewContext,
+        AnyElement, Axis, CursorRegion, Element, LayoutContext, MouseRegion, RectFExt,
+        SceneBuilder, SizeConstraint, Vector2FExt, View, ViewContext,
     };
-    use serde_json::Value;
-    use smallvec::SmallVec;
 
-    struct AdjustableFlexData {
-        flex: f32,
-    }
-
-    pub struct AdjustableGroupElement<V: View> {
+    pub struct PaneAxisElement<V: View> {
         axis: Axis,
-        handle_size: f32,
         basis: usize,
-        callback: Rc<dyn Fn(SmallVec<[(usize, f32); 2]>, &mut V, &mut EventContext<V>)>,
+        flexes: Rc<RefCell<Vec<f32>>>,
         children: Vec<AnyElement<V>>,
     }
 
-    impl<V: View> AdjustableGroupElement<V> {
-        pub fn new(
-            axis: Axis,
-            handle_size: f32,
-            basis: usize,
-            callback: impl Fn(SmallVec<[(usize, f32); 2]>, &mut V, &mut EventContext<V>) + 'static,
-        ) -> Self {
+    impl<V: View> PaneAxisElement<V> {
+        pub fn new(axis: Axis, basis: usize, flexes: Rc<RefCell<Vec<f32>>>) -> Self {
             Self {
                 axis,
-                handle_size,
                 basis,
-                callback: Rc::new(callback),
+                flexes,
                 children: Default::default(),
             }
         }
@@ -571,19 +549,17 @@ mod adjustable_group {
             view: &mut V,
             cx: &mut LayoutContext<V>,
         ) {
+            let flexes = self.flexes.borrow();
             let cross_axis = self.axis.invert();
-            let last_ix = self.children.len() - 1;
             for (ix, child) in self.children.iter_mut().enumerate() {
-                let flex = child.metadata::<AdjustableFlexData>().unwrap().flex;
-
-                let handle_size = if ix == last_ix { 0. } else { self.handle_size };
+                let flex = flexes[ix];
 
                 let child_size = if *remaining_flex == 0.0 {
                     *remaining_space
                 } else {
                     let space_per_flex = *remaining_space / *remaining_flex;
                     space_per_flex * flex
-                } - handle_size;
+                };
 
                 let child_constraint = match self.axis {
                     Axis::Horizontal => SizeConstraint::new(
@@ -596,20 +572,20 @@ mod adjustable_group {
                     ),
                 };
                 let child_size = child.layout(child_constraint, view, cx);
-                *remaining_space -= child_size.along(self.axis) + handle_size;
+                *remaining_space -= child_size.along(self.axis);
                 *remaining_flex -= flex;
                 *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
             }
         }
     }
 
-    impl<V: View> Extend<AnyElement<V>> for AdjustableGroupElement<V> {
+    impl<V: View> Extend<AnyElement<V>> for PaneAxisElement<V> {
         fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
             self.children.extend(children);
         }
     }
 
-    impl<V: View> Element<V> for AdjustableGroupElement<V> {
+    impl<V: View> Element<V> for PaneAxisElement<V> {
         type LayoutState = f32;
         type PaintState = ();
 
@@ -619,14 +595,11 @@ mod adjustable_group {
             view: &mut V,
             cx: &mut LayoutContext<V>,
         ) -> (Vector2F, Self::LayoutState) {
+            debug_assert!(self.children.len() == self.flexes.borrow().len());
             let mut remaining_flex = 0.;
 
             let mut cross_axis_max: f32 = 0.0;
-            for child in &mut self.children {
-                let metadata = child.metadata::<AdjustableFlexData>();
-                let flex = metadata
-                    .map(|metadata| metadata.flex)
-                    .expect("All children of an adjustable flex must be AdjustableFlexItems");
+            for flex in self.flexes.borrow().iter() {
                 remaining_flex += flex;
             }
 
@@ -695,48 +668,61 @@ mod adjustable_group {
                     Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
                 }
 
+                const HANDLE_HITBOX_SIZE: f32 = 4.0;
                 if let Some((next_ix, next_child)) = children_iter.peek() {
-                    let bounds = match self.axis {
+                    scene.push_stacking_context(None, None);
+
+                    let handle_origin = match self.axis {
+                        Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
+                        Axis::Vertical => child_origin - vec2f(0.0, HANDLE_HITBOX_SIZE / 2.),
+                    };
+
+                    let handle_bounds = match self.axis {
                         Axis::Horizontal => RectF::new(
-                            child_origin,
-                            vec2f(self.handle_size, visible_bounds.height()),
+                            handle_origin,
+                            vec2f(HANDLE_HITBOX_SIZE, visible_bounds.height()),
                         ),
                         Axis::Vertical => RectF::new(
-                            child_origin,
-                            vec2f(visible_bounds.width(), self.handle_size),
+                            handle_origin,
+                            vec2f(visible_bounds.width(), HANDLE_HITBOX_SIZE),
                         ),
                     };
 
-                    scene.push_quad(Quad {
-                        bounds,
-                        background: Some(Color::red()),
-                        ..Default::default()
-                    });
+                    // use gpui::color::Color,
+                    // scene.push_quad(Quad {
+                    //     bounds: handle_bounds,
+                    //     background: Some(Color::red()),
+                    //     ..Default::default()
+                    // });
 
                     let style = match self.axis {
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                     };
 
-                    scene.push_cursor_region(CursorRegion { bounds, style });
+                    scene.push_cursor_region(CursorRegion {
+                        bounds: handle_bounds,
+                        style,
+                    });
 
-                    let callback = self.callback.clone();
                     let axis = self.axis;
                     let child_size = child.size();
                     let next_child_size = next_child.size();
-                    let mut drag_bounds = visible_bounds.clone();
-                    // Unsure why this should be needed....
-                    drag_bounds.set_origin_y(0.);
-                    let current_flex = child.metadata::<AdjustableFlexData>().unwrap().flex;
-                    let next_flex = next_child.metadata::<AdjustableFlexData>().unwrap().flex;
+                    let drag_bounds = visible_bounds.clone();
+                    let flexes = self.flexes.clone();
+                    let current_flex = flexes.borrow()[ix];
                     let next_ix = *next_ix;
+                    let next_flex = flexes.borrow()[next_ix];
                     const HORIZONTAL_MIN_SIZE: f32 = 80.;
                     const VERTICAL_MIN_SIZE: f32 = 100.;
                     enum ResizeHandle {}
-                    let mut mouse_region =
-                        MouseRegion::new::<ResizeHandle>(cx.view_id(), self.basis + ix, bounds);
+                    let mut mouse_region = MouseRegion::new::<ResizeHandle>(
+                        cx.view_id(),
+                        self.basis + ix,
+                        handle_bounds,
+                    );
                     mouse_region =
-                        mouse_region.on_drag(MouseButton::Left, move |drag, v: &mut V, cx| {
+                        mouse_region.on_drag(MouseButton::Left, move |drag, _: &mut V, cx| {
                             let min_size = match axis {
                                 Axis::Horizontal => HORIZONTAL_MIN_SIZE,
                                 Axis::Vertical => VERTICAL_MIN_SIZE,
@@ -748,15 +734,15 @@ mod adjustable_group {
                                 return;
                             }
 
-                            let flex_position = drag.position - drag_bounds.origin();
-                            let mut current_target_size = (flex_position - child_start).along(axis);
+                            let mut current_target_size = (drag.position - child_start).along(axis);
+
                             let proposed_current_pixel_change =
                                 current_target_size - child_size.along(axis);
 
                             if proposed_current_pixel_change < 0. {
                                 current_target_size = current_target_size.max(min_size);
                             } else if proposed_current_pixel_change > 0. {
-                                // TODO: cascade this size change down, collect into a vec
+                                // TODO: cascade this size change down, collect all changes into a vec
                                 let next_target_size = (next_child_size.along(axis)
                                     - proposed_current_pixel_change)
                                     .max(min_size);
@@ -768,25 +754,18 @@ mod adjustable_group {
 
                             let current_pixel_change = current_target_size - child_size.along(axis);
                             let flex_change = current_pixel_change / drag_bounds.length_along(axis);
-
                             let current_target_flex = current_flex + flex_change;
                             let next_target_flex = next_flex - flex_change;
 
-                            callback(
-                                smallvec::smallvec![
-                                    (ix, current_target_flex),
-                                    (next_ix, next_target_flex),
-                                ],
-                                v,
-                                cx,
-                            )
+                            let mut borrow = flexes.borrow_mut();
+                            *borrow.get_mut(ix).unwrap() = current_target_flex;
+                            *borrow.get_mut(next_ix).unwrap() = next_target_flex;
+
+                            cx.notify();
                         });
                     scene.push_mouse_region(mouse_region);
 
-                    match self.axis {
-                        Axis::Horizontal => child_origin += vec2f(self.handle_size, 0.0),
-                        Axis::Vertical => child_origin += vec2f(0.0, self.handle_size),
-                    }
+                    scene.pop_stacking_context();
                 }
             }
 
@@ -819,84 +798,10 @@ mod adjustable_group {
             cx: &ViewContext<V>,
         ) -> json::Value {
             serde_json::json!({
-                "type": "Flex",
+                "type": "PaneAxis",
                 "bounds": bounds.to_json(),
                 "axis": self.axis.to_json(),
                 "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
-            })
-        }
-    }
-
-    pub struct AdjustableGroupItem<V: View> {
-        metadata: AdjustableFlexData,
-        child: AnyElement<V>,
-    }
-
-    impl<V: View> AdjustableGroupItem<V> {
-        pub fn new(child: impl Element<V>, flex: f32) -> Self {
-            Self {
-                metadata: AdjustableFlexData { flex },
-                child: child.into_any(),
-            }
-        }
-    }
-
-    impl<V: View> Element<V> for AdjustableGroupItem<V> {
-        type LayoutState = ();
-        type PaintState = ();
-
-        fn layout(
-            &mut self,
-            constraint: SizeConstraint,
-            view: &mut V,
-            cx: &mut LayoutContext<V>,
-        ) -> (Vector2F, Self::LayoutState) {
-            let size = self.child.layout(constraint, view, cx);
-            (size, ())
-        }
-
-        fn paint(
-            &mut self,
-            scene: &mut SceneBuilder,
-            bounds: RectF,
-            visible_bounds: RectF,
-            _: &mut Self::LayoutState,
-            view: &mut V,
-            cx: &mut ViewContext<V>,
-        ) -> Self::PaintState {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx)
-        }
-
-        fn rect_for_text_range(
-            &self,
-            range_utf16: Range<usize>,
-            _: RectF,
-            _: RectF,
-            _: &Self::LayoutState,
-            _: &Self::PaintState,
-            view: &V,
-            cx: &ViewContext<V>,
-        ) -> Option<RectF> {
-            self.child.rect_for_text_range(range_utf16, view, cx)
-        }
-
-        fn metadata(&self) -> Option<&dyn Any> {
-            Some(&self.metadata)
-        }
-
-        fn debug(
-            &self,
-            _: RectF,
-            _: &Self::LayoutState,
-            _: &Self::PaintState,
-            view: &V,
-            cx: &ViewContext<V>,
-        ) -> Value {
-            serde_json::json!({
-                "type": "Flexible",
-                "flex": self.metadata.flex,
-                "child": self.child.debug(view, cx)
             })
         }
     }

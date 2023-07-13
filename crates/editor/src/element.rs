@@ -1182,8 +1182,10 @@ impl EditorElement {
         });
         scene.push_mouse_region(
             MouseRegion::new::<ScrollbarMouseHandlers>(cx.view_id(), cx.view_id(), track_bounds)
-                .on_move(move |_, editor: &mut Editor, cx| {
-                    editor.scroll_manager.show_scrollbar(cx);
+                .on_move(move |event, editor: &mut Editor, cx| {
+                    if event.pressed_button.is_none() {
+                        editor.scroll_manager.show_scrollbar(cx);
+                    }
                 })
                 .on_down(MouseButton::Left, {
                     let row_range = row_range.clone();
