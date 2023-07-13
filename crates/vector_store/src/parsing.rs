@@ -81,7 +81,11 @@ impl CodeContextRetriever {
 
             if let Some((item, byte_range)) = item.zip(byte_range) {
                 if !name.is_empty() {
-                    let item = format!("{}\n{}", context_spans.join("\n"), item);
+                    let item = if context_spans.is_empty() {
+                        item.to_string()
+                    } else {
+                        format!("{}\n{}", context_spans.join("\n"), item)
+                    };
 
                     let document_text = CODE_CONTEXT_TEMPLATE
                         .replace("<path>", relative_path.to_str().unwrap())
