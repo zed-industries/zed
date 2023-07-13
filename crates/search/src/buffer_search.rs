@@ -1,5 +1,5 @@
 use crate::{
-    CaretsToAllMatches, SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
+    SearchOption, SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
     ToggleRegex, ToggleWholeWord,
 };
 use collections::HashMap;
@@ -39,10 +39,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::focus_editor);
     cx.add_action(BufferSearchBar::select_next_match);
     cx.add_action(BufferSearchBar::select_prev_match);
-    cx.add_action(BufferSearchBar::carets_to_all_matches);
+    cx.add_action(BufferSearchBar::select_all_matches);
     cx.add_action(BufferSearchBar::select_next_match_on_pane);
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
-    cx.add_action(BufferSearchBar::carets_to_all_matches_on_pane);
+    cx.add_action(BufferSearchBar::select_all_matches_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
@@ -490,7 +490,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, cx);
     }
 
-    fn carets_to_all_matches(&mut self, _: &CaretsToAllMatches, cx: &mut ViewContext<Self>) {
+    fn select_all_matches(&mut self, _: &SelectAllMatches, cx: &mut ViewContext<Self>) {
         if !self.dismissed {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
@@ -540,13 +540,13 @@ impl BufferSearchBar {
         }
     }
 
-    fn carets_to_all_matches_on_pane(
+    fn select_all_matches_on_pane(
         pane: &mut Pane,
-        action: &CaretsToAllMatches,
+        action: &SelectAllMatches,
         cx: &mut ViewContext<Pane>,
     ) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.carets_to_all_matches(action, cx));
+            search_bar.update(cx, |bar, cx| bar.select_all_matches(action, cx));
         }
     }
 
@@ -994,7 +994,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_carets_to_all_matches(cx: &mut TestAppContext) {
+    async fn test_search_select_all_matches(cx: &mut TestAppContext) {
         crate::project_search::tests::init_test(cx);
 
         let buffer_text = r#"
@@ -1038,7 +1038,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.carets_to_all_matches(&CaretsToAllMatches, cx);
+            search_bar.select_all_matches(&SelectAllMatches, cx);
             let all_selections =
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
             assert_eq!(
