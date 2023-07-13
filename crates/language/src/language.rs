@@ -342,6 +342,8 @@ pub struct LanguageConfig {
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
+    #[serde(default)]
+    pub icon_path: Option<Arc<str>>,
 }
 
 #[derive(Debug, Default)]
@@ -408,6 +410,7 @@ impl Default for LanguageConfig {
             line_comment: Default::default(),
             block_comment: Default::default(),
             overrides: Default::default(),
+            icon_path: Default::default(),
         }
     }
 }
@@ -750,6 +753,22 @@ impl LanguageRegistry {
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let name = UniCase::new(name);
         self.get_or_load_language(|config| UniCase::new(config.name.as_ref()) == name)
+    }
+
+    pub fn icon_for_suffix(
+        self: &Arc<Self>,
+        suffix: &str,
+    ) -> Option<Arc<str>> {
+        let state = self.state.read();
+        state.available_languages
+            .iter()
+            .find(|langauge| {
+                langauge.config.path_suffixes.iter().any(|s| s == suffix)
+            })
+            .map(|language| {
+                language.config.icon_path.clone()
+            })
+            .flatten()
     }
 
     pub fn language_for_name_or_extension(

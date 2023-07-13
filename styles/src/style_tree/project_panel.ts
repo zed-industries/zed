@@ -47,7 +47,8 @@ export default function project_panel(): any {
             height: 22,
             background: background(theme.middle),
             icon_color: foreground(theme.middle, "variant"),
-            icon_size: 7,
+            directory_icon_size: 7,
+            file_icon_size: 14,
             icon_spacing: 5,
             text: text(theme.middle, "sans", "variant", { size: "sm" }),
             status: {

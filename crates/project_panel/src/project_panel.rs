@@ -44,6 +44,7 @@ use workspace::{
 
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
+const TEXT_FILE_ASSET: &'static str = "icons/radix/file-text.svg";
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -94,6 +95,7 @@ pub enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct EntryDetails {
     filename: String,
+    icon: Option<Arc<str>>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -1180,6 +1182,15 @@ impl ProjectPanel {
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
 
+                    let icon = match entry.kind {
+                        EntryKind::File(_) => self
+                            .project
+                            .read(cx)
+                            .icon_for_path(&entry.path)
+                            .or_else(|| Some(TEXT_FILE_ASSET.into())),
+                        _ => None,
+                    };
+
                     let mut details = EntryDetails {
                         filename: entry
                             .path
@@ -1187,6 +1198,7 @@ impl ProjectPanel {
                             .unwrap_or(root_name)
                             .to_string_lossy()
                             .to_string(),
+                        icon,
                         path: entry.path.clone(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
@@ -1254,23 +1266,32 @@ impl ProjectPanel {
             .unwrap_or(style.text.color);
 
         Flex::row()
-            .with_child(
-                if kind.is_dir() {
-                    if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
-                    } else {
-                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
-                    }
-                    .constrained()
+            .with_child(if kind.is_dir() {
+                if details.is_expanded {
+                    Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
+                } else {
+                    Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
+                }
+                .constrained()
+                .with_max_width(style.directory_icon_size)
+                .with_max_height(style.directory_icon_size)
+                .aligned()
+                .constrained()
+                .with_width(style.directory_icon_size)
+            } else {
+                if let Some(icon) = &details.icon {
+                    Svg::new(icon.to_string())
+                        .with_color(style.icon_color)
+                        .constrained()
                 } else {
                     Empty::new().constrained()
                 }
-                .with_max_width(style.icon_size)
-                .with_max_height(style.icon_size)
+                .with_max_width(style.file_icon_size)
+                .with_max_height(style.file_icon_size)
                 .aligned()
                 .constrained()
-                .with_width(style.icon_size),
-            )
+                .with_width(style.file_icon_size)
+            })
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
                     .contained()
