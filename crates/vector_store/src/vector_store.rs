@@ -18,16 +18,16 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
-use parsing::{CodeContextRetriever, ParsedFile};
+use parsing::{CodeContextRetriever, Document};
 use project::{Fs, PathChange, Project, ProjectEntryId, WorktreeId};
 use smol::channel;
 use std::{
     collections::HashMap,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use tree_sitter::{Parser, QueryCursor};
 use util::{
     channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
     http::HttpClient,
@@ -36,7 +36,7 @@ use util::{
 };
 use workspace::{Workspace, WorkspaceCreated};
 
-const VECTOR_STORE_VERSION: usize = 0;
+const VECTOR_STORE_VERSION: usize = 1;
 const EMBEDDINGS_BATCH_SIZE: usize = 150;
 
 pub fn init(
@@ -80,11 +80,11 @@ pub fn init(
         let vector_store = VectorStore::new(
             fs,
             db_file_path,
-            // Arc::new(embedding::DummyEmbeddings {}),
-            Arc::new(OpenAIEmbeddings {
-                client: http_client,
-                executor: cx.background(),
-            }),
+            Arc::new(embedding::DummyEmbeddings {}),
+            // Arc::new(OpenAIEmbeddings {
+            //     client: http_client,
+            //     executor: cx.background(),
+            // }),
             language_registry,
             cx.clone(),
         )
@@ -212,14 +212,16 @@ pub struct PendingFile {
 pub struct SearchResult {
     pub worktree_id: WorktreeId,
     pub name: String,
-    pub offset: usize,
+    pub byte_range: Range<usize>,
     pub file_path: PathBuf,
 }
 
 enum DbOperation {
     InsertFile {
         worktree_id: i64,
-        indexed_file: ParsedFile,
+        documents: Vec<Document>,
+        path: PathBuf,
+        mtime: SystemTime,
     },
     Delete {
         worktree_id: i64,
@@ -238,8 +240,9 @@ enum DbOperation {
 enum EmbeddingJob {
     Enqueue {
         worktree_id: i64,
-        parsed_file: ParsedFile,
-        document_spans: Vec<String>,
+        path: PathBuf,
+        mtime: SystemTime,
+        documents: Vec<Document>,
     },
     Flush,
 }
@@ -256,18 +259,7 @@ impl VectorStore {
 
         let db = cx
             .background()
-            .spawn({
-                let fs = fs.clone();
-                let database_url = database_url.clone();
-                async move {
-                    if let Some(db_directory) = database_url.parent() {
-                        fs.create_dir(db_directory).await.log_err();
-                    }
-
-                    let db = VectorDatabase::new(database_url.to_string_lossy().to_string())?;
-                    anyhow::Ok(db)
-                }
-            })
+            .spawn(VectorDatabase::new(fs.clone(), database_url.clone()))
             .await?;
 
         Ok(cx.add_model(|cx| {
@@ -280,9 +272,12 @@ impl VectorStore {
                     match job {
                         DbOperation::InsertFile {
                             worktree_id,
-                            indexed_file,
+                            documents,
+                            path,
+                            mtime,
                         } => {
-                            db.insert_file(worktree_id, indexed_file).log_err();
+                            db.insert_file(worktree_id, path, mtime, documents)
+                                .log_err();
                         }
                         DbOperation::Delete { worktree_id, path } => {
                             db.delete_file(worktree_id, path).log_err();
@@ -304,35 +299,45 @@ impl VectorStore {
 
             // embed_tx/rx: Embed Batch and Send to Database
             let (embed_batch_tx, embed_batch_rx) =
-                channel::unbounded::<Vec<(i64, ParsedFile, Vec<String>)>>();
+                channel::unbounded::<Vec<(i64, Vec<Document>, PathBuf, SystemTime)>>();
             let _embed_batch_task = cx.background().spawn({
                 let db_update_tx = db_update_tx.clone();
                 let embedding_provider = embedding_provider.clone();
                 async move {
                     while let Ok(mut embeddings_queue) = embed_batch_rx.recv().await {
                         // Construct Batch
-                        let mut document_spans = vec![];
-                        for (_, _, document_span) in embeddings_queue.iter() {
-                            document_spans.extend(document_span.iter().map(|s| s.as_str()));
+                        let mut batch_documents = vec![];
+                        for (_, documents, _, _) in embeddings_queue.iter() {
+                            batch_documents
+                                .extend(documents.iter().map(|document| document.content.as_str()));
                         }
 
-                        if let Ok(embeddings) = embedding_provider.embed_batch(document_spans).await
+                        if let Ok(embeddings) =
+                            embedding_provider.embed_batch(batch_documents).await
                         {
+                            log::trace!(
+                                "created {} embeddings for {} files",
+                                embeddings.len(),
+                                embeddings_queue.len(),
+                            );
+
                             let mut i = 0;
                             let mut j = 0;
 
                             for embedding in embeddings.iter() {
-                                while embeddings_queue[i].1.documents.len() == j {
+                                while embeddings_queue[i].1.len() == j {
                                     i += 1;
                                     j = 0;
                                 }
 
-                                embeddings_queue[i].1.documents[j].embedding = embedding.to_owned();
+                                embeddings_queue[i].1[j].embedding = embedding.to_owned();
                                 j += 1;
                             }
 
-                            for (worktree_id, indexed_file, _) in embeddings_queue.into_iter() {
-                                for document in indexed_file.documents.iter() {
+                            for (worktree_id, documents, path, mtime) in
+                                embeddings_queue.into_iter()
+                            {
+                                for document in documents.iter() {
                                     // TODO: Update this so it doesn't panic
                                     assert!(
                                         document.embedding.len() > 0,
@@ -343,7 +348,9 @@ impl VectorStore {
                                 db_update_tx
                                     .send(DbOperation::InsertFile {
                                         worktree_id,
-                                        indexed_file,
+                                        documents,
+                                        path,
+                                        mtime,
                                     })
                                     .await
                                     .unwrap();
@@ -362,12 +369,13 @@ impl VectorStore {
                 while let Ok(job) = batch_files_rx.recv().await {
                     let should_flush = match job {
                         EmbeddingJob::Enqueue {
-                            document_spans,
+                            documents,
                             worktree_id,
-                            parsed_file,
+                            path,
+                            mtime,
                         } => {
-                            queue_len += &document_spans.len();
-                            embeddings_queue.push((worktree_id, parsed_file, document_spans));
+                            queue_len += &documents.len();
+                            embeddings_queue.push((worktree_id, documents, path, mtime));
                             queue_len >= EMBEDDINGS_BATCH_SIZE
                         }
                         EmbeddingJob::Flush => true,
@@ -385,26 +393,38 @@ impl VectorStore {
             let (parsing_files_tx, parsing_files_rx) = channel::unbounded::<PendingFile>();
 
             let mut _parsing_files_tasks = Vec::new();
-            // for _ in 0..cx.background().num_cpus() {
-            for _ in 0..1 {
+            for _ in 0..cx.background().num_cpus() {
                 let fs = fs.clone();
                 let parsing_files_rx = parsing_files_rx.clone();
                 let batch_files_tx = batch_files_tx.clone();
                 _parsing_files_tasks.push(cx.background().spawn(async move {
-                    let parser = Parser::new();
-                    let cursor = QueryCursor::new();
-                    let mut retriever = CodeContextRetriever { parser, cursor, fs };
+                    let mut retriever = CodeContextRetriever::new();
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
-                        if let Some((indexed_file, document_spans)) =
-                            retriever.parse_file(pending_file.clone()).await.log_err()
+                        if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err()
                         {
-                            batch_files_tx
-                                .try_send(EmbeddingJob::Enqueue {
-                                    worktree_id: pending_file.worktree_db_id,
-                                    parsed_file: indexed_file,
-                                    document_spans,
-                                })
-                                .unwrap();
+                            if let Some(documents) = retriever
+                                .parse_file(
+                                    &pending_file.relative_path,
+                                    &content,
+                                    pending_file.language,
+                                )
+                                .log_err()
+                            {
+                                log::trace!(
+                                    "parsed path {:?}: {} documents",
+                                    pending_file.relative_path,
+                                    documents.len()
+                                );
+
+                                batch_files_tx
+                                    .try_send(EmbeddingJob::Enqueue {
+                                        worktree_id: pending_file.worktree_db_id,
+                                        path: pending_file.relative_path,
+                                        mtime: pending_file.modified_time,
+                                        documents,
+                                    })
+                                    .unwrap();
+                            }
                         }
 
                         if parsing_files_rx.len() == 0 {
@@ -543,6 +563,7 @@ impl VectorStore {
                                         });
 
                                     if !already_stored {
+                                        log::trace!("sending for parsing: {:?}", path_buf);
                                         parsing_files_tx
                                             .try_send(PendingFile {
                                                 worktree_db_id: db_ids_by_worktree_id
@@ -565,8 +586,8 @@ impl VectorStore {
                                     .unwrap();
                             }
                         }
-                        log::info!(
-                            "Parsing Worktree Completed in {:?}",
+                        log::trace!(
+                            "parsing worktree completed in {:?}",
                             t0.elapsed().as_millis()
                         );
                     }
@@ -622,11 +643,12 @@ impl VectorStore {
 
         let embedding_provider = self.embedding_provider.clone();
         let database_url = self.database_url.clone();
+        let fs = self.fs.clone();
         cx.spawn(|this, cx| async move {
             let documents = cx
                 .background()
                 .spawn(async move {
-                    let database = VectorDatabase::new(database_url.to_string_lossy().into())?;
+                    let database = VectorDatabase::new(fs, database_url).await?;
 
                     let phrase_embedding = embedding_provider
                         .embed_batch(vec![&phrase])
@@ -648,12 +670,12 @@ impl VectorStore {
 
                 Ok(documents
                     .into_iter()
-                    .filter_map(|(worktree_db_id, file_path, offset, name)| {
+                    .filter_map(|(worktree_db_id, file_path, byte_range, name)| {
                         let worktree_id = project_state.worktree_id_for_db_id(worktree_db_id)?;
                         Some(SearchResult {
                             worktree_id,
                             name,
-                            offset,
+                            byte_range,
                             file_path,
                         })
                     })

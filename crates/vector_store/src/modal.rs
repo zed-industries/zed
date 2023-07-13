@@ -66,7 +66,7 @@ impl PickerDelegate for SemanticSearchDelegate {
             });
 
             let workspace = self.workspace.clone();
-            let position = search_result.clone().offset;
+            let position = search_result.clone().byte_range.start;
             cx.spawn(|_, mut cx| async move {
                 let buffer = buffer.await?;
                 workspace.update(&mut cx, |workspace, cx| {

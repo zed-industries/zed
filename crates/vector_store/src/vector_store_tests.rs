@@ -12,6 +12,13 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use unindent::Unindent;
 
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
+}
+
 #[gpui::test]
 async fn test_vector_store(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -95,9 +102,21 @@ async fn test_vector_store(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    assert_eq!(search_results[0].offset, 0);
+    assert_eq!(search_results[0].byte_range.start, 0);
     assert_eq!(search_results[0].name, "aaa");
     assert_eq!(search_results[0].worktree_id, worktree_id);
+}
+
+#[gpui::test]
+async fn test_code_context_retrieval(cx: &mut TestAppContext) {
+    // let mut retriever = CodeContextRetriever::new(fs);
+
+    // retriever::parse_file(
+    //     "
+    //     //
+    // ",
+    // );
+    //
 }
 
 #[gpui::test]

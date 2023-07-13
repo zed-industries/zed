@@ -1,23 +1,14 @@
-use std::{path::PathBuf, sync::Arc, time::SystemTime};
-
 use anyhow::{anyhow, Ok, Result};
-use project::Fs;
+use language::Language;
+use std::{ops::Range, path::Path, sync::Arc};
 use tree_sitter::{Parser, QueryCursor};
-
-use crate::PendingFile;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Document {
-    pub offset: usize,
     pub name: String,
+    pub range: Range<usize>,
+    pub content: String,
     pub embedding: Vec<f32>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ParsedFile {
-    pub path: PathBuf,
-    pub mtime: SystemTime,
-    pub documents: Vec<Document>,
 }
 
 const CODE_CONTEXT_TEMPLATE: &str =
@@ -26,24 +17,29 @@ const CODE_CONTEXT_TEMPLATE: &str =
 pub struct CodeContextRetriever {
     pub parser: Parser,
     pub cursor: QueryCursor,
-    pub fs: Arc<dyn Fs>,
 }
 
 impl CodeContextRetriever {
-    pub async fn parse_file(
+    pub fn new() -> Self {
+        Self {
+            parser: Parser::new(),
+            cursor: QueryCursor::new(),
+        }
+    }
+
+    pub fn parse_file(
         &mut self,
-        pending_file: PendingFile,
-    ) -> Result<(ParsedFile, Vec<String>)> {
-        let grammar = pending_file
-            .language
+        relative_path: &Path,
+        content: &str,
+        language: Arc<Language>,
+    ) -> Result<Vec<Document>> {
+        let grammar = language
             .grammar()
             .ok_or_else(|| anyhow!("no grammar for language"))?;
         let embedding_config = grammar
             .embedding_config
             .as_ref()
             .ok_or_else(|| anyhow!("no embedding queries"))?;
-
-        let content = self.fs.load(&pending_file.absolute_path).await?;
 
         self.parser.set_language(grammar.ts_language).unwrap();
 
@@ -53,7 +49,6 @@ impl CodeContextRetriever {
             .ok_or_else(|| anyhow!("parsing failed"))?;
 
         let mut documents = Vec::new();
-        let mut document_texts = Vec::new();
 
         // Iterate through query matches
         for mat in self.cursor.matches(
@@ -63,11 +58,11 @@ impl CodeContextRetriever {
         ) {
             let mut name: Vec<&str> = vec![];
             let mut item: Option<&str> = None;
-            let mut offset: Option<usize> = None;
+            let mut byte_range: Option<Range<usize>> = None;
             let mut context_spans: Vec<&str> = vec![];
             for capture in mat.captures {
                 if capture.index == embedding_config.item_capture_ix {
-                    offset = Some(capture.node.byte_range().start);
+                    byte_range = Some(capture.node.byte_range());
                     item = content.get(capture.node.byte_range());
                 } else if capture.index == embedding_config.name_capture_ix {
                     if let Some(name_content) = content.get(capture.node.byte_range()) {
@@ -84,30 +79,25 @@ impl CodeContextRetriever {
                 }
             }
 
-            if item.is_some() && offset.is_some() && name.len() > 0 {
-                let item = format!("{}\n{}", context_spans.join("\n"), item.unwrap());
+            if let Some((item, byte_range)) = item.zip(byte_range) {
+                if !name.is_empty() {
+                    let item = format!("{}\n{}", context_spans.join("\n"), item);
 
-                let document_text = CODE_CONTEXT_TEMPLATE
-                    .replace("<path>", pending_file.relative_path.to_str().unwrap())
-                    .replace("<language>", &pending_file.language.name().to_lowercase())
-                    .replace("<item>", item.as_str());
+                    let document_text = CODE_CONTEXT_TEMPLATE
+                        .replace("<path>", relative_path.to_str().unwrap())
+                        .replace("<language>", &language.name().to_lowercase())
+                        .replace("<item>", item.as_str());
 
-                document_texts.push(document_text);
-                documents.push(Document {
-                    name: name.join(" "),
-                    offset: offset.unwrap(),
-                    embedding: Vec::new(),
-                })
+                    documents.push(Document {
+                        range: byte_range,
+                        content: document_text,
+                        embedding: Vec::new(),
+                        name: name.join(" ").to_string(),
+                    });
+                }
             }
         }
 
-        return Ok((
-            ParsedFile {
-                path: pending_file.relative_path,
-                mtime: pending_file.modified_time,
-                documents,
-            },
-            document_texts,
-        ));
+        return Ok(documents);
     }
 }
