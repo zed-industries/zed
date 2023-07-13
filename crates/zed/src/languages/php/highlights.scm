@@ -88,6 +88,7 @@
 "echo" @keyword
 "else" @keyword
 "elseif" @keyword
+"enum" @keyword
 "enddeclare" @keyword
 "endforeach" @keyword
 "endif" @keyword
