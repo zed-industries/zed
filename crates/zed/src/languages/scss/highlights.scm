@@ -44,6 +44,15 @@
 
 ; At-Rules
 
+; CSS
+
+"@media" @keyword
+"@import" @keyword
+"@charset" @keyword
+"@namespace" @keyword
+"@supports" @keyword
+"@keyframes" @keyword
+
 ; SCSS-Specific
 
 "@use" @keyword
@@ -66,27 +75,12 @@
 "@while" @keyword
 "@return" @keyword
 
-; CSS
-
-"@media" @keyword
-"@import" @keyword
-"@charset" @keyword
-"@namespace" @keyword
-"@supports" @keyword
-"@keyframes" @keyword
-
-; Other Common
-
-"@mixin" @keyword
-"@include" @keyword
-
 (at_keyword) @keyword
 (to) @keyword
 (from) @keyword
 (important) @keyword
 
 (string_value) @string
-(color_value) @string.special
 
 (integer_value) @number
 (float_value) @number
@@ -105,10 +99,6 @@
 (variable_name) @variable
 (variable_value) @variable
 
-; Colors
-
-(color_value) @string
-
 ; Includes
 
 [
@@ -121,5 +111,19 @@
     (identifier) @function
 )
 
-"#" @punctuation.delimiter
+; Pseudo-selectors
+
+(pseudo_class_selector
+    (nesting_selector) @attribute
+    ":" @attribute
+) @selector.pseudo
+
+; Delimiters
+
+";" @punctuation.delimiter
 "," @punctuation.delimiter
+
+(declaration
+    (property_name) @property
+    ":" @punctuation.delimiter
+)

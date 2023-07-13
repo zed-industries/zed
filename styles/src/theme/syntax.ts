@@ -262,7 +262,7 @@ function build_default_syntax(): Syntax {
             color: color.type,
         },
         variable: {
-            color: color.primary,
+            color: theme.ramps.red(0.5).hex(),
         },
         label: {
             color: theme.ramps.blue(0.5).hex(),
