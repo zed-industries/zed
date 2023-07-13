@@ -80,11 +80,10 @@ pub fn init(
         let vector_store = VectorStore::new(
             fs,
             db_file_path,
-            Arc::new(embedding::DummyEmbeddings {}),
-            // Arc::new(OpenAIEmbeddings {
-            //     client: http_client,
-            //     executor: cx.background(),
-            // }),
+            Arc::new(OpenAIEmbeddings {
+                client: http_client,
+                executor: cx.background(),
+            }),
             language_registry,
             cx.clone(),
         )
