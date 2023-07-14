@@ -11,7 +11,7 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions,
     keymap_matcher::{KeymapContext, Keystroke},
-    platform::KeyDownEvent,
+    platform::{KeyDownEvent, ModifiersChangedEvent},
     AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
@@ -159,6 +159,7 @@ impl TerminalView {
                 }
             }
             Event::Open(url) => {
+                // TODO kb
                 // Get a workspace pointer from the new() function above
                 // Guess for project path or url
                 // Either run open buffer action OR platform open depending on whatever happens
@@ -397,6 +398,20 @@ impl View for TerminalView {
             terminal.focus_out();
         });
         cx.notify();
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let handled = self
+            .terminal()
+            .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+        if handled {
+            cx.notify();
+        }
+        handled
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {

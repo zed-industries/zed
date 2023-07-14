@@ -51,7 +51,7 @@ use gpui::{
     fonts,
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::Keystroke,
-    platform::{MouseButton, MouseMovedEvent, TouchPhase},
+    platform::{Modifiers, MouseButton, MouseMovedEvent, TouchPhase},
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
     AppContext, ClipboardItem, Entity, ModelContext, Task,
 };
@@ -494,6 +494,7 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
+            cmd_pressed: false,
         };
 
         Ok(TerminalBuilder {
@@ -638,6 +639,7 @@ pub struct Terminal {
     scroll_px: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
+    cmd_pressed: bool,
 }
 
 impl Terminal {
@@ -807,7 +809,6 @@ impl Terminal {
                 term.scroll_to_point(*point);
                 self.refresh_hyperlink();
             }
-            // We need to change this to a word boundary check
             InternalEvent::FindHyperlink(position, open) => {
                 let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
 
@@ -966,6 +967,21 @@ impl Terminal {
         }
     }
 
+    pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
+        let cmd = modifiers.cmd;
+        let changed = self.cmd_pressed != cmd;
+        if changed {
+            self.cmd_pressed = cmd;
+            if cmd {
+                self.refresh_hyperlink();
+            } else {
+                self.last_content.last_hovered_hyperlink.take();
+            }
+        }
+
+        changed
+    }
+
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
         let paste_text = if self.last_content.mode.contains(TermMode::BRACKETED_PASTE) {
@@ -1091,7 +1107,7 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else if e.cmd {
+        } else if self.cmd_pressed {
             self.hyperlink_from_position(Some(position));
         }
     }
@@ -1210,7 +1226,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.platform().open_url(link.uri());
-                } else if e.cmd {
+                } else if self.cmd_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }

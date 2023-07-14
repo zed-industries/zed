@@ -392,10 +392,6 @@ impl TerminalElement {
 
         let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
 
-        // 1. Get file:linenumber syntax working ✔️
-        // 2. Switch terminal to look for word boundaries, on cmd-hover
-        // 3. Send those query strings to the resolver thing above
-
         // Terminal Emulator controlled behavior:
         region = region
             // Start selections
