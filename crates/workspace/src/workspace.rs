@@ -3502,27 +3502,11 @@ fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut Asy
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 workspace.show_notification_once(0, cx, |cx| {
                     cx.add_view(|_| {
-                        MessageNotification::new("Failed to load any database file.")
+                        MessageNotification::new("Failed to load the database file.")
                             .with_click_message("Click to let us know about this error")
                             .on_click(|cx| cx.platform().open_url(REPORT_ISSUE_URL))
                     })
                 });
-            } else {
-                let backup_path = (*db::BACKUP_DB_PATH).read();
-                if let Some(backup_path) = backup_path.clone() {
-                    workspace.show_notification_once(1, cx, move |cx| {
-                        cx.add_view(move |_| {
-                            MessageNotification::new(format!(
-                                "Database file was corrupted. Old database backed up to {}",
-                                backup_path.display()
-                            ))
-                            .with_click_message("Click to show old database in finder")
-                            .on_click(move |cx| {
-                                cx.platform().open_url(&backup_path.to_string_lossy())
-                            })
-                        })
-                    });
-                }
             }
         })
         .log_err();
