@@ -895,7 +895,14 @@ pub fn dock_default_item_factory(
         })
         .notify_err(workspace, cx)?;
 
-    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+    let terminal_view = cx.add_view(|cx| {
+        TerminalView::new(
+            terminal,
+            workspace.weak_handle(),
+            workspace.database_id(),
+            cx,
+        )
+    });
 
     Some(Box::new(terminal_view))
 }

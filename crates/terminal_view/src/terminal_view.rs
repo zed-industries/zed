@@ -32,7 +32,7 @@ use terminal::{
     },
     Event, Terminal, TerminalBlink, WorkingDirectory,
 };
-use util::ResultExt;
+use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
@@ -117,19 +117,27 @@ impl TerminalView {
             .notify_err(workspace, cx);
 
         if let Some(terminal) = terminal {
-            let view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+            let view = cx.add_view(|cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.weak_handle(),
+                    workspace.database_id(),
+                    cx,
+                )
+            });
             workspace.add_item(Box::new(view), cx)
         }
     }
 
     pub fn new(
         terminal: ModelHandle<Terminal>,
+        workspace: WeakViewHandle<Workspace>,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let view_id = cx.view_id();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&terminal, |this, _, event, cx| match event {
+        cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
@@ -158,12 +166,30 @@ impl TerminalView {
                         .detach();
                 }
             }
-            Event::Open(url) => {
-                // TODO kb
-                // Get a workspace pointer from the new() function above
-                // Guess for project path or url
-                // Either run open buffer action OR platform open depending on whatever happens
-                cx.platform().open_url(url);
+            Event::Open(maybe_url_or_path) => {
+                // TODO kb, what is the API for this?
+                // terminal::URL_REGEX.matches(maybe_url_or_path)
+                if maybe_url_or_path.starts_with("http") {
+                    cx.platform().open_url(maybe_url_or_path);
+                } else if let Some(workspace) = workspace.upgrade(cx) {
+                    let path_like =
+                        PathLikeWithPosition::parse_str(maybe_url_or_path.as_str(), |path_str| {
+                            Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
+                        })
+                        .expect("infallible");
+                    let maybe_path = path_like.path_like;
+                    workspace.update(cx, |workspace, cx| {
+                        if false { //&& workspace.contains_path() {
+                             //
+                        } else if maybe_path.exists() {
+                            workspace
+                                .open_abs_path(maybe_path, true, cx)
+                                .detach_and_log_err(cx);
+                        }
+                    });
+                }
+
+                // TODO kb let terminal know if we cannot open the string
             }
             _ => cx.emit(event.clone()),
         })
@@ -639,7 +665,7 @@ impl Item for TerminalView {
                 project.create_terminal(cwd, window_id, cx)
             })?;
             Ok(pane.update(&mut cx, |_, cx| {
-                cx.add_view(|cx| TerminalView::new(terminal, workspace_id, cx))
+                cx.add_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
             })?)
         })
     }

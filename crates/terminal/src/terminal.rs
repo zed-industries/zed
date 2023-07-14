@@ -72,9 +72,10 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
-// Regex Copied from alacritty's ui_config.rs
-
 lazy_static! {
+    // Regex Copied from alacritty's ui_config.rs
+    pub static ref URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+
     static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-]+").unwrap();
 }
 
