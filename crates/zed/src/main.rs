@@ -154,7 +154,7 @@ fn main() {
         file_finder::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(cx);
+        project_panel::init(Assets, cx);
         diagnostics::init(cx);
         search::init(cx);
         vector_store::init(fs.clone(), http.clone(), languages.clone(), cx);

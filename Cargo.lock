@@ -5360,6 +5360,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "collections",
  "context_menu",
  "db",
  "drag_and_drop",

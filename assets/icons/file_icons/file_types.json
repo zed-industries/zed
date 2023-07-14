@@ -1,0 +1,107 @@
+{
+  "suffixes": {
+    "jpg": "image",
+    "jpeg": "image",
+    "tiff": "image",
+    "svg": "image",
+    "psd": "image",
+    "png": "image",
+    "gif": "image",
+    "bmp": "image",
+    "ico": "image",
+    "mp4": "video",
+    "webm": "video",
+    "ogg": "video",
+    "mp3": "audio",
+    "wav": "audio",
+    "flac": "audio",
+    "aac": "audio",
+    "pdf": "document",
+    "doc": "document",
+    "docx": "document",
+    "xls": "document",
+    "xlsx": "document",
+    "ppt": "document",
+    "pptx": "document",
+    "odt": "document",
+    "ods": "document",
+    "odp": "document",
+    "txt": "document",
+    "rtf": "document",
+    "md": "document",
+    "html": "template",
+    "htm": "template",
+    "xml": "template",
+    "hbs": "template",
+    "handlebars": "template",
+    "js": "code",
+    "css": "code",
+    "php": "code",
+    "c": "code",
+    "cpp": "code",
+    "h": "code",
+    "hpp": "code",
+    "java": "code",
+    "py": "code",
+    "swift": "code",
+    "go": "code",
+    "rb": "code",
+    "rs": "code",
+    "rkt": "code",
+    "scm": "code",
+    "sql": "code",
+    "json": "settings",
+    "ini": "settings",
+    "yaml": "settings",
+    "yml": "settings",
+    "toml": "settings",
+    "conf": "settings",
+    "lock": "settings",
+    "gitignore": "vcs",
+    "gitattributes": "vcs",
+    "ps1": "terminal",
+    "sh": "terminal",
+    "bash": "terminal",
+    "zsh": "terminal",
+    "fish": "terminal",
+    "log": "log"
+  },
+  "types": {
+    "directory": {
+      "icon": "icons/file_icons/quill/folder.svg"
+    },
+    "expanded_directory": {
+      "icon": "icons/file_icons/quill/folder-open.svg"
+    },
+    "image": {
+      "icon": "icons/file_icons/quill/image.svg"
+    },
+    "video": {
+      "icon": "icons/file_icons/quill/file.svg"
+    },
+    "audio": {
+      "icon": "icons/file_icons/quill/file.svg"
+    },
+    "document": {
+      "icon": "icons/file_icons/quill/book.svg"
+    },
+    "template": {
+      "icon": "icons/file_icons/quill/html.svg"
+    },
+    "code": {
+      "icon": "icons/file_icons/quill/code.svg"
+    },
+    "settings": {
+      "icon": "icons/file_icons/quill/settings.svg"
+    },
+    "vcs": {
+      "icon": "icons/file_icons/quill/git.svg"
+    },
+    "terminal": {
+      "icon": "icons/file_icons/quill/terminal.svg"
+    },
+    "log": {
+      "icon": "icons/file_icons/quill/info.svg"
+    }
+  }
+}

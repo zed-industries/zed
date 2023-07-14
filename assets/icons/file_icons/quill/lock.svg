@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="32px" height="32px" viewBox="0 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 59.1 (86144) - https://sketch.com -->
+    <title>lock_dark</title>
+    <desc>Created with Sketch.</desc>
+    <g id="lock_dark" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" fill-opacity="0.16">
+        <g id="lock" transform="translate(5.000000, 4.000000)" fill="#F0F4F8" fill-rule="nonzero">
+            <path d="M4.5,9.5 L4.5,7 C4.5,3.41014913 7.41014913,0.5 11,0.5 C14.5898509,0.5 17.5,3.41014913 17.5,7 L17.5,9.5 L18,9.5 C19.9329966,9.5 21.5,11.0670034 21.5,13 L21.5,20 C21.5,21.9329966 19.9329966,23.5 18,23.5 L4,23.5 C2.06700338,23.5 0.5,21.9329966 0.5,20 L0.5,13 C0.5,11.0670034 2.06700338,9.5 4,9.5 L4.5,9.5 Z M7.5,9.5 L14.5,9.5 L14.5,7 C14.5,5.06700338 12.9329966,3.5 11,3.5 C9.06700338,3.5 7.5,5.06700338 7.5,7 L7.5,9.5 Z M4,12.5 C3.72385763,12.5 3.5,12.7238576 3.5,13 L3.5,20 C3.5,20.2761424 3.72385763,20.5 4,20.5 L18,20.5 C18.2761424,20.5 18.5,20.2761424 18.5,20 L18.5,13 C18.5,12.7238576 18.2761424,12.5 18,12.5 L4,12.5 Z" id="Shape"></path>
+        </g>
+    </g>
+</svg>
