@@ -20,6 +20,7 @@
       "cmd-shift-a": "editor::SelectLargerSyntaxNode",
       "shift-f12": "editor::FindAllReferences",
       "alt-cmd-down": "editor::GoToDefinition",
+      "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
       "alt-shift-cmd-down": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",

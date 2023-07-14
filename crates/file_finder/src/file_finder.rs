@@ -442,53 +442,71 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<FileFinder>) {
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<FileFinder>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                let open_task = workspace.update(cx, |workspace, cx| match m {
-                    Match::History(history_match) => {
-                        let worktree_id = history_match.project.worktree_id;
-                        if workspace
-                            .project()
-                            .read(cx)
-                            .worktree_for_id(worktree_id, cx)
-                            .is_some()
-                        {
-                            workspace.open_path(
-                                ProjectPath {
-                                    worktree_id,
-                                    path: Arc::clone(&history_match.project.path),
-                                },
-                                None,
-                                true,
-                                cx,
-                            )
+                let open_task = workspace.update(cx, move |workspace, cx| {
+                    let split_or_open = |workspace: &mut Workspace, project_path, cx| {
+                        if secondary {
+                            workspace.split_path(project_path, cx)
                         } else {
-                            match history_match.absolute.as_ref() {
-                                Some(abs_path) => {
-                                    workspace.open_abs_path(abs_path.to_path_buf(), false, cx)
-                                }
-                                None => workspace.open_path(
+                            workspace.open_path(project_path, None, true, cx)
+                        }
+                    };
+                    match m {
+                        Match::History(history_match) => {
+                            let worktree_id = history_match.project.worktree_id;
+                            if workspace
+                                .project()
+                                .read(cx)
+                                .worktree_for_id(worktree_id, cx)
+                                .is_some()
+                            {
+                                split_or_open(
+                                    workspace,
                                     ProjectPath {
                                         worktree_id,
                                         path: Arc::clone(&history_match.project.path),
                                     },
-                                    None,
-                                    true,
                                     cx,
-                                ),
+                                )
+                            } else {
+                                match history_match.absolute.as_ref() {
+                                    Some(abs_path) => {
+                                        if secondary {
+                                            workspace.split_abs_path(
+                                                abs_path.to_path_buf(),
+                                                false,
+                                                cx,
+                                            )
+                                        } else {
+                                            workspace.open_abs_path(
+                                                abs_path.to_path_buf(),
+                                                false,
+                                                cx,
+                                            )
+                                        }
+                                    }
+                                    None => split_or_open(
+                                        workspace,
+                                        ProjectPath {
+                                            worktree_id,
+                                            path: Arc::clone(&history_match.project.path),
+                                        },
+                                        cx,
+                                    ),
+                                }
                             }
                         }
+                        Match::Search(m) => split_or_open(
+                            workspace,
+                            ProjectPath {
+                                worktree_id: WorktreeId::from_usize(m.worktree_id),
+                                path: m.path.clone(),
+                            },
+                            cx,
+                        ),
                     }
-                    Match::Search(m) => workspace.open_path(
-                        ProjectPath {
-                            worktree_id: WorktreeId::from_usize(m.worktree_id),
-                            path: m.path.clone(),
-                        },
-                        None,
-                        true,
-                        cx,
-                    ),
                 });
 
                 let row = self

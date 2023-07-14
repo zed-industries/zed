@@ -182,7 +182,7 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         let current_pick = self.selected_index();
         let Some(current_pick) = self.matches.get(current_pick).map(|pick| pick.string.clone()) else {
             return;

@@ -120,7 +120,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.matches.len()
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<ThemeSelector>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<ThemeSelector>) {
         self.selection_completed = true;
 
         let theme_name = theme::current(cx).meta.name.clone();
