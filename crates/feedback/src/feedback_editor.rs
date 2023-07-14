@@ -362,8 +362,13 @@ impl Item for FeedbackEditor {
 impl SearchableItem for FeedbackEditor {
     type Match = Range<Anchor>;
 
-    fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
-        Editor::to_search_event(event)
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<workspace::searchable::SearchEvent> {
+        self.editor
+            .update(cx, |editor, cx| editor.to_search_event(event, cx))
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {

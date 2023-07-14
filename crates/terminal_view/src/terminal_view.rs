@@ -647,7 +647,11 @@ impl SearchableItem for TerminalView {
     }
 
     /// Convert events raised by this item into search-relevant events (if applicable)
-    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        _: &mut ViewContext<Self>,
+    ) -> Option<SearchEvent> {
         match event {
             Event::Wakeup => Some(SearchEvent::MatchesInvalidated),
             Event::SelectionsChanged => Some(SearchEvent::ActiveMatchChanged),

@@ -467,8 +467,13 @@ impl Item for LspLogView {
 impl SearchableItem for LspLogView {
     type Match = <Editor as SearchableItem>::Match;
 
-    fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
-        Editor::to_search_event(event)
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<workspace::searchable::SearchEvent> {
+        self.editor
+            .update(cx, |editor, cx| editor.to_search_event(event, cx))
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {

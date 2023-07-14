@@ -1029,12 +1029,16 @@ mod tests {
         });
 
         editor.next_notification(cx).await;
-        editor.update(cx, |editor, cx| {
-            let initial_selections =   editor.selections.display_ranges(cx);
+        let initial_selections = editor.update(cx, |editor, cx| {
+            let initial_selections = editor.selections.display_ranges(cx);
             assert_eq!(
                 initial_selections.len(), 1,
                 "Expected to have only one selection before adding carets to all matches, but got: {initial_selections:?}",
-            )
+            );
+            initial_selections
+        });
+        search_bar.update(cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         search_bar.update(cx, |search_bar, cx| {
@@ -1045,6 +1049,75 @@ mod tests {
                 all_selections.len(),
                 expected_query_matches_count,
                 "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+            );
+        });
+        search_bar.update(cx, |search_bar, _| {
+            assert_eq!(
+                search_bar.active_match_index,
+                Some(0),
+                "Match index should not change after selecting all matches"
+            );
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_next_match(&SelectNextMatch, cx);
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "On next match, should deselect items and select the next match"
+            );
+            assert_ne!(
+                all_selections, initial_selections,
+                "Next match should be different from the first selection"
+            );
+        });
+        search_bar.update(cx, |search_bar, _| {
+            assert_eq!(
+                search_bar.active_match_index,
+                Some(1),
+                "Match index should be updated to the next one"
+            );
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, cx);
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                expected_query_matches_count,
+                "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+            );
+        });
+        search_bar.update(cx, |search_bar, _| {
+            assert_eq!(
+                search_bar.active_match_index,
+                Some(1),
+                "Match index should not change after selecting all matches"
+            );
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "On previous match, should deselect items and select the previous item"
+            );
+            assert_eq!(
+                all_selections, initial_selections,
+                "Previous match should be the same as the first selection"
+            );
+        });
+        search_bar.update(cx, |search_bar, _| {
+            assert_eq!(
+                search_bar.active_match_index,
+                Some(0),
+                "Match index should be updated to the previous one"
             );
         });
     }

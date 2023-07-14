@@ -37,7 +37,11 @@ pub trait SearchableItem: Item {
             regex: true,
         }
     }
-    fn to_search_event(event: &Self::Event) -> Option<SearchEvent>;
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SearchEvent>;
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
@@ -141,8 +145,9 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         cx: &mut WindowContext,
         handler: Box<dyn Fn(SearchEvent, &mut WindowContext)>,
     ) -> Subscription {
-        cx.subscribe(self, move |_, event, cx| {
-            if let Some(search_event) = T::to_search_event(event) {
+        cx.subscribe(self, move |handle, event, cx| {
+            let search_event = handle.update(cx, |handle, cx| handle.to_search_event(event, cx));
+            if let Some(search_event) = search_event {
                 handler(search_event, cx)
             }
         })
