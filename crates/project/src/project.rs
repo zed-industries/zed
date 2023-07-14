@@ -2475,8 +2475,7 @@ impl Project {
     }
 
     pub fn icon_for_path(&self, path: &Path) -> Option<Arc<str>> {
-        self.languages
-            .icon_for_suffix(path.extension()?.to_str()?)
+        self.languages.icon_for_suffix(path.extension()?.to_str()?)
     }
 
     fn detect_language_for_buffer(

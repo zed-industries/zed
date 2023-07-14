@@ -1168,7 +1168,10 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let git_status_setting = settings::get::<ProjectPanelSettings>(cx).git_status;
+            let (git_status_setting, show_file_icons) = {
+                let settings = settings::get::<ProjectPanelSettings>(cx);
+                (settings.git_status, settings.file_icons)
+            };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
@@ -1182,14 +1185,16 @@ impl ProjectPanel {
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
 
-                    let icon = match entry.kind {
-                        EntryKind::File(_) => self
-                            .project
-                            .read(cx)
-                            .icon_for_path(&entry.path)
-                            .or_else(|| Some(TEXT_FILE_ASSET.into())),
-                        _ => None,
-                    };
+                    let icon = show_file_icons
+                        .then(|| match entry.kind {
+                            EntryKind::File(_) => self
+                                .project
+                                .read(cx)
+                                .icon_for_path(&entry.path)
+                                .or_else(|| Some(TEXT_FILE_ASSET.into())),
+                            _ => None,
+                        })
+                        .flatten();
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1283,14 +1288,20 @@ impl ProjectPanel {
                     Svg::new(icon.to_string())
                         .with_color(style.icon_color)
                         .constrained()
+                        .with_max_width(style.file_icon_size)
+                        .with_max_height(style.file_icon_size)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.file_icon_size)
                 } else {
-                    Empty::new().constrained()
+                    Empty::new()
+                        .constrained()
+                        .with_max_width(style.directory_icon_size)
+                        .with_max_height(style.directory_icon_size)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.directory_icon_size)
                 }
-                .with_max_width(style.file_icon_size)
-                .with_max_height(style.file_icon_size)
-                .aligned()
-                .constrained()
-                .with_width(style.file_icon_size)
             })
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)

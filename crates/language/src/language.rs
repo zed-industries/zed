@@ -755,19 +755,13 @@ impl LanguageRegistry {
         self.get_or_load_language(|config| UniCase::new(config.name.as_ref()) == name)
     }
 
-    pub fn icon_for_suffix(
-        self: &Arc<Self>,
-        suffix: &str,
-    ) -> Option<Arc<str>> {
+    pub fn icon_for_suffix(self: &Arc<Self>, suffix: &str) -> Option<Arc<str>> {
         let state = self.state.read();
-        state.available_languages
+        state
+            .available_languages
             .iter()
-            .find(|langauge| {
-                langauge.config.path_suffixes.iter().any(|s| s == suffix)
-            })
-            .map(|language| {
-                language.config.icon_path.clone()
-            })
+            .find(|langauge| langauge.config.path_suffixes.iter().any(|s| s == suffix))
+            .map(|language| language.config.icon_path.clone())
             .flatten()
     }
 

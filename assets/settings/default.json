@@ -99,6 +99,8 @@
   "project_panel": {
     // Whether to show the git status in the project panel.
     "git_status": true,
+    // Whether to show file icons in the project panel.
+    "file_icons": true,
     // Where to dock project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the project panel.
