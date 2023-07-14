@@ -3,6 +3,7 @@ gpui::actions!(
     [
         Cancel,
         Confirm,
+        SecondaryConfirm,
         SelectPrev,
         SelectNext,
         SelectFirst,

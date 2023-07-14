@@ -51,7 +51,7 @@ impl PickerDelegate for SemanticSearchDelegate {
         "Search repository in natural language...".into()
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<SemanticSearch>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<SemanticSearch>) {
         if let Some(search_result) = self.matches.get(self.selected_match_index) {
             // Open Buffer
             let search_result = search_result.clone();

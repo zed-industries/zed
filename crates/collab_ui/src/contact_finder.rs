@@ -67,7 +67,7 @@ impl PickerDelegate for ContactFinderDelegate {
         })
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(user) = self.potential_contacts.get(self.selected_index) {
             let user_store = self.user_store.read(cx);
             match user_store.contact_request_status(user) {

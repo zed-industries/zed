@@ -1021,7 +1021,7 @@ mod tests {
         // Split the pane with the first entry, then open the second entry again.
         workspace
             .update(cx, |w, cx| {
-                w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
                 w.open_path(file2.clone(), None, true, cx)
             })
             .await
@@ -1344,7 +1344,11 @@ mod tests {
         cx.dispatch_action(window_id, NewFile);
         workspace
             .update(cx, |workspace, cx| {
-                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                workspace.split_and_clone(
+                    workspace.active_pane().clone(),
+                    SplitDirection::Right,
+                    cx,
+                );
                 workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
             })
             .await

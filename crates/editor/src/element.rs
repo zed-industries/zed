@@ -156,6 +156,7 @@ impl EditorElement {
                         event.position,
                         event.cmd,
                         event.shift,
+                        event.alt,
                         position_map.as_ref(),
                         text_bounds,
                         cx,
@@ -308,6 +309,7 @@ impl EditorElement {
         position: Vector2F,
         cmd: bool,
         shift: bool,
+        alt: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
         cx: &mut EventContext<Editor>,
@@ -324,9 +326,9 @@ impl EditorElement {
 
             if point == target_point {
                 if shift {
-                    go_to_fetched_type_definition(editor, point, cx);
+                    go_to_fetched_type_definition(editor, point, alt, cx);
                 } else {
-                    go_to_fetched_definition(editor, point, cx);
+                    go_to_fetched_definition(editor, point, alt, cx);
                 }
 
                 return true;
