@@ -763,11 +763,7 @@ fn test_empty_combined_injections_inside_injections() {
 }
 
 #[gpui::test(iterations = 50)]
-fn test_random_syntax_map_edits(mut rng: StdRng) {
-    let operations = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(10);
-
+fn test_random_syntax_map_edits_rust_macros(rng: StdRng) {
     let text = r#"
         fn test_something() {
             let vec = vec![5, 1, 3, 8];
@@ -788,68 +784,12 @@ fn test_random_syntax_map_edits(mut rng: StdRng) {
     let registry = Arc::new(LanguageRegistry::test());
     let language = Arc::new(rust_lang());
     registry.add(language.clone());
-    let mut buffer = Buffer::new(0, 0, text);
 
-    let mut syntax_map = SyntaxMap::new();
-    syntax_map.set_language_registry(registry.clone());
-    syntax_map.reparse(language.clone(), &buffer);
-
-    let mut reference_syntax_map = SyntaxMap::new();
-    reference_syntax_map.set_language_registry(registry.clone());
-
-    log::info!("initial text:\n{}", buffer.text());
-
-    for _ in 0..operations {
-        let prev_buffer = buffer.snapshot();
-        let prev_syntax_map = syntax_map.snapshot();
-
-        buffer.randomly_edit(&mut rng, 3);
-        log::info!("text:\n{}", buffer.text());
-
-        syntax_map.interpolate(&buffer);
-        check_interpolation(&prev_syntax_map, &syntax_map, &prev_buffer, &buffer);
-
-        syntax_map.reparse(language.clone(), &buffer);
-
-        reference_syntax_map.clear();
-        reference_syntax_map.reparse(language.clone(), &buffer);
-    }
-
-    for i in 0..operations {
-        let i = operations - i - 1;
-        buffer.undo();
-        log::info!("undoing operation {}", i);
-        log::info!("text:\n{}", buffer.text());
-
-        syntax_map.interpolate(&buffer);
-        syntax_map.reparse(language.clone(), &buffer);
-
-        reference_syntax_map.clear();
-        reference_syntax_map.reparse(language.clone(), &buffer);
-        assert_eq!(
-            syntax_map.layers(&buffer).len(),
-            reference_syntax_map.layers(&buffer).len(),
-            "wrong number of layers after undoing edit {i}"
-        );
-    }
-
-    let layers = syntax_map.layers(&buffer);
-    let reference_layers = reference_syntax_map.layers(&buffer);
-    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter()) {
-        assert_eq!(
-            edited_layer.node().to_sexp(),
-            reference_layer.node().to_sexp()
-        );
-        assert_eq!(edited_layer.node().range(), reference_layer.node().range());
-    }
+    test_random_edits(text, registry, language, rng);
 }
 
 #[gpui::test(iterations = 50)]
-fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
-    let operations = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(10);
-
+fn test_random_syntax_map_edits_with_erb(rng: StdRng) {
     let text = r#"
         <div id="main">
         <% if one?(:two) %>
@@ -866,13 +806,60 @@ fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
         </div>
     "#
     .unindent()
-    .repeat(8);
+    .repeat(5);
 
     let registry = Arc::new(LanguageRegistry::test());
     let language = Arc::new(erb_lang());
     registry.add(language.clone());
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+#[gpui::test(iterations = 50)]
+fn test_random_syntax_map_edits_with_heex(rng: StdRng) {
+    let text = r#"
+        defmodule TheModule do
+            def the_method(assigns) do
+                ~H"""
+                <%= if @empty do %>
+                    <div class="h-4"></div>
+                <% else %>
+                    <div class="max-w-2xl w-full animate-pulse">
+                    <div class="flex-1 space-y-4">
+                        <div class={[@bg_class, "h-4 rounded-lg w-3/4"]}></div>
+                        <div class={[@bg_class, "h-4 rounded-lg"]}></div>
+                        <div class={[@bg_class, "h-4 rounded-lg w-5/6"]}></div>
+                    </div>
+                    </div>
+                <% end %>
+                """
+            end
+        end
+    "#
+    .unindent()
+    .repeat(3);
+
+    let registry = Arc::new(LanguageRegistry::test());
+    let language = Arc::new(elixir_lang());
+    registry.add(language.clone());
+    registry.add(Arc::new(heex_lang()));
+    registry.add(Arc::new(html_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+fn test_random_edits(
+    text: String,
+    registry: Arc<LanguageRegistry>,
+    language: Arc<Language>,
+    mut rng: StdRng,
+) {
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
     let mut buffer = Buffer::new(0, 0, text);
 
     let mut syntax_map = SyntaxMap::new();
