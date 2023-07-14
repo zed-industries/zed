@@ -1355,7 +1355,7 @@ impl ProjectPanel {
                 if kind.is_dir() {
                     this.toggle_expanded(entry_id, cx);
                 } else {
-                    if event.cmd && event.click_count > 1 {
+                    if event.cmd {
                         this.split_entry(entry_id, cx);
                     } else if !event.cmd {
                         this.open_entry(entry_id, event.click_count > 1, cx);
