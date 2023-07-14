@@ -166,10 +166,11 @@ impl TerminalView {
                         .detach();
                 }
             }
-            Event::Open(maybe_url_or_path) => {
-                // TODO kb, what is the API for this?
-                // terminal::URL_REGEX.matches(maybe_url_or_path)
-                if maybe_url_or_path.starts_with("http") {
+            Event::Open {
+                is_url,
+                maybe_url_or_path,
+            } => {
+                if *is_url {
                     cx.platform().open_url(maybe_url_or_path);
                 } else if let Some(workspace) = workspace.upgrade(cx) {
                     let path_like =
@@ -180,10 +181,11 @@ impl TerminalView {
                     let maybe_path = path_like.path_like;
                     workspace.update(cx, |workspace, cx| {
                         if false { //&& workspace.contains_path() {
-                             //
+                             // TODO kb
                         } else if maybe_path.exists() {
+                            let visible = maybe_path.is_dir();
                             workspace
-                                .open_abs_path(maybe_path, true, cx)
+                                .open_abs_path(maybe_path, visible, cx)
                                 .detach_and_log_err(cx);
                         }
                     });

@@ -583,17 +583,23 @@ impl Element<TerminalView> for TerminalElement {
         let last_hovered_hyperlink = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
-            terminal.last_content.last_hovered_hyperlink.clone()
+            terminal.last_content.last_hovered_word.clone()
         });
 
-        let hyperlink_tooltip = last_hovered_hyperlink.map(|(uri, _, id)| {
+        let hyperlink_tooltip = last_hovered_hyperlink.map(|hovered_word| {
             let mut tooltip = Overlay::new(
                 Empty::new()
                     .contained()
                     .constrained()
                     .with_width(dimensions.width())
                     .with_height(dimensions.height())
-                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx),
+                    .with_tooltip::<TerminalElement>(
+                        hovered_word.id,
+                        hovered_word.word,
+                        None,
+                        tooltip_style,
+                        cx,
+                    ),
             )
             .with_position_mode(gpui::elements::OverlayPositionMode::Local)
             .into_any();
@@ -613,7 +619,7 @@ impl Element<TerminalView> for TerminalElement {
             cursor_char,
             selection,
             cursor,
-            last_hovered_hyperlink,
+            last_hovered_word,
             ..
         } = { &terminal_handle.read(cx).last_content };
 
@@ -634,9 +640,9 @@ impl Element<TerminalView> for TerminalElement {
             &terminal_theme,
             cx.text_layout_cache(),
             cx.font_cache(),
-            last_hovered_hyperlink
+            last_hovered_word
                 .as_ref()
-                .map(|(_, range, _)| (link_style, range)),
+                .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
