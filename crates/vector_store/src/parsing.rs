@@ -51,6 +51,7 @@ impl CodeContextRetriever {
         let mut documents = Vec::new();
 
         // Iterate through query matches
+        let mut name_ranges: Vec<Range<usize>> = vec![];
         for mat in self.cursor.matches(
             &embedding_config.query,
             tree.root_node(),
@@ -65,7 +66,12 @@ impl CodeContextRetriever {
                     byte_range = Some(capture.node.byte_range());
                     item = content.get(capture.node.byte_range());
                 } else if capture.index == embedding_config.name_capture_ix {
-                    if let Some(name_content) = content.get(capture.node.byte_range()) {
+                    let name_range = capture.node.byte_range();
+                    if name_ranges.contains(&name_range) {
+                        continue;
+                    }
+                    name_ranges.push(name_range.clone());
+                    if let Some(name_content) = content.get(name_range.clone()) {
                         name.push(name_content);
                     }
                 }
