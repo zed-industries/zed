@@ -28,6 +28,7 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
+    "crates/gpui/playground",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",

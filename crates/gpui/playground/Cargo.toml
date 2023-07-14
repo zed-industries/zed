@@ -1,0 +1,13 @@
+[[bin]]
+name = "playground"
+path = "src/playground.rs"
+
+[package]
+name = "playground"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gpui = { path = ".." }
+log.workspace = true
+simplelog = "0.9"
