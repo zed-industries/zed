@@ -26,8 +26,15 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
 
 impl FileAssociations {
     pub fn new(assets: impl AssetSource) -> Self {
-        let file = assets.load("icons/file_icons/file_types.json").unwrap();
-        serde_json::from_str::<FileAssociations>(str::from_utf8(&file).unwrap()).unwrap()
+        assets
+            .load("icons/file_icons/file_types.json")
+            .map(|file| {
+                serde_json::from_str::<FileAssociations>(str::from_utf8(&file).unwrap()).unwrap()
+            })
+            .unwrap_or_else(|_| FileAssociations {
+                suffixes: HashMap::default(),
+                types: HashMap::default(),
+            })
     }
 
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
