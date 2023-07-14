@@ -398,7 +398,9 @@ impl PaneAxis {
             }
 
             if self.members.len() == 1 {
-                Ok(self.members.pop())
+                let result = self.members.pop();
+                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
+                Ok(result)
             } else {
                 Ok(None)
             }
