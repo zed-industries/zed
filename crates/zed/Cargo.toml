@@ -119,7 +119,7 @@ tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", re
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-ruby = "0.20.0"
 tree-sitter-html = "0.19.0"
-tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"}
+tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "ca8af220aaf2a80aaf609bfb0df193817e4f064b"}
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a"}
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930"}
 tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "697bb515471871e85ff799ea57a76298a71a9cca"}

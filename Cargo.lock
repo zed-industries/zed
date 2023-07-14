@@ -8118,8 +8118,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-scheme"
-version = "0.2.0"
-source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
+version = "0.5.0"
+source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=ca8af220aaf2a80aaf609bfb0df193817e4f064b#ca8af220aaf2a80aaf609bfb0df193817e4f064b"
 dependencies = [
  "cc",
  "tree-sitter",
