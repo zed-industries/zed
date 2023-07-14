@@ -33,6 +33,7 @@ pub trait GitRepository: Send {
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+
     fn branches(&self) -> Result<Vec<Branch>> {
         Ok(vec![])
     }
