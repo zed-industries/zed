@@ -148,6 +148,7 @@ impl View for BufferSearchBar {
                         Flex::row()
                             .with_child(self.render_nav_button("<", Direction::Prev, cx))
                             .with_child(self.render_nav_button(">", Direction::Next, cx))
+                            .with_child(self.render_action_button("Select All", cx))
                             .aligned(),
                     )
                     .with_child(
@@ -397,6 +398,37 @@ impl BufferSearchBar {
             direction as usize,
             tooltip.to_string(),
             Some(action),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
+
+    fn render_action_button(
+        &self,
+        icon: &'static str,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let tooltip = "Select All Matches";
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let action_type_id = 0_usize;
+
+        enum ActionButton {}
+        MouseEventHandler::<ActionButton, _>::new(action_type_id, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme.search.action_button.style_for(state);
+            Label::new(icon, style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.select_all_matches(&SelectAllMatches, cx)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<ActionButton>(
+            action_type_id,
+            tooltip.to_string(),
+            Some(Box::new(SelectAllMatches)),
             tooltip_style,
             cx,
         )
