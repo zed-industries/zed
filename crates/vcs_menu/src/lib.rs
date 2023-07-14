@@ -106,12 +106,14 @@ impl PickerDelegate for BranchListDelegate {
                 .read_with(&mut cx, |view, cx| {
                     let delegate = view.delegate();
                     let project = delegate.workspace.read(cx).project().read(&cx);
-                    let mut cwd =
-                    project
+
+                    let Some(worktree) = project
                         .visible_worktrees(cx)
                         .next()
-                        .unwrap()
-                        .read(cx)
+                    else {
+                        bail!("Cannot update branch list as there are no visible worktrees")
+                    };
+                    let mut cwd = worktree .read(cx)
                         .abs_path()
                         .to_path_buf();
                     cwd.push(".git");
