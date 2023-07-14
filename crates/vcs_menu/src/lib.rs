@@ -182,7 +182,9 @@ impl PickerDelegate for BranchListDelegate {
 
     fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         let current_pick = self.selected_index();
-        let current_pick = self.matches[current_pick].string.clone();
+        let Some(current_pick) = self.matches.get(current_pick).map(|pick| pick.string.clone()) else {
+            return;
+        };
         cx.spawn(|picker, mut cx| async move {
             picker
                 .update(&mut cx, |this, cx| {
