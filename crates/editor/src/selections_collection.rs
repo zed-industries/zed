@@ -16,13 +16,13 @@ use crate::{
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSelection {
     pub selection: Selection<Anchor>,
     pub mode: SelectMode,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     display_map: ModelHandle<DisplayMap>,
     buffer: ModelHandle<MultiBuffer>,
