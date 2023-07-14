@@ -1791,7 +1791,7 @@ mod tests {
                 first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
                 ..Default::default()
             },
-            tree_sitter_javascript::language(),
+            tree_sitter_typescript::language_tsx(),
             vec![],
             |_| Default::default(),
         );

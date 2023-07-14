@@ -2253,9 +2253,8 @@ dependencies = [
  "theme",
  "tree-sitter",
  "tree-sitter-html",
- "tree-sitter-javascript",
  "tree-sitter-rust",
- "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
+ "tree-sitter-typescript",
  "unindent",
  "util",
  "workspace",
@@ -3750,15 +3749,16 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-elixir",
  "tree-sitter-embedded-template",
+ "tree-sitter-heex",
  "tree-sitter-html",
- "tree-sitter-javascript",
- "tree-sitter-json 0.19.0",
+ "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
- "tree-sitter-typescript 0.20.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tree-sitter-typescript",
  "unicase",
  "unindent",
  "util",
@@ -8030,16 +8030,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-javascript"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2490fab08630b2c8943c320f7b63473cbf65511c8d83aec551beb9b4375906ed"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-json"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8118,8 +8108,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-scheme"
-version = "0.5.0"
-source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=ca8af220aaf2a80aaf609bfb0df193817e4f064b#ca8af220aaf2a80aaf609bfb0df193817e4f064b"
+version = "0.2.0"
+source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8138,16 +8128,6 @@ dependencies = [
 name = "tree-sitter-toml"
 version = "0.5.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-typescript"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "079c695c32d39ad089101c66393aeaca30e967fba3486a91f573d2f0e12d290a"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9566,7 +9546,7 @@ dependencies = [
  "tree-sitter-scheme",
  "tree-sitter-svelte",
  "tree-sitter-toml",
- "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
+ "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unindent",
  "url",

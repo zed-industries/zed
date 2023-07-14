@@ -1671,7 +1671,7 @@ fn test_language_scope_at(cx: &mut AppContext) {
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_javascript::language()),
+            Some(tree_sitter_typescript::language_tsx()),
         )
         .with_override_query(
             r#"
@@ -2293,7 +2293,7 @@ fn javascript_lang() -> Language {
             name: "JavaScript".into(),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     )
     .with_brackets_query(
         r#"
