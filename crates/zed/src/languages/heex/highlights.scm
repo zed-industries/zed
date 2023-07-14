@@ -1,10 +1,7 @@
 ; HEEx delimiters
 [
-  "--%>"
-  "-->"
   "/>"
   "<!"
-  "<!--"
   "<"
   "</"
   "</:"
@@ -21,6 +18,9 @@
   "<%%="
   "<%="
   "%>"
+  "--%>"
+  "-->"
+  "<!--"
 ] @keyword
 
 ; HEEx operators are highlighted as such
