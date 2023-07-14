@@ -912,7 +912,7 @@ impl<'a> WindowContext<'a> {
         let mut new_parents = HashMap::default();
         let mut views_to_notify_if_ancestors_change = HashMap::default();
         rendered_root.layout(
-            SizeConstraint::strict(window_size),
+            SizeConstraint::new(Vector2F::zero(), window_size),
             &mut new_parents,
             &mut views_to_notify_if_ancestors_change,
             refreshing,
