@@ -16,8 +16,8 @@ mod lua;
 mod python;
 mod ruby;
 mod rust;
-mod typescript;
 mod svelte;
+mod typescript;
 mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -141,7 +141,9 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
     language(
         "svelte",
         tree_sitter_svelte::language(),
-        vec![Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone()))],
+        vec![Arc::new(svelte::SvelteLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
 }
 
