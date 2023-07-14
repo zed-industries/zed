@@ -149,8 +149,8 @@ impl settings::Setting for ThemeSettings {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = cx
             .global::<Arc<ThemeRegistry>>()
-            .list(params.staff_mode)
-            .map(|theme| Value::String(theme.name.clone()))
+            .list_names(params.staff_mode)
+            .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
 
         let theme_name_schema = SchemaObject {

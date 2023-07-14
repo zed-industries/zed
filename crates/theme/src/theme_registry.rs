@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -43,7 +44,7 @@ impl ThemeRegistry {
         this
     }
 
-    pub fn list(&self, staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
+    pub fn list_names(&self, staff: bool) -> impl Iterator<Item = Cow<str>> + '_ {
         let mut dirs = self.assets.list("themes/");
 
         if !staff {
@@ -53,10 +54,21 @@ impl ThemeRegistry {
                 .collect()
         }
 
-        dirs.into_iter().filter_map(|path| {
-            let filename = path.strip_prefix("themes/")?;
-            let theme_name = filename.strip_suffix(".json")?;
-            self.get(theme_name).ok().map(|theme| theme.meta.clone())
+        fn get_name(path: &str) -> Option<&str> {
+            path.strip_prefix("themes/")?.strip_suffix(".json")
+        }
+
+        dirs.into_iter().filter_map(|path| match path {
+            Cow::Borrowed(path) => Some(Cow::Borrowed(get_name(path)?)),
+            Cow::Owned(path) => Some(Cow::Owned(get_name(&path)?.to_string())),
+        })
+    }
+
+    pub fn list(&self, staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
+        self.list_names(staff).filter_map(|theme_name| {
+            self.get(theme_name.as_ref())
+                .ok()
+                .map(|theme| theme.meta.clone())
         })
     }
 
