@@ -7985,7 +7985,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-elixir"
 version = "0.1.0"
-source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=4ba9dab6e2602960d95b2b625f3386c27e08084e#4ba9dab6e2602960d95b2b625f3386c27e08084e"
+source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=2616034f78ffa83ca6a521ebd7eee1868cb5c14c#2616034f78ffa83ca6a521ebd7eee1868cb5c14c"
 dependencies = [
  "cc",
  "tree-sitter",
