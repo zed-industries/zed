@@ -114,7 +114,7 @@ export default function editor(): any {
                             color: foreground(layer, "default"),
                         },
                         hovered: {
-                            color: foreground(layer, "variant"),
+                            color: foreground(layer, "on"),
                         },
                     },
                 },
