@@ -63,3 +63,13 @@
         (accessibility_modifier)
     ]* @context
     name: (_) @name) @item
+
+(return_statement
+    "return" @context
+    (object
+        "{" @context)) @item
+
+(return_statement
+    (object
+        (pair
+            key: (_) @name) @item))

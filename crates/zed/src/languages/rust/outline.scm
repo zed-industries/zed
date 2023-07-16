@@ -27,13 +27,27 @@
     (visibility_modifier)? @context
     (function_modifiers)? @context
     "fn" @context
-    name: (_) @name) @item
+    name: (_) @name
+    (parameters
+        "(" @context
+        ((self_parameter) @context ","? @context)?
+        ((parameter pattern: (_) @context) ","? @context)*
+        ")" @context)
+    "->"? @context
+    return_type: (_)? @context) @item
 
 (function_signature_item
     (visibility_modifier)? @context
     (function_modifiers)? @context
     "fn" @context
-    name: (_) @name) @item
+    name: (_) @name
+    (parameters
+        "(" @context
+        ((self_parameter) @context ","? @context)?
+        ((parameter pattern: (_) @context) ","? @context)*
+        ")" @context)
+    "->"? @context
+    return_type: (_)? @context) @item
 
 (macro_definition
     . "macro_rules!" @context
@@ -56,8 +70,12 @@
 (const_item
     (visibility_modifier)? @context
     "const" @context
-    name: (_) @name) @item
+    name: (_) @name
+    ":"? @context
+    type: (_)? @context) @item
 
 (field_declaration
     (visibility_modifier)? @context
-    name: (_) @name) @item
+    name: (_) @name
+    ":"? @context
+    type: (_)? @context) @item

@@ -6,6 +6,13 @@
     "enum" @context
     name: (_) @name) @item
 
+(return_statement
+    "return" @context
+    (object
+        "{" @context
+        (pair
+            key: (_) @name) @item))
+
 (function_declaration
     "async"? @context
     "function" @context
