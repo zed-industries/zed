@@ -9,130 +9,217 @@ use gpui::{
     serde_json::Value,
     AnyElement, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View, ViewContext,
 };
-use std::{any::Any, ops::Range, rc::Rc};
+use std::{any::Any, ops::Range};
 
-pub struct Atom<V: View> {
-    style: Rc<AtomStyle>,
+// Core idea is that everything is a channel, and channels are heirarchical.
+//
+// Tree 🌲 of channels
+//   - (Potentially v0.2) All channels associated with a conversation (Slack model)
+//   - Audio
+//   - You can share projects into the channel
+//   - 1.
+//
+//
+// - 2 thoughts:
+//  - Difference from where we are to the above:
+//      - Channels = rooms + chat + persistence
+//      - Chat = multiplayer assistant panel + server integrated persistence
+//  - The tree structure, is good for navigating chats, AND it's good for distributing permissions.
+// #zed-public// /zed- <- Share a pointer (URL) for this
+//
+//
+
+pub struct Node<V: View> {
+    style: NodeStyle,
     children: Vec<AnyElement<V>>,
 }
 
-impl<V: View> Atom<V> {
-    pub fn new(style: impl Into<Rc<AtomStyle>>) -> Self {
+impl<V: View> Default for Node<V> {
+    fn default() -> Self {
         Self {
-            style: style.into(),
-            children: Vec::new(),
+            style: Default::default(),
+            children: Default::default(),
         }
     }
+}
 
-    fn inner_constraint(&self, mut constraint: SizeConstraint) -> SizeConstraint {
-        // Constrain width
-        constraint
-            .max
-            .set_x(constraint.max.x().min(self.style.width.max()));
-
-        // Constrain height
-        constraint
-            .max
-            .set_y(constraint.max.y().min(self.style.height.max()));
-
-        // Account for margin, border, and padding
-        let inset = self.inset_size();
-        SizeConstraint {
-            min: (constraint.min - inset).max(Vector2F::zero()),
-            max: (constraint.max - inset).max(Vector2F::zero()),
-        }
+impl<V: View> Node<V> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    // fn layout_2d_children(
-    //     &mut self,
-    //     orientation: Axis2d,
-    //     constraint: SizeConstraint,
-    //     view: &mut V,
-    //     cx: &mut LayoutContext<V>,
-    // ) -> Vector2F {
-    //     let mut total_flex: Option<f32> = None;
-    //     let mut total_size = 0.0;
-    //     let mut cross_axis_max: f32 = 0.0;
+    pub fn child(mut self, child: impl Element<V>) -> Self {
+        self.children.push(child.into_any());
+        self
+    }
 
-    //     // First pass: Layout non-flex children only
-    //     for child in &mut self.children {
-    //         if let Some(child_flex) = child.metadata::<AtomStyle>().and_then(|style| style.flex) {
-    //             *total_flex.get_or_insert(0.) += child_flex;
-    //         } else {
-    //             let child_constraint = match orientation {
-    //                 Axis2d::X => SizeConstraint::new(
-    //                     vec2f(0.0, constraint.min.y()),
-    //                     vec2f(INFINITY, constraint.max.y()),
-    //                 ),
-    //                 Axis2d::Y => SizeConstraint::new(
-    //                     vec2f(constraint.min.x(), 0.0),
-    //                     vec2f(constraint.max.x(), INFINITY),
-    //                 ),
-    //             };
-    //             let child_size = child.layout(child_constraint, view, cx);
-    //             total_size += match orientation {
-    //                 Axis3d::Horizontal => {
-    //                     cross_axis_max = cross_axis_max.max(child_size.y());
-    //                     child_size.x()
-    //                 }
-    //                 Axis3d::Vertical => {
-    //                     cross_axis_max = cross_axis_max.max(child_size.x());
-    //                     child_size.y()
-    //                 }
-    //             };
-    //         }
-    //     }
+    pub fn children<I, E>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = E>,
+        E: Element<V>,
+    {
+        self.children
+            .extend(children.into_iter().map(|child| child.into_any()));
+        self
+    }
 
-    //     let remaining_space = match orientation {
-    //         Axis3d::Vertical => constraint.max.y() - total_size,
-    //         Axis3d::Horizontal => constraint.max.x() - total_size,
-    //     };
+    pub fn width(mut self, width: impl Into<Length>) -> Self {
+        self.style.width = width.into();
+        self
+    }
 
-    //     // Second pass: Layout flexible children
-    //     if let Some(total_flex) = total_flex {
-    //         if total_flex > 0. {
-    //             let space_per_flex = remaining_space.max(0.) / total_flex;
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.style.height = height.into();
+        self
+    }
 
-    //             for child in &mut self.children {
-    //                 if let Some(child_flex) =
-    //                     child.metadata::<AtomStyle>().and_then(|style| style.flex)
-    //                 {
-    //                     let child_max = space_per_flex * child_flex;
-    //                     let mut child_constraint = constraint;
-    //                     match orientation {
-    //                         Axis3d::Vertical => {
-    //                             child_constraint.min.set_y(0.0);
-    //                             child_constraint.max.set_y(child_max);
-    //                         }
-    //                         Axis3d::Horizontal => {
-    //                             child_constraint.min.set_x(0.0);
-    //                             child_constraint.max.set_x(child_max);
-    //                         }
-    //                     }
+    pub fn fill(mut self, fill: impl Into<Fill>) -> Self {
+        self.style.fill = fill.into();
+        self
+    }
 
-    //                     let child_size = child.layout(child_constraint, view, cx);
+    fn layout_2d_children(
+        &mut self,
+        axis: Axis2d,
+        size: Vector2F,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Vector2F {
+        let mut total_flex: Option<f32> = None;
+        let mut total_size = 0.0;
+        let mut cross_axis_max: f32 = 0.0;
 
-    //                     cross_axis_max = match orientation {
-    //                         Axis3d::Vertical => {
-    //                             total_size += child_size.y();
-    //                             cross_axis_max.max(child_size.x())
-    //                         }
-    //                         Axis3d::Horizontal => {
-    //                             total_size += child_size.x();
-    //                             cross_axis_max.max(child_size.y())
-    //                         }
-    //                     };
-    //                 }
-    //             }
-    //         }
-    //     }
+        // First pass: Layout non-flex children only
+        for child in &mut self.children {
+            let child_flex = child.metadata::<NodeStyle>().and_then(|style| match axis {
+                Axis2d::X => style.width.flex(),
+                Axis2d::Y => style.height.flex(),
+            });
 
-    //     let size = match orientation {
-    //         Axis3d::Vertical => vec2f(cross_axis_max, total_size),
-    //         Axis3d::Horizontal => vec2f(total_size, cross_axis_max),
-    //     };
-    //     size
-    // }
+            if let Some(child_flex) = child_flex {
+                *total_flex.get_or_insert(0.) += child_flex;
+            } else {
+                match axis {
+                    Axis2d::X => {
+                        let child_constraint =
+                            SizeConstraint::new(Vector2F::zero(), vec2f(f32::INFINITY, size.y()));
+                        let child_size = child.layout(child_constraint, view, cx);
+                        cross_axis_max = cross_axis_max.max(child_size.y());
+                        total_size += child_size.x();
+                    }
+                    Axis2d::Y => {
+                        let child_constraint =
+                            SizeConstraint::new(Vector2F::zero(), vec2f(size.x(), f32::INFINITY));
+                        let child_size = child.layout(child_constraint, view, cx);
+                        cross_axis_max = cross_axis_max.max(child_size.x());
+                        total_size += child_size.y();
+                    }
+                }
+            }
+        }
+
+        // let remaining_space = match axis {
+        //     Axis2d::X => constraint.max.x() - total_size,
+        //     Axis2d::Y => constraint.max.y() - total_size,
+        // };
+
+        // // Second pass: Layout flexible children
+        // if let Some(total_flex) = total_flex {
+        //     if total_flex > 0. {
+        //         let space_per_flex = remaining_space.max(0.) / total_flex;
+
+        //         for child in &mut self.children {
+        //             if let Some(child_flex) =
+        //                 child.metadata::<AtomStyle>().and_then(|style| style.flex)
+        //             {
+        //                 let child_max = space_per_flex * child_flex;
+        //                 let mut child_constraint = constraint;
+        //                 match axis {
+        //                     Axis3d::Vertical => {
+        //                         child_constraint.min.set_y(0.0);
+        //                         child_constraint.max.set_y(child_max);
+        //                     }
+        //                     Axis3d::Horizontal => {
+        //                         child_constraint.min.set_x(0.0);
+        //                         child_constraint.max.set_x(child_max);
+        //                     }
+        //                 }
+
+        //                 let child_size = child.layout(child_constraint, view, cx);
+
+        //                 cross_axis_max = match axis {
+        //                     Axis3d::Vertical => {
+        //                         total_size += child_size.y();
+        //                         cross_axis_max.max(child_size.x())
+        //                     }
+        //                     Axis3d::Horizontal => {
+        //                         total_size += child_size.x();
+        //                         cross_axis_max.max(child_size.y())
+        //                     }
+        //                 };
+        //             }
+        //         }
+        //     }
+        // }
+
+        let size = match axis {
+            Axis2d::X => vec2f(total_size, cross_axis_max),
+            Axis2d::Y => vec2f(cross_axis_max, total_size),
+        };
+        size
+    }
+
+    fn paint_2d_children(
+        &mut self,
+        scene: &mut SceneBuilder,
+        axis: Axis2d,
+        bounds: RectF,
+        visible_bounds: RectF,
+        size_of_children: &mut Vector2F,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        let parent_size = bounds.size();
+        let mut child_origin = bounds.origin();
+
+        // Align all children together along the primary axis
+        let mut align_horizontally = false;
+        let mut align_vertically = false;
+        match axis {
+            Axis2d::X => align_horizontally = true,
+            Axis2d::Y => align_vertically = true,
+        }
+        align_child(
+            &mut child_origin,
+            parent_size,
+            *size_of_children,
+            self.style.align.0,
+            align_horizontally,
+            align_vertically,
+        );
+
+        for child in &mut self.children {
+            // Align each child along the cross axis
+            align_horizontally = !align_horizontally;
+            align_vertically = !align_vertically;
+            align_child(
+                &mut child_origin,
+                parent_size,
+                child.size(),
+                self.style.align.0,
+                align_horizontally,
+                align_vertically,
+            );
+
+            child.paint(scene, child_origin, visible_bounds, view, cx);
+
+            // Advance along the primary axis by the size of this child
+            match axis {
+                Axis2d::X => child_origin.set_x(child_origin.x() + child.size().x()),
+                Axis2d::Y => child_origin.set_y(child_origin.x() + child.size().y()),
+            }
+        }
+    }
 
     // fn layout_stacked_children(
     //     &mut self,
@@ -190,7 +277,7 @@ impl<V: View> Atom<V> {
     }
 }
 
-impl<V: View> Element<V> for Atom<V> {
+impl<V: View> Element<V> for Node<V> {
     type LayoutState = Vector2F; // Content size
     type PaintState = ();
 
@@ -200,34 +287,39 @@ impl<V: View> Element<V> for Atom<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let inner_constraint = self.inner_constraint(constraint);
-        // let size_of_children = match self.style.axis {
-        //     // Axis3d::X => self.layout_2d_children(Axis2d::X, constraint, view, cx),
-        //     // Axis3d::Y => self.layout_2d_children(Axis2d::Y, constraint, view, cx),
-        //     // Axis3d::Z => self.layout_stacked_children(constraint, view, cx),
-        // };
-        let size_of_children = inner_constraint.max; // TODO!
-
-        // Add back space for padding, border, and margin.
-        let mut size = size_of_children + self.inset_size();
+        let mut size = Vector2F::zero();
+        let margin_size = self.margin_size();
+        match self.style.width {
+            Length::Fixed(width) => size.set_x(width + margin_size.x()),
+            Length::Auto { flex, min, max } => {
+                todo!()
+            }
+        }
+        match self.style.height {
+            Length::Fixed(height) => size.set_y(height + margin_size.y()),
+            Length::Auto { flex, min, max } => todo!(),
+        }
 
         // Impose horizontal constraints
         if constraint.min.x().is_finite() {
             size.set_x(size.x().max(constraint.min.x()));
         }
-        if size.x() > constraint.max.x() {
-            size.set_x(constraint.max.x());
-        }
+        size.set_x(size.x().min(constraint.max.x()));
 
         // Impose vertical constraints
         if constraint.min.y().is_finite() {
             size.set_y(size.y().max(constraint.min.y()));
         }
-        if size.y() > constraint.max.y() {
-            size.set_y(constraint.max.y());
-        }
+        size.set_x(size.y().min(constraint.max.y()));
 
-        (size, size_of_children)
+        let inner_size = size - margin_size - self.border_size() - self.padding_size();
+        let size_of_children = match self.style.axis {
+            Axis3d::X => self.layout_2d_children(Axis2d::X, inner_size, view, cx),
+            Axis3d::Y => self.layout_2d_children(Axis2d::Y, inner_size, view, cx),
+            Axis3d::Z => todo!(), // self.layout_stacked_children(inner_constraint, view, cx),
+        };
+
+        (dbg!(size), dbg!(size_of_children))
     }
 
     fn paint(
@@ -268,27 +360,23 @@ impl<V: View> Element<V> for Atom<V> {
         // }
 
         // Render the background and/or the border (if it not an overlay border).
-        match self.style.fill {
-            Fill::Color(fill_color) => {}
-        }
-        if let Fill::Color(fill_color) = self.style.fill {
-            let is_fill_visible = !fill_color.is_fully_transparent();
-            if is_fill_visible || self.style.border.is_visible() {
-                scene.push_quad(Quad {
-                    bounds: content_bounds,
-                    background: is_fill_visible.then_some(fill_color),
-                    border: scene::Border {
-                        width: self.style.border.width,
-                        color: self.style.border.color,
-                        overlay: false,
-                        top: self.style.border.top,
-                        right: self.style.border.right,
-                        bottom: self.style.border.bottom,
-                        left: self.style.border.left,
-                    },
-                    corner_radius: self.style.corner_radius,
-                });
-            }
+        let Fill::Color(fill_color) = self.style.fill;
+        let is_fill_visible = !fill_color.is_fully_transparent();
+        if is_fill_visible || self.style.border.is_visible() {
+            scene.push_quad(Quad {
+                bounds: content_bounds,
+                background: is_fill_visible.then_some(fill_color),
+                border: scene::Border {
+                    width: self.style.border.width,
+                    color: self.style.border.color,
+                    overlay: false,
+                    top: self.style.border.top,
+                    right: self.style.border.right,
+                    bottom: self.style.border.bottom,
+                    left: self.style.border.left,
+                },
+                corner_radius: self.style.corner_radius,
+            });
         }
 
         if !self.children.is_empty() {
@@ -298,10 +386,29 @@ impl<V: View> Element<V> for Atom<V> {
                 content_bounds.origin() + vec2f(padding.left, padding.top),
                 content_bounds.lower_right() - vec2f(padding.right, padding.top),
             );
-            let parent_size = padded_bounds.size();
 
-            // Now paint the children accourding to the orientation.
-            let child_aligment = self.style.align;
+            match self.style.axis {
+                Axis3d::X => self.paint_2d_children(
+                    scene,
+                    Axis2d::X,
+                    padded_bounds,
+                    visible_bounds,
+                    size_of_children,
+                    view,
+                    cx,
+                ),
+                Axis3d::Y => self.paint_2d_children(
+                    scene,
+                    Axis2d::Y,
+                    padded_bounds,
+                    visible_bounds,
+                    size_of_children,
+                    view,
+                    cx,
+                ),
+                Axis3d::Z => todo!(),
+            }
+
             // match self.style.orientation {
             //     Orientation::Axial(axis) => {
             //         let mut child_origin = padded_bounds.origin();
@@ -363,23 +470,6 @@ impl<V: View> Element<V> for Atom<V> {
             //                     child_origin.set_y(child_origin.x() + child.size().y())
             //                 }
             //             }
-            //         }
-            //     }
-            //     Orientation::Stacked => {
-            //         for child in &mut self.children {
-            //             let mut child_origin = padded_bounds.origin();
-            //             align_child(
-            //                 &mut child_origin,
-            //                 parent_size,
-            //                 child.size(),
-            //                 child_aligment,
-            //                 true,
-            //                 true,
-            //             );
-
-            //             scene.paint_layer(None, |scene| {
-            //                 child.paint(scene, child_origin, visible_bounds, view, cx);
-            //             });
             //         }
             //     }
             // }
@@ -450,10 +540,10 @@ struct Interactive<Style> {
 }
 
 #[derive(Clone, Default)]
-pub struct AtomStyle {
+pub struct NodeStyle {
     axis: Axis3d,
     wrap: bool,
-    align: Vector2F,
+    align: Align,
     overflow_x: Overflow,
     overflow_y: Overflow,
     gap_x: Gap,
@@ -472,27 +562,11 @@ pub struct AtomStyle {
     opacity: f32,
     fill: Fill,
     border: Border,
-    corner_radius: f32,
+    corner_radius: f32, // corner radius matches swift!
     shadows: Vec<Shadow>,
 }
 
-impl AtomStyle {
-    pub fn width(mut self, width: impl Into<Length>) -> Self {
-        self.width = width.into();
-        self
-    }
-
-    pub fn height(mut self, height: impl Into<Length>) -> Self {
-        self.height = height.into();
-        self
-    }
-
-    pub fn fill(mut self, fill: impl Into<Fill>) -> Self {
-        self.fill = fill.into();
-        self
-    }
-}
-
+// Sides?
 #[derive(Clone, Default)]
 struct Edges<T> {
     top: T,
@@ -510,7 +584,7 @@ struct CornerRadii {
 }
 
 #[derive(Clone)]
-enum Fill {
+pub enum Fill {
     Color(Color),
 }
 
@@ -545,7 +619,7 @@ impl Border {
 }
 
 #[derive(Clone, Copy)]
-enum Length {
+pub enum Length {
     Fixed(f32),
     Auto { flex: f32, min: f32, max: f32 },
 }
@@ -572,6 +646,22 @@ impl Length {
             Length::Fixed(value) => *value,
             Length::Auto { max, .. } => *max,
         }
+    }
+
+    pub fn flex(&self) -> Option<f32> {
+        match self {
+            Length::Fixed(_) => None,
+            Length::Auto { flex, .. } => Some(*flex),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Align(Vector2F);
+
+impl Default for Align {
+    fn default() -> Self {
+        Self(vec2f(-1., -1.))
     }
 }
 

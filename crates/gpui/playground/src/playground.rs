@@ -1,5 +1,5 @@
-use elements::{Atom, AtomStyle};
-use gpui::{color::Color, AnyElement, Element, Entity, View};
+use elements::{Node, NodeStyle};
+use gpui::{color::Color, AnyElement, Element, Entity, View, ViewContext};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -25,13 +25,26 @@ impl View for PlaygroundView {
         "PlaygroundView"
     }
 
-    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> AnyElement<PlaygroundView> {
-        Atom::new(
-            AtomStyle::default()
-                .width(100.)
-                .height(100.)
-                .fill(Color::red()),
-        )
-        .into_any()
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<PlaygroundView> {
+        // Node::with_style(NodeStyle)
+        // Node::new().width(100.0).fill(Color::red())
+        //
+        Node::new()
+            .width(100.)
+            .height(100.)
+            .fill(Color::red())
+            .children([
+                Node::new().width(20.).height(20.).fill(Color::green()),
+                Node::new().width(20.).height(20.).fill(Color::blue()),
+            ])
+            .into_any()
+
+        // Node::with_style(
+        //     NodeStyle::default()
+        //         .width(100.)
+        //         .height(100.)
+        //         .fill(Color::red()),
+        // )
+        // .into_any()
     }
 }
