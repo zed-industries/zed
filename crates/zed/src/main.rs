@@ -702,7 +702,8 @@ fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
                 });
             })
         }
-    }).detach()
+    })
+    .detach()
 }
 
 #[cfg(not(debug_assertions))]

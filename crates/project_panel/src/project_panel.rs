@@ -237,7 +237,8 @@ impl ProjectPanel {
 
             cx.observe_global::<FileAssociations, _>(|_, cx| {
                 cx.notify();
-            }).detach();
+            })
+            .detach();
 
             let view_id = cx.view_id();
             let mut this = Self {
@@ -1192,11 +1193,10 @@ impl ProjectPanel {
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
-                    let icon = show_file_icons
-                        .then(|| match entry.kind {
-                            EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx),
-                            _ => FileAssociations::get_folder_icon(is_expanded, cx),
-                        });
+                    let icon = show_file_icons.then(|| match entry.kind {
+                        EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx),
+                        _ => FileAssociations::get_folder_icon(is_expanded, cx),
+                    });
 
                     let mut details = EntryDetails {
                         filename: entry
