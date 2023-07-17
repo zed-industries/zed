@@ -1,19 +1,18 @@
 use anyhow::{anyhow, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
+
+
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{future::BoxFuture, FutureExt};
-use gpui::AppContext;
+
+
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::{LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use serde_json::{json, Value};
-use smol::{fs, io::BufReader, stream::StreamExt};
+
+use smol::{fs, stream::StreamExt};
 use std::{
     any::Any,
     ffi::OsString,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
