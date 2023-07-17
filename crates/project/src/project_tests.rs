@@ -3558,6 +3558,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// TODO: Add support for replace
 #[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -3577,7 +3578,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            SearchQuery::text("TWO", Option::<String>::None, false, true, Vec::new(), Vec::new()),
             cx
         )
         .await
@@ -3602,7 +3603,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            SearchQuery::text("TWO", Option::<String>::None, false, true, Vec::new(), Vec::new()),
             cx
         )
         .await
@@ -3639,6 +3640,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![Glob::new("*.odd").unwrap().compile_matcher()],
@@ -3657,6 +3659,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![Glob::new("*.rs").unwrap().compile_matcher()],
@@ -3678,6 +3681,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![
@@ -3702,6 +3706,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![
@@ -3749,6 +3754,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 Vec::new(),
@@ -3772,6 +3778,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 Vec::new(),
@@ -3793,6 +3800,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 Vec::new(),
@@ -3817,6 +3825,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 Vec::new(),
@@ -3858,6 +3867,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![Glob::new("*.odd").unwrap().compile_matcher()],
@@ -3876,6 +3886,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![Glob::new("*.ts").unwrap().compile_matcher()],
@@ -3894,6 +3905,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![
@@ -3918,6 +3930,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
             &project,
             SearchQuery::text(
                 search_query,
+                Option::<String>::None,
                 false,
                 true,
                 vec![
