@@ -15,7 +15,7 @@ const CODE_CONTEXT_TEMPLATE: &str =
     "The below code snippet is from file '<path>'\n\n```<language>\n<item>\n```";
 const ENTIRE_FILE_TEMPLATE: &str =
     "The below snippet is from file '<path>'\n\n```<language>\n<item>\n```";
-pub const PARSEABLE_ENTIRE_FILE_TYPES: [&str; 3] = ["TOML", "YAML", "JSON"];
+pub const PARSEABLE_ENTIRE_FILE_TYPES: [&str; 4] = ["TOML", "YAML", "JSON", "CSS"];
 
 pub struct CodeContextRetriever {
     pub parser: Parser,
