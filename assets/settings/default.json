@@ -128,9 +128,12 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
-  // Color tab titles based on the git status of the buffer.
+  // Settings related to the editor's tabs
   "tabs": {
-    "git_status": false
+    // Show git status colors in the editor tabs.
+    "git_status": false,
+    // Position of the close button on the editor tabs.
+    "close_position": "right"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

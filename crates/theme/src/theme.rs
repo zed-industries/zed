@@ -723,12 +723,12 @@ pub struct Scrollbar {
     pub thumb: ContainerStyle,
     pub width: f32,
     pub min_height_factor: f32,
-    pub git: FileGitDiffColors,
+    pub git: BufferGitDiffColors,
     pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct FileGitDiffColors {
+pub struct BufferGitDiffColors {
     pub inserted: Color,
     pub modified: Color,
     pub deleted: Color,

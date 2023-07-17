@@ -1370,81 +1370,94 @@ impl Pane {
             container.border.left = false;
         }
 
-        Flex::row()
-            .with_child({
-                let diameter = 7.0;
-                let icon_color = if item.has_conflict(cx) {
-                    Some(tab_style.icon_conflict)
-                } else if item.is_dirty(cx) {
-                    Some(tab_style.icon_dirty)
-                } else {
-                    None
-                };
+        let buffer_jewel_element = {
+            let diameter = 7.0;
+            let icon_color = if item.has_conflict(cx) {
+                Some(tab_style.icon_conflict)
+            } else if item.is_dirty(cx) {
+                Some(tab_style.icon_dirty)
+            } else {
+                None
+            };
 
-                Canvas::new(move |scene, bounds, _, _, _| {
-                    if let Some(color) = icon_color {
-                        let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                        scene.push_quad(Quad {
-                            bounds: square,
-                            background: Some(color),
-                            border: Default::default(),
-                            corner_radius: diameter / 2.,
-                        });
-                    }
-                })
-                .constrained()
-                .with_width(diameter)
-                .with_height(diameter)
-                .aligned()
+            Canvas::new(move |scene, bounds, _, _, _| {
+                if let Some(color) = icon_color {
+                    let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
+                    scene.push_quad(Quad {
+                        bounds: square,
+                        background: Some(color),
+                        border: Default::default(),
+                        corner_radius: diameter / 2.,
+                    });
+                }
             })
-            .with_child(title.aligned().contained().with_style(ContainerStyle {
-                margin: Margin {
-                    left: tab_style.spacing,
-                    right: tab_style.spacing,
-                    ..Default::default()
-                },
+            .constrained()
+            .with_width(diameter)
+            .with_height(diameter)
+            .aligned()
+        };
+
+        let title_element = title.aligned().contained().with_style(ContainerStyle {
+            margin: Margin {
+                left: tab_style.spacing,
+                right: tab_style.spacing,
                 ..Default::default()
-            }))
-            .with_child(
-                if hovered {
-                    let item_id = item.id();
-                    enum TabCloseButton {}
-                    let icon = Svg::new("icons/x_mark_8.svg");
-                    MouseEventHandler::<TabCloseButton, _>::new(item_id, cx, |mouse_state, _| {
-                        if mouse_state.hovered() {
-                            icon.with_color(tab_style.icon_close_active)
-                        } else {
-                            icon.with_color(tab_style.icon_close)
-                        }
-                    })
-                    .with_padding(Padding::uniform(4.))
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, {
-                        let pane = pane.clone();
-                        move |_, _, cx| {
-                            let pane = pane.clone();
-                            cx.window_context().defer(move |cx| {
-                                if let Some(pane) = pane.upgrade(cx) {
-                                    pane.update(cx, |pane, cx| {
-                                        pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
-                                    });
-                                }
+            },
+            ..Default::default()
+        });
+
+        let close_element = if hovered {
+            let item_id = item.id();
+            enum TabCloseButton {}
+            let icon = Svg::new("icons/x_mark_8.svg");
+            MouseEventHandler::<TabCloseButton, _>::new(item_id, cx, |mouse_state, _| {
+                if mouse_state.hovered() {
+                    icon.with_color(tab_style.icon_close_active)
+                } else {
+                    icon.with_color(tab_style.icon_close)
+                }
+            })
+            .with_padding(Padding::uniform(4.))
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, {
+                let pane = pane.clone();
+                move |_, _, cx| {
+                    let pane = pane.clone();
+                    cx.window_context().defer(move |cx| {
+                        if let Some(pane) = pane.upgrade(cx) {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
                             });
                         }
-                    })
-                    .into_any_named("close-tab-icon")
-                    .constrained()
-                } else {
-                    Empty::new().constrained()
+                    });
                 }
-                .with_width(tab_style.close_icon_width)
-                .aligned(),
-            )
-            .contained()
-            .with_style(container)
+            })
+            .into_any_named("close-tab-icon")
             .constrained()
-            .with_height(tab_style.height)
-            .into_any()
+        } else {
+            Empty::new().constrained()
+        }
+        .with_width(tab_style.close_icon_width)
+        .aligned();
+
+        let close_right = settings::get::<ItemSettings>(cx).close_position.right();
+
+        if close_right {
+            Flex::row()
+                .with_child(buffer_jewel_element)
+                .with_child(title_element)
+                .with_child(close_element)
+        } else {
+            Flex::row()
+                .with_child(close_element)
+                .with_child(title_element)
+                .with_child(buffer_jewel_element)
+        }
+        .contained()
+        .with_style(container)
+        .constrained()
+        .with_height(tab_style.height)
+        .into_any()
     }
 
     pub fn render_tab_bar_button<
