@@ -180,18 +180,28 @@ impl TerminalView {
                         .expect("infallible");
                     let maybe_path = path_like.path_like;
                     workspace.update(cx, |workspace, cx| {
-                        if false { //&& workspace.contains_path() {
-                             // TODO kb
-                        } else if maybe_path.exists() {
-                            let visible = maybe_path.is_dir();
+                        let potential_abs_paths = if maybe_path.is_absolute() {
+                            vec![maybe_path]
+                        } else {
                             workspace
-                                .open_abs_path(maybe_path, visible, cx)
-                                .detach_and_log_err(cx);
+                                .worktrees(cx)
+                                .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
+                                .collect()
+                        };
+
+                        for path in potential_abs_paths {
+                            if path.exists() {
+                                let visible = path.is_dir();
+                                workspace
+                                    .open_abs_path(path, visible, cx)
+                                    .detach_and_log_err(cx);
+                                break;
+                            }
                         }
                     });
                 }
 
-                // TODO kb let terminal know if we cannot open the string
+                // TODO kb let terminal know if we cannot open the string + remove the error message when folder open returns None
             }
             _ => cx.emit(event.clone()),
         })
