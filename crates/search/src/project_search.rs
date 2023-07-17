@@ -17,6 +17,7 @@ use gpui::{
     Action, AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
+use language::Selection;
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
 use smallvec::SmallVec;
@@ -196,7 +197,7 @@ impl ProjectSearch {
         cx.notify();
     }
 
-    fn replace_all(&mut self, replacement_text: String, cx: &mut ModelContext<Self>) {
+    fn replace_all(&mut self, replacement_text: Arc<str>, cx: &mut ModelContext<Self>) {
         let pending_search = if let Some(task) = &self.pending_search {
             task.clone()
         } else {
@@ -212,11 +213,49 @@ impl ProjectSearch {
                         multibuffer.edit(
                             this.match_ranges
                                 .iter()
-                                .map(|range| (range.clone(), replacement_text.clone())),
+                                .map(|range| (range.clone(), replacement_text.to_string())),
                             None,
                             cx,
                         )
                     })
+                });
+
+                result
+            })
+            .shared(),
+        );
+    }
+
+    fn replace(&mut self, index: usize, replacement_text: Arc<str>, cx: &mut ModelContext<Self>) {
+        let pending_search = if let Some(task) = &self.pending_search {
+            task.clone()
+        } else {
+            Task::ready(None).shared()
+        };
+
+        self.pending_search = Some(
+            cx.spawn(|this, mut cx| async move {
+                let result = pending_search.await;
+
+                this.update(&mut cx, |this, cx| {
+                    if this.match_ranges.len() == 0 {
+                        return;
+                    }
+
+                    debug_assert!(index < this.match_ranges.len());
+
+                    this.excerpts.update(cx, |multibuffer, cx| {
+                        multibuffer.edit(
+                            [(
+                                this.match_ranges[index].clone(),
+                                replacement_text.to_string(),
+                            )],
+                            None,
+                            cx,
+                        );
+                    });
+
+                    cx.notify();
                 });
 
                 result
@@ -567,7 +606,7 @@ impl ProjectSearchView {
             query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
-            replace_editor
+            replace_editor,
         };
         this.model_changed(cx);
         this
@@ -632,16 +671,35 @@ impl ProjectSearchView {
         }
     }
 
+    fn replace(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(query) = self.build_search_query(cx) {
+            if let Some(replace_text) = query.replace_text() {
+                if let Some(idx) = self.active_match_index {
+                    self.model
+                        .update(cx, |model, cx| model.replace(idx, replace_text, cx));
+
+                    self.select_match(Direction::Next, cx);
+
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     fn replace_all(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
-            self.model.update(cx, |model, cx| {
-                model.replace_all("replacement_text".to_string(), cx)
-            });
+            if let Some(replace_text) = query.replace_text() {
+                self.model
+                    .update(cx, |model, cx| model.replace_all(replace_text, cx));
+            }
         }
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
+        let replace = self
+            .show_replace
+            .then(|| self.replace_editor.read(cx).text(cx));
         let included_files =
             match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
@@ -669,6 +727,7 @@ impl ProjectSearchView {
         if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
+                replace,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
@@ -687,6 +746,7 @@ impl ProjectSearchView {
         } else {
             Some(SearchQuery::text(
                 text,
+                replace,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
@@ -828,9 +888,8 @@ impl ProjectSearchBar {
     }
 
     fn replace(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {
-        // TODO
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| search_view.replace_all(cx));
+            search_view.update(cx, |search_view, cx| search_view.replace(cx));
         }
     }
 
@@ -960,6 +1019,7 @@ impl ProjectSearchBar {
                 search_view.show_filter = !search_view.show_filter;
                 cx.notify();
             });
+            cx.notify();
         }
     }
 
@@ -969,6 +1029,7 @@ impl ProjectSearchBar {
                 search_view.show_replace = !search_view.show_replace;
                 cx.notify();
             });
+            cx.notify();
         }
     }
 
@@ -1190,16 +1251,34 @@ impl View for ProjectSearchBar {
                         .with_margin_bottom(row_spacing),
                 )
                 .with_children(show_replace.then(|| {
+                    Flex::row()
+                        .with_child(
                             Flex::row()
                                 .with_child(replace_view)
                                 .contained()
                                 .with_style(include_container_style)
                                 .aligned()
                                 .constrained()
-                                .with_min_width(theme.search.include_exclude_editor.min_width)
-                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .with_min_width(theme.search.editor.min_width)
+                                .with_max_width(theme.search.editor.max_width)
+                                .flex(1., false),
+                        )
+                        .with_child(
+                            Flex::row()
+                                .with_child(
+                                    IconButton::new(0, "Ⓡ+")
+                                        .with_action(Box::new(Replace), "Replace"),
+                                )
+                                .with_child(
+                                    IconButton::new(1, "Ⓡ*")
+                                        .with_action(Box::new(ReplaceAll), "Replace All"),
+                                )
                                 .contained()
-                                .with_margin_bottom(row_spacing)
+                                .with_style(theme.search.option_button_group)
+                                .aligned(),
+                        )
+                        .contained()
+                        .with_margin_bottom(row_spacing)
                 }))
                 .with_children(show_filter.then(|| {
                     Flex::row()
@@ -1257,8 +1336,15 @@ impl ToolbarItemView for ProjectSearchBar {
         }
     }
 
-    fn row_count(&self) -> usize {
-        2
+    fn row_count(&self, cx: &AppContext) -> usize {
+        1 + self
+            .active_project_search
+            .as_ref()
+            .map(|active_project_search| {
+                active_project_search.read(cx).show_filter as usize
+                    + active_project_search.read(cx).show_replace as usize
+            })
+            .unwrap_or(0)
     }
 }
 
@@ -1667,6 +1753,80 @@ impl ToggleIconButton {
                     self.id,
                     tooltip,
                     Some((action)(!self.state)),
+                    tooltip_style,
+                    cx,
+                )
+                .into_any()
+        } else {
+            icon_button.into_any()
+        }
+    }
+}
+
+#[derive(Element)]
+struct IconButton {
+    id: usize,
+    icon: String,
+    tooltip: Option<String>,
+    action: Option<Box<dyn Action>>,
+}
+
+impl IconButton {
+    fn new(id: usize, icon: impl AsRef<str>) -> Self {
+        let icon = icon.as_ref().to_owned();
+        Self {
+            id,
+            icon,
+            tooltip: None,
+            action: None,
+        }
+    }
+
+    fn with_action(mut self, action: Box<dyn Action>, tooltip: impl AsRef<str>) -> Self {
+        let tooltip = tooltip.as_ref().to_owned();
+        self.action = Some(action);
+        self.tooltip = Some(tooltip);
+        self
+    }
+}
+
+impl IconButton {
+    fn render<V: View>(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        enum ViewButton {}
+
+        let icon = self.icon.clone();
+        let icon_button = MouseEventHandler::<ViewButton, _>::new(self.id, cx, |state, cx| {
+            let theme = theme::current(cx);
+
+            let style = theme.search.option_button.inactive_state().style_for(state);
+
+            Label::new(icon, style.text.clone())
+                .contained()
+                .with_style(style.container)
+        });
+
+        if let Some((tooltip, action)) = self.tooltip.as_ref().zip(self.action.as_ref()) {
+            let tooltip_style = theme::current(cx).tooltip.clone();
+            let tooltip = tooltip.clone();
+
+            icon_button
+                .on_click(MouseButton::Left, {
+                    let action = action.boxed_clone();
+                    move |_, _, cx| {
+                        let window_id = cx.window_id();
+                        let view_id = cx.view_id();
+                        let action = action.boxed_clone();
+                        cx.spawn(|_, mut cx| async move {
+                            cx.dispatch_action(window_id, view_id, action.as_ref()).ok();
+                        })
+                        .detach()
+                    }
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<ViewButton>(
+                    self.id,
+                    tooltip,
+                    Some(action.boxed_clone()),
                     tooltip_style,
                     cx,
                 )

@@ -235,6 +235,7 @@ impl ToolbarItemView for BufferSearchBar {
     }
 }
 
+// TODO: Add support for replace
 impl BufferSearchBar {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
@@ -685,6 +686,7 @@ impl BufferSearchBar {
                 let query = if self.search_options.contains(SearchOptions::REGEX) {
                     match SearchQuery::regex(
                         query,
+                        Option::<String>::None,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
@@ -700,6 +702,7 @@ impl BufferSearchBar {
                 } else {
                     SearchQuery::text(
                         query,
+                        Option::<String>::None,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
