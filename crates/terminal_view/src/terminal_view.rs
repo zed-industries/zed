@@ -166,42 +166,27 @@ impl TerminalView {
                         .detach();
                 }
             }
-            Event::Open {
-                is_url,
-                maybe_url_or_path,
+            Event::ProbePathOpen {
+                maybe_path,
+                can_open_tx,
             } => {
-                if *is_url {
-                    cx.platform().open_url(maybe_url_or_path);
-                } else if let Some(workspace) = workspace.upgrade(cx) {
-                    let path_like =
-                        PathLikeWithPosition::parse_str(maybe_url_or_path.as_str(), |path_str| {
-                            Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-                        })
-                        .expect("infallible");
-                    let maybe_path = path_like.path_like;
-                    workspace.update(cx, |workspace, cx| {
-                        let potential_abs_paths = if maybe_path.is_absolute() {
-                            vec![maybe_path]
-                        } else {
+                let can_open = !possible_open_targets(&workspace, maybe_path, cx).is_empty();
+                can_open_tx.send_blocking(can_open).ok();
+            }
+            Event::OpenUrl(url) => cx.platform().open_url(url),
+            Event::OpenPath(maybe_path) => {
+                let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
+                if let Some(path) = potential_abs_paths.into_iter().next() {
+                    // TODO kb change selections using path_like row & column
+                    let visible = path.path_like.is_dir();
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
                             workspace
-                                .worktrees(cx)
-                                .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
-                                .collect()
-                        };
-
-                        for path in potential_abs_paths {
-                            if path.exists() {
-                                let visible = path.is_dir();
-                                workspace
-                                    .open_abs_path(path, visible, cx)
-                                    .detach_and_log_err(cx);
-                                break;
-                            }
-                        }
-                    });
+                                .open_abs_path(path.path_like, visible, cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
                 }
-
-                // TODO kb let terminal know if we cannot open the string + remove the error message when folder open returns None
             }
             _ => cx.emit(event.clone()),
         })
@@ -387,6 +372,40 @@ impl TerminalView {
             });
         }
     }
+}
+
+fn possible_open_targets(
+    workspace: &WeakViewHandle<Workspace>,
+    maybe_path: &String,
+    cx: &mut ViewContext<'_, '_, TerminalView>,
+) -> Vec<PathLikeWithPosition<PathBuf>> {
+    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |path_str| {
+        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
+    })
+    .expect("infallible");
+    let maybe_path = path_like.path_like;
+    let potential_abs_paths = if maybe_path.is_absolute() {
+        vec![maybe_path]
+    } else if let Some(workspace) = workspace.upgrade(cx) {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
+                .collect()
+        })
+    } else {
+        Vec::new()
+    };
+
+    potential_abs_paths
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(|path| PathLikeWithPosition {
+            path_like: path,
+            row: path_like.row,
+            column: path_like.column,
+        })
+        .collect()
 }
 
 pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {

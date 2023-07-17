@@ -33,6 +33,7 @@ use mappings::mouse::{
 use procinfo::LocalProcessInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smol::channel::Sender;
 use util::truncate_and_trailoff;
 
 use std::{
@@ -89,10 +90,12 @@ pub enum Event {
     Wakeup,
     BlinkChanged,
     SelectionsChanged,
-    Open {
-        is_url: bool,
-        maybe_url_or_path: String,
+    OpenUrl(String),
+    ProbePathOpen {
+        maybe_path: String,
+        can_open_tx: Sender<bool>,
     },
+    OpenPath(String),
 }
 
 #[derive(Clone)]
@@ -874,12 +877,43 @@ impl Terminal {
 
                 if let Some((maybe_url_or_path, is_url, url_match)) = found_url {
                     if *open {
-                        cx.emit(Event::Open {
-                            is_url,
-                            maybe_url_or_path,
-                        })
+                        let event = if is_url {
+                            Event::OpenUrl(maybe_url_or_path)
+                        } else {
+                            Event::OpenPath(maybe_url_or_path)
+                        };
+                        cx.emit(event);
                     } else {
-                        self.update_selected_word(prev_hovered_word, maybe_url_or_path, url_match);
+                        if is_url {
+                            self.update_selected_word(
+                                prev_hovered_word,
+                                maybe_url_or_path,
+                                url_match,
+                            );
+                        } else {
+                            let (can_open_tx, can_open_rx) = smol::channel::bounded(1);
+                            cx.emit(Event::ProbePathOpen {
+                                maybe_path: maybe_url_or_path.clone(),
+                                can_open_tx,
+                            });
+
+                            cx.spawn(|terminal, mut cx| async move {
+                                let can_open = can_open_rx.recv().await.unwrap_or(false);
+                                terminal.update(&mut cx, |terminal, cx| {
+                                    if can_open {
+                                        terminal.update_selected_word(
+                                            prev_hovered_word,
+                                            maybe_url_or_path,
+                                            url_match,
+                                        );
+                                    } else {
+                                        terminal.last_content.last_hovered_word.take();
+                                    }
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
+                        };
                     }
                 }
             }
