@@ -884,36 +884,13 @@ impl Terminal {
                         };
                         cx.emit(event);
                     } else {
-                        if is_url {
-                            self.update_selected_word(
-                                prev_hovered_word,
-                                maybe_url_or_path,
-                                url_match,
-                            );
-                        } else {
-                            let (can_open_tx, can_open_rx) = smol::channel::bounded(1);
-                            cx.emit(Event::ProbePathOpen {
-                                maybe_path: maybe_url_or_path.clone(),
-                                can_open_tx,
-                            });
-
-                            cx.spawn(|terminal, mut cx| async move {
-                                let can_open = can_open_rx.recv().await.unwrap_or(false);
-                                terminal.update(&mut cx, |terminal, cx| {
-                                    if can_open {
-                                        terminal.update_selected_word(
-                                            prev_hovered_word,
-                                            maybe_url_or_path,
-                                            url_match,
-                                        );
-                                    } else {
-                                        terminal.last_content.last_hovered_word.take();
-                                    }
-                                    cx.notify();
-                                });
-                            })
-                            .detach();
-                        };
+                        self.update_selected_word(
+                            prev_hovered_word,
+                            maybe_url_or_path,
+                            url_match,
+                            !is_url,
+                            cx,
+                        );
                     }
                 }
             }
@@ -925,6 +902,8 @@ impl Terminal {
         prev_word: Option<HoveredWord>,
         word: String,
         word_match: RangeInclusive<Point>,
+        should_probe_word: bool,
+        cx: &mut ModelContext<Self>,
     ) {
         if let Some(prev_word) = prev_word {
             if prev_word.word == word && prev_word.word_match == word_match {
@@ -933,6 +912,29 @@ impl Terminal {
                     word_match,
                     id: prev_word.id,
                 });
+            } else if should_probe_word {
+                let (can_open_tx, can_open_rx) = smol::channel::bounded(1);
+                cx.emit(Event::ProbePathOpen {
+                    maybe_path: word.clone(),
+                    can_open_tx,
+                });
+
+                cx.spawn(|terminal, mut cx| async move {
+                    let can_open = can_open_rx.recv().await.unwrap_or(false);
+                    terminal.update(&mut cx, |terminal, cx| {
+                        if can_open {
+                            terminal.last_content.last_hovered_word = Some(HoveredWord {
+                                word,
+                                word_match,
+                                id: terminal.next_link_id(),
+                            });
+                        } else {
+                            terminal.last_content.last_hovered_word.take();
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
             } else {
                 self.last_content.last_hovered_word = Some(HoveredWord {
                     word,
