@@ -144,7 +144,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_code_context_retrieval() {
+async fn test_code_context_retrieval_rust() {
     let language = rust_lang();
     let mut retriever = CodeContextRetriever::new();
 
@@ -198,6 +198,142 @@ async fn test_code_context_retrieval() {
             }
         ]
     );
+}
+
+#[gpui::test]
+async fn test_code_context_retrieval_javascript() {
+    let language = js_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = "
+/* globals importScripts, backend */
+function _authorize() {}
+
+/**
+ * Sometimes the frontend build is way faster than backend.
+ */
+export async function authorizeBank() {
+    _authorize(pushModal, upgradingAccountId, {});
+}
+
+export class SettingsPage {
+    /* This is a test setting */
+    constructor(page) {
+        this.page = page;
+    }
+}
+
+/* This is a test comment */
+class TestClass {}
+
+/* Schema for editor_events in Clickhouse. */
+export interface ClickhouseEditorEvent {
+    installation_id: string
+    operation: string
+}
+";
+
+    let parsed_files = retriever
+        .parse_file(Path::new("foo.js"), &text, language)
+        .unwrap();
+
+    let test_documents = &[
+        Document {
+            name: "function _authorize".into(),
+            range: text.find("function _authorize").unwrap()..(text.find("}").unwrap() + 1),
+            content: "
+                    The below code snippet is from file 'foo.js'
+
+                    ```javascript
+                    /* globals importScripts, backend */
+                    function _authorize() {}
+                    ```"
+            .unindent(),
+            embedding: vec![],
+        },
+        Document {
+            name: "async function authorizeBank".into(),
+            range: text.find("export async").unwrap()..224,
+            content: "
+                    The below code snippet is from file 'foo.js'
+
+                    ```javascript
+                    /**
+                     * Sometimes the frontend build is way faster than backend.
+                     */
+                    export async function authorizeBank() {
+                        _authorize(pushModal, upgradingAccountId, {});
+                    }
+                    ```"
+            .unindent(),
+            embedding: vec![],
+        },
+        Document {
+            name: "class SettingsPage".into(),
+            range: 226..344,
+            content: "
+                    The below code snippet is from file 'foo.js'
+
+                    ```javascript
+                    export class SettingsPage {
+                        /* This is a test setting */
+                        constructor(page) {
+                            this.page = page;
+                        }
+                    }
+                    ```"
+            .unindent(),
+            embedding: vec![],
+        },
+        Document {
+            name: "constructor".into(),
+            range: 291..342,
+            content: "
+                The below code snippet is from file 'foo.js'
+
+                ```javascript
+                /* This is a test setting */
+                constructor(page) {
+                        this.page = page;
+                    }
+                ```"
+            .unindent(),
+            embedding: vec![],
+        },
+        Document {
+            name: "class TestClass".into(),
+            range: 375..393,
+            content: "
+                    The below code snippet is from file 'foo.js'
+
+                    ```javascript
+                    /* This is a test comment */
+                    class TestClass {}
+                    ```"
+            .unindent(),
+            embedding: vec![],
+        },
+        Document {
+            name: "interface ClickhouseEditorEvent".into(),
+            range: 441..533,
+            content: "
+                    The below code snippet is from file 'foo.js'
+
+                    ```javascript
+                    /* Schema for editor_events in Clickhouse. */
+                    export interface ClickhouseEditorEvent {
+                        installation_id: string
+                        operation: string
+                    }
+                    ```"
+            .unindent(),
+            embedding: vec![],
+        },
+    ];
+
+    for idx in 0..test_documents.len() {
+        assert_eq!(test_documents[idx], parsed_files[idx]);
+    }
 }
 
 #[gpui::test]
@@ -269,6 +405,110 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
             })
             .collect())
     }
+}
+
+fn js_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Javascript".into(),
+                path_suffixes: vec!["js".into()],
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::language_tsx()),
+        )
+        .with_embedding_query(
+            &r#"
+
+            (
+                (comment)* @context
+                .
+                (export_statement
+                    (function_declaration
+                        "async"? @name
+                        "function" @name
+                        name: (_) @name)) @item
+                    )
+
+            (
+                (comment)* @context
+                .
+                (function_declaration
+                    "async"? @name
+                    "function" @name
+                    name: (_) @name) @item
+                    )
+
+            (
+                (comment)* @context
+                .
+                (export_statement
+                    (class_declaration
+                        "class" @name
+                        name: (_) @name)) @item
+                    )
+
+            (
+                (comment)* @context
+                .
+                (class_declaration
+                    "class" @name
+                    name: (_) @name) @item
+                    )
+
+            (
+                (comment)* @context
+                .
+                (method_definition
+                    [
+                        "get"
+                        "set"
+                        "async"
+                        "*"
+                        "static"
+                    ]* @name
+                    name: (_) @name) @item
+                )
+
+            (
+                (comment)* @context
+                .
+                (export_statement
+                    (interface_declaration
+                        "interface" @name
+                        name: (_) @name)) @item
+                )
+
+            (
+                (comment)* @context
+                .
+                (interface_declaration
+                    "interface" @name
+                    name: (_) @name) @item
+                )
+
+            (
+                (comment)* @context
+                .
+                (export_statement
+                    (enum_declaration
+                        "enum" @name
+                        name: (_) @name)) @item
+                )
+
+            (
+                (comment)* @context
+                .
+                (enum_declaration
+                    "enum" @name
+                    name: (_) @name) @item
+                )
+
+                    "#
+            .unindent(),
+        )
+        .unwrap(),
+    )
 }
 
 fn rust_lang() -> Arc<Language> {

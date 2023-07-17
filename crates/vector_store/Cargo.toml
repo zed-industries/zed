@@ -44,10 +44,13 @@ project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
-tree-sitter-rust = "*"
 
 rand.workspace = true
 unindent.workspace = true
 tempdir.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
+
+tree-sitter-javascript = "*"
+tree-sitter-typescript = "*"
+tree-sitter-rust = "*"
