@@ -3,8 +3,10 @@ pub mod terminal_element;
 pub mod terminal_panel;
 
 use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
+use anyhow::Context;
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions,
     elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack},
@@ -15,6 +17,7 @@ use gpui::{
     AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
+use language::Bias;
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use smallvec::{smallvec, SmallVec};
@@ -177,15 +180,42 @@ impl TerminalView {
             Event::OpenPath(maybe_path) => {
                 let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
                 if let Some(path) = potential_abs_paths.into_iter().next() {
-                    // TODO kb change selections using path_like row & column
                     let visible = path.path_like.is_dir();
-                    if let Some(workspace) = workspace.upgrade(cx) {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace
-                                .open_abs_path(path.path_like, visible, cx)
-                                .detach_and_log_err(cx);
-                        });
-                    }
+                    let task_workspace = workspace.clone();
+                    cx.spawn(|_, mut cx| async move {
+                        let opened_item = task_workspace
+                            .update(&mut cx, |workspace, cx| {
+                                workspace.open_abs_path(path.path_like, visible, cx)
+                            })
+                            .context("workspace update")?
+                            .await
+                            .context("workspace update")?;
+                        if let Some(row) = path.row {
+                            let col = path.column.unwrap_or(0);
+                            if let Some(active_editor) = opened_item.downcast::<Editor>() {
+                                active_editor
+                                    .downgrade()
+                                    .update(&mut cx, |editor, cx| {
+                                        let snapshot = editor.snapshot(cx).display_snapshot;
+                                        let point = snapshot.buffer_snapshot.clip_point(
+                                            language::Point::new(
+                                                row.saturating_sub(1),
+                                                col.saturating_sub(1),
+                                            ),
+                                            Bias::Left,
+                                        );
+                                        editor.change_selections(
+                                            Some(Autoscroll::center()),
+                                            cx,
+                                            |s| s.select_ranges([point..point]),
+                                        );
+                                    })
+                                    .log_err();
+                            }
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
             _ => cx.emit(event.clone()),
