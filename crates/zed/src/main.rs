@@ -157,7 +157,7 @@ fn main() {
         project_panel::init(cx);
         diagnostics::init(cx);
         search::init(cx);
-        vector_store::init(fs.clone(), http.clone(), languages.clone(), cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(http.clone(), node_runtime, cx);

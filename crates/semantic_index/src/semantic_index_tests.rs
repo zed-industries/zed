@@ -2,8 +2,8 @@ use crate::{
     db::dot,
     embedding::EmbeddingProvider,
     parsing::{CodeContextRetriever, Document},
-    vector_store_settings::VectorStoreSettings,
-    VectorStore,
+    semantic_index_settings::SemanticIndexSettings,
+    SemanticIndex,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -30,10 +30,10 @@ fn init_logger() {
 }
 
 #[gpui::test]
-async fn test_vector_store(cx: &mut TestAppContext) {
+async fn test_semantic_index(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.set_global(SettingsStore::test(cx));
-        settings::register::<VectorStoreSettings>(cx);
+        settings::register::<SemanticIndexSettings>(cx);
         settings::register::<ProjectSettings>(cx);
     });
 
@@ -74,7 +74,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
     let db_path = db_dir.path().join("db.sqlite");
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
-    let store = VectorStore::new(
+    let store = SemanticIndex::new(
         fs.clone(),
         db_path,
         embedding_provider.clone(),

@@ -1,4 +1,4 @@
-use crate::{parsing::Document, VECTOR_STORE_VERSION};
+use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
 use anyhow::{anyhow, Result};
 use project::Fs;
 use rpc::proto::Timestamp;
@@ -55,7 +55,9 @@ impl VectorDatabase {
     }
 
     fn get_existing_version(&self) -> Result<i64> {
-        let mut version_query = self.db.prepare("SELECT version from vector_store_config")?;
+        let mut version_query = self
+            .db
+            .prepare("SELECT version from semantic_index_config")?;
         version_query
             .query_row([], |row| Ok(row.get::<_, i64>(0)?))
             .map_err(|err| anyhow!("version query failed: {err}"))
@@ -66,7 +68,7 @@ impl VectorDatabase {
 
         if self
             .get_existing_version()
-            .map_or(false, |version| version == VECTOR_STORE_VERSION as i64)
+            .map_or(false, |version| version == SEMANTIC_INDEX_VERSION as i64)
         {
             return Ok(());
         }
@@ -74,7 +76,7 @@ impl VectorDatabase {
         self.db
             .execute(
                 "
-                    DROP TABLE vector_store_config;
+                    DROP TABLE semantic_index_config;
                     DROP TABLE worktrees;
                     DROP TABLE files;
                     DROP TABLE documents;
@@ -85,15 +87,15 @@ impl VectorDatabase {
 
         // Initialize Vector Databasing Tables
         self.db.execute(
-            "CREATE TABLE vector_store_config (
+            "CREATE TABLE semantic_index_config (
                 version INTEGER NOT NULL
             )",
             [],
         )?;
 
         self.db.execute(
-            "INSERT INTO vector_store_config (version) VALUES (?1)",
-            params![VECTOR_STORE_VERSION],
+            "INSERT INTO semantic_index_config (version) VALUES (?1)",
+            params![SEMANTIC_INDEX_VERSION],
         )?;
 
         self.db.execute(

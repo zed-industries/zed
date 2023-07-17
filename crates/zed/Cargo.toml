@@ -64,7 +64,7 @@ terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
-vector_store = { path = "../vector_store" }
+semantic_index = { path = "../semantic_index" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }

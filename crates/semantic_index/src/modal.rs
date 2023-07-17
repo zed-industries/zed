@@ -1,4 +1,4 @@
-use crate::{SearchResult, VectorStore};
+use crate::{SearchResult, SemanticIndex};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, elements::*, AnyElement, AppContext, ModelHandle, MouseState, Task, ViewContext,
@@ -20,7 +20,7 @@ pub type SemanticSearch = Picker<SemanticSearchDelegate>;
 pub struct SemanticSearchDelegate {
     workspace: WeakViewHandle<Workspace>,
     project: ModelHandle<Project>,
-    vector_store: ModelHandle<VectorStore>,
+    semantic_index: ModelHandle<SemanticIndex>,
     selected_match_index: usize,
     matches: Vec<SearchResult>,
     history: HashMap<String, Vec<SearchResult>>,
@@ -33,12 +33,12 @@ impl SemanticSearchDelegate {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
         project: ModelHandle<Project>,
-        vector_store: ModelHandle<VectorStore>,
+        semantic_index: ModelHandle<SemanticIndex>,
     ) -> Self {
         Self {
             workspace,
             project,
-            vector_store,
+            semantic_index,
             selected_match_index: 0,
             matches: vec![],
             history: HashMap::new(),
@@ -105,7 +105,7 @@ impl PickerDelegate for SemanticSearchDelegate {
             return Task::ready(());
         }
 
-        let vector_store = self.vector_store.clone();
+        let semantic_index = self.semantic_index.clone();
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             cx.background().timer(EMBEDDING_DEBOUNCE_INTERVAL).await;
@@ -123,7 +123,7 @@ impl PickerDelegate for SemanticSearchDelegate {
 
             if let Some(retrieved) = retrieved_cached.log_err() {
                 if !retrieved {
-                    let task = vector_store.update(&mut cx, |store, cx| {
+                    let task = semantic_index.update(&mut cx, |store, cx| {
                         store.search_project(project.clone(), query.to_string(), 10, cx)
                     });
 

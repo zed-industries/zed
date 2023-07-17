@@ -1,11 +1,11 @@
 [package]
-name = "vector_store"
+name = "semantic_index"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/vector_store.rs"
+path = "src/semantic_index.rs"
 doctest = false
 
 [dependencies]

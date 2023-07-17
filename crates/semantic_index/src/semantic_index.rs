@@ -2,12 +2,12 @@ mod db;
 mod embedding;
 mod modal;
 mod parsing;
-mod vector_store_settings;
+mod semantic_index_settings;
 
 #[cfg(test)]
-mod vector_store_tests;
+mod semantic_index_tests;
 
-use crate::vector_store_settings::VectorStoreSettings;
+use crate::semantic_index_settings::SemanticIndexSettings;
 use anyhow::{anyhow, Result};
 use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
@@ -40,7 +40,7 @@ use util::{
 };
 use workspace::{Workspace, WorkspaceCreated};
 
-const VECTOR_STORE_VERSION: usize = 1;
+const SEMANTIC_INDEX_VERSION: usize = 1;
 const EMBEDDINGS_BATCH_SIZE: usize = 150;
 
 pub fn init(
@@ -49,7 +49,7 @@ pub fn init(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AppContext,
 ) {
-    settings::register::<VectorStoreSettings>(cx);
+    settings::register::<SemanticIndexSettings>(cx);
 
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
@@ -58,14 +58,14 @@ pub fn init(
     SemanticSearch::init(cx);
     cx.add_action(
         |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
-            if cx.has_global::<ModelHandle<VectorStore>>() {
-                let vector_store = cx.global::<ModelHandle<VectorStore>>().clone();
+            if cx.has_global::<ModelHandle<SemanticIndex>>() {
+                let semantic_index = cx.global::<ModelHandle<SemanticIndex>>().clone();
                 workspace.toggle_modal(cx, |workspace, cx| {
                     let project = workspace.project().clone();
                     let workspace = cx.weak_handle();
                     cx.add_view(|cx| {
                         SemanticSearch::new(
-                            SemanticSearchDelegate::new(workspace, project, vector_store),
+                            SemanticSearchDelegate::new(workspace, project, semantic_index),
                             cx,
                         )
                     })
@@ -75,13 +75,14 @@ pub fn init(
     );
 
     if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<VectorStoreSettings>(cx).enabled
+        || !settings::get::<SemanticIndexSettings>(cx).enabled
     {
+        log::info!("NOT ENABLED");
         return;
     }
 
     cx.spawn(move |mut cx| async move {
-        let vector_store = VectorStore::new(
+        let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
             Arc::new(OpenAIEmbeddings {
@@ -94,15 +95,15 @@ pub fn init(
         .await?;
 
         cx.update(|cx| {
-            cx.set_global(vector_store.clone());
+            cx.set_global(semantic_index.clone());
             cx.subscribe_global::<WorkspaceCreated, _>({
-                let vector_store = vector_store.clone();
+                let semantic_index = semantic_index.clone();
                 move |event, cx| {
                     let workspace = &event.0;
                     if let Some(workspace) = workspace.upgrade(cx) {
                         let project = workspace.read(cx).project().clone();
                         if project.read(cx).is_local() {
-                            vector_store.update(cx, |store, cx| {
+                            semantic_index.update(cx, |store, cx| {
                                 store.index_project(project, cx).detach();
                             });
                         }
@@ -117,7 +118,7 @@ pub fn init(
     .detach();
 }
 
-pub struct VectorStore {
+pub struct SemanticIndex {
     fs: Arc<dyn Fs>,
     database_url: Arc<PathBuf>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -220,7 +221,7 @@ enum EmbeddingJob {
     Flush,
 }
 
-impl VectorStore {
+impl SemanticIndex {
     async fn new(
         fs: Arc<dyn Fs>,
         database_url: PathBuf,
@@ -672,7 +673,7 @@ impl VectorStore {
     }
 }
 
-impl Entity for VectorStore {
+impl Entity for SemanticIndex {
     type Event = ();
 }
 
