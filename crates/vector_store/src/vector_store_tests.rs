@@ -56,6 +56,9 @@ async fn test_vector_store(cx: &mut TestAppContext) {
                         println!(\"bbbb!\");
                     }
                 ".unindent(),
+                "file3.toml": "
+                    ZZZZZZZ = 5
+                    ".unindent(),
             }
         }),
     )
@@ -63,7 +66,9 @@ async fn test_vector_store(cx: &mut TestAppContext) {
 
     let languages = Arc::new(LanguageRegistry::new(Task::ready(())));
     let rust_language = rust_lang();
+    let toml_language = toml_lang();
     languages.add(rust_language);
+    languages.add(toml_language);
 
     let db_dir = tempdir::TempDir::new("vector-store").unwrap();
     let db_path = db_dir.path().join("db.sqlite");
@@ -87,7 +92,7 @@ async fn test_vector_store(cx: &mut TestAppContext) {
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await
         .unwrap();
-    assert_eq!(file_count, 2);
+    assert_eq!(file_count, 3);
     cx.foreground().run_until_parked();
     store.update(cx, |store, _cx| {
         assert_eq!(
@@ -577,4 +582,15 @@ fn rust_lang() -> Arc<Language> {
         )
         .unwrap(),
     )
+}
+
+fn toml_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "TOML".into(),
+            path_suffixes: vec!["toml".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_toml::language()),
+    ))
 }

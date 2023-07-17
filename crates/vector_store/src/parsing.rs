@@ -13,6 +13,9 @@ pub struct Document {
 
 const CODE_CONTEXT_TEMPLATE: &str =
     "The below code snippet is from file '<path>'\n\n```<language>\n<item>\n```";
+const ENTIRE_FILE_TEMPLATE: &str =
+    "The below snippet is from file '<path>'\n\n```<language>\n<item>\n```";
+pub const PARSEABLE_ENTIRE_FILE_TYPES: [&str; 3] = ["TOML", "YAML", "JSON"];
 
 pub struct CodeContextRetriever {
     pub parser: Parser,
@@ -27,12 +30,35 @@ impl CodeContextRetriever {
         }
     }
 
+    fn _parse_entire_file(
+        &self,
+        relative_path: &Path,
+        language_name: Arc<str>,
+        content: &str,
+    ) -> Result<Vec<Document>> {
+        let document_span = ENTIRE_FILE_TEMPLATE
+            .replace("<path>", relative_path.to_string_lossy().as_ref())
+            .replace("<language>", language_name.as_ref())
+            .replace("item", &content);
+
+        Ok(vec![Document {
+            range: 0..content.len(),
+            content: document_span,
+            embedding: Vec::new(),
+            name: language_name.to_string(),
+        }])
+    }
+
     pub fn parse_file(
         &mut self,
         relative_path: &Path,
         content: &str,
         language: Arc<Language>,
     ) -> Result<Vec<Document>> {
+        if PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref()) {
+            return self._parse_entire_file(relative_path, language.name(), &content);
+        }
+
         let grammar = language
             .grammar()
             .ok_or_else(|| anyhow!("no grammar for language"))?;

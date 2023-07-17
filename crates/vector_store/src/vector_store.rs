@@ -19,7 +19,7 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use parking_lot::Mutex;
-use parsing::{CodeContextRetriever, Document};
+use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
 use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
@@ -537,10 +537,11 @@ impl VectorStore {
                                 .language_for_file(&absolute_path, None)
                                 .await
                             {
-                                if language
-                                    .grammar()
-                                    .and_then(|grammar| grammar.embedding_config.as_ref())
-                                    .is_none()
+                                if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())
+                                    && language
+                                        .grammar()
+                                        .and_then(|grammar| grammar.embedding_config.as_ref())
+                                        .is_none()
                                 {
                                     continue;
                                 }

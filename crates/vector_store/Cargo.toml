@@ -51,6 +51,6 @@ tempdir.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 
-tree-sitter-javascript = "*"
 tree-sitter-typescript = "*"
 tree-sitter-rust = "*"
+tree-sitter-toml = "*"
