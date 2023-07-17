@@ -2695,7 +2695,6 @@ impl Project {
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
-        dbg!(language.name());
         let setup = Self::setup_pending_language_server(
             this,
             initialization_options,
