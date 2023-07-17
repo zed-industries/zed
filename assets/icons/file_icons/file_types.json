@@ -67,6 +67,9 @@
     "log": "log"
   },
   "types": {
+    "default": {
+      "icon": "icons/file_icons/quill/file.svg"
+    },
     "directory": {
       "icon": "icons/file_icons/quill/folder.svg"
     },

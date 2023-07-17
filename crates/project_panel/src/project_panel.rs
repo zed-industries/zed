@@ -1,11 +1,12 @@
-mod file_associations;
+pub mod file_associations;
 mod project_panel_settings;
 
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
-use file_associations::{FileAssociations, TEXT_FILE_ASSET};
+use file_associations::FileAssociations;
+
 use futures::stream::StreamExt;
 use gpui::{
     actions,
@@ -233,6 +234,10 @@ impl ProjectPanel {
                 }
             })
             .detach();
+
+            cx.observe_global::<FileAssociations, _>(|_, cx| {
+                cx.notify();
+            }).detach();
 
             let view_id = cx.view_id();
             let mut this = Self {
@@ -1189,11 +1194,9 @@ impl ProjectPanel {
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = show_file_icons
                         .then(|| match entry.kind {
-                            EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx)
-                                .or_else(|| Some(TEXT_FILE_ASSET.into())),
+                            EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx),
                             _ => FileAssociations::get_folder_icon(is_expanded, cx),
-                        })
-                        .flatten();
+                        });
 
                     let mut details = EntryDetails {
                         filename: entry
