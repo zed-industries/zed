@@ -8,7 +8,7 @@ use std::{any::TypeId, fmt::Debug};
 use collections::HashMap;
 use smallvec::SmallVec;
 
-use crate::Action;
+use crate::{Action, NoAction};
 
 pub use binding::{Binding, BindingMatchResult};
 pub use keymap::Keymap;
@@ -81,6 +81,7 @@ impl KeymapMatcher {
         // The key is the reverse position of the binding in the bindings list so that later bindings
         // match before earlier ones in the user's config
         let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Default::default();
+        let no_action_id = (NoAction {}).id();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
@@ -108,7 +109,9 @@ impl KeymapMatcher {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings.push((*view_id, action));
+                        if action.id() != no_action_id {
+                            matched_bindings.push((*view_id, action));
+                        }
                     }
                     BindingMatchResult::Partial => {
                         self.pending_views
