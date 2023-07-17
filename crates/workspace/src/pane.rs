@@ -3,14 +3,16 @@ mod dragged_item_receiver;
 use super::{ItemHandle, SplitDirection};
 pub use crate::toolbar::Toolbar;
 use crate::{
-    item::WeakItemHandle, notify_of_new_dock, AutosaveSetting, Item, NewCenterTerminal, NewFile,
-    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
+    item::{ItemSettings, WeakItemHandle},
+    notify_of_new_dock, AutosaveSetting, Item, NewCenterTerminal, NewFile, NewSearch, ToggleZoom,
+    Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
 use drag_and_drop::{DragAndDrop, Draggable};
 use dragged_item_receiver::dragged_item_receiver;
+use fs::repository::GitFileStatus;
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -866,6 +868,7 @@ impl Pane {
                 .paths_by_item
                 .get(&item.id())
                 .and_then(|(_, abs_path)| abs_path.clone());
+
             self.nav_history
                 .0
                 .borrow_mut()
@@ -1157,6 +1160,11 @@ impl Pane {
             .zip(self.tab_details(cx))
             .enumerate()
         {
+            let git_status = item
+                .project_path(cx)
+                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .and_then(|entry| entry.git_status());
+
             let detail = if detail == 0 { None } else { Some(detail) };
             let tab_active = ix == self.active_item_index;
 
@@ -1174,9 +1182,21 @@ impl Pane {
                         let tab_tooltip_text =
                             item.tab_tooltip_text(cx).map(|text| text.into_owned());
 
+                        let mut tab_style = theme
+                            .workspace
+                            .tab_bar
+                            .tab_style(pane_active, tab_active)
+                            .clone();
+                        let should_show_status = settings::get::<ItemSettings>(cx).git_status;
+                        if should_show_status && git_status != None {
+                            tab_style.label.text.color = match git_status.unwrap() {
+                                GitFileStatus::Added => tab_style.git.inserted,
+                                GitFileStatus::Modified => tab_style.git.modified,
+                                GitFileStatus::Conflict => tab_style.git.conflict,
+                            };
+                        }
+
                         move |mouse_state, cx| {
-                            let tab_style =
-                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
                             let hovered = mouse_state.hovered();
 
                             enum Tab {}
@@ -1188,7 +1208,7 @@ impl Pane {
                                         ix == 0,
                                         detail,
                                         hovered,
-                                        tab_style,
+                                        &tab_style,
                                         cx,
                                     )
                                 })

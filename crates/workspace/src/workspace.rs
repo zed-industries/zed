@@ -203,6 +203,7 @@ pub type WorkspaceId = i64;
 
 pub fn init_settings(cx: &mut AppContext) {
     settings::register::<WorkspaceSettings>(cx);
+    settings::register::<item::ItemSettings>(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {

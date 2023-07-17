@@ -10,6 +10,9 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
+use schemars::JsonSchema;
+use serde_derive::{Deserialize, Serialize};
+use settings::Setting;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -26,6 +29,30 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
+
+#[derive(Deserialize)]
+pub struct ItemSettings {
+    pub git_status: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ItemSettingsContent {
+    git_status: Option<bool>,
+}
+
+impl Setting for ItemSettings {
+    const KEY: Option<&'static str> = Some("tabs");
+
+    type FileContent = ItemSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &gpui::AppContext,
+    ) -> anyhow::Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
 
 #[derive(Eq, PartialEq, Hash, Debug)]
 pub enum ItemEvent {
