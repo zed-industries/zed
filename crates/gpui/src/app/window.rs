@@ -363,17 +363,13 @@ impl<'a> WindowContext<'a> {
     ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         let window_id = self.window_id;
         let mut contexts = Vec::new();
-        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
+        let mut handler_depths_by_action_id = HashMap::<TypeId, usize>::default();
         for (depth, view_id) in self.ancestors(view_id).enumerate() {
             if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
                 contexts.push(view_metadata.keymap_context.clone());
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    handler_depths_by_action_type.extend(
-                        actions
-                            .keys()
-                            .copied()
-                            .map(|action_type| (action_type, depth)),
-                    );
+                    handler_depths_by_action_id
+                        .extend(actions.keys().copied().map(|action_id| (action_id, depth)));
                 }
             } else {
                 log::error!(
@@ -383,21 +379,21 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        handler_depths_by_action_type.extend(
+        handler_depths_by_action_id.extend(
             self.global_actions
                 .keys()
                 .copied()
-                .map(|action_type| (action_type, contexts.len())),
+                .map(|action_id| (action_id, contexts.len())),
         );
 
         self.action_deserializers
             .iter()
-            .filter_map(move |(name, (type_id, deserialize))| {
-                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
+            .filter_map(move |(name, (action_id, deserialize))| {
+                if let Some(action_depth) = handler_depths_by_action_id.get(action_id).copied() {
                     let action = deserialize(serde_json::Value::Object(Default::default())).ok()?;
                     let bindings = self
                         .keystroke_matcher
-                        .bindings_for_action_type(*type_id)
+                        .bindings_for_action(*action_id)
                         .filter(|b| {
                             action.eq(b.action())
                                 && (0..=action_depth)

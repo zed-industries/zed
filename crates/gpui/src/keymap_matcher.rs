@@ -47,8 +47,8 @@ impl KeymapMatcher {
         self.keymap.clear();
     }
 
-    pub fn bindings_for_action_type(&self, action_type: TypeId) -> impl Iterator<Item = &Binding> {
-        self.keymap.bindings_for_action_type(action_type)
+    pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &Binding> {
+        self.keymap.bindings_for_action(action_id)
     }
 
     pub fn clear_pending(&mut self) {
