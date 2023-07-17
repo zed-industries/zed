@@ -78,6 +78,16 @@ impl<V: View> Node<V> {
         self
     }
 
+    pub fn row(mut self) -> Self {
+        self.style.axis = Axis3d::X;
+        self
+    }
+
+    pub fn stack(mut self) -> Self {
+        self.style.axis = Axis3d::Z;
+        self
+    }
+
     fn layout_2d_children(
         &mut self,
         axis: Axis2d,
@@ -216,7 +226,7 @@ impl<V: View> Node<V> {
             // Advance along the primary axis by the size of this child
             match axis {
                 Axis2d::X => child_origin.set_x(child_origin.x() + child.size().x()),
-                Axis2d::Y => child_origin.set_y(child_origin.x() + child.size().y()),
+                Axis2d::Y => child_origin.set_y(child_origin.y() + child.size().y()),
             }
         }
     }

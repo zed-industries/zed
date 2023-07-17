@@ -33,9 +33,12 @@ impl View for PlaygroundView {
             .width(100.)
             .height(100.)
             .fill(Color::red())
+            .row()
             .children([
                 Node::new().width(20.).height(20.).fill(Color::green()),
                 Node::new().width(20.).height(20.).fill(Color::blue()),
+                Node::new().width(30.).height(30.).fill(Color::yellow()),
+                Node::new().width(50.).height(50.).fill(Color::yellow()),
             ])
             .into_any()
 
