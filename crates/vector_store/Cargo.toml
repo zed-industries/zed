@@ -54,3 +54,4 @@ env_logger.workspace = true
 tree-sitter-typescript = "*"
 tree-sitter-rust = "*"
 tree-sitter-toml = "*"
+tree-sitter-cpp = "*"

@@ -8518,6 +8518,7 @@ dependencies = [
  "theme",
  "tiktoken-rs 0.5.0",
  "tree-sitter",
+ "tree-sitter-cpp",
  "tree-sitter-rust",
  "tree-sitter-toml 0.20.0",
  "tree-sitter-typescript 0.20.2 (registry+https://github.com/rust-lang/crates.io-index)",
