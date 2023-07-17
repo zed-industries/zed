@@ -499,6 +499,10 @@ impl SearchableItem for LspLogView {
             .update(cx, |e, cx| e.activate_match(index, matches, cx))
     }
 
+    fn remove_match(&mut self, _: usize, _: Vec<Self::Match>, _: &mut ViewContext<Self>) {
+        //N/A
+    }
+
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, cx))

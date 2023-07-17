@@ -1,6 +1,7 @@
 use std::{
     cell::Ref,
-    cmp, iter, mem,
+    cmp::{self, Ordering},
+    iter, mem,
     ops::{Deref, Range, Sub},
     sync::Arc,
 };

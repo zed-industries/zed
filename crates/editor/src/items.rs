@@ -958,6 +958,16 @@ impl SearchableItem for Editor {
         })
     }
 
+    fn remove_match(
+        &mut self,
+        index: usize,
+        matches: Vec<Range<Anchor>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.unfold_ranges([matches[index].clone()], false, true, cx);
+
+    }
+
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.unfold_ranges(matches.clone(), false, false, cx);
         let mut ranges = Vec::new();
