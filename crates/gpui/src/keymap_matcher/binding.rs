@@ -7,8 +7,8 @@ use super::{KeymapContext, KeymapContextPredicate, Keystroke};
 
 pub struct Binding {
     action: Box<dyn Action>,
-    keystrokes: SmallVec<[Keystroke; 2]>,
-    context_predicate: Option<KeymapContextPredicate>,
+    pub(super) keystrokes: SmallVec<[Keystroke; 2]>,
+    pub(super) context_predicate: Option<KeymapContextPredicate>,
 }
 
 impl std::fmt::Debug for Binding {
