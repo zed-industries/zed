@@ -8,14 +8,14 @@ use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
-use futures::StreamExt;
+use futures::{future::Shared, FutureExt, StreamExt};
 use globset::{Glob, GlobMatcher};
 use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -27,6 +27,7 @@ use std::{
     mem,
     ops::{Not, Range},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 use util::ResultExt as _;
@@ -36,7 +37,18 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
-actions!(project_search, [SearchInNew, ToggleFocus, NextField]);
+actions!(
+    project_search,
+    [
+        SearchInNew,
+        ToggleFocus,
+        NextField,
+        Replace,
+        ReplaceAll,
+        ToggleReplace,
+        ToggleFilter
+    ]
+);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -46,6 +58,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchView::move_focus_to_results);
     cx.add_action(ProjectSearchBar::search);
+    cx.add_action(ProjectSearchBar::replace_all);
+    cx.add_action(ProjectSearchBar::replace);
+    cx.add_action(ProjectSearchBar::toggle_focus);
+    cx.add_action(ProjectSearchBar::toggle_replace);
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
@@ -72,7 +88,7 @@ fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext
 struct ProjectSearch {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
-    pending_search: Option<Task<Option<()>>>,
+    pending_search: Option<Shared<Task<Option<()>>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     search_id: usize,
@@ -92,12 +108,15 @@ pub struct ProjectSearchView {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
+    show_filter: bool,
+    show_replace: bool,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
     query_editor_was_focused: bool,
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
+    replace_editor: ViewHandle<Editor>,
 }
 
 pub struct ProjectSearchBar {
@@ -142,37 +161,70 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
-        self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-            let matches = search.await.log_err()?;
-            let this = this.upgrade(&cx)?;
-            let mut matches = matches.into_iter().collect::<Vec<_>>();
-            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
-                this.match_ranges.clear();
-                matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
-                this.excerpts.update(cx, |excerpts, cx| {
-                    excerpts.clear(cx);
-                    excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
-                })
-            });
+        self.pending_search = Some(
+            cx.spawn_weak(|this, mut cx| async move {
+                let matches = search.await.log_err()?;
+                let this = this.upgrade(&cx)?;
+                let mut matches = matches.into_iter().collect::<Vec<_>>();
+                let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+                    this.match_ranges.clear();
+                    matches
+                        .sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
+                    this.excerpts.update(cx, |excerpts, cx| {
+                        excerpts.clear(cx);
+                        excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
+                    })
+                });
 
-            while let Some(match_range) = match_ranges.next().await {
-                this.update(&mut cx, |this, cx| {
-                    this.match_ranges.push(match_range);
-                    while let Ok(Some(match_range)) = match_ranges.try_next() {
+                while let Some(match_range) = match_ranges.next().await {
+                    this.update(&mut cx, |this, cx| {
                         this.match_ranges.push(match_range);
-                    }
+                        while let Ok(Some(match_range)) = match_ranges.try_next() {
+                            this.match_ranges.push(match_range);
+                        }
+                        cx.notify();
+                    });
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    this.pending_search.take();
                     cx.notify();
                 });
-            }
 
-            this.update(&mut cx, |this, cx| {
-                this.pending_search.take();
-                cx.notify();
-            });
-
-            None
-        }));
+                None
+            })
+            .shared(),
+        );
         cx.notify();
+    }
+
+    fn replace_all(&mut self, replacement_text: String, cx: &mut ModelContext<Self>) {
+        let pending_search = if let Some(task) = &self.pending_search {
+            task.clone()
+        } else {
+            Task::ready(None).shared()
+        };
+
+        self.pending_search = Some(
+            cx.spawn(|this, mut cx| async move {
+                let result = pending_search.await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.excerpts.update(cx, |multibuffer, cx| {
+                        multibuffer.edit(
+                            this.match_ranges
+                                .iter()
+                                .map(|range| (range.clone(), replacement_text.clone())),
+                            None,
+                            cx,
+                        )
+                    })
+                });
+
+                result
+            })
+            .shared(),
+        );
     }
 }
 
@@ -457,6 +509,23 @@ impl ProjectSearchView {
         })
         .detach();
 
+        let replace_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| {
+                    theme.search.include_exclude_editor.input.clone()
+                })),
+                cx,
+            );
+            editor.set_placeholder_text("Replace", cx);
+
+            editor
+        });
+        // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&replace_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
+
         let included_files_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
@@ -499,11 +568,14 @@ impl ProjectSearchView {
             case_sensitive,
             whole_word,
             regex,
+            show_filter: false,
+            show_replace: false,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
+            replace_editor
         };
         this.model_changed(cx);
         this
@@ -565,6 +637,14 @@ impl ProjectSearchView {
     fn search(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
+        }
+    }
+
+    fn replace_all(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(query) = self.build_search_query(cx) {
+            self.model.update(cx, |model, cx| {
+                model.replace_all("replacement_text".to_string(), cx)
+            });
         }
     }
 
@@ -756,6 +836,20 @@ impl ProjectSearchBar {
         }
     }
 
+    fn replace(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {
+        // TODO
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| search_view.replace_all(cx));
+        }
+    }
+
+    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+        // TODO
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| search_view.replace_all(cx));
+        }
+    }
+
     fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
         if let Some(search_view) = workspace
             .active_item(cx)
@@ -873,6 +967,24 @@ impl ProjectSearchBar {
             true
         } else {
             false
+        }
+    }
+
+    fn toggle_focus(&mut self, _: &ToggleFilter, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.show_filter = !search_view.show_filter;
+                cx.notify();
+            });
+        }
+    }
+
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.show_replace = !search_view.show_replace;
+                cx.notify();
+            });
         }
     }
 
@@ -1006,8 +1118,21 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .right()
                 .flex(1.0, true);
+            let replace_view = ChildView::new(&search.replace_editor, cx)
+                .aligned()
+                .left()
+                .flex(1.0, true);
 
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
+
+            let (show_replace, show_filter) = self
+                .active_project_search
+                .as_ref()
+                .map(|search_view| {
+                    let search_view = search_view.read(cx);
+                    (search_view.show_replace, search_view.show_filter)
+                })
+                .unwrap_or((false, false));
 
             Flex::column()
                 .with_child(
@@ -1043,6 +1168,20 @@ impl View for ProjectSearchBar {
                         )
                         .with_child(
                             Flex::row()
+                                .with_child(
+                                    ToggleIconButton::new(0, show_replace, "Ⓡ")
+                                        .with_action(|_| Box::new(ToggleReplace), "Toggle replace"),
+                                )
+                                .with_child(
+                                    ToggleIconButton::new(1, show_filter, "Υ")
+                                        .with_action(|_| Box::new(ToggleFilter), "Toggle filter"),
+                                )
+                                .contained()
+                                .with_style(theme.search.option_button_group)
+                                .aligned(),
+                        )
+                        .with_child(
+                            Flex::row()
                                 .with_child(self.render_nav_button("<", Direction::Prev, cx))
                                 .with_child(self.render_nav_button(">", Direction::Next, cx))
                                 .aligned(),
@@ -1071,7 +1210,19 @@ impl View for ProjectSearchBar {
                         .contained()
                         .with_margin_bottom(row_spacing),
                 )
-                .with_child(
+                .with_children(show_replace.then(|| {
+                            Flex::row()
+                                .with_child(replace_view)
+                                .contained()
+                                .with_style(include_container_style)
+                                .aligned()
+                                .constrained()
+                                .with_min_width(theme.search.include_exclude_editor.min_width)
+                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .contained()
+                                .with_margin_bottom(row_spacing)
+                }))
+                .with_children(show_filter.then(|| {
                     Flex::row()
                         .with_child(
                             Flex::row()
@@ -1094,8 +1245,8 @@ impl View for ProjectSearchBar {
                                 .with_min_width(theme.search.include_exclude_editor.min_width)
                                 .with_max_width(theme.search.include_exclude_editor.max_width)
                                 .flex(1., false),
-                        ),
-                )
+                        )
+                }))
                 .contained()
                 .with_style(theme.search.container)
                 .aligned()
@@ -1459,5 +1610,90 @@ pub mod tests {
             Project::init_settings(cx);
             super::init(cx);
         });
+    }
+}
+
+#[derive(Element)]
+struct ToggleIconButton {
+    id: usize,
+    state: bool,
+    icon: String,
+    tooltip: Option<String>,
+    action: Option<Rc<dyn Fn(bool) -> Box<dyn Action>>>,
+}
+
+impl ToggleIconButton {
+    fn new(id: usize, state: bool, icon: impl AsRef<str>) -> Self {
+        let icon = icon.as_ref().to_owned();
+        Self {
+            id,
+            state,
+            icon,
+            tooltip: None,
+            action: None,
+        }
+    }
+
+    fn with_action(
+        mut self,
+        f: impl Fn(bool) -> Box<dyn Action> + 'static,
+        tooltip: impl AsRef<str>,
+    ) -> Self {
+        let tooltip = tooltip.as_ref().to_owned();
+        self.action = Some(Rc::new(f));
+        self.tooltip = Some(tooltip);
+        self
+    }
+}
+
+impl ToggleIconButton {
+    fn render<V: View>(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        enum ViewButton {}
+
+        let button_state = self.state;
+        let icon = self.icon.clone();
+        let icon_button = MouseEventHandler::<ViewButton, _>::new(self.id, cx, |state, cx| {
+            let theme = theme::current(cx);
+
+            let style = theme
+                .search
+                .option_button
+                .in_state(button_state)
+                .style_for(state);
+
+            Label::new(icon, style.text.clone())
+                .contained()
+                .with_style(style.container)
+        });
+
+        if let Some((tooltip, action)) = self.tooltip.as_ref().zip(self.action.as_ref()) {
+            let tooltip_style = theme::current(cx).tooltip.clone();
+            let tooltip = tooltip.clone();
+
+            icon_button
+                .on_click(MouseButton::Left, {
+                    let action = action.clone();
+                    move |_, _, cx| {
+                        let action = (action)(!button_state);
+                        let window_id = cx.window_id();
+                        let view_id = cx.view_id();
+                        cx.spawn(|_, mut cx| async move {
+                            cx.dispatch_action(window_id, view_id, action.as_ref()).ok();
+                        })
+                        .detach()
+                    }
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<ViewButton>(
+                    self.id,
+                    tooltip,
+                    Some((action)(!self.state)),
+                    tooltip_style,
+                    cx,
+                )
+                .into_any()
+        } else {
+            icon_button.into_any()
+        }
     }
 }
