@@ -627,7 +627,7 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, None, cx)
+                editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });
 
             let range_to_select = match_ranges[new_index].clone();
@@ -668,7 +668,6 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             self.active_match_index = Some(0);
-            self.select_match(Direction::Next, cx);
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;

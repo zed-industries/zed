@@ -57,19 +57,19 @@ pub trait SearchableItem: Item {
         matches: &Vec<Self::Match>,
         current_index: usize,
         direction: Direction,
-        count: Option<usize>,
+        count: usize,
         _: &mut ViewContext<Self>,
     ) -> usize {
         match direction {
             Direction::Prev => {
-                let count = count.unwrap_or(1) % matches.len();
+                let count = count % matches.len();
                 if current_index >= count {
                     current_index - count
                 } else {
                     matches.len() - (count - current_index)
                 }
             }
-            Direction::Next => (current_index + count.unwrap_or(1)) % matches.len(),
+            Direction::Next => (current_index + count) % matches.len(),
         }
     }
     fn find_matches(
@@ -108,7 +108,7 @@ pub trait SearchableItemHandle: ItemHandle {
         matches: &Vec<Box<dyn Any + Send>>,
         current_index: usize,
         direction: Direction,
-        count: Option<usize>,
+        count: usize,
         cx: &mut WindowContext,
     ) -> usize;
     fn find_matches(
@@ -179,7 +179,7 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         matches: &Vec<Box<dyn Any + Send>>,
         current_index: usize,
         direction: Direction,
-        count: Option<usize>,
+        count: usize,
         cx: &mut WindowContext,
     ) -> usize {
         let matches = downcast_matches(matches);

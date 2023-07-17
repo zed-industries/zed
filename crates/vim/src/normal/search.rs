@@ -81,6 +81,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
     })
 }
 
+// hook into the existing to clear out any vim search state on cmd+f or edit -> find.
 fn search_deploy(_: &mut Pane, _: &buffer_search::Deploy, cx: &mut ViewContext<Pane>) {
     Vim::update(cx, |vim, _| vim.state.search = Default::default());
     cx.propagate_action();
@@ -100,9 +101,9 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                     if (search_bar.query(cx) != state.initial_query)
                         && state.direction == Direction::Next
                     {
-                        count = count.saturating_sub(1);
+                        count = count.saturating_sub(1)
                     }
-                    search_bar.select_match(state.direction, Some(count), cx);
+                    search_bar.select_match(state.direction, count, cx);
                     state.count = 1;
                     search_bar.focus_editor(&Default::default(), cx);
                 });
@@ -139,7 +140,7 @@ pub fn move_to_internal(
                     cx.spawn(|_, mut cx| async move {
                         search.await?;
                         search_bar.update(&mut cx, |search_bar, cx| {
-                            search_bar.select_match(direction, Some(count), cx)
+                            search_bar.select_match(direction, count, cx)
                         })?;
                         anyhow::Ok(())
                     })

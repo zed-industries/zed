@@ -560,11 +560,11 @@ impl BufferSearchBar {
     }
 
     fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
-        self.select_match(Direction::Next, None, cx);
+        self.select_match(Direction::Next, 1, cx);
     }
 
     fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
-        self.select_match(Direction::Prev, None, cx);
+        self.select_match(Direction::Prev, 1, cx);
     }
 
     fn select_all_matches(&mut self, _: &SelectAllMatches, cx: &mut ViewContext<Self>) {
@@ -581,12 +581,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn select_match(
-        &mut self,
-        direction: Direction,
-        count: Option<usize>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn select_match(&mut self, direction: Direction, count: usize, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
@@ -1086,15 +1081,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_with_options(cx: &mut TestAppContext) {
+    async fn test_search_option_handling(cx: &mut TestAppContext) {
         let (editor, search_bar) = init_test(cx);
 
         // show with options should make current search case sensitive
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
-            search_bar.search("us", cx);
-        });
-        editor.next_notification(cx).await;
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.show(cx);
+                search_bar.search("us", Some(SearchOptions::CASE_SENSITIVE), cx)
+            })
+            .await
+            .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -1105,31 +1102,20 @@ mod tests {
             );
         });
 
-        // show should return to the default options (case insensitive)
+        // search_suggested should restore default options
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.show(true, true, cx);
-        });
-        editor.next_notification(cx).await;
-        editor.update(cx, |editor, cx| {
-            assert_eq!(
-                editor.all_background_highlights(cx),
-                &[
-                    (
-                        DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
-                        Color::red(),
-                    ),
-                    (
-                        DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
-                        Color::red(),
-                    )
-                ]
-            );
+            search_bar.search_suggested(cx);
+            assert_eq!(search_bar.search_options, SearchOptions::NONE)
         });
 
-        // toggling a search option (even in show_with_options mode) should update the defaults
+        // toggling a search option should update the defaults
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("regex", Some(SearchOptions::CASE_SENSITIVE), cx)
+            })
+            .await
+            .unwrap();
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.search("regex", cx);
-            search_bar.show_with_options(false, false, SearchOptions::CASE_SENSITIVE, cx);
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
         });
         editor.next_notification(cx).await;
@@ -1145,38 +1131,11 @@ mod tests {
 
         // defaults should still include whole word
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.show(true, true, cx);
-        });
-        editor.next_notification(cx).await;
-        editor.update(cx, |editor, cx| {
+            search_bar.search_suggested(cx);
             assert_eq!(
-                editor.all_background_highlights(cx),
-                &[(
-                    DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
-                    Color::red(),
-                ),]
-            );
-        });
-
-        // removing whole word changes the search again
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
-        });
-        editor.next_notification(cx).await;
-        editor.update(cx, |editor, cx| {
-            assert_eq!(
-                editor.all_background_highlights(cx),
-                &[
-                    (
-                        DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
-                        Color::red(),
-                    ),
-                    (
-                        DisplayPoint::new(0, 44)..DisplayPoint::new(0, 49),
-                        Color::red()
-                    )
-                ]
-            );
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD
+            )
         });
     }
 
@@ -1207,15 +1166,18 @@ mod tests {
         let search_bar = cx.add_view(window_id, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
-            search_bar.show(false, true, cx);
+            search_bar.show(cx);
             search_bar
         });
 
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("a", None, cx))
+            .await
+            .unwrap();
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.set_query("a", cx);
+            search_bar.activate_current_match(cx);
         });
 
-        editor.next_notification(cx).await;
         let initial_selections = editor.update(cx, |editor, cx| {
             let initial_selections = editor.selections.display_ranges(cx);
             assert_eq!(
