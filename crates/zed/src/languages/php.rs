@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -50,7 +51,6 @@ impl LspAdapter for IntelephenseLspAdapter {
         // At the time of writing the latest vscode-eslint release was released in 2020 and requires
         // special custom LSP protocol extensions be handled to fully initialize. Download the latest
         // prerelease instead to sidestep this issue
-        dbg!("Strarting fetching server binary version");
         Ok(Box::new(IntelephenseVersion(
             self.node.npm_package_latest_version("intelephense").await?,
         )) as Box<_>)
@@ -62,7 +62,6 @@ impl LspAdapter for IntelephenseLspAdapter {
         container_dir: PathBuf,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        dbg!("Strarting fetching server binary");
         let version = version.downcast::<IntelephenseVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
 
@@ -71,9 +70,8 @@ impl LspAdapter for IntelephenseLspAdapter {
                 .npm_install_packages(&container_dir, [("intelephense", version.0.as_str())])
                 .await?;
         }
-        dbg!("Fetched server binary");
         Ok(LanguageServerBinary {
-            path: dbg!(self.node.binary_path().await)?,
+            path: self.node.binary_path().await?,
             arguments: intelephense_server_binary_arguments(&server_path),
         })
     }
@@ -83,7 +81,6 @@ impl LspAdapter for IntelephenseLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        dbg!("cached_server_binary");
         get_cached_server_binary(container_dir, &self.node).await
     }
 
@@ -91,7 +88,6 @@ impl LspAdapter for IntelephenseLspAdapter {
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        dbg!("installation_test_binary");
         get_cached_server_binary(container_dir, &self.node).await
     }
 
@@ -100,13 +96,14 @@ impl LspAdapter for IntelephenseLspAdapter {
         _item: &lsp::CompletionItem,
         _language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        dbg!(_item.kind);
         None
     }
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
-        dbg!("init_options");
         None
+    }
+    async fn language_ids(&self) -> HashMap<String, String> {
+        HashMap::from_iter([("PHP".into(), "php".into())])
     }
 }
 
