@@ -332,7 +332,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 _: &(),
                 view: &V,
                 cx: &gpui::ViewContext<V>,
-            ) -> serde_json::Value {
+            ) -> gpui::serde_json::Value {
                 element.debug(view, cx)
             }
         }

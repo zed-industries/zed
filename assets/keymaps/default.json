@@ -229,13 +229,17 @@
   {
     "context": "ProjectSearchBar",
     "bindings": {
-      "escape": "project_search::ToggleFocus"
+      "escape":  "project_search::ToggleFocus",
+      "cmd-r": "project_search::ToggleReplace",
+      "cmd-shift-r": "project_search::Replace",
+      "alt-cmd-shift-r": "project_search::ReplaceAll"
     }
   },
   {
     "context": "ProjectSearchView",
     "bindings": {
-      "escape": "project_search::ToggleFocus"
+      "escape": "project_search::ToggleFocus",
+      "cmd-r": "project_search::ToggleReplace"
     }
   },
   {
