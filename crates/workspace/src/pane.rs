@@ -1140,6 +1140,10 @@ impl Pane {
     }
 
     fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Flex::row();
+        }
+
         let theme = theme::current(cx).clone();
 
         let pane = cx.handle().downgrade();
@@ -1339,6 +1343,10 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Empty::new().into_any();
+        }
+
         let title = item.tab_content(detail, &tab_style, cx);
         Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
     }
@@ -1352,6 +1360,10 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Empty::new().into_any();
+        }
+
         let title = item.dragged_tab_content(detail, &tab_style, cx);
         Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
     }
@@ -1365,6 +1377,10 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<T>,
     ) -> AnyElement<T> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Empty::new().into_any();
+        }
+
         let mut container = tab_style.container.clone();
         if first {
             container.border.left = false;
@@ -1473,6 +1489,10 @@ impl Pane {
         on_down: F2,
         context_menu: Option<ViewHandle<ContextMenu>>,
     ) -> AnyElement<Pane> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Empty::new().into_any();
+        }
+
         enum TabBarButton {}
 
         let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
@@ -1507,7 +1527,11 @@ impl Pane {
             .into_any_named("tab bar button")
     }
 
-    fn render_blank_pane(&self, theme: &Theme, _cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+    fn render_blank_pane(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+            return Empty::new().into_any();
+        }
+
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1562,24 +1586,29 @@ impl View for Pane {
                             ),
                         );
 
-                        let mut tab_row = Flex::row()
-                            .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
+                        let mut height: f32 = 0.0;
+                        if settings::get::<ItemSettings>(cx).visibility.visible() {
+                            let mut tab_row = Flex::row().with_child(
+                                self.render_tabs(cx).flex(1., true).into_any_named("tabs"),
+                            );
 
-                        if self.has_focus {
-                            let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
-                            tab_row.add_child(
-                                (render_tab_bar_buttons)(self, cx)
-                                    .contained()
-                                    .with_style(theme.workspace.tab_bar.pane_button_container)
-                                    .flex(1., false)
-                                    .into_any(),
-                            )
+                            if self.has_focus {
+                                let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
+                                tab_row.add_child(
+                                    (render_tab_bar_buttons)(self, cx)
+                                        .contained()
+                                        .with_style(theme.workspace.tab_bar.pane_button_container)
+                                        .flex(1., false)
+                                        .into_any(),
+                                )
+                            }
+
+                            stack.add_child(tab_row);
+                            height = theme.workspace.tab_bar.height;
                         }
-
-                        stack.add_child(tab_row);
                         stack
                             .constrained()
-                            .with_height(theme.workspace.tab_bar.height)
+                            .with_height(height)
                             .flex(1., false)
                             .into_any_named("tab bar")
                     })
