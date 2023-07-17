@@ -1,12 +1,10 @@
 use anyhow::{anyhow, Result};
 
-
 use async_trait::async_trait;
 use collections::HashMap;
 
-
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::{LanguageServerBinary};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 
 use smol::{fs, stream::StreamExt};
