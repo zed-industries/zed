@@ -396,6 +396,11 @@ impl SearchableItem for FeedbackEditor {
             .update(cx, |editor, cx| editor.activate_match(index, matches, cx))
     }
 
+    fn remove_match(&mut self, index: usize, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.remove_match(index, matches, cx))
+    }
+
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, cx))

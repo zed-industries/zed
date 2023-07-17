@@ -52,6 +52,7 @@ pub trait SearchableItem: Item {
         cx: &mut ViewContext<Self>,
     );
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
+    fn remove_match(&mut self, index: usize, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Self::Match>,

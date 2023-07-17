@@ -686,6 +686,11 @@ impl SearchableItem for TerminalView {
         cx.notify();
     }
 
+    /// N/A
+    fn remove_match(&mut self, _: usize, _: Vec<Self::Match>, _: &mut ViewContext<Self>) {
+
+    }
+
     /// Add selections for all matches given.
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.terminal()
