@@ -271,7 +271,9 @@ actions!(
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
+        GoToDefinitionSplit,
         GoToTypeDefinition,
+        GoToTypeDefinitionSplit,
         MoveToEnclosingBracket,
         UndoSelection,
         RedoSelection,
@@ -407,7 +409,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::go_to_hunk);
     cx.add_action(Editor::go_to_prev_hunk);
     cx.add_action(Editor::go_to_definition);
+    cx.add_action(Editor::go_to_definition_split);
     cx.add_action(Editor::go_to_type_definition);
+    cx.add_action(Editor::go_to_type_definition_split);
     cx.add_action(Editor::fold);
     cx.add_action(Editor::fold_at);
     cx.add_action(Editor::unfold_lines);
@@ -494,6 +498,7 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct EditorStyle {
     pub text: TextStyle,
+    pub line_height_scalar: f32,
     pub placeholder_text: Option<TextStyle>,
     pub theme: theme::Editor,
     pub theme_id: usize,
@@ -6184,14 +6189,31 @@ impl Editor {
     }
 
     pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, cx);
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
     }
 
     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, cx);
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
     }
 
-    fn go_to_definition_of_kind(&mut self, kind: GotoDefinitionKind, cx: &mut ViewContext<Self>) {
+    pub fn go_to_definition_split(&mut self, _: &GoToDefinitionSplit, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx);
+    }
+
+    pub fn go_to_type_definition_split(
+        &mut self,
+        _: &GoToTypeDefinitionSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx);
+    }
+
+    fn go_to_definition_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        split: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let Some(workspace) = self.workspace(cx) else { return };
         let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
@@ -6210,7 +6232,7 @@ impl Editor {
         cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(definitions, cx);
+                editor.navigate_to_definitions(definitions, split, cx);
             })?;
             Ok::<(), anyhow::Error>(())
         })
@@ -6220,6 +6242,7 @@ impl Editor {
     pub fn navigate_to_definitions(
         &mut self,
         mut definitions: Vec<LocationLink>,
+        split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
         let Some(workspace) = self.workspace(cx) else { return };
@@ -6239,7 +6262,11 @@ impl Editor {
             } else {
                 cx.window_context().defer(move |cx| {
                     let target_editor: ViewHandle<Self> = workspace.update(cx, |workspace, cx| {
-                        workspace.open_project_item(definition.target.buffer.clone(), cx)
+                        if split {
+                            workspace.split_project_item(definition.target.buffer.clone(), cx)
+                        } else {
+                            workspace.open_project_item(definition.target.buffer.clone(), cx)
+                        }
                     });
                     target_editor.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
@@ -6275,7 +6302,9 @@ impl Editor {
                     .map(|definition| definition.target)
                     .collect();
                 workspace.update(cx, |workspace, cx| {
-                    Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
+                    Self::open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, split, cx,
+                    )
                 });
             });
         }
@@ -6320,7 +6349,7 @@ impl Editor {
                         })
                         .unwrap();
                     Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, cx,
+                        workspace, locations, replica_id, title, false, cx,
                     );
                 })?;
 
@@ -6335,6 +6364,7 @@ impl Editor {
         mut locations: Vec<Location>,
         replica_id: ReplicaId,
         title: String,
+        split: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
         // If there are multiple definitions, open them in a multibuffer
@@ -6381,7 +6411,11 @@ impl Editor {
                 cx,
             );
         });
-        workspace.add_item(Box::new(editor), cx);
+        if split {
+            workspace.split_item(Box::new(editor), cx);
+        } else {
+            workspace.add_item(Box::new(editor), cx);
+        }
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -7222,6 +7256,47 @@ impl Editor {
         }
         results
     }
+    pub fn background_highlights_in_range_for<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((color_fetcher, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let color = color_fetcher(theme);
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let start = range
+                .start
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            let end = range
+                .end
+                .to_point(buffer)
+                .to_display_point(display_snapshot);
+            results.push((start..end, color))
+        }
+
+        results
+    }
 
     pub fn highlight_text<T: 'static>(
         &mut self,
@@ -7524,7 +7599,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        name: &'static str,
+        operation: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
@@ -7561,7 +7636,7 @@ impl Editor {
         let event = ClickhouseEvent::Editor {
             file_extension,
             vim_mode,
-            operation: name,
+            operation,
             copilot_enabled,
             copilot_enabled_for_language,
         };
@@ -8060,7 +8135,7 @@ fn build_style(
     cx: &AppContext,
 ) -> EditorStyle {
     let font_cache = cx.font_cache();
-
+    let line_height_scalar = settings.line_height();
     let theme_id = settings.theme.meta.id;
     let mut theme = settings.theme.editor.clone();
     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
@@ -8074,6 +8149,7 @@ fn build_style(
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
+            line_height_scalar,
             theme,
             theme_id,
         }
@@ -8096,6 +8172,7 @@ fn build_style(
                 underline: Default::default(),
             },
             placeholder_text: None,
+            line_height_scalar,
             theme,
             theme_id,
         }

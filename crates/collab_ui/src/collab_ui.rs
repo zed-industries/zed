@@ -1,4 +1,3 @@
-mod branch_list;
 mod collab_titlebar_item;
 mod contact_finder;
 mod contact_list;
@@ -29,7 +28,7 @@ actions!(
 );
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
-    branch_list::init(cx);
+    vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
     contact_list::init(cx);
     contact_finder::init(cx);
@@ -45,11 +44,25 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
-    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+    let call = ActiveCall::global(cx).read(cx);
+    if let Some(room) = call.room().cloned() {
+        let client = call.client();
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
+                ActiveCall::report_call_event_for_room(
+                    "disable screen share",
+                    room.id(),
+                    &client,
+                    cx,
+                );
                 Task::ready(room.unshare_screen(cx))
             } else {
+                ActiveCall::report_call_event_for_room(
+                    "enable screen share",
+                    room.id(),
+                    &client,
+                    cx,
+                );
                 room.share_screen(cx)
             }
         });

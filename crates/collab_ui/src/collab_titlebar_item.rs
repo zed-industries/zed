@@ -1,8 +1,5 @@
 use crate::{
-    branch_list::{build_branch_list, BranchList},
-    contact_notification::ContactNotification,
-    contacts_popover,
-    face_pile::FacePile,
+    contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
     toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute,
     ToggleScreenSharing,
 };
@@ -27,6 +24,7 @@ use recent_projects::{build_recent_projects, RecentProjects};
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
+use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{FollowNextCollaborator, Workspace, WORKSPACE_DB};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -37,7 +35,6 @@ actions!(
     [
         ToggleContactsMenu,
         ToggleUserMenu,
-        ToggleVcsMenu,
         ToggleProjectMenu,
         SwitchBranch,
         ShareProject,
@@ -286,7 +283,7 @@ impl CollabTitlebarItem {
                                             .with_tooltip::<BranchPopoverTooltip>(
                                                 0,
                                                 "Recent branches".into(),
-                                                None,
+                                                Some(Box::new(ToggleVcsMenu)),
                                                 theme.tooltip.clone(),
                                                 cx,
                                             )

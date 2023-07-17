@@ -1268,6 +1268,19 @@ impl Vector2FExt for Vector2F {
     }
 }
 
+pub trait RectFExt {
+    fn length_along(self, axis: Axis) -> f32;
+}
+
+impl RectFExt for RectF {
+    fn length_along(self, axis: Axis) -> f32 {
+        match axis {
+            Axis::Horizontal => self.width(),
+            Axis::Vertical => self.height(),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct SizeConstraint {
     pub min: Vector2F,

@@ -1,8 +1,4 @@
 pub mod dock;
-/// NOTE: Focus only 'takes' after an update has flushed_effects.
-///
-/// This may cause issues when you're trying to write tests that use workspace focus to add items at
-/// specific locations.
 pub mod item;
 pub mod notifications;
 pub mod pane;
@@ -508,6 +504,7 @@ pub struct Workspace {
     subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
+    _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
 }
 
@@ -722,6 +719,7 @@ impl Workspace {
             app_state,
             _observe_current_user,
             _apply_leader_updates,
+            _schedule_serialize: None,
             leader_updates_tx,
             subscriptions,
             pane_history_timestamp,
@@ -1823,6 +1821,13 @@ impl Workspace {
             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }
 
+    pub fn split_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        let new_pane = self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
+        new_pane.update(cx, move |new_pane, cx| {
+            new_pane.add_item(item, true, true, None, cx)
+        })
+    }
+
     pub fn open_abs_path(
         &mut self,
         abs_path: PathBuf,
@@ -1853,6 +1858,21 @@ impl Workspace {
         })
     }
 
+    pub fn split_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        let project_path_task =
+            Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
+        cx.spawn(|this, mut cx| async move {
+            let (_, path) = project_path_task.await?;
+            this.update(&mut cx, |this, cx| this.split_path(path, cx))?
+                .await
+        })
+    }
+
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -1875,6 +1895,38 @@ impl Workspace {
             pane.update(&mut cx, |pane, cx| {
                 pane.open_item(project_entry_id, focus_item, cx, build_item)
             })
+        })
+    }
+
+    pub fn split_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
+            self.panes
+                .first()
+                .expect("There must be an active pane")
+                .downgrade()
+        });
+
+        if let Member::Pane(center_pane) = &self.center.root {
+            if center_pane.read(cx).items_len() == 0 {
+                return self.open_path(path, Some(pane), true, cx);
+            }
+        }
+
+        let task = self.load_path(path.into(), cx);
+        cx.spawn(|this, mut cx| async move {
+            let (project_entry_id, build_item) = task.await?;
+            this.update(&mut cx, move |this, cx| -> Option<_> {
+                let pane = pane.upgrade(cx)?;
+                let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+                new_pane.update(cx, |new_pane, cx| {
+                    Some(new_pane.open_item(project_entry_id, true, cx, build_item))
+                })
+            })
+            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
         })
     }
 
@@ -1928,6 +1980,30 @@ impl Workspace {
         item
     }
 
+    pub fn split_project_item<T>(
+        &mut self,
+        project_item: ModelHandle<T::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> ViewHandle<T>
+    where
+        T: ProjectItem,
+    {
+        use project::Item as _;
+
+        let entry_id = project_item.read(cx).entry_id(cx);
+        if let Some(item) = entry_id
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
+            .and_then(|item| item.downcast())
+        {
+            self.activate_item(&item, cx);
+            return item;
+        }
+
+        let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        self.split_item(Box::new(item.clone()), cx);
+        item
+    }
+
     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
             self.active_pane.update(cx, |pane, cx| {
@@ -1955,7 +2031,7 @@ impl Workspace {
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
             cx.focus(&pane);
         } else {
-            self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
+            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, cx);
         }
     }
 
@@ -2008,7 +2084,7 @@ impl Workspace {
         match event {
             pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
             pane::Event::Split(direction) => {
-                self.split_pane(pane, *direction, cx);
+                self.split_and_clone(pane, *direction, cx);
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
@@ -2059,6 +2135,20 @@ impl Workspace {
     }
 
     pub fn split_pane(
+        &mut self,
+        pane_to_split: ViewHandle<Pane>,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) -> ViewHandle<Pane> {
+        let new_pane = self.add_pane(cx);
+        self.center
+            .split(&pane_to_split, &new_pane, split_direction)
+            .unwrap();
+        cx.notify();
+        new_pane
+    }
+
+    pub fn split_and_clone(
         &mut self,
         pane: ViewHandle<Pane>,
         direction: SplitDirection,
@@ -2897,6 +2987,14 @@ impl Workspace {
         cx.notify();
     }
 
+    fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
+        self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
+            cx.background().timer(Duration::from_millis(100)).await;
+            this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
+                .ok();
+        }));
+    }
+
     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
         fn serialize_pane_handle(
             pane_handle: &ViewHandle<Pane>,
@@ -2927,12 +3025,17 @@ impl Workspace {
             cx: &AppContext,
         ) -> SerializedPaneGroup {
             match pane_group {
-                Member::Axis(PaneAxis { axis, members }) => SerializedPaneGroup::Group {
+                Member::Axis(PaneAxis {
+                    axis,
+                    members,
+                    flexes,
+                }) => SerializedPaneGroup::Group {
                     axis: *axis,
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, cx))
                         .collect::<Vec<_>>(),
+                    flexes: Some(flexes.borrow().clone()),
                 },
                 Member::Pane(pane_handle) => {
                     SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
@@ -3399,27 +3502,11 @@ fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut Asy
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 workspace.show_notification_once(0, cx, |cx| {
                     cx.add_view(|_| {
-                        MessageNotification::new("Failed to load any database file.")
+                        MessageNotification::new("Failed to load the database file.")
                             .with_click_message("Click to let us know about this error")
                             .on_click(|cx| cx.platform().open_url(REPORT_ISSUE_URL))
                     })
                 });
-            } else {
-                let backup_path = (*db::BACKUP_DB_PATH).read();
-                if let Some(backup_path) = backup_path.clone() {
-                    workspace.show_notification_once(1, cx, move |cx| {
-                        cx.add_view(move |_| {
-                            MessageNotification::new(format!(
-                                "Database file was corrupted. Old database backed up to {}",
-                                backup_path.display()
-                            ))
-                            .with_click_message("Click to show old database in finder")
-                            .on_click(move |cx| {
-                                cx.platform().open_url(&backup_path.to_string_lossy())
-                            })
-                        })
-                    });
-                }
             }
         })
         .log_err();
@@ -4235,7 +4322,7 @@ mod tests {
             });
 
             workspace
-                .split_pane(left_pane.clone(), SplitDirection::Right, cx)
+                .split_and_clone(left_pane.clone(), SplitDirection::Right, cx)
                 .unwrap();
 
             left_pane

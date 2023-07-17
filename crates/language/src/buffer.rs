@@ -2145,23 +2145,27 @@ impl BufferSnapshot {
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
+        let mut range = 0..self.len();
+        let mut scope = self.language.clone().map(|language| LanguageScope {
+            language,
+            override_id: None,
+        });
 
-        if let Some(layer_info) = self
-            .syntax
-            .layers_for_range(offset..offset, &self.text)
-            .filter(|l| l.node().end_byte() > offset)
-            .last()
-        {
-            Some(LanguageScope {
-                language: layer_info.language.clone(),
-                override_id: layer_info.override_id(offset, &self.text),
-            })
-        } else {
-            self.language.clone().map(|language| LanguageScope {
-                language,
-                override_id: None,
-            })
+        // Use the layer that has the smallest node intersecting the given point.
+        for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
+            let mut cursor = layer.node().walk();
+            while cursor.goto_first_child_for_byte(offset).is_some() {}
+            let node_range = cursor.node().byte_range();
+            if node_range.to_inclusive().contains(&offset) && node_range.len() < range.len() {
+                range = node_range;
+                scope = Some(LanguageScope {
+                    language: layer.language.clone(),
+                    override_id: layer.override_id(offset, &self.text),
+                });
+            }
         }
+
+        scope
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {

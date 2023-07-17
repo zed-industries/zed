@@ -29,12 +29,12 @@ jobs:
           rustup update stable
 
       - name: Install Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'

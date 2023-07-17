@@ -883,14 +883,24 @@ impl ProjectItem for Editor {
     }
 }
 
-enum BufferSearchHighlights {}
+pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
-    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        _: &mut ViewContext<Self>,
+    ) -> Option<SearchEvent> {
         match event {
             Event::BufferEdited => Some(SearchEvent::MatchesInvalidated),
-            Event::SelectionsChanged { .. } => Some(SearchEvent::ActiveMatchChanged),
+            Event::SelectionsChanged { .. } => {
+                if self.selections.disjoint_anchors().len() == 1 {
+                    Some(SearchEvent::ActiveMatchChanged)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -941,6 +951,11 @@ impl SearchableItem for Editor {
         });
     }
 
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.unfold_ranges(matches.clone(), false, false, cx);
+        self.change_selections(None, cx, |s| s.select_ranges(matches));
+    }
+
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,
@@ -949,8 +964,16 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
-        let cursor = self.selections.newest_anchor().head();
-        if matches[current_index].start.cmp(&cursor, &buffer).is_gt() {
+        let current_index_position = if self.selections.disjoint_anchors().len() == 1 {
+            self.selections.newest_anchor().head()
+        } else {
+            matches[current_index].start
+        };
+        if matches[current_index]
+            .start
+            .cmp(&current_index_position, &buffer)
+            .is_gt()
+        {
             if direction == Direction::Prev {
                 if current_index == 0 {
                     current_index = matches.len() - 1;
@@ -958,7 +981,11 @@ impl SearchableItem for Editor {
                     current_index -= 1;
                 }
             }
-        } else if matches[current_index].end.cmp(&cursor, &buffer).is_lt() {
+        } else if matches[current_index]
+            .end
+            .cmp(&current_index_position, &buffer)
+            .is_lt()
+        {
             if direction == Direction::Next {
                 current_index = 0;
             }
