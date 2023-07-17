@@ -2680,6 +2680,7 @@ impl Project {
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
+        dbg!(language.name());
         let setup = Self::setup_pending_language_server(
             this,
             initialization_options,
@@ -2694,7 +2695,6 @@ impl Project {
             Some(language_server) => language_server,
             None => return Ok(None),
         };
-
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),

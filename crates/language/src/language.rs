@@ -262,24 +262,31 @@ pub trait LspAdapter: 'static + Send + Sync {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
-    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    async fn process_diagnostics(&self, d: &mut lsp::PublishDiagnosticsParams) {
+        dbg!(d);
+    }
 
-    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
+    async fn process_completion(&self, d: &mut lsp::CompletionItem) {
+        dbg!(d);
+    }
 
     async fn label_for_completion(
         &self,
-        _: &lsp::CompletionItem,
+        item: &lsp::CompletionItem,
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
+        dbg!(item);
         None
     }
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
+        name: &str,
+        kind: lsp::SymbolKind,
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
+        dbg!(name);
+        dbg!(kind);
         None
     }
 
@@ -321,7 +328,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
@@ -810,6 +817,7 @@ impl LanguageRegistry {
                             .spawn(async move {
                                 let id = language.id;
                                 let queries = (language.get_queries)(&language.path);
+                                dbg!(&language.path);
                                 let language =
                                     Language::new(language.config, Some(language.grammar))
                                         .with_lsp_adapters(language.lsp_adapters)
@@ -819,9 +827,11 @@ impl LanguageRegistry {
                                     Ok(language) => {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
+
                                         state.add(language.clone());
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                            dbg!(&name);
                                             for tx in txs.drain(..) {
                                                 let _ = tx.send(Ok(language.clone()));
                                             }
@@ -829,6 +839,7 @@ impl LanguageRegistry {
                                     }
                                     Err(err) => {
                                         log::error!("failed to load language {name} - {err}");
+                                        dbg!(&name);
                                         let mut state = this.state.write();
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
