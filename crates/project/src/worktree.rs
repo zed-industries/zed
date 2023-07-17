@@ -397,6 +397,7 @@ impl Worktree {
         }))
     }
 
+    // abcdefghi
     pub fn remote(
         project_remote_id: u64,
         replica_id: ReplicaId,
@@ -2022,6 +2023,9 @@ impl LocalSnapshot {
     ) -> Vec<Arc<Path>> {
         let mut changes = vec![];
         let mut edits = vec![];
+
+        let statuses = repo_ptr.statuses();
+
         for mut entry in self
             .descendent_entries(false, false, &work_directory.0)
             .cloned()
@@ -2029,10 +2033,8 @@ impl LocalSnapshot {
             let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
                 continue;
             };
-            let git_file_status = repo_ptr
-                .status(&RepoPath(repo_path.into()))
-                .log_err()
-                .flatten();
+            let repo_path = RepoPath(repo_path.to_path_buf());
+            let git_file_status = statuses.as_ref().and_then(|s| s.get(&repo_path).copied());
             if entry.git_status != git_file_status {
                 entry.git_status = git_file_status;
                 changes.push(entry.path.clone());

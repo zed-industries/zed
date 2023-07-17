@@ -156,6 +156,7 @@ impl EditorElement {
                         event.position,
                         event.cmd,
                         event.shift,
+                        event.alt,
                         position_map.as_ref(),
                         text_bounds,
                         cx,
@@ -308,6 +309,7 @@ impl EditorElement {
         position: Vector2F,
         cmd: bool,
         shift: bool,
+        alt: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
         cx: &mut EventContext<Editor>,
@@ -324,9 +326,9 @@ impl EditorElement {
 
             if point == target_point {
                 if shift {
-                    go_to_fetched_type_definition(editor, point, cx);
+                    go_to_fetched_type_definition(editor, point, alt, cx);
                 } else {
-                    go_to_fetched_definition(editor, point, cx);
+                    go_to_fetched_definition(editor, point, alt, cx);
                 }
 
                 return true;
@@ -1086,11 +1088,13 @@ impl EditorElement {
                         })
                     }
                 };
-                for (row, _) in &editor.background_highlights_in_range(
-                    start_anchor..end_anchor,
-                    &layout.position_map.snapshot,
-                    &theme,
-                ) {
+                for (row, _) in &editor
+                    .background_highlights_in_range_for::<crate::items::BufferSearchHighlights>(
+                        start_anchor..end_anchor,
+                        &layout.position_map.snapshot,
+                        &theme,
+                    )
+                {
                     let start_display = row.start;
                     let end_display = row.end;
 
@@ -1180,8 +1184,10 @@ impl EditorElement {
         });
         scene.push_mouse_region(
             MouseRegion::new::<ScrollbarMouseHandlers>(cx.view_id(), cx.view_id(), track_bounds)
-                .on_move(move |_, editor: &mut Editor, cx| {
-                    editor.scroll_manager.show_scrollbar(cx);
+                .on_move(move |event, editor: &mut Editor, cx| {
+                    if event.pressed_button.is_none() {
+                        editor.scroll_manager.show_scrollbar(cx);
+                    }
                 })
                 .on_down(MouseButton::Left, {
                     let row_range = row_range.clone();
@@ -1971,7 +1977,7 @@ impl Element<Editor> for EditorElement {
 
         let snapshot = editor.snapshot(cx);
         let style = self.style.clone();
-        let line_height = style.text.line_height(cx.font_cache());
+        let line_height = (style.text.font_size * style.line_height_scalar).round();
 
         let gutter_padding;
         let gutter_width;
@@ -2149,6 +2155,9 @@ impl Element<Editor> for EditorElement {
             ShowScrollbar::Auto => {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                ||
+                // Selections
+                (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
                 // Scrollmanager
                 || editor.scroll_manager.scrollbars_visible()
             }
@@ -2911,7 +2920,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{BlockDisposition, BlockProperties},
-        editor_tests::{init_test, update_test_settings},
+        editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
     use gpui::TestAppContext;
@@ -3108,7 +3117,7 @@ mod tests {
         let resize_step = 10.0;
         let mut editor_width = 200.0;
         while editor_width <= 1000.0 {
-            update_test_settings(cx, |s| {
+            update_test_language_settings(cx, |s| {
                 s.defaults.tab_size = NonZeroU32::new(tab_size);
                 s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                 s.defaults.preferred_line_length = Some(editor_width as u32);

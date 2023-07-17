@@ -84,7 +84,7 @@ function user_menu() {
                 base: {
                     corner_radius: 6,
                     height: button_height,
-                    width: online ? 37 : 24,
+                    width: 20,
                     padding: {
                         top: 2,
                         bottom: 2,
@@ -153,6 +153,7 @@ function user_menu() {
             },
         }
     }
+
     return {
         user_menu_button_online: build_button({ online: true }),
         user_menu_button_offline: build_button({ online: false }),

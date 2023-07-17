@@ -19,7 +19,8 @@ actions!(
         ToggleCaseSensitive,
         ToggleRegex,
         SelectNextMatch,
-        SelectPrevMatch
+        SelectPrevMatch,
+        SelectAllMatches,
     ]
 );
 

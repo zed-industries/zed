@@ -27,7 +27,7 @@ use std::{
 };
 use theme::Theme;
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Debug)]
 pub enum ItemEvent {
     CloseItem,
     UpdateTab,

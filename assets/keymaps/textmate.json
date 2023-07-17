@@ -2,6 +2,7 @@
   {
     "bindings": {
       "cmd-shift-o": "projects::OpenRecent",
+      "cmd-shift-b": "branches::OpenRecent",
       "cmd-alt-tab": "project_panel::ToggleFocus"
     }
   },
@@ -11,6 +12,7 @@
       "cmd-l": "go_to_line::Toggle",
       "ctrl-shift-d": "editor::DuplicateLine",
       "cmd-b": "editor::GoToDefinition",
+      "alt-cmd-b": "editor::GoToDefinition",
       "cmd-j": "editor::ScrollCursorCenter",
       "cmd-shift-l": "editor::SelectLine",
       "cmd-shift-t": "outline::Toggle",

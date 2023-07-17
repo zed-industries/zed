@@ -198,7 +198,7 @@ impl TerminalLineHeight {
         match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
-            TerminalLineHeight::Custom(line_height) => *line_height,
+            TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
         }
     }
 }
@@ -905,6 +905,21 @@ impl Terminal {
 
             self.events
                 .push_back(InternalEvent::ScrollToPoint(*search_match.start()));
+        }
+    }
+
+    pub fn select_matches(&mut self, matches: Vec<RangeInclusive<Point>>) {
+        let matches_to_select = self
+            .matches
+            .iter()
+            .filter(|self_match| matches.contains(self_match))
+            .cloned()
+            .collect::<Vec<_>>();
+        for match_to_select in matches_to_select {
+            self.set_selection(Some((
+                make_selection(&match_to_select),
+                *match_to_select.end(),
+            )));
         }
     }
 

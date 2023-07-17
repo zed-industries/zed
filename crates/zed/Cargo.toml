@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.95.0"
+version = "0.96.0"
 publish = false
 
 [lib]
@@ -64,6 +64,7 @@ terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
+vector_store = { path = "../vector_store" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
@@ -103,25 +104,27 @@ thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
 tree-sitter.workspace = true
-tree-sitter-c = "0.20.1"
-tree-sitter-cpp = "0.20.0"
-tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "4ba9dab6e2602960d95b2b625f3386c27e08084e" }
-tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
-tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
-tree-sitter-rust = "0.20.3"
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-python = "0.20.2"
-tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
-tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-ruby = "0.20.0"
-tree-sitter-html = "0.19.0"
-tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"}
-tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a"}
-tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930"}
-tree-sitter-lua = "0.0.14"
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-css.workspace = true
+tree-sitter-elixir.workspace = true
+tree-sitter-embedded-template.workspace = true
+tree-sitter-go.workspace = true
+tree-sitter-heex.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-markdown.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-toml.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-ruby.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-scheme.workspace = true
+tree-sitter-svelte.workspace = true
+tree-sitter-racket.workspace = true
+tree-sitter-yaml.workspace = true
+tree-sitter-lua.workspace = true
+
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4"] }

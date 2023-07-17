@@ -24,6 +24,17 @@
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
+  // Set the buffer's line height.
+  // May take 3 values:
+  //  1. Use a line height that's comfortable for reading (1.618)
+  //         "line_height": "comfortable"
+  //  2. Use a standard line height, (1.3)
+  //         "line_height": "standard",
+  //  3. Use a custom line height
+  //         "line_height": {
+  //           "custom": 2
+  //         },
+  "buffer_line_height": "comfortable",
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
@@ -282,7 +293,6 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    //
     "line_height": "comfortable"
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -290,6 +300,11 @@
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono"
+  },
+  // Difference settings for vector_store
+  "vector_store": {
+    "enabled": false,
+    "reindexing_delay_seconds": 600
   },
   // Different settings for specific languages.
   "languages": {

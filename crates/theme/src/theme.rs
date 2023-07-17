@@ -379,6 +379,7 @@ pub struct Search {
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
     pub option_button: Toggleable<Interactive<ContainedText>>,
+    pub action_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
@@ -586,7 +587,7 @@ pub struct Picker {
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
     pub header: ContainedLabel,
-    pub footer: ContainedLabel,
+    pub footer: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -1030,6 +1031,7 @@ pub struct AssistantStyle {
     pub system_sender: Interactive<ContainedText>,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
+    pub low_remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,

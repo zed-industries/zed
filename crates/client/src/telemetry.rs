@@ -70,6 +70,10 @@ pub enum ClickhouseEvent {
         suggestion_accepted: bool,
         file_extension: Option<String>,
     },
+    Call {
+        operation: &'static str,
+        room_id: u64,
+    },
 }
 
 #[cfg(debug_assertions)]

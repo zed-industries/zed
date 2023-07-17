@@ -37,7 +37,11 @@ pub trait SearchableItem: Item {
             regex: true,
         }
     }
-    fn to_search_event(event: &Self::Event) -> Option<SearchEvent>;
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SearchEvent>;
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
@@ -47,6 +51,7 @@ pub trait SearchableItem: Item {
         matches: Vec<Self::Match>,
         cx: &mut ViewContext<Self>,
     );
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Self::Match>,
@@ -97,6 +102,7 @@ pub trait SearchableItemHandle: ItemHandle {
         matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut WindowContext,
     );
+    fn select_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
     fn match_index_for_direction(
         &self,
         matches: &Vec<Box<dyn Any + Send>>,
@@ -135,8 +141,9 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         cx: &mut WindowContext,
         handler: Box<dyn Fn(SearchEvent, &mut WindowContext)>,
     ) -> Subscription {
-        cx.subscribe(self, move |_, event, cx| {
-            if let Some(search_event) = T::to_search_event(event) {
+        cx.subscribe(self, move |handle, event, cx| {
+            let search_event = handle.update(cx, |handle, cx| handle.to_search_event(event, cx));
+            if let Some(search_event) = search_event {
                 handler(search_event, cx)
             }
         })
@@ -161,6 +168,12 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.activate_match(index, matches, cx));
     }
+
+    fn select_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext) {
+        let matches = downcast_matches(matches);
+        self.update(cx, |this, cx| this.select_matches(matches, cx));
+    }
+
     fn match_index_for_direction(
         &self,
         matches: &Vec<Box<dyn Any + Send>>,

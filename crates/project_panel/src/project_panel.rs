@@ -159,6 +159,9 @@ pub enum Event {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
     },
+    SplitEntry {
+        entry_id: ProjectEntryId,
+    },
     DockPositionChanged,
     Focus,
 }
@@ -287,6 +290,21 @@ impl ProjectPanel {
                                     cx.focus(&project_panel);
                                 }
                             }
+                        }
+                    }
+                }
+                &Event::SplitEntry { entry_id } => {
+                    if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
+                        if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            workspace
+                                .split_path(
+                                    ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    },
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
                         }
                     }
                 }
@@ -618,6 +636,10 @@ impl ProjectPanel {
             entry_id,
             focus_opened_item,
         });
+    }
+
+    fn split_entry(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::SplitEntry { entry_id });
     }
 
     fn new_file(&mut self, _: &NewFile, cx: &mut ViewContext<Self>) {
@@ -1333,7 +1355,11 @@ impl ProjectPanel {
                 if kind.is_dir() {
                     this.toggle_expanded(entry_id, cx);
                 } else {
-                    this.open_entry(entry_id, event.click_count > 1, cx);
+                    if event.cmd {
+                        this.split_entry(entry_id, cx);
+                    } else if !event.cmd {
+                        this.open_entry(entry_id, event.click_count > 1, cx);
+                    }
                 }
             }
         })

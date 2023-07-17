@@ -7,7 +7,6 @@ use anyhow::Context;
 use gpui::AppContext;
 pub use indoc::indoc;
 pub use lazy_static;
-use parking_lot::{Mutex, RwLock};
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
@@ -17,11 +16,9 @@ pub use util::paths::DB_DIR;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
-use std::fs::create_dir_all;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 use util::channel::ReleaseChannel;
 use util::{async_iife, ResultExt};
 
@@ -42,10 +39,8 @@ const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
     pub static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
-    pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
 }
-static DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
 
 /// Open or create a database at the given directory path.
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
@@ -63,66 +58,14 @@ pub async fn open_db<M: Migrator + 'static>(
     let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
 
     let connection = async_iife!({
-        // Note: This still has a race condition where 1 set of migrations succeeds
-        // (e.g. (Workspace, Editor)) and another fails (e.g. (Workspace, Terminal))
-        // This will cause the first connection to have the database taken out
-        // from under it. This *should* be fine though. The second dabatase failure will
-        // cause errors in the log and so should be observed by developers while writing
-        // soon-to-be good migrations. If user databases are corrupted, we toss them out
-        // and try again from a blank. As long as running all migrations from start to end
-        // on a blank database is ok, this race condition will never be triggered.
-        //
-        // Basically: Don't ever push invalid migrations to stable or everyone will have
-        // a bad time.
-
-        // If no db folder, create one at 0-{channel}
-        create_dir_all(&main_db_dir).context("Could not create db directory")?;
+        smol::fs::create_dir_all(&main_db_dir)
+            .await
+            .context("Could not create db directory")
+            .log_err()?;
         let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
-
-        // Optimistically open databases in parallel
-        if !DB_FILE_OPERATIONS.is_locked() {
-            // Try building a connection
-            if let Some(connection) = open_main_db(&db_path).await {
-                return Ok(connection)
-            };
-        }
-
-        // Take a lock in the failure case so that we move the db once per process instead
-        // of potentially multiple times from different threads. This shouldn't happen in the
-        // normal path
-        let _lock = DB_FILE_OPERATIONS.lock();
-        if let Some(connection) = open_main_db(&db_path).await {
-            return Ok(connection)
-        };
-
-        let backup_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("System clock is set before the unix timestamp, Zed does not support this region of spacetime")
-            .as_millis();
-
-        // If failed, move 0-{channel} to {current unix timestamp}-{channel}
-        let backup_db_dir = db_dir.join(Path::new(&format!(
-            "{}-{}",
-            backup_timestamp,
-            release_channel_name,
-        )));
-
-        std::fs::rename(&main_db_dir, &backup_db_dir)
-            .context("Failed clean up corrupted database, panicking.")?;
-
-        // Set a static ref with the failed timestamp and error so we can notify the user
-        {
-            let mut guard = BACKUP_DB_PATH.write();
-            *guard = Some(backup_db_dir);
-        }
-
-        // Create a new 0-{channel}
-        create_dir_all(&main_db_dir).context("Should be able to create the database directory")?;
-        let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
-
-        // Try again
-        open_main_db(&db_path).await.context("Could not newly created db")
-    }).await.log_err();
+        open_main_db(&db_path).await
+    })
+    .await;
 
     if let Some(connection) = connection {
         return connection;
@@ -249,13 +192,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, thread};
+    use std::thread;
 
-    use sqlez::{connection::Connection, domain::Domain};
+    use sqlez::domain::Domain;
     use sqlez_macros::sql;
     use tempdir::TempDir;
 
-    use crate::{open_db, DB_FILE_NAME};
+    use crate::open_db;
 
     // Test bad migration panics
     #[gpui::test]
@@ -321,31 +264,10 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-
-        let mut corrupted_backup_dir = fs::read_dir(tempdir.path())
-            .unwrap()
-            .find(|entry| {
-                !entry
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_str()
-                    .unwrap()
-                    .starts_with("0")
-            })
-            .unwrap()
-            .unwrap()
-            .path();
-        corrupted_backup_dir.push(DB_FILE_NAME);
-
-        let backup = Connection::open_file(&corrupted_backup_dir.to_string_lossy());
-        assert!(backup.select_row::<usize>("SELECT * FROM test").unwrap()()
-            .unwrap()
-            .is_none());
     }
 
     /// Test that DB exists but corrupted (causing recreate)
-    #[gpui::test]
+    #[gpui::test(iterations = 30)]
     async fn test_simultaneous_db_corruption() {
         enum CorruptedDB {}
 

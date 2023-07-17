@@ -33,10 +33,14 @@ pub trait GitRepository: Send {
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+
     fn branches(&self) -> Result<Vec<Branch>> {
         Ok(vec![])
     }
     fn change_branch(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn create_branch(&self, _: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -150,6 +154,12 @@ impl GitRepository for LibGitRepository {
                 .name()
                 .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
         )?;
+        Ok(())
+    }
+    fn create_branch(&self, name: &str) -> Result<()> {
+        let current_commit = self.head()?.peel_to_commit()?;
+        self.branch(name, &current_commit, false)?;
+
         Ok(())
     }
 }
