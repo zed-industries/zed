@@ -343,6 +343,143 @@ async fn test_code_context_retrieval_javascript() {
 }
 
 #[gpui::test]
+async fn test_code_context_retrieval_elixir() {
+    let language = elixir_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+defmodule File.Stream do
+    @moduledoc """
+    Defines a `File.Stream` struct returned by `File.stream!/3`.
+
+    The following fields are public:
+
+    * `path`          - the file path
+    * `modes`         - the file modes
+    * `raw`           - a boolean indicating if bin functions should be used
+    * `line_or_bytes` - if reading should read lines or a given number of bytes
+    * `node`          - the node the file belongs to
+
+    """
+
+    defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
+
+    @type t :: %__MODULE__{}
+
+    @doc false
+    def __build__(path, modes, line_or_bytes) do
+    raw = :lists.keyfind(:encoding, 1, modes) == false
+
+    modes =
+        case raw do
+        true ->
+            case :lists.keyfind(:read_ahead, 1, modes) do
+            {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+            {:read_ahead, _} -> [:raw | modes]
+            false -> [:raw, :read_ahead | modes]
+            end
+
+        false ->
+            modes
+        end
+
+    %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
+
+    end
+"#
+    .unindent();
+
+    let parsed_files = retriever
+        .parse_file(Path::new("foo.ex"), &text, language)
+        .unwrap();
+
+    let test_documents = &[
+        Document{
+            name: "defmodule File.Stream".into(),
+            range: 0..1132,
+            content: r#"
+                The below code snippet is from file 'foo.ex'
+
+                ```elixir
+                defmodule File.Stream do
+                    @moduledoc """
+                    Defines a `File.Stream` struct returned by `File.stream!/3`.
+
+                    The following fields are public:
+
+                    * `path`          - the file path
+                    * `modes`         - the file modes
+                    * `raw`           - a boolean indicating if bin functions should be used
+                    * `line_or_bytes` - if reading should read lines or a given number of bytes
+                    * `node`          - the node the file belongs to
+
+                    """
+
+                    defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
+
+                    @type t :: %__MODULE__{}
+
+                    @doc false
+                    def __build__(path, modes, line_or_bytes) do
+                    raw = :lists.keyfind(:encoding, 1, modes) == false
+
+                    modes =
+                        case raw do
+                        true ->
+                            case :lists.keyfind(:read_ahead, 1, modes) do
+                            {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+                            {:read_ahead, _} -> [:raw | modes]
+                            false -> [:raw, :read_ahead | modes]
+                            end
+
+                        false ->
+                            modes
+                        end
+
+                    %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
+
+                    end
+                ```"#.unindent(),
+            embedding: vec![],
+        },
+        Document {
+        name: "def __build__".into(),
+        range: 574..1132,
+        content: r#"
+The below code snippet is from file 'foo.ex'
+
+```elixir
+@doc false
+def __build__(path, modes, line_or_bytes) do
+    raw = :lists.keyfind(:encoding, 1, modes) == false
+
+    modes =
+        case raw do
+        true ->
+            case :lists.keyfind(:read_ahead, 1, modes) do
+            {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+            {:read_ahead, _} -> [:raw | modes]
+            false -> [:raw, :read_ahead | modes]
+            end
+
+        false ->
+            modes
+        end
+
+    %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
+
+    end
+```"#
+            .unindent(),
+        embedding: vec![],
+    }];
+
+    for idx in 0..test_documents.len() {
+        assert_eq!(test_documents[idx], parsed_files[idx]);
+    }
+}
+
+#[gpui::test]
 async fn test_code_context_retrieval_cpp() {
     let language = cpp_lang();
     let mut retriever = CodeContextRetriever::new();
@@ -845,6 +982,51 @@ fn cpp_lang() -> Arc<Language> {
                     declarator: (_) @name) @item
             )
 
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn elixir_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Elixir".into(),
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            Some(tree_sitter_elixir::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (unary_operator
+                    operator: "@"
+                    operand: (call
+                        target: (identifier) @unary
+                        (#match? @unary "^(doc)$"))
+                    ) @context
+                .
+                (call
+                target: (identifier) @name
+                (arguments
+                [
+                (identifier) @name
+                (call
+                target: (identifier) @name)
+                (binary_operator
+                left: (call
+                target: (identifier) @name)
+                operator: "when")
+                ])
+                (#match? @name "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
+                )
+
+            (call
+                target: (identifier) @name
+                (arguments (alias) @name)
+                (#match? @name "^(defmodule|defprotocol)$")) @item
             "#,
         )
         .unwrap(),
