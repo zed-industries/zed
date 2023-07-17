@@ -77,7 +77,6 @@ pub fn init(
     if *RELEASE_CHANNEL == ReleaseChannel::Stable
         || !settings::get::<SemanticIndexSettings>(cx).enabled
     {
-        log::info!("NOT ENABLED");
         return;
     }
 
