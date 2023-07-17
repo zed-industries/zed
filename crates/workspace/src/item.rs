@@ -33,11 +33,30 @@ use theme::Theme;
 #[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
+    pub close_position: ClosePosition,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ClosePosition {
+    Left,
+    #[default]
+    Right,
+}
+
+impl ClosePosition {
+    pub fn right(&self) -> bool {
+        match self {
+            ClosePosition::Left => false,
+            ClosePosition::Right => true,
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
     git_status: Option<bool>,
+    close_position: Option<ClosePosition>,
 }
 
 impl Setting for ItemSettings {
