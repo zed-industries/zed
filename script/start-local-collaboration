@@ -45,7 +45,7 @@ position_2=${half_width},${y}
 # Authenticate using the collab server's admin secret.
 export ZED_STATELESS=1
 export ZED_ADMIN_API_TOKEN=secret
-export ZED_SERVER_URL=http://localhost:3000
+export ZED_SERVER_URL=http://localhost:8080
 export ZED_WINDOW_SIZE=${half_width},${height}
 
 cargo build
