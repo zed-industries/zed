@@ -67,13 +67,17 @@ impl EmbeddingProvider for DummyEmbeddings {
     }
 }
 
-const INPUT_LIMIT: usize = 8190;
+const OPENAI_INPUT_LIMIT: usize = 8190;
 
 impl OpenAIEmbeddings {
+    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
+        Self { client, executor }
+    }
+
     fn truncate(span: String) -> String {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span.as_ref());
-        if tokens.len() > INPUT_LIMIT {
-            tokens.truncate(INPUT_LIMIT);
+        if tokens.len() > OPENAI_INPUT_LIMIT {
+            tokens.truncate(OPENAI_INPUT_LIMIT);
             let result = OPENAI_BPE_TOKENIZER.decode(tokens.clone());
             if result.is_ok() {
                 let transformed = result.unwrap();
@@ -115,6 +119,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .ok_or_else(|| anyhow!("no api key"))?;
 
         let mut request_number = 0;
+        let mut truncated = false;
         let mut response: Response<AsyncBody>;
         let mut spans: Vec<String> = spans.iter().map(|x| x.to_string()).collect();
         while request_number < MAX_RETRIES {
@@ -136,15 +141,18 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     self.executor.timer(delay).await;
                 }
                 StatusCode::BAD_REQUEST => {
-                    log::info!(
-                        "BAD REQUEST: {:?} {:?}",
-                        &response.status(),
-                        response.body()
-                    );
-                    // Don't worry about delaying bad request, as we can assume
-                    // we haven't been rate limited yet.
-                    for span in spans.iter_mut() {
-                        *span = Self::truncate(span.to_string());
+                    // Only truncate if it hasnt been truncated before
+                    if !truncated {
+                        for span in spans.iter_mut() {
+                            *span = Self::truncate(span.clone());
+                        }
+                        truncated = true;
+                    } else {
+                        // If failing once already truncated, log the error and break the loop
+                        let mut body = String::new();
+                        response.body_mut().read_to_string(&mut body).await?;
+                        log::trace!("open ai bad request: {:?} {:?}", &response.status(), body);
+                        break;
                     }
                 }
                 StatusCode::OK => {
@@ -152,7 +160,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     response.body_mut().read_to_string(&mut body).await?;
                     let response: OpenAIEmbeddingResponse = serde_json::from_str(&body)?;
 
-                    log::info!(
+                    log::trace!(
                         "openai embedding completed. tokens: {:?}",
                         response.usage.total_tokens
                     );
