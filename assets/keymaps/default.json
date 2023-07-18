@@ -232,14 +232,17 @@
       "escape":  "project_search::ToggleFocus",
       "cmd-r": "project_search::ToggleReplace",
       "cmd-shift-r": "project_search::Replace",
-      "alt-cmd-shift-r": "project_search::ReplaceAll"
+      "alt-cmd-shift-r": "project_search::ReplaceAll",
+      "cmd-z": "project_search::Undo"
     }
   },
   {
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "cmd-r": "project_search::ToggleReplace"
+      "cmd-r": "project_search::ToggleReplace",
+      "cmd-shift-r": "project_search::Replace",
+      "alt-cmd-shift-r": "project_search::ReplaceAll",
     }
   },
   {
