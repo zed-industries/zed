@@ -1,6 +1,7 @@
 mod dense_id;
 mod messages;
 mod operations;
+mod sync;
 #[cfg(test)]
 mod test;
 
