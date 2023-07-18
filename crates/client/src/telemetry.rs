@@ -40,6 +40,7 @@ lazy_static! {
 struct ClickhouseEventRequestBody {
     token: &'static str,
     installation_id: Option<Arc<str>>,
+    is_staff: Option<bool>,
     app_version: Option<Arc<str>>,
     os_name: &'static str,
     os_version: Option<Arc<str>>,
@@ -224,6 +225,7 @@ impl Telemetry {
                             &ClickhouseEventRequestBody {
                                 token: ZED_SECRET_CLIENT_TOKEN,
                                 installation_id: state.installation_id.clone(),
+                                is_staff: state.is_staff.clone(),
                                 app_version: state.app_version.clone(),
                                 os_name: state.os_name,
                                 os_version: state.os_version.clone(),
