@@ -1,6 +1,6 @@
 use crate::{
-    SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleWholeWord,
+    Replace, ReplaceAll, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -46,6 +46,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
     cx.add_action(BufferSearchBar::select_all_matches_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
+    cx.add_action(BufferSearchBar::replace_all);
+    cx.add_action(BufferSearchBar::replace);
+    cx.add_action(BufferSearchBar::toggle_replace);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
@@ -581,6 +584,12 @@ impl BufferSearchBar {
             }
         }
     }
+
+    fn replace(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {}
+
+    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {}
+
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {}
 
     pub fn select_match(&mut self, direction: Direction, count: usize, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {

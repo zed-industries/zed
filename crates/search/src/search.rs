@@ -21,6 +21,9 @@ actions!(
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
+        Replace,
+        ReplaceAll,
+        ToggleReplace
     ]
 );
 
