@@ -954,10 +954,20 @@ impl SearchableItem for Editor {
     fn remove_match(
         &mut self,
         index: usize,
-        matches: Vec<Range<Anchor>>,
+        mut matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
+        self.clear_background_highlights::<BufferSearchHighlights>(cx);
         self.unfold_ranges([matches[index].clone()], false, true, cx);
+        matches.remove(index);
+        self.highlight_background::<BufferSearchHighlights>(
+            matches.clone(),
+            |theme| theme.search.match_background,
+            cx,
+        );
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.select_ranges(matches);
+        });
 
     }
 

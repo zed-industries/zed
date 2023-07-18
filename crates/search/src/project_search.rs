@@ -90,6 +90,7 @@ struct ProjectSearch {
     excerpts: ModelHandle<MultiBuffer>,
     pending_search: Option<Shared<Task<Option<()>>>>,
     match_ranges: Vec<Range<Anchor>>,
+    out_of_date_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     search_id: usize,
 }
@@ -111,7 +112,7 @@ pub struct ProjectSearchView {
     show_filter: bool,
     show_replace: bool,
     panels_with_errors: HashSet<InputPanel>,
-    active_match_index: Option<usize>,
+    active_match_index: Option<Option<usize>>,
     search_id: usize,
     query_editor_was_focused: bool,
     included_files_editor: ViewHandle<Editor>,
@@ -135,6 +136,7 @@ impl ProjectSearch {
             project,
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
             pending_search: Default::default(),
+            out_of_date_ranges: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
             search_id: 0,
@@ -148,6 +150,7 @@ impl ProjectSearch {
                 .excerpts
                 .update(cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
+            out_of_date_ranges: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
             search_id: self.search_id,
@@ -161,6 +164,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
+        self.out_of_date_ranges.clear();
         self.pending_search = Some(
             cx.spawn_weak(|this, mut cx| async move {
                 let matches = search.await.log_err()?;
@@ -168,6 +172,8 @@ impl ProjectSearch {
                 let mut matches = matches.into_iter().collect::<Vec<_>>();
                 let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
                     this.match_ranges.clear();
+                    this.out_of_date_ranges.clear();
+
                     matches
                         .sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
                     this.excerpts.update(cx, |excerpts, cx| {
@@ -199,68 +205,47 @@ impl ProjectSearch {
     }
 
     fn replace_all(&mut self, replacement_text: Arc<str>, cx: &mut ModelContext<Self>) {
-        let pending_search = if let Some(task) = &self.pending_search {
-            task.clone()
-        } else {
-            Task::ready(None).shared()
-        };
+        self.excerpts.update(cx, |multibuffer, cx| {
+            multibuffer.edit(
+                self.match_ranges
+                    .iter()
+                    .map(|range| (range.clone(), replacement_text.to_string())),
+                None,
+                cx,
+            )
+        });
 
-        self.pending_search = Some(
-            cx.spawn(|this, mut cx| async move {
-                let result = pending_search.await;
-
-                this.update(&mut cx, |this, cx| {
-                    this.excerpts.update(cx, |multibuffer, cx| {
-                        multibuffer.edit(
-                            this.match_ranges
-                                .iter()
-                                .map(|range| (range.clone(), replacement_text.to_string())),
-                            None,
-                            cx,
-                        )
-                    })
-                });
-
-                result
-            })
-            .shared(),
-        );
+        self.out_of_date_ranges
+            .extend(self.match_ranges.drain(..));
     }
 
-    fn replace(&mut self, index: usize, replacement_text: Arc<str>, cx: &mut ModelContext<Self>) {
-        let pending_search = if let Some(task) = &self.pending_search {
-            task.clone()
-        } else {
-            Task::ready(None).shared()
-        };
+    fn replace(
+        &mut self,
+        index: usize,
+        replacement_text: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<usize> {
+        if self.match_ranges.len() == 0 {
+            return None;
+        }
 
-        self.pending_search = Some(
-            cx.spawn(|this, mut cx| async move {
-                let result = pending_search.await;
+        debug_assert!(index < self.match_ranges.len());
 
-                this.update(&mut cx, |this, cx| {
-                    if this.match_ranges.len() == 0 {
-                        return;
-                    }
+        self.excerpts.update(cx, |multibuffer, cx| {
+            multibuffer.edit(
+                [(
+                    self.match_ranges[index].clone(),
+                    replacement_text.to_string(),
+                )],
+                None,
+                cx,
+            );
+        });
 
-                    debug_assert!(index < this.match_ranges.len());
-
-                    this.excerpts.update(cx, |multibuffer, cx| {
-                        multibuffer.edit(
-                            [(this.match_ranges[index].clone(), replacement_text.to_string())],
-                            None,
-                            cx,
-                        );
-
-                    });
-
-                    cx.notify();
-                });
-
-                result
-            })
-            .shared(),
-        );
+        self.out_of_date_ranges
+            .push(self.match_ranges.remove(index));
+        cx.notify();
+        Some(self.match_ranges.len())
     }
 }
 
@@ -281,7 +266,7 @@ impl View for ProjectSearchView {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let model = &self.model.read(cx);
-        if model.match_ranges.is_empty() {
+        if model.match_ranges.is_empty() && self.active_match_index.is_none() {
             enum Status {}
 
             let theme = theme::current(cx).clone();
@@ -679,22 +664,21 @@ impl ProjectSearchView {
     fn replace(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             if let Some(replace_text) = query.replace_text() {
-                if let Some(idx) = self.active_match_index {
-
-                    self.model
+                if let Some(Some(idx)) = self.active_match_index {
+                    let len = self
+                        .model
                         .update(cx, |model, cx| model.replace(idx, replace_text, cx));
 
-                    self.results_editor.update(cx, |editor, cx| {
-                        editor.select_matches(self.model.read(cx).match_ranges.clone(), cx)
-                    });
-
-                    if idx < self.model.read(cx).match_ranges.len() - 1{
-                        self.active_match_index = Some(idx + 1);
+                    if let Some(len) = len {
+                        if idx >= len {
+                            self.active_match_index = Some(Some(0));
+                            self.select_index(0, cx)
+                        } else {
+                            self.select_index(idx, cx)
+                        }
                     } else {
-                        self.active_match_index = Some(0);
+                        self.active_match_index = Some(None);
                     }
-
-                    cx.notify();
                 }
             }
         }
@@ -705,6 +689,7 @@ impl ProjectSearchView {
             if let Some(replace_text) = query.replace_text() {
                 self.model
                     .update(cx, |model, cx| model.replace_all(replace_text, cx));
+                self.active_match_index = Some(None);
             }
         }
     }
@@ -778,20 +763,26 @@ impl ProjectSearchView {
     }
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
-        if let Some(index) = self.active_match_index {
+        if let Some(Some(index)) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
             let new_index = self.results_editor.update(cx, |editor, cx| {
                 editor.match_index_for_direction(&match_ranges, index, direction, cx)
             });
 
-            let range_to_select = match_ranges[new_index].clone();
-            self.results_editor.update(cx, |editor, cx| {
-                editor.unfold_ranges([range_to_select.clone()], false, true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_ranges([range_to_select])
-                });
-            });
+            self.select_index(new_index, cx)
         }
+    }
+
+    fn select_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        let Some(range_to_select) = self.model.read(cx).match_ranges.get(index).map(|range| range.clone()) else {
+            return
+        };
+        self.results_editor.update(cx, |editor, cx| {
+            editor.unfold_ranges([range_to_select.clone()], false, true, cx);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges([range_to_select])
+            });
+        });
     }
 
     fn focus_query_editor(&mut self, cx: &mut ViewContext<Self>) {
@@ -818,12 +809,9 @@ impl ProjectSearchView {
 
     fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
         let match_ranges = self.model.read(cx).match_ranges.clone();
-        if match_ranges.is_empty() {
-            self.active_match_index = None;
-        } else {
-            self.active_match_index = Some(0);
-            self.select_match(Direction::Next, cx);
-            self.update_match_index(cx);
+        // self.select_match(Direction::Next, cx);
+        self.update_match_index(cx);
+        if !match_ranges.is_empty() {
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
@@ -832,16 +820,23 @@ impl ProjectSearchView {
                         s.select_ranges(match_ranges.first().cloned())
                     });
                 }
-                editor.highlight_background::<Self>(
-                    match_ranges,
-                    |theme| theme.search.match_background,
-                    cx,
-                );
             });
             if is_new_search && self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
             }
         }
+        self.results_editor.update(cx, |editor, cx| {
+            editor.highlight_background::<ProjectSearch>(
+                self.model.read(cx).out_of_date_ranges.clone(),
+                |theme| theme.search.out_of_date_match_background,
+                cx,
+            );
+            editor.highlight_background::<Self>(
+                self.model.read(cx).match_ranges.clone(),
+                |theme| theme.search.match_background,
+                cx,
+            );
+        });
 
         cx.emit(ViewEvent::UpdateTab);
         cx.notify();
@@ -854,8 +849,8 @@ impl ProjectSearchView {
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
-        if self.active_match_index != new_index {
-            self.active_match_index = new_index;
+        if self.active_match_index != Some(new_index) {
+            self.active_match_index = Some(new_index);
             cx.notify();
         }
     }
@@ -1216,7 +1211,7 @@ impl View for ProjectSearchBar {
                                     Label::new(
                                         format!(
                                             "{}/{}",
-                                            match_ix + 1,
+                                            match_ix.map(|ix| ix + 1).unwrap_or(0),
                                             search.model.read(cx).match_ranges.len()
                                         ),
                                         theme.search.match_index.text.clone(),
@@ -1438,7 +1433,7 @@ pub mod tests {
                     )
                 ]
             );
-            assert_eq!(search_view.active_match_index, Some(0));
+            assert_eq!(search_view.active_match_index, Some(Some(0)));
             assert_eq!(
                 search_view
                     .results_editor
@@ -1450,7 +1445,7 @@ pub mod tests {
         });
 
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.active_match_index, Some(1));
+            assert_eq!(search_view.active_match_index, Some(Some(1)));
             assert_eq!(
                 search_view
                     .results_editor
@@ -1461,7 +1456,7 @@ pub mod tests {
         });
 
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.active_match_index, Some(2));
+            assert_eq!(search_view.active_match_index, Some(Some(2)));
             assert_eq!(
                 search_view
                     .results_editor
@@ -1472,7 +1467,7 @@ pub mod tests {
         });
 
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.active_match_index, Some(0));
+            assert_eq!(search_view.active_match_index, Some(Some(0)));
             assert_eq!(
                 search_view
                     .results_editor
@@ -1483,7 +1478,7 @@ pub mod tests {
         });
 
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.active_match_index, Some(2));
+            assert_eq!(search_view.active_match_index, Some(Some(2)));
             assert_eq!(
                 search_view
                     .results_editor
@@ -1494,7 +1489,7 @@ pub mod tests {
         });
 
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.active_match_index, Some(1));
+            assert_eq!(search_view.active_match_index, Some(Some(1)));
             assert_eq!(
                 search_view
                     .results_editor

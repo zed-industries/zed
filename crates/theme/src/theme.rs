@@ -381,6 +381,7 @@ pub struct Search {
     pub option_button: Toggleable<Interactive<ContainedText>>,
     pub action_button: Interactive<ContainedText>,
     pub match_background: Color,
+    pub out_of_date_match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
     pub dismiss_button: Interactive<IconButton>,
