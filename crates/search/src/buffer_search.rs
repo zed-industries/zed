@@ -69,6 +69,7 @@ fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContex
 
 pub struct BufferSearchBar {
     pub query_editor: ViewHandle<Editor>,
+    pub replace_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
@@ -79,6 +80,7 @@ pub struct BufferSearchBar {
     default_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
+    show_replace: bool,
 }
 
 impl Entity for BufferSearchBar {
@@ -109,36 +111,97 @@ impl View for BufferSearchBar {
             .map(|active_searchable_item| active_searchable_item.supported_options())
             .unwrap_or_default();
 
-        Flex::row()
+        Flex::column()
             .with_child(
                 Flex::row()
                     .with_child(
                         Flex::row()
                             .with_child(
-                                ChildView::new(&self.query_editor, cx)
+                                Flex::row()
+                                    .with_child(
+                                        ChildView::new(&self.query_editor, cx)
+                                            .aligned()
+                                            .left()
+                                            .flex(1., true),
+                                    )
+                                    .with_children(self.active_searchable_item.as_ref().and_then(
+                                        |searchable_item| {
+                                            let matches = self
+                                                .searchable_items_with_matches
+                                                .get(&searchable_item.downgrade())?;
+                                            let message =
+                                                if let Some(match_ix) = self.active_match_index {
+                                                    format!("{}/{}", match_ix + 1, matches.len())
+                                                } else {
+                                                    "No matches".to_string()
+                                                };
+
+                                            Some(
+                                                Label::new(
+                                                    message,
+                                                    theme.search.match_index.text.clone(),
+                                                )
+                                                .contained()
+                                                .with_style(theme.search.match_index.container)
+                                                .aligned(),
+                                            )
+                                        },
+                                    ))
+                                    .contained()
+                                    .with_style(editor_container)
+                                    .aligned()
+                                    .constrained()
+                                    .with_min_width(theme.search.editor.min_width)
+                                    .with_max_width(theme.search.editor.max_width)
+                                    .flex(1., false),
+                            )
+                            .with_child(
+                                Flex::row()
+                                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                                    .with_child(self.render_action_button("Select All", cx))
+                                    .aligned(),
+                            )
+                            .with_child(
+                                Flex::row()
+                                    .with_children(self.render_search_option(
+                                        supported_options.case,
+                                        "Case",
+                                        SearchOptions::CASE_SENSITIVE,
+                                        cx,
+                                    ))
+                                    .with_children(self.render_search_option(
+                                        supported_options.word,
+                                        "Word",
+                                        SearchOptions::WHOLE_WORD,
+                                        cx,
+                                    ))
+                                    .with_children(self.render_search_option(
+                                        supported_options.regex,
+                                        "Regex",
+                                        SearchOptions::REGEX,
+                                        cx,
+                                    ))
+                                    .contained()
+                                    .with_style(theme.search.option_button_group)
+                                    .aligned(),
+                            )
+                            .flex(1., true),
+                    )
+                    .with_child(self.render_close_button(&theme.search, cx))
+                    .contained()
+                    .with_margin_bottom(theme.workspace.toolbar.container.padding.bottom),
+            )
+            .with_children(self.show_replace.then(|| {
+                Flex::row()
+                    .with_child(
+                        Flex::row()
+                            .with_child(
+                                ChildView::new(&self.replace_editor, cx)
                                     .aligned()
                                     .left()
                                     .flex(1., true),
                             )
-                            .with_children(self.active_searchable_item.as_ref().and_then(
-                                |searchable_item| {
-                                    let matches = self
-                                        .searchable_items_with_matches
-                                        .get(&searchable_item.downgrade())?;
-                                    let message = if let Some(match_ix) = self.active_match_index {
-                                        format!("{}/{}", match_ix + 1, matches.len())
-                                    } else {
-                                        "No matches".to_string()
-                                    };
-
-                                    Some(
-                                        Label::new(message, theme.search.match_index.text.clone())
-                                            .contained()
-                                            .with_style(theme.search.match_index.container)
-                                            .aligned(),
-                                    )
-                                },
-                            ))
                             .contained()
                             .with_style(editor_container)
                             .aligned()
@@ -149,38 +212,11 @@ impl View for BufferSearchBar {
                     )
                     .with_child(
                         Flex::row()
-                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                            .with_child(self.render_nav_button(">", Direction::Next, cx))
-                            .with_child(self.render_action_button("Select All", cx))
+                            .with_child(self.render_replace_button("<", Direction::Prev, cx))
+                            .with_child(self.render_replace_button(">", Direction::Next, cx))
                             .aligned(),
                     )
-                    .with_child(
-                        Flex::row()
-                            .with_children(self.render_search_option(
-                                supported_options.case,
-                                "Case",
-                                SearchOptions::CASE_SENSITIVE,
-                                cx,
-                            ))
-                            .with_children(self.render_search_option(
-                                supported_options.word,
-                                "Word",
-                                SearchOptions::WHOLE_WORD,
-                                cx,
-                            ))
-                            .with_children(self.render_search_option(
-                                supported_options.regex,
-                                "Regex",
-                                SearchOptions::REGEX,
-                                cx,
-                            ))
-                            .contained()
-                            .with_style(theme.search.option_button_group)
-                            .aligned(),
-                    )
-                    .flex(1., true),
-            )
-            .with_child(self.render_close_button(&theme.search, cx))
+            }))
             .contained()
             .with_style(theme.search.container)
             .into_any_named("search bar")
@@ -236,6 +272,10 @@ impl ToolbarItemView for BufferSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
+
+    fn row_count(&self, _cx: &AppContext) -> usize {
+        1 + self.show_replace as usize
+    }
 }
 
 // TODO: Add support for replace
@@ -251,8 +291,17 @@ impl BufferSearchBar {
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
+        let replace_editor = cx.add_view(|cx| {
+            Editor::auto_height(
+                2,
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            )
+        });
+
         Self {
             query_editor,
+            replace_editor,
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
@@ -262,6 +311,7 @@ impl BufferSearchBar {
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
+            show_replace: false,
         }
     }
 
@@ -445,6 +495,51 @@ impl BufferSearchBar {
         .into_any()
     }
 
+    fn render_replace_button(
+        &self,
+        icon: &'static str,
+        direction: Direction,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let action: Box<dyn Action>;
+        let tooltip;
+        match direction {
+            Direction::Prev => {
+                action = Box::new(SelectPrevMatch);
+                tooltip = "Select Previous Match";
+            }
+            Direction::Next => {
+                action = Box::new(SelectNextMatch);
+                tooltip = "Select Next Match";
+            }
+        };
+        let tooltip_style = theme::current(cx).tooltip.clone();
+
+        enum NavButton {}
+        MouseEventHandler::<NavButton, _>::new(2 + direction as usize, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme.search.option_button.inactive_state().style_for(state);
+            Label::new(icon, style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, {
+            move |_, this, cx| match direction {
+                Direction::Prev => this.select_prev_match(&Default::default(), cx),
+                Direction::Next => this.select_next_match(&Default::default(), cx),
+            }
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<NavButton>(
+            2 + direction as usize,
+            tooltip.to_string(),
+            Some(action),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
+
     fn render_action_button(
         &self,
         icon: &'static str,
@@ -585,11 +680,27 @@ impl BufferSearchBar {
         }
     }
 
-    fn replace(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {}
+    fn replace(&mut self, _: &Replace, _: &mut ViewContext<Self>) {}
 
-    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {}
+    fn replace_all(&mut self, _: &ReplaceAll, _: &mut ViewContext<Self>) {}
 
-    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {}
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
+        if self.show_replace && self.replace_editor.is_focused(cx) {
+            self.query_editor.update(cx, |query_editor, cx| {
+                query_editor.select_all(&editor::SelectAll, cx);
+            });
+
+            cx.focus_self();
+        }
+
+        self.show_replace = !self.show_replace;
+
+        if self.show_replace {
+            cx.focus(self.replace_editor.as_any());
+        }
+
+        cx.notify();
+    }
 
     pub fn select_match(&mut self, direction: Direction, count: usize, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
