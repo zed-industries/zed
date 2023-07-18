@@ -371,8 +371,7 @@
       "ctrl--": "pane::GoBack",
       "ctrl-_": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus",
-      "cmd-shift-r": "project_search::ToggleReplace"
+      "cmd-shift-f": "project_search::ToggleFocus"
     }
   },
   {
