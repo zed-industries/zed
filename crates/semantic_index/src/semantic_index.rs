@@ -12,7 +12,7 @@ use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
-use language::{Language, LanguageRegistry};
+use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
@@ -93,7 +93,7 @@ pub struct SemanticIndex {
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
     outstanding_job_count_rx: watch::Receiver<usize>,
-    outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
 
 struct JobHandle {
@@ -135,12 +135,9 @@ pub struct PendingFile {
     job_handle: JobHandle,
 }
 
-#[derive(Debug, Clone)]
 pub struct SearchResult {
-    pub worktree_id: WorktreeId,
-    pub name: String,
-    pub byte_range: Range<usize>,
-    pub file_path: PathBuf,
+    pub buffer: ModelHandle<Buffer>,
+    pub range: Range<Anchor>,
 }
 
 enum DbOperation {
@@ -520,7 +517,7 @@ impl SemanticIndex {
                             .map(|(a, b)| (*a, *b))
                             .collect(),
                         outstanding_job_count_rx: job_count_rx.clone(),
-                        outstanding_job_count_tx: job_count_tx.clone(),
+                        _outstanding_job_count_tx: job_count_tx.clone(),
                     },
                 );
             });
@@ -623,7 +620,7 @@ impl SemanticIndex {
         let embedding_provider = self.embedding_provider.clone();
         let database_url = self.database_url.clone();
         let fs = self.fs.clone();
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let documents = cx
                 .background()
                 .spawn(async move {
@@ -640,26 +637,39 @@ impl SemanticIndex {
                 })
                 .await?;
 
-            this.read_with(&cx, |this, _| {
-                let project_state = if let Some(state) = this.projects.get(&project.downgrade()) {
-                    state
-                } else {
-                    return Err(anyhow!("project not added"));
-                };
+            let mut tasks = Vec::new();
+            let mut ranges = Vec::new();
+            let weak_project = project.downgrade();
+            project.update(&mut cx, |project, cx| {
+                for (worktree_db_id, file_path, byte_range) in documents {
+                    let project_state =
+                        if let Some(state) = this.read(cx).projects.get(&weak_project) {
+                            state
+                        } else {
+                            return Err(anyhow!("project not added"));
+                        };
+                    if let Some(worktree_id) = project_state.worktree_id_for_db_id(worktree_db_id) {
+                        tasks.push(project.open_buffer((worktree_id, file_path), cx));
+                        ranges.push(byte_range);
+                    }
+                }
 
-                Ok(documents
-                    .into_iter()
-                    .filter_map(|(worktree_db_id, file_path, byte_range, name)| {
-                        let worktree_id = project_state.worktree_id_for_db_id(worktree_db_id)?;
-                        Some(SearchResult {
-                            worktree_id,
-                            name,
-                            byte_range,
-                            file_path,
-                        })
-                    })
-                    .collect())
-            })
+                Ok(())
+            })?;
+
+            let buffers = futures::future::join_all(tasks).await;
+
+            Ok(buffers
+                .into_iter()
+                .zip(ranges)
+                .filter_map(|(buffer, range)| {
+                    let buffer = buffer.log_err()?;
+                    let range = buffer.read_with(&cx, |buffer, _| {
+                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end)
+                    });
+                    Some(SearchResult { buffer, range })
+                })
+                .collect::<Vec<_>>())
         })
     }
 }

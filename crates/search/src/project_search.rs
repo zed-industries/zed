@@ -2,7 +2,7 @@ use crate::{
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
@@ -186,6 +186,53 @@ impl ProjectSearch {
             None
         }));
         cx.notify();
+    }
+
+    fn semantic_search(&mut self, query: String, cx: &mut ModelContext<Self>) -> Option<()> {
+        let project = self.project.clone();
+        let semantic_index = SemanticIndex::global(cx)?;
+        let search_task = semantic_index.update(cx, |semantic_index, cx| {
+            semantic_index.search_project(project, query.clone(), 10, cx)
+        });
+
+        self.search_id += 1;
+        // self.active_query = Some(query);
+        self.match_ranges.clear();
+        self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+            let results = search_task.await.log_err()?;
+
+            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+                this.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.clear(cx);
+
+                    let matches = results
+                        .into_iter()
+                        .map(|result| (result.buffer, vec![result.range]))
+                        .collect();
+
+                    excerpts.stream_excerpts_with_context_lines(matches, 3, cx)
+                })
+            });
+
+            while let Some(match_range) = match_ranges.next().await {
+                this.update(&mut cx, |this, cx| {
+                    this.match_ranges.push(match_range);
+                    while let Ok(Some(match_range)) = match_ranges.try_next() {
+                        this.match_ranges.push(match_range);
+                    }
+                    cx.notify();
+                });
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.pending_search.take();
+                cx.notify();
+            });
+
+            None
+        }));
+
+        Some(())
     }
 }
 
@@ -595,27 +642,9 @@ impl ProjectSearchView {
                 return;
             }
 
-            let search_phrase = self.query_editor.read(cx).text(cx);
-            let project = self.model.read(cx).project.clone();
-            if let Some(semantic_index) = SemanticIndex::global(cx) {
-                let search_task = semantic_index.update(cx, |semantic_index, cx| {
-                    semantic_index.search_project(project, search_phrase, 10, cx)
-                });
-                semantic.search_task = Some(cx.spawn(|this, mut cx| async move {
-                    let results = search_task.await.context("search task")?;
-
-                    this.update(&mut cx, |this, cx| {
-                        dbg!(&results);
-                        // TODO: Update results
-
-                        if let Some(semantic) = &mut this.semantic {
-                            semantic.search_task = None;
-                        }
-                    })?;
-
-                    anyhow::Ok(())
-                }));
-            }
+            let query = self.query_editor.read(cx).text(cx);
+            self.model
+                .update(cx, |model, cx| model.semantic_search(query, cx));
             return;
         }
 

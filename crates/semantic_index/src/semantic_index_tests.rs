@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{Task, TestAppContext};
-use language::{Language, LanguageConfig, LanguageRegistry};
+use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
@@ -85,9 +85,6 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     .unwrap();
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-    let worktree_id = project.read_with(cx, |project, cx| {
-        project.worktrees(cx).next().unwrap().read(cx).id()
-    });
     let (file_count, outstanding_file_count) = store
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await
@@ -103,9 +100,13 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    assert_eq!(search_results[0].byte_range.start, 0);
-    assert_eq!(search_results[0].name, "aaa");
-    assert_eq!(search_results[0].worktree_id, worktree_id);
+    search_results[0].buffer.read_with(cx, |buffer, _cx| {
+        assert_eq!(search_results[0].range.start.to_offset(buffer), 0);
+        assert_eq!(
+            buffer.file().unwrap().path().as_ref(),
+            Path::new("file1.rs")
+        );
+    });
 
     fs.save(
         "/the-root/src/file2.rs".as_ref(),

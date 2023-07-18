@@ -70,10 +70,6 @@ impl EmbeddingProvider for DummyEmbeddings {
 const OPENAI_INPUT_LIMIT: usize = 8190;
 
 impl OpenAIEmbeddings {
-    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
-        Self { client, executor }
-    }
-
     fn truncate(span: String) -> String {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span.as_ref());
         if tokens.len() > OPENAI_INPUT_LIMIT {
@@ -81,7 +77,6 @@ impl OpenAIEmbeddings {
             let result = OPENAI_BPE_TOKENIZER.decode(tokens.clone());
             if result.is_ok() {
                 let transformed = result.unwrap();
-                // assert_ne!(transformed, span);
                 return transformed;
             }
         }

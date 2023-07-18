@@ -252,7 +252,7 @@ impl VectorDatabase {
         worktree_ids: &[i64],
         query_embedding: &Vec<f32>,
         limit: usize,
-    ) -> Result<Vec<(i64, PathBuf, Range<usize>, String)>> {
+    ) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
         let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
         self.for_each_document(&worktree_ids, |id, embedding| {
             let similarity = dot(&embedding, &query_embedding);
@@ -296,10 +296,7 @@ impl VectorDatabase {
         Ok(())
     }
 
-    fn get_documents_by_ids(
-        &self,
-        ids: &[i64],
-    ) -> Result<Vec<(i64, PathBuf, Range<usize>, String)>> {
+    fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
         let mut statement = self.db.prepare(
             "
                 SELECT
@@ -307,7 +304,7 @@ impl VectorDatabase {
                     files.worktree_id,
                     files.relative_path,
                     documents.start_byte,
-                    documents.end_byte, documents.name
+                    documents.end_byte
                 FROM
                     documents, files
                 WHERE
@@ -322,14 +319,13 @@ impl VectorDatabase {
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?.into(),
                 row.get(3)?..row.get(4)?,
-                row.get(5)?,
             ))
         })?;
 
-        let mut values_by_id = HashMap::<i64, (i64, PathBuf, Range<usize>, String)>::default();
+        let mut values_by_id = HashMap::<i64, (i64, PathBuf, Range<usize>)>::default();
         for row in result_iter {
-            let (id, worktree_id, path, range, name) = row?;
-            values_by_id.insert(id, (worktree_id, path, range, name));
+            let (id, worktree_id, path, range) = row?;
+            values_by_id.insert(id, (worktree_id, path, range));
         }
 
         let mut results = Vec::with_capacity(ids.len());
