@@ -223,16 +223,19 @@
       "tab": "buffer_search::FocusEditor",
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
-      "alt-enter": "search::SelectAllMatches"
+      "alt-enter": "search::SelectAllMatches",
+      "cmd-r": "search::ToggleReplace",
+      "cmd-shift-r": "search::Replace",
+      "alt-cmd-shift-r": "search::ReplaceAll"
     }
   },
   {
     "context": "ProjectSearchBar",
     "bindings": {
       "escape":  "project_search::ToggleFocus",
-      "cmd-r": "project_search::ToggleReplace",
-      "cmd-shift-r": "project_search::Replace",
-      "alt-cmd-shift-r": "project_search::ReplaceAll",
+      "cmd-r": "search::ToggleReplace",
+      "cmd-shift-r": "search::Replace",
+      "alt-cmd-shift-r": "search::ReplaceAll",
       "cmd-z": "project_search::Undo"
     }
   },
@@ -240,9 +243,9 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "cmd-r": "project_search::ToggleReplace",
-      "cmd-shift-r": "project_search::Replace",
-      "alt-cmd-shift-r": "project_search::ReplaceAll",
+      "cmd-r": "search::ToggleReplace",
+      "cmd-shift-r": "search::Replace",
+      "alt-cmd-shift-r": "search::ReplaceAll"
     }
   },
   {
@@ -368,7 +371,8 @@
       "ctrl--": "pane::GoBack",
       "ctrl-_": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus"
+      "cmd-shift-f": "project_search::ToggleFocus",
+      "cmd-shift-r": "project_search::ToggleReplace"
     }
   },
   {

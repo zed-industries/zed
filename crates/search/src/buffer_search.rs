@@ -1,6 +1,6 @@
 use crate::{
     SearchOption, SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleWholeWord,
+    ToggleRegex, ToggleWholeWord, Replace, ReplaceAll, ToggleReplace,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -44,6 +44,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
     cx.add_action(BufferSearchBar::select_all_matches_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
+    cx.add_action(BufferSearchBar::replace_all);
+    cx.add_action(BufferSearchBar::replace);
+    cx.add_action(BufferSearchBar::toggle_replace);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
@@ -535,6 +538,24 @@ impl BufferSearchBar {
                 }
             }
         }
+    }
+
+    fn replace(
+        &mut self, _: &Replace, cx: &mut ViewContext<Self>
+    ) {
+
+    }
+
+    fn replace_all(
+        &mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>
+    ) {
+
+    }
+
+    fn toggle_replace(
+        &mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>
+    ) {
+
     }
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
