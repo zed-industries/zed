@@ -1,5 +1,5 @@
 use crate::{
-    ClientNetwork, ClientRoom, Message, RoomCredentials, RoomName, RoomToken, ServerNetwork,
+    ClientNetwork, ClientRoom, Message, RoomCredentials, RoomName, RoomToken, ServerNetwork, User,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -27,8 +27,13 @@ impl TestNetwork {
         TestServer(self.0.clone())
     }
 
-    pub fn client(&self) -> TestClient {
-        TestClient(self.0.clone())
+    pub fn client(&self, login: impl Into<Arc<str>>) -> TestClient {
+        TestClient {
+            user: User {
+                login: login.into(),
+            },
+            network: self.0.clone(),
+        }
     }
 }
 
@@ -36,7 +41,7 @@ struct NetworkState {
     executor: Arc<Background>,
     request_handlers: BTreeMap<
         TypeId,
-        Box<dyn Send + Fn(Box<dyn Any>) -> BoxFuture<'static, Result<Box<dyn Any>>>>,
+        Box<dyn Send + Fn(User, Box<dyn Any>) -> BoxFuture<'static, Result<Box<dyn Any>>>>,
     >,
     rooms: BTreeMap<RoomName, Room>,
 }
@@ -50,15 +55,15 @@ pub struct TestServer(Arc<Mutex<NetworkState>>);
 impl ServerNetwork for TestServer {
     fn on_request<H, F, R>(&self, handle_request: H)
     where
-        H: 'static + Send + Sync + Fn(R) -> F,
-        F: 'static + Send + Sync + futures::Future<Output = Result<R::Response>>,
+        H: 'static + Send + Fn(User, R) -> F,
+        F: 'static + Send + futures::Future<Output = Result<R::Response>>,
         R: crate::Request,
     {
         self.0.lock().request_handlers.insert(
             TypeId::of::<R>(),
-            Box::new(move |request| {
+            Box::new(move |user, request| {
                 let request = request.downcast::<R>().unwrap();
-                let response = handle_request(*request);
+                let response = handle_request(user, *request);
                 async move {
                     response
                         .await
@@ -68,9 +73,20 @@ impl ServerNetwork for TestServer {
             }),
         );
     }
+
+    fn create_room(&self, room: &RoomName) -> BoxFuture<Result<()>> {
+        todo!()
+    }
+
+    fn grant_room_access(&self, room: &RoomName, user: &str) -> RoomToken {
+        todo!()
+    }
 }
 
-pub struct TestClient(Arc<Mutex<NetworkState>>);
+pub struct TestClient {
+    user: User,
+    network: Arc<Mutex<NetworkState>>,
+}
 
 impl ClientNetwork for TestClient {
     type Room = TestClientRoom;
@@ -79,7 +95,7 @@ impl ClientNetwork for TestClient {
         &self,
         request: R,
     ) -> futures::future::BoxFuture<anyhow::Result<R::Response>> {
-        let network = self.0.lock();
+        let network = self.network.lock();
         let executor = network.executor.clone();
         let request = network
             .request_handlers
@@ -87,7 +103,7 @@ impl ClientNetwork for TestClient {
             .expect(&format!(
                 "handler for request {} not found",
                 type_name::<R>()
-            ))(Box::new(request));
+            ))(self.user.clone(), Box::new(request));
         async move {
             executor.simulate_random_delay().await;
             let response = request
@@ -104,7 +120,7 @@ impl ClientNetwork for TestClient {
             outbox: Default::default(),
             credentials,
             message_handlers: Default::default(),
-            network: self.0.clone(),
+            network: self.network.clone(),
         }
     }
 }

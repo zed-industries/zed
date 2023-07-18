@@ -1,4 +1,4 @@
-use crate::{Message, RepoId, Request, RoomCredentials};
+use crate::{RepoId, Request, RoomCredentials};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-use crate::{AnchorRange, Message, OperationId, RevisionId};
+use crate::{AnchorRange, OperationId, RevisionId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::sync::Arc;
