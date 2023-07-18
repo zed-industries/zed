@@ -104,7 +104,7 @@ thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
 tree-sitter.workspace = true
-tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "1b0321ee85701d5036c334a6f04761cdc672e64c" }
+tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
