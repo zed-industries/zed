@@ -19,6 +19,7 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
+semantic_index = { path = "../semantic_index" }
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true

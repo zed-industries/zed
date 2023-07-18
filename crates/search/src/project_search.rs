@@ -2,7 +2,7 @@ use crate::{
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
@@ -18,7 +18,9 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
+use postage::stream::Stream;
 use project::{search::SearchQuery, Project};
+use semantic_index::SemanticIndex;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -36,7 +38,10 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
-actions!(project_search, [SearchInNew, ToggleFocus, NextField]);
+actions!(
+    project_search,
+    [SearchInNew, ToggleFocus, NextField, ToggleSemanticSearch]
+);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -92,12 +97,20 @@ pub struct ProjectSearchView {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
+    semantic: Option<SemanticSearchState>,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
     query_editor_was_focused: bool,
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
+}
+
+struct SemanticSearchState {
+    file_count: usize,
+    outstanding_file_count: usize,
+    _progress_task: Task<()>,
+    search_task: Option<Task<Result<()>>>,
 }
 
 pub struct ProjectSearchBar {
@@ -198,12 +211,25 @@ impl View for ProjectSearchView {
 
             let theme = theme::current(cx).clone();
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
-                ""
+                Cow::Borrowed("")
+            } else if let Some(semantic) = &self.semantic {
+                if semantic.search_task.is_some() {
+                    Cow::Borrowed("Searching...")
+                } else if semantic.outstanding_file_count > 0 {
+                    Cow::Owned(format!(
+                        "Indexing. {} of {}...",
+                        semantic.file_count - semantic.outstanding_file_count,
+                        semantic.file_count
+                    ))
+                } else {
+                    Cow::Borrowed("Indexing complete")
+                }
             } else if model.pending_search.is_some() {
-                "Searching..."
+                Cow::Borrowed("Searching...")
             } else {
-                "No results"
+                Cow::Borrowed("No results")
             };
+
             MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
                 Label::new(text, theme.search.results_status.clone())
                     .aligned()
@@ -499,6 +525,7 @@ impl ProjectSearchView {
             case_sensitive,
             whole_word,
             regex,
+            semantic: None,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
@@ -563,6 +590,35 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(semantic) = &mut self.semantic {
+            if semantic.outstanding_file_count > 0 {
+                return;
+            }
+
+            let search_phrase = self.query_editor.read(cx).text(cx);
+            let project = self.model.read(cx).project.clone();
+            if let Some(semantic_index) = SemanticIndex::global(cx) {
+                let search_task = semantic_index.update(cx, |semantic_index, cx| {
+                    semantic_index.search_project(project, search_phrase, 10, cx)
+                });
+                semantic.search_task = Some(cx.spawn(|this, mut cx| async move {
+                    let results = search_task.await.context("search task")?;
+
+                    this.update(&mut cx, |this, cx| {
+                        dbg!(&results);
+                        // TODO: Update results
+
+                        if let Some(semantic) = &mut this.semantic {
+                            semantic.search_task = None;
+                        }
+                    })?;
+
+                    anyhow::Ok(())
+                }));
+            }
+            return;
+        }
+
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
@@ -876,6 +932,59 @@ impl ProjectSearchBar {
         }
     }
 
+    fn toggle_semantic_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                if search_view.semantic.is_some() {
+                    search_view.semantic = None;
+                } else if let Some(semantic_index) = SemanticIndex::global(cx) {
+                    // TODO: confirm that it's ok to send this project
+
+                    let project = search_view.model.read(cx).project.clone();
+                    let index_task = semantic_index.update(cx, |semantic_index, cx| {
+                        semantic_index.index_project(project, cx)
+                    });
+
+                    cx.spawn(|search_view, mut cx| async move {
+                        let (files_to_index, mut files_remaining_rx) = index_task.await?;
+
+                        search_view.update(&mut cx, |search_view, cx| {
+                            search_view.semantic = Some(SemanticSearchState {
+                                file_count: files_to_index,
+                                outstanding_file_count: files_to_index,
+                                search_task: None,
+                                _progress_task: cx.spawn(|search_view, mut cx| async move {
+                                    while let Some(count) = files_remaining_rx.recv().await {
+                                        search_view
+                                            .update(&mut cx, |search_view, cx| {
+                                                if let Some(semantic_search_state) =
+                                                    &mut search_view.semantic
+                                                {
+                                                    semantic_search_state.outstanding_file_count =
+                                                        count;
+                                                    cx.notify();
+                                                    if count == 0 {
+                                                        return;
+                                                    }
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                            });
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            });
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
     fn render_nav_button(
         &self,
         icon: &'static str,
@@ -947,6 +1056,42 @@ impl ProjectSearchBar {
             option as usize,
             format!("Toggle {}", option.label()),
             Some(option.to_toggle_action()),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
+
+    fn render_semantic_search_button(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let is_active = if let Some(search) = self.active_project_search.as_ref() {
+            let search = search.read(cx);
+            search.semantic.is_some()
+        } else {
+            false
+        };
+
+        let region_id = 3;
+
+        MouseEventHandler::<Self, _>::new(region_id, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme
+                .search
+                .option_button
+                .in_state(is_active)
+                .style_for(state);
+            Label::new("Semantic", style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_semantic_search(cx);
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self>(
+            region_id,
+            format!("Toggle Semantic Search"),
+            Some(Box::new(ToggleSemanticSearch)),
             tooltip_style,
             cx,
         )
@@ -1049,6 +1194,7 @@ impl View for ProjectSearchBar {
                         )
                         .with_child(
                             Flex::row()
+                                .with_child(self.render_semantic_search_button(cx))
                                 .with_child(self.render_option_button(
                                     "Case",
                                     SearchOption::CaseSensitive,

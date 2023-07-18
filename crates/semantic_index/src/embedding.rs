@@ -86,6 +86,7 @@ impl OpenAIEmbeddings {
     async fn send_request(&self, api_key: &str, spans: Vec<&str>) -> Result<Response<AsyncBody>> {
         let request = Request::post("https://api.openai.com/v1/embeddings")
             .redirect_policy(isahc::config::RedirectPolicy::Follow)
+            .timeout(Duration::from_secs(4))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", api_key))
             .body(
@@ -133,7 +134,11 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     self.executor.timer(delay).await;
                 }
                 StatusCode::BAD_REQUEST => {
-                    log::info!("BAD REQUEST: {:?}", &response.status());
+                    log::info!(
+                        "BAD REQUEST: {:?} {:?}",
+                        &response.status(),
+                        response.body()
+                    );
                     // Don't worry about delaying bad request, as we can assume
                     // we haven't been rate limited yet.
                     for span in spans.iter_mut() {

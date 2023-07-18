@@ -1,5 +1,5 @@
 use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use project::Fs;
 use rpc::proto::Timestamp;
 use rusqlite::{
@@ -76,14 +76,14 @@ impl VectorDatabase {
         self.db
             .execute(
                 "
-                    DROP TABLE semantic_index_config;
-                    DROP TABLE worktrees;
-                    DROP TABLE files;
-                    DROP TABLE documents;
+                DROP TABLE IF EXISTS documents;
+                DROP TABLE IF EXISTS files;
+                DROP TABLE IF EXISTS worktrees;
+                DROP TABLE IF EXISTS semantic_index_config;
                 ",
                 [],
             )
-            .ok();
+            .context("failed to drop tables")?;
 
         // Initialize Vector Databasing Tables
         self.db.execute(

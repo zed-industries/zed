@@ -20,6 +20,7 @@ editor = { path = "../editor" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 anyhow.workspace = true
+postage.workspace = true
 futures.workspace = true
 smol.workspace = true
 rusqlite = { version = "0.27.0", features = ["blob", "array", "modern_sqlite"] }

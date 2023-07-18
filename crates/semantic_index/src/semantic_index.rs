@@ -1,6 +1,5 @@
 mod db;
 mod embedding;
-mod modal;
 mod parsing;
 mod semantic_index_settings;
 
@@ -12,25 +11,20 @@ use anyhow::{anyhow, Result};
 use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
-use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, ViewContext,
-    WeakModelHandle,
-};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Language, LanguageRegistry};
-use modal::{SemanticSearch, SemanticSearchDelegate, Toggle};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
+use postage::watch;
 use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
+    mem,
     ops::Range,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{self, AtomicUsize},
-        Arc, Weak,
-    },
-    time::{Instant, SystemTime},
+    sync::{Arc, Weak},
+    time::SystemTime,
 };
 use util::{
     channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
@@ -38,9 +32,8 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt,
 };
-use workspace::{Workspace, WorkspaceCreated};
 
-const SEMANTIC_INDEX_VERSION: usize = 1;
+const SEMANTIC_INDEX_VERSION: usize = 3;
 const EMBEDDINGS_BATCH_SIZE: usize = 150;
 
 pub fn init(
@@ -54,25 +47,6 @@ pub fn init(
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
-
-    SemanticSearch::init(cx);
-    cx.add_action(
-        |workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>| {
-            if cx.has_global::<ModelHandle<SemanticIndex>>() {
-                let semantic_index = cx.global::<ModelHandle<SemanticIndex>>().clone();
-                workspace.toggle_modal(cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    let workspace = cx.weak_handle();
-                    cx.add_view(|cx| {
-                        SemanticSearch::new(
-                            SemanticSearchDelegate::new(workspace, project, semantic_index),
-                            cx,
-                        )
-                    })
-                });
-            }
-        },
-    );
 
     if *RELEASE_CHANNEL == ReleaseChannel::Stable
         || !settings::get::<SemanticIndexSettings>(cx).enabled
@@ -95,21 +69,6 @@ pub fn init(
 
         cx.update(|cx| {
             cx.set_global(semantic_index.clone());
-            cx.subscribe_global::<WorkspaceCreated, _>({
-                let semantic_index = semantic_index.clone();
-                move |event, cx| {
-                    let workspace = &event.0;
-                    if let Some(workspace) = workspace.upgrade(cx) {
-                        let project = workspace.read(cx).project().clone();
-                        if project.read(cx).is_local() {
-                            semantic_index.update(cx, |store, cx| {
-                                store.index_project(project, cx).detach();
-                            });
-                        }
-                    }
-                }
-            })
-            .detach();
         });
 
         anyhow::Ok(())
@@ -128,20 +87,17 @@ pub struct SemanticIndex {
     _embed_batch_task: Task<()>,
     _batch_files_task: Task<()>,
     _parsing_files_tasks: Vec<Task<()>>,
-    next_job_id: Arc<AtomicUsize>,
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
 }
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
-    outstanding_jobs: Arc<Mutex<HashSet<JobId>>>,
+    outstanding_job_count_rx: watch::Receiver<usize>,
+    outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
 
-type JobId = usize;
-
 struct JobHandle {
-    id: JobId,
-    set: Weak<Mutex<HashSet<JobId>>>,
+    tx: Weak<Mutex<watch::Sender<usize>>>,
 }
 
 impl ProjectState {
@@ -221,6 +177,14 @@ enum EmbeddingJob {
 }
 
 impl SemanticIndex {
+    pub fn global(cx: &AppContext) -> Option<ModelHandle<SemanticIndex>> {
+        if cx.has_global::<ModelHandle<Self>>() {
+            Some(cx.global::<ModelHandle<SemanticIndex>>().clone())
+        } else {
+            None
+        }
+    }
+
     async fn new(
         fs: Arc<dyn Fs>,
         database_url: PathBuf,
@@ -236,184 +200,69 @@ impl SemanticIndex {
             .await?;
 
         Ok(cx.add_model(|cx| {
-            // paths_tx -> embeddings_tx -> db_update_tx
-
-            //db_update_tx/rx: Updating Database
+            // Perform database operations
             let (db_update_tx, db_update_rx) = channel::unbounded();
-            let _db_update_task = cx.background().spawn(async move {
-                while let Ok(job) = db_update_rx.recv().await {
-                    match job {
-                        DbOperation::InsertFile {
-                            worktree_id,
-                            documents,
-                            path,
-                            mtime,
-                            job_handle,
-                        } => {
-                            db.insert_file(worktree_id, path, mtime, documents)
-                                .log_err();
-                            drop(job_handle)
-                        }
-                        DbOperation::Delete { worktree_id, path } => {
-                            db.delete_file(worktree_id, path).log_err();
-                        }
-                        DbOperation::FindOrCreateWorktree { path, sender } => {
-                            let id = db.find_or_create_worktree(&path);
-                            sender.send(id).ok();
-                        }
-                        DbOperation::FileMTimes {
-                            worktree_id: worktree_db_id,
-                            sender,
-                        } => {
-                            let file_mtimes = db.get_file_mtimes(worktree_db_id);
-                            sender.send(file_mtimes).ok();
-                        }
+            let _db_update_task = cx.background().spawn({
+                async move {
+                    while let Ok(job) = db_update_rx.recv().await {
+                        Self::run_db_operation(&db, job)
                     }
                 }
             });
 
-            // embed_tx/rx: Embed Batch and Send to Database
+            // Group documents into batches and send them to the embedding provider.
             let (embed_batch_tx, embed_batch_rx) =
                 channel::unbounded::<Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>>();
             let _embed_batch_task = cx.background().spawn({
                 let db_update_tx = db_update_tx.clone();
                 let embedding_provider = embedding_provider.clone();
                 async move {
-                    while let Ok(mut embeddings_queue) = embed_batch_rx.recv().await {
-                        // Construct Batch
-                        let mut batch_documents = vec![];
-                        for (_, documents, _, _, _) in embeddings_queue.iter() {
-                            batch_documents
-                                .extend(documents.iter().map(|document| document.content.as_str()));
-                        }
-
-                        if let Ok(embeddings) =
-                            embedding_provider.embed_batch(batch_documents).await
-                        {
-                            log::trace!(
-                                "created {} embeddings for {} files",
-                                embeddings.len(),
-                                embeddings_queue.len(),
-                            );
-
-                            let mut i = 0;
-                            let mut j = 0;
-
-                            for embedding in embeddings.iter() {
-                                while embeddings_queue[i].1.len() == j {
-                                    i += 1;
-                                    j = 0;
-                                }
-
-                                embeddings_queue[i].1[j].embedding = embedding.to_owned();
-                                j += 1;
-                            }
-
-                            for (worktree_id, documents, path, mtime, job_handle) in
-                                embeddings_queue.into_iter()
-                            {
-                                for document in documents.iter() {
-                                    // TODO: Update this so it doesn't panic
-                                    assert!(
-                                        document.embedding.len() > 0,
-                                        "Document Embedding Not Complete"
-                                    );
-                                }
-
-                                db_update_tx
-                                    .send(DbOperation::InsertFile {
-                                        worktree_id,
-                                        documents,
-                                        path,
-                                        mtime,
-                                        job_handle,
-                                    })
-                                    .await
-                                    .unwrap();
-                            }
-                        }
+                    while let Ok(embeddings_queue) = embed_batch_rx.recv().await {
+                        Self::compute_embeddings_for_batch(
+                            embeddings_queue,
+                            &embedding_provider,
+                            &db_update_tx,
+                        )
+                        .await;
                     }
                 }
             });
 
-            // batch_tx/rx: Batch Files to Send for Embeddings
+            // Group documents into batches and send them to the embedding provider.
             let (batch_files_tx, batch_files_rx) = channel::unbounded::<EmbeddingJob>();
             let _batch_files_task = cx.background().spawn(async move {
                 let mut queue_len = 0;
                 let mut embeddings_queue = vec![];
-
                 while let Ok(job) = batch_files_rx.recv().await {
-                    let should_flush = match job {
-                        EmbeddingJob::Enqueue {
-                            documents,
-                            worktree_id,
-                            path,
-                            mtime,
-                            job_handle,
-                        } => {
-                            queue_len += &documents.len();
-                            embeddings_queue.push((
-                                worktree_id,
-                                documents,
-                                path,
-                                mtime,
-                                job_handle,
-                            ));
-                            queue_len >= EMBEDDINGS_BATCH_SIZE
-                        }
-                        EmbeddingJob::Flush => true,
-                    };
-
-                    if should_flush {
-                        embed_batch_tx.try_send(embeddings_queue).unwrap();
-                        embeddings_queue = vec![];
-                        queue_len = 0;
-                    }
+                    Self::enqueue_documents_to_embed(
+                        job,
+                        &mut queue_len,
+                        &mut embeddings_queue,
+                        &embed_batch_tx,
+                    );
                 }
             });
 
-            // parsing_files_tx/rx: Parsing Files to Embeddable Documents
+            // Parse files into embeddable documents.
             let (parsing_files_tx, parsing_files_rx) = channel::unbounded::<PendingFile>();
-
             let mut _parsing_files_tasks = Vec::new();
             for _ in 0..cx.background().num_cpus() {
                 let fs = fs.clone();
                 let parsing_files_rx = parsing_files_rx.clone();
                 let batch_files_tx = batch_files_tx.clone();
+                let db_update_tx = db_update_tx.clone();
                 _parsing_files_tasks.push(cx.background().spawn(async move {
                     let mut retriever = CodeContextRetriever::new();
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
-                        if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err()
-                        {
-                            if let Some(documents) = retriever
-                                .parse_file(
-                                    &pending_file.relative_path,
-                                    &content,
-                                    pending_file.language,
-                                )
-                                .log_err()
-                            {
-                                log::trace!(
-                                    "parsed path {:?}: {} documents",
-                                    pending_file.relative_path,
-                                    documents.len()
-                                );
-
-                                batch_files_tx
-                                    .try_send(EmbeddingJob::Enqueue {
-                                        worktree_id: pending_file.worktree_db_id,
-                                        path: pending_file.relative_path,
-                                        mtime: pending_file.modified_time,
-                                        job_handle: pending_file.job_handle,
-                                        documents,
-                                    })
-                                    .unwrap();
-                            }
-                        }
-
-                        if parsing_files_rx.len() == 0 {
-                            batch_files_tx.try_send(EmbeddingJob::Flush).unwrap();
-                        }
+                        Self::parse_file(
+                            &fs,
+                            pending_file,
+                            &mut retriever,
+                            &batch_files_tx,
+                            &parsing_files_rx,
+                            &db_update_tx,
+                        )
+                        .await;
                     }
                 }));
             }
@@ -424,7 +273,6 @@ impl SemanticIndex {
                 embedding_provider,
                 language_registry,
                 db_update_tx,
-                next_job_id: Default::default(),
                 parsing_files_tx,
                 _db_update_task,
                 _embed_batch_task,
@@ -433,6 +281,167 @@ impl SemanticIndex {
                 projects: HashMap::new(),
             }
         }))
+    }
+
+    fn run_db_operation(db: &VectorDatabase, job: DbOperation) {
+        match job {
+            DbOperation::InsertFile {
+                worktree_id,
+                documents,
+                path,
+                mtime,
+                job_handle,
+            } => {
+                db.insert_file(worktree_id, path, mtime, documents)
+                    .log_err();
+                drop(job_handle)
+            }
+            DbOperation::Delete { worktree_id, path } => {
+                db.delete_file(worktree_id, path).log_err();
+            }
+            DbOperation::FindOrCreateWorktree { path, sender } => {
+                let id = db.find_or_create_worktree(&path);
+                sender.send(id).ok();
+            }
+            DbOperation::FileMTimes {
+                worktree_id: worktree_db_id,
+                sender,
+            } => {
+                let file_mtimes = db.get_file_mtimes(worktree_db_id);
+                sender.send(file_mtimes).ok();
+            }
+        }
+    }
+
+    async fn compute_embeddings_for_batch(
+        mut embeddings_queue: Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>,
+        embedding_provider: &Arc<dyn EmbeddingProvider>,
+        db_update_tx: &channel::Sender<DbOperation>,
+    ) {
+        let mut batch_documents = vec![];
+        for (_, documents, _, _, _) in embeddings_queue.iter() {
+            batch_documents.extend(documents.iter().map(|document| document.content.as_str()));
+        }
+
+        if let Ok(embeddings) = embedding_provider.embed_batch(batch_documents).await {
+            log::trace!(
+                "created {} embeddings for {} files",
+                embeddings.len(),
+                embeddings_queue.len(),
+            );
+
+            let mut i = 0;
+            let mut j = 0;
+
+            for embedding in embeddings.iter() {
+                while embeddings_queue[i].1.len() == j {
+                    i += 1;
+                    j = 0;
+                }
+
+                embeddings_queue[i].1[j].embedding = embedding.to_owned();
+                j += 1;
+            }
+
+            for (worktree_id, documents, path, mtime, job_handle) in embeddings_queue.into_iter() {
+                // for document in documents.iter() {
+                //     // TODO: Update this so it doesn't panic
+                //     assert!(
+                //         document.embedding.len() > 0,
+                //         "Document Embedding Not Complete"
+                //     );
+                // }
+
+                db_update_tx
+                    .send(DbOperation::InsertFile {
+                        worktree_id,
+                        documents,
+                        path,
+                        mtime,
+                        job_handle,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    fn enqueue_documents_to_embed(
+        job: EmbeddingJob,
+        queue_len: &mut usize,
+        embeddings_queue: &mut Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>,
+        embed_batch_tx: &channel::Sender<Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>>,
+    ) {
+        let should_flush = match job {
+            EmbeddingJob::Enqueue {
+                documents,
+                worktree_id,
+                path,
+                mtime,
+                job_handle,
+            } => {
+                *queue_len += &documents.len();
+                embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
+                *queue_len >= EMBEDDINGS_BATCH_SIZE
+            }
+            EmbeddingJob::Flush => true,
+        };
+
+        if should_flush {
+            embed_batch_tx
+                .try_send(mem::take(embeddings_queue))
+                .unwrap();
+            *queue_len = 0;
+        }
+    }
+
+    async fn parse_file(
+        fs: &Arc<dyn Fs>,
+        pending_file: PendingFile,
+        retriever: &mut CodeContextRetriever,
+        batch_files_tx: &channel::Sender<EmbeddingJob>,
+        parsing_files_rx: &channel::Receiver<PendingFile>,
+        db_update_tx: &channel::Sender<DbOperation>,
+    ) {
+        if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
+            if let Some(documents) = retriever
+                .parse_file(&pending_file.relative_path, &content, pending_file.language)
+                .log_err()
+            {
+                log::trace!(
+                    "parsed path {:?}: {} documents",
+                    pending_file.relative_path,
+                    documents.len()
+                );
+
+                if documents.len() == 0 {
+                    db_update_tx
+                        .send(DbOperation::InsertFile {
+                            worktree_id: pending_file.worktree_db_id,
+                            documents,
+                            path: pending_file.relative_path,
+                            mtime: pending_file.modified_time,
+                            job_handle: pending_file.job_handle,
+                        })
+                        .await
+                        .unwrap();
+                } else {
+                    batch_files_tx
+                        .try_send(EmbeddingJob::Enqueue {
+                            worktree_id: pending_file.worktree_db_id,
+                            path: pending_file.relative_path,
+                            mtime: pending_file.modified_time,
+                            job_handle: pending_file.job_handle,
+                            documents,
+                        })
+                        .unwrap();
+                }
+            }
+        }
+
+        if parsing_files_rx.len() == 0 {
+            batch_files_tx.try_send(EmbeddingJob::Flush).unwrap();
+        }
     }
 
     fn find_or_create_worktree(&self, path: PathBuf) -> impl Future<Output = Result<i64>> {
@@ -457,11 +466,11 @@ impl SemanticIndex {
         async move { rx.await? }
     }
 
-    fn index_project(
+    pub fn index_project(
         &mut self,
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<usize>> {
+    ) -> Task<Result<(usize, watch::Receiver<usize>)>> {
         let worktree_scans_complete = project
             .read(cx)
             .worktrees(cx)
@@ -483,7 +492,6 @@ impl SemanticIndex {
         let language_registry = self.language_registry.clone();
         let db_update_tx = self.db_update_tx.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
-        let next_job_id = self.next_job_id.clone();
 
         cx.spawn(|this, mut cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
@@ -509,8 +517,8 @@ impl SemanticIndex {
                 );
             }
 
-            // let mut pending_files: Vec<(PathBuf, ((i64, PathBuf, Arc<Language>, SystemTime), SystemTime))> = vec![];
-            let outstanding_jobs = Arc::new(Mutex::new(HashSet::new()));
+            let (job_count_tx, job_count_rx) = watch::channel_with(0);
+            let job_count_tx = Arc::new(Mutex::new(job_count_tx));
             this.update(&mut cx, |this, _| {
                 this.projects.insert(
                     project.downgrade(),
@@ -519,7 +527,8 @@ impl SemanticIndex {
                             .iter()
                             .map(|(a, b)| (*a, *b))
                             .collect(),
-                        outstanding_jobs: outstanding_jobs.clone(),
+                        outstanding_job_count_rx: job_count_rx.clone(),
+                        outstanding_job_count_tx: job_count_tx.clone(),
                     },
                 );
             });
@@ -527,7 +536,6 @@ impl SemanticIndex {
             cx.background()
                 .spawn(async move {
                     let mut count = 0;
-                    let t0 = Instant::now();
                     for worktree in worktrees.into_iter() {
                         let mut file_mtimes = worktree_file_mtimes.remove(&worktree.id()).unwrap();
                         for file in worktree.files(false, 0) {
@@ -552,14 +560,11 @@ impl SemanticIndex {
                                     .map_or(false, |existing_mtime| existing_mtime == file.mtime);
 
                                 if !already_stored {
-                                    log::trace!("sending for parsing: {:?}", path_buf);
                                     count += 1;
-                                    let job_id = next_job_id.fetch_add(1, atomic::Ordering::SeqCst);
+                                    *job_count_tx.lock().borrow_mut() += 1;
                                     let job_handle = JobHandle {
-                                        id: job_id,
-                                        set: Arc::downgrade(&outstanding_jobs),
+                                        tx: Arc::downgrade(&job_count_tx),
                                     };
-                                    outstanding_jobs.lock().insert(job_id);
                                     parsing_files_tx
                                         .try_send(PendingFile {
                                             worktree_db_id: db_ids_by_worktree_id[&worktree.id()],
@@ -582,27 +587,22 @@ impl SemanticIndex {
                                 .unwrap();
                         }
                     }
-                    log::trace!(
-                        "parsing worktree completed in {:?}",
-                        t0.elapsed().as_millis()
-                    );
 
-                    Ok(count)
+                    anyhow::Ok((count, job_count_rx))
                 })
                 .await
         })
     }
 
-    pub fn remaining_files_to_index_for_project(
+    pub fn outstanding_job_count_rx(
         &self,
         project: &ModelHandle<Project>,
-    ) -> Option<usize> {
+    ) -> Option<watch::Receiver<usize>> {
         Some(
             self.projects
                 .get(&project.downgrade())?
-                .outstanding_jobs
-                .lock()
-                .len(),
+                .outstanding_job_count_rx
+                .clone(),
         )
     }
 
@@ -678,8 +678,9 @@ impl Entity for SemanticIndex {
 
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        if let Some(set) = self.set.upgrade() {
-            set.lock().remove(&self.id);
+        if let Some(tx) = self.tx.upgrade() {
+            let mut tx = tx.lock();
+            *tx.borrow_mut() -= 1;
         }
     }
 }

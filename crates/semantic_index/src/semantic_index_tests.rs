@@ -88,18 +88,13 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     let worktree_id = project.read_with(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
     });
-    let file_count = store
+    let (file_count, outstanding_file_count) = store
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await
         .unwrap();
     assert_eq!(file_count, 3);
     cx.foreground().run_until_parked();
-    store.update(cx, |store, _cx| {
-        assert_eq!(
-            store.remaining_files_to_index_for_project(&project),
-            Some(0)
-        );
-    });
+    assert_eq!(*outstanding_file_count.borrow(), 0);
 
     let search_results = store
         .update(cx, |store, cx| {
@@ -128,19 +123,14 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     cx.foreground().run_until_parked();
 
     let prev_embedding_count = embedding_provider.embedding_count();
-    let file_count = store
+    let (file_count, outstanding_file_count) = store
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await
         .unwrap();
     assert_eq!(file_count, 1);
 
     cx.foreground().run_until_parked();
-    store.update(cx, |store, _cx| {
-        assert_eq!(
-            store.remaining_files_to_index_for_project(&project),
-            Some(0)
-        );
-    });
+    assert_eq!(*outstanding_file_count.borrow(), 0);
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,
