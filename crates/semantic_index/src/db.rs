@@ -66,24 +66,28 @@ impl VectorDatabase {
     fn initialize_database(&self) -> Result<()> {
         rusqlite::vtab::array::load_module(&self.db)?;
 
+        // Delete existing tables, if SEMANTIC_INDEX_VERSION is bumped
         if self
             .get_existing_version()
             .map_or(false, |version| version == SEMANTIC_INDEX_VERSION as i64)
         {
+            log::trace!("vector database schema up to date");
             return Ok(());
         }
 
+        log::trace!("vector database schema out of date. updating...");
         self.db
-            .execute(
-                "
-                DROP TABLE IF EXISTS documents;
-                DROP TABLE IF EXISTS files;
-                DROP TABLE IF EXISTS worktrees;
-                DROP TABLE IF EXISTS semantic_index_config;
-                ",
-                [],
-            )
-            .context("failed to drop tables")?;
+            .execute("DROP TABLE IF EXISTS documents", [])
+            .context("failed to drop 'documents' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS files", [])
+            .context("failed to drop 'files' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS worktrees", [])
+            .context("failed to drop 'worktrees' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS semantic_index_config", [])
+            .context("failed to drop 'semantic_index_config' table")?;
 
         // Initialize Vector Databasing Tables
         self.db.execute(
@@ -133,6 +137,7 @@ impl VectorDatabase {
             [],
         )?;
 
+        log::trace!("vector database initialized with updated schema.");
         Ok(())
     }
 

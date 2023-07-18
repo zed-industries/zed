@@ -33,7 +33,7 @@ use util::{
     ResultExt,
 };
 
-const SEMANTIC_INDEX_VERSION: usize = 3;
+const SEMANTIC_INDEX_VERSION: usize = 4;
 const EMBEDDINGS_BATCH_SIZE: usize = 150;
 
 pub fn init(
@@ -344,14 +344,6 @@ impl SemanticIndex {
             }
 
             for (worktree_id, documents, path, mtime, job_handle) in embeddings_queue.into_iter() {
-                // for document in documents.iter() {
-                //     // TODO: Update this so it doesn't panic
-                //     assert!(
-                //         document.embedding.len() > 0,
-                //         "Document Embedding Not Complete"
-                //     );
-                // }
-
                 db_update_tx
                     .send(DbOperation::InsertFile {
                         worktree_id,
