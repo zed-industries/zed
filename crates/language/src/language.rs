@@ -321,7 +321,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
