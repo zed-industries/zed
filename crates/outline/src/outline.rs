@@ -177,7 +177,7 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<OutlineView>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<OutlineView>) {
         self.prev_scroll_position.take();
         self.active_editor.update(cx, |active_editor, cx| {
             if let Some(rows) = active_editor.highlighted_rows() {

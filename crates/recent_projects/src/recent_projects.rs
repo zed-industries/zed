@@ -161,7 +161,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<RecentProjects>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<RecentProjects>) {
         if let Some((selected_match, workspace)) = self
             .matches
             .get(self.selected_index())

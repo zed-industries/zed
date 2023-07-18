@@ -7217,7 +7217,7 @@ async fn test_peers_following_each_other(
 
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
@@ -7228,7 +7228,7 @@ async fn test_peers_following_each_other(
         .await
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
@@ -7455,7 +7455,7 @@ async fn test_auto_unfollowing(
 
     // When client B activates a different pane, it continues following client A in the original pane.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.split_pane(pane_b.clone(), SplitDirection::Right, cx)
+        workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, cx)
     });
     assert_eq!(
         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),

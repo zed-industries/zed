@@ -246,23 +246,26 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 pub fn go_to_fetched_definition(
     editor: &mut Editor,
     point: DisplayPoint,
+    split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    go_to_fetched_definition_of_kind(LinkDefinitionKind::Symbol, editor, point, cx);
+    go_to_fetched_definition_of_kind(LinkDefinitionKind::Symbol, editor, point, split, cx);
 }
 
 pub fn go_to_fetched_type_definition(
     editor: &mut Editor,
     point: DisplayPoint,
+    split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    go_to_fetched_definition_of_kind(LinkDefinitionKind::Type, editor, point, cx);
+    go_to_fetched_definition_of_kind(LinkDefinitionKind::Type, editor, point, split, cx);
 }
 
 fn go_to_fetched_definition_of_kind(
     kind: LinkDefinitionKind,
     editor: &mut Editor,
     point: DisplayPoint,
+    split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
     let cached_definitions = editor.link_go_to_definition_state.definitions.clone();
@@ -275,7 +278,7 @@ fn go_to_fetched_definition_of_kind(
             cx.focus_self();
         }
 
-        editor.navigate_to_definitions(cached_definitions, cx);
+        editor.navigate_to_definitions(cached_definitions, split, cx);
     } else {
         editor.select(
             SelectPhase::Begin {
@@ -403,7 +406,7 @@ mod tests {
             });
 
         cx.update_editor(|editor, cx| {
-            go_to_fetched_type_definition(editor, hover_point, cx);
+            go_to_fetched_type_definition(editor, hover_point, false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -614,7 +617,7 @@ mod tests {
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, cx);
+            go_to_fetched_definition(editor, hover_point, false, cx);
         });
         // Assert selection moved to to definition
         cx.lsp
@@ -655,7 +658,7 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, cx);
+            go_to_fetched_definition(editor, hover_point, false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();

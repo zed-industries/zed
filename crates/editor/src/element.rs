@@ -156,6 +156,7 @@ impl EditorElement {
                         event.position,
                         event.cmd,
                         event.shift,
+                        event.alt,
                         position_map.as_ref(),
                         text_bounds,
                         cx,
@@ -308,6 +309,7 @@ impl EditorElement {
         position: Vector2F,
         cmd: bool,
         shift: bool,
+        alt: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
         cx: &mut EventContext<Editor>,
@@ -324,9 +326,9 @@ impl EditorElement {
 
             if point == target_point {
                 if shift {
-                    go_to_fetched_type_definition(editor, point, cx);
+                    go_to_fetched_type_definition(editor, point, alt, cx);
                 } else {
-                    go_to_fetched_definition(editor, point, cx);
+                    go_to_fetched_definition(editor, point, alt, cx);
                 }
 
                 return true;
@@ -1182,8 +1184,10 @@ impl EditorElement {
         });
         scene.push_mouse_region(
             MouseRegion::new::<ScrollbarMouseHandlers>(cx.view_id(), cx.view_id(), track_bounds)
-                .on_move(move |_, editor: &mut Editor, cx| {
-                    editor.scroll_manager.show_scrollbar(cx);
+                .on_move(move |event, editor: &mut Editor, cx| {
+                    if event.pressed_button.is_none() {
+                        editor.scroll_manager.show_scrollbar(cx);
+                    }
                 })
                 .on_down(MouseButton::Left, {
                     let row_range = row_range.clone();
@@ -1973,7 +1977,7 @@ impl Element<Editor> for EditorElement {
 
         let snapshot = editor.snapshot(cx);
         let style = self.style.clone();
-        let line_height = style.text.line_height(cx.font_cache());
+        let line_height = (style.text.font_size * style.line_height_scalar).round();
 
         let gutter_padding;
         let gutter_width;

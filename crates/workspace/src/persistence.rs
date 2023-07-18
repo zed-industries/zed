@@ -45,6 +45,7 @@ define_connection! {
     //   parent_group_id: Option<usize>, // None indicates that this is the root node
     //   position: Optiopn<usize>, // None indicates that this is the root node
     //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
+    //   flexes: Option<Vec<f32>>, // A JSON array of floats
     // )
     //
     // panes(
@@ -168,7 +169,12 @@ define_connection! {
         ALTER TABLE workspaces ADD COLUMN left_dock_zoom INTEGER; //bool
         ALTER TABLE workspaces ADD COLUMN right_dock_zoom INTEGER; //bool
         ALTER TABLE workspaces ADD COLUMN bottom_dock_zoom INTEGER; //bool
-    )];
+    ),
+    // Add pane group flex data
+    sql!(
+        ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
+    )
+    ];
 }
 
 impl WorkspaceDb {
@@ -359,38 +365,51 @@ impl WorkspaceDb {
         group_id: Option<GroupId>,
     ) -> Result<Vec<SerializedPaneGroup>> {
         type GroupKey = (Option<GroupId>, WorkspaceId);
-        type GroupOrPane = (Option<GroupId>, Option<Axis>, Option<PaneId>, Option<bool>);
+        type GroupOrPane = (
+            Option<GroupId>,
+            Option<Axis>,
+            Option<PaneId>,
+            Option<bool>,
+            Option<String>,
+        );
         self.select_bound::<GroupKey, GroupOrPane>(sql!(
-            SELECT group_id, axis, pane_id, active
+            SELECT group_id, axis, pane_id, active, flexes
                 FROM (SELECT
-                    group_id,
-                    axis,
-                    NULL as pane_id,
-                    NULL as active,
-                    position,
-                    parent_group_id,
-                    workspace_id
-                    FROM pane_groups
+                        group_id,
+                        axis,
+                        NULL as pane_id,
+                        NULL as active,
+                        position,
+                        parent_group_id,
+                        workspace_id,
+                        flexes
+                      FROM pane_groups
                     UNION
-                    SELECT
-                    NULL,
-                    NULL,
-                    center_panes.pane_id,
-                    panes.active as active,
-                    position,
-                    parent_group_id,
-                    panes.workspace_id as workspace_id
-                        FROM center_panes
-                        JOIN panes ON center_panes.pane_id = panes.pane_id)
+                      SELECT
+                        NULL,
+                        NULL,
+                        center_panes.pane_id,
+                        panes.active as active,
+                        position,
+                        parent_group_id,
+                        panes.workspace_id as workspace_id,
+                        NULL
+                      FROM center_panes
+                      JOIN panes ON center_panes.pane_id = panes.pane_id)
                 WHERE parent_group_id IS ? AND workspace_id = ?
                 ORDER BY position
         ))?((group_id, workspace_id))?
         .into_iter()
-        .map(|(group_id, axis, pane_id, active)| {
+        .map(|(group_id, axis, pane_id, active, flexes)| {
             if let Some((group_id, axis)) = group_id.zip(axis) {
+                let flexes = flexes
+                    .map(|flexes| serde_json::from_str::<Vec<f32>>(&flexes))
+                    .transpose()?;
+
                 Ok(SerializedPaneGroup::Group {
                     axis,
                     children: self.get_pane_group(workspace_id, Some(group_id))?,
+                    flexes,
                 })
             } else if let Some((pane_id, active)) = pane_id.zip(active) {
                 Ok(SerializedPaneGroup::Pane(SerializedPane::new(
@@ -417,14 +436,34 @@ impl WorkspaceDb {
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
         match pane_group {
-            SerializedPaneGroup::Group { axis, children } => {
+            SerializedPaneGroup::Group {
+                axis,
+                children,
+                flexes,
+            } => {
                 let (parent_id, position) = unzip_option(parent);
 
+                let flex_string = flexes
+                    .as_ref()
+                    .map(|flexes| serde_json::json!(flexes).to_string());
+
                 let group_id = conn.select_row_bound::<_, i64>(sql!(
-                    INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO pane_groups(
+                        workspace_id,
+                        parent_group_id,
+                        position,
+                        axis,
+                        flexes
+                    )
+                    VALUES (?, ?, ?, ?, ?)
                     RETURNING group_id
-                ))?((workspace_id, parent_id, position, *axis))?
+                ))?((
+                    workspace_id,
+                    parent_id,
+                    position,
+                    *axis,
+                    flex_string,
+                ))?
                 .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
 
                 for (position, group) in children.iter().enumerate() {
@@ -641,6 +680,14 @@ mod tests {
         assert_eq!(test_text_1, "test-text-1");
     }
 
+    fn group(axis: gpui::Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
+        SerializedPaneGroup::Group {
+            axis,
+            flexes: None,
+            children,
+        }
+    }
+
     #[gpui::test]
     async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
@@ -652,12 +699,12 @@ mod tests {
         //  | - - - |       |
         //  | 3,4   |       |
         //  -----------------
-        let center_group = SerializedPaneGroup::Group {
-            axis: gpui::Axis::Horizontal,
-            children: vec![
-                SerializedPaneGroup::Group {
-                    axis: gpui::Axis::Vertical,
-                    children: vec![
+        let center_group = group(
+            gpui::Axis::Horizontal,
+            vec![
+                group(
+                    gpui::Axis::Vertical,
+                    vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
                                 SerializedItem::new("Terminal", 5, false),
@@ -673,7 +720,7 @@ mod tests {
                             false,
                         )),
                     ],
-                },
+                ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
                         SerializedItem::new("Terminal", 9, false),
@@ -682,7 +729,7 @@ mod tests {
                     false,
                 )),
             ],
-        };
+        );
 
         let workspace = SerializedWorkspace {
             id: 5,
@@ -811,12 +858,12 @@ mod tests {
         //  | - - - |       |
         //  | 3,4   |       |
         //  -----------------
-        let center_pane = SerializedPaneGroup::Group {
-            axis: gpui::Axis::Horizontal,
-            children: vec![
-                SerializedPaneGroup::Group {
-                    axis: gpui::Axis::Vertical,
-                    children: vec![
+        let center_pane = group(
+            gpui::Axis::Horizontal,
+            vec![
+                group(
+                    gpui::Axis::Vertical,
+                    vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
                                 SerializedItem::new("Terminal", 1, false),
@@ -832,7 +879,7 @@ mod tests {
                             true,
                         )),
                     ],
-                },
+                ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
                         SerializedItem::new("Terminal", 5, true),
@@ -841,7 +888,7 @@ mod tests {
                     false,
                 )),
             ],
-        };
+        );
 
         let workspace = default_workspace(&["/tmp"], &center_pane);
 
@@ -858,12 +905,12 @@ mod tests {
 
         let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
 
-        let center_pane = SerializedPaneGroup::Group {
-            axis: gpui::Axis::Horizontal,
-            children: vec![
-                SerializedPaneGroup::Group {
-                    axis: gpui::Axis::Vertical,
-                    children: vec![
+        let center_pane = group(
+            gpui::Axis::Horizontal,
+            vec![
+                group(
+                    gpui::Axis::Vertical,
+                    vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
                                 SerializedItem::new("Terminal", 1, false),
@@ -879,7 +926,7 @@ mod tests {
                             true,
                         )),
                     ],
-                },
+                ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
                         SerializedItem::new("Terminal", 5, false),
@@ -888,7 +935,7 @@ mod tests {
                     false,
                 )),
             ],
-        };
+        );
 
         let id = &["/tmp"];
 
@@ -896,9 +943,9 @@ mod tests {
 
         db.save_workspace(workspace.clone()).await;
 
-        workspace.center_group = SerializedPaneGroup::Group {
-            axis: gpui::Axis::Vertical,
-            children: vec![
+        workspace.center_group = group(
+            gpui::Axis::Vertical,
+            vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
                         SerializedItem::new("Terminal", 1, false),
@@ -914,7 +961,7 @@ mod tests {
                     true,
                 )),
             ],
-        };
+        );
 
         db.save_workspace(workspace.clone()).await;
 
