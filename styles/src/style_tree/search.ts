@@ -39,6 +39,10 @@ export default function search(): any {
             foreground(theme.highest, "accent"),
             0.4
         ),
+        out_of_date_match_background: with_opacity(
+            foreground(theme.middle, "accent"),
+            0.2
+        ),
         option_button: toggleable({
             base: interactive({
                 base: {
