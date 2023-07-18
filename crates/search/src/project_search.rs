@@ -46,7 +46,8 @@ actions!(
         Replace,
         ReplaceAll,
         ToggleReplace,
-        ToggleFilter
+        ToggleFilter,
+        Undo
     ]
 );
 
@@ -56,11 +57,18 @@ struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSe
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSearches::default());
     cx.add_action(ProjectSearchView::deploy);
-    cx.add_action(ProjectSearchView::move_focus_to_results);
+    cx.add_action(ProjectSearchView::toggle_focus);
+    cx.add_action(ProjectSearchView::toggle_filter);
+    cx.add_action(ProjectSearchView::toggle_replace);
+    cx.add_action(ProjectSearchView::replace_all_action);
+    cx.add_action(ProjectSearchView::replace_action);
+    cx.add_action(ProjectSearchView::undo_action);
+    cx.add_action(ProjectSearchBar::toggle_focus);
     cx.add_action(ProjectSearchBar::search);
     cx.add_action(ProjectSearchBar::replace_all);
     cx.add_action(ProjectSearchBar::replace);
-    cx.add_action(ProjectSearchBar::toggle_focus);
+    cx.add_action(ProjectSearchBar::undo);
+    cx.add_action(ProjectSearchBar::toggle_filter);
     cx.add_action(ProjectSearchBar::toggle_replace);
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
@@ -112,6 +120,9 @@ pub struct ProjectSearchView {
     show_filter: bool,
     show_replace: bool,
     panels_with_errors: HashSet<InputPanel>,
+    // None -> No results
+    // Some(None) Results, but no match index (e.g. after a replace all)
+    // Some(Some(_)) Results, with an index
     active_match_index: Option<Option<usize>>,
     search_id: usize,
     query_editor_was_focused: bool,
@@ -215,8 +226,7 @@ impl ProjectSearch {
             )
         });
 
-        self.out_of_date_ranges
-            .extend(self.match_ranges.drain(..));
+        self.out_of_date_ranges.extend(self.match_ranges.drain(..));
     }
 
     fn replace(
@@ -661,6 +671,10 @@ impl ProjectSearchView {
         }
     }
 
+    fn replace_action(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {
+        self.replace(cx);
+    }
+
     fn replace(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             if let Some(replace_text) = query.replace_text() {
@@ -684,6 +698,10 @@ impl ProjectSearchView {
         }
     }
 
+    fn replace_all_action(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+        self.replace_all(cx);
+    }
+
     fn replace_all(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             if let Some(replace_text) = query.replace_text() {
@@ -692,6 +710,14 @@ impl ProjectSearchView {
                 self.active_match_index = Some(None);
             }
         }
+    }
+
+    fn undo_action(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        self.undo(cx);
+    }
+
+    fn undo(&mut self, cx: &mut ViewContext<Self>) {
+        // self.replace_all(cx);
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
@@ -785,12 +811,28 @@ impl ProjectSearchView {
         });
     }
 
-    fn focus_query_editor(&mut self, cx: &mut ViewContext<Self>) {
-        self.query_editor.update(cx, |query_editor, cx| {
-            query_editor.select_all(&SelectAll, cx);
+    fn focus_editor(&mut self, handle: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        handle.update(cx, |editor, cx| {
+            editor.select_all(&SelectAll, cx);
         });
-        self.query_editor_was_focused = true;
-        cx.focus(&self.query_editor);
+        self.query_editor_was_focused = false;
+        cx.focus(&handle);
+    }
+
+    fn focus_query_editor(&mut self, cx: &mut ViewContext<Self>) {
+        self.focus_editor(self.query_editor.clone(), cx)
+    }
+
+    fn focus_replace_editor(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_replace = true;
+        self.focus_editor(self.replace_editor.clone(), cx);
+        cx.notify();
+    }
+
+    fn focus_filter_editor(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_filter = true;
+        self.focus_editor(self.included_files_editor.clone(), cx);
+        cx.notify();
     }
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
@@ -809,7 +851,7 @@ impl ProjectSearchView {
 
     fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
         let match_ranges = self.model.read(cx).match_ranges.clone();
-        // self.select_match(Direction::Next, cx);
+
         self.update_match_index(cx);
         if !match_ranges.is_empty() {
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
@@ -859,21 +901,28 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn move_focus_to_results(pane: &mut Pane, _: &ToggleFocus, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |search_view, cx| {
-                if !search_view.results_editor.is_focused(cx)
-                    && !search_view.model.read(cx).match_ranges.is_empty()
-                {
-                    return search_view.focus_results_editor(cx);
-                }
-            });
-        }
+    fn toggle_focus(
+        search_view: &mut ProjectSearchView,
+        _: &ToggleFocus,
+        cx: &mut ViewContext<ProjectSearchView>,
+    ) {
+        search_view.focus_query_editor(cx);
+    }
 
-        cx.propagate_action();
+    fn toggle_replace(
+        search_view: &mut ProjectSearchView,
+        _: &ToggleReplace,
+        cx: &mut ViewContext<ProjectSearchView>,
+    ) {
+        search_view.focus_replace_editor(cx);
+    }
+
+    fn toggle_filter(
+        search_view: &mut ProjectSearchView,
+        _: &ToggleFilter,
+        cx: &mut ViewContext<ProjectSearchView>,
+    ) {
+        return search_view.focus_filter_editor(cx);
     }
 }
 
@@ -891,15 +940,37 @@ impl ProjectSearchBar {
         }
     }
 
+    fn toggle_focus(
+        search_bar: &mut ProjectSearchBar,
+        _: &ToggleFocus,
+        cx: &mut ViewContext<ProjectSearchBar>,
+    ) {
+        if let Some(view) = &search_bar.active_project_search {
+            view.update(cx, |view, cx| view.focus_results_editor(cx));
+        }
+    }
+
     fn search(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| search_view.search(cx));
+            search_view.update(cx, |search_view, cx| {
+                if search_view.replace_editor.is_focused(cx) {
+                    search_view.replace(cx)
+                } else {
+                    search_view.search(cx);
+                }
+            });
         }
     }
 
     fn replace(&mut self, _: &Replace, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| search_view.replace(cx));
+        }
+    }
+
+    fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| search_view.undo(cx));
         }
     }
 
@@ -1030,10 +1101,20 @@ impl ProjectSearchBar {
         }
     }
 
-    fn toggle_focus(&mut self, _: &ToggleFilter, cx: &mut ViewContext<Self>) {
+    fn toggle_filter(&mut self, _: &ToggleFilter, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
+                if search_view.show_filter && search_view.included_files_editor.is_focused(cx)
+                    || search_view.excluded_files_editor.is_focused(cx)
+                {
+                    search_view.focus_query_editor(cx);
+                }
+
                 search_view.show_filter = !search_view.show_filter;
+
+                if search_view.show_filter {
+                    search_view.focus_filter_editor(cx);
+                }
                 cx.notify();
             });
             cx.notify();
@@ -1043,7 +1124,15 @@ impl ProjectSearchBar {
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
+                if search_view.show_replace && search_view.replace_editor.is_focused(cx) {
+                    search_view.focus_query_editor(cx);
+                }
+
                 search_view.show_replace = !search_view.show_replace;
+
+                if search_view.show_replace {
+                    search_view.focus_replace_editor(cx);
+                }
                 cx.notify();
             });
             cx.notify();
