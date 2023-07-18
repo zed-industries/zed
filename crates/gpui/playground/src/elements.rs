@@ -9,7 +9,7 @@ use gpui::{
     serde_json::Value,
     AnyElement, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View, ViewContext,
 };
-use std::{any::Any, ops::Range};
+use std::{any::Any, f32, ops::Range};
 
 // Core idea is that everything is a channel, and channels are heirarchical.
 //
@@ -128,49 +128,50 @@ impl<V: View> Node<V> {
             }
         }
 
-        // let remaining_space = match axis {
-        //     Axis2d::X => constraint.max.x() - total_size,
-        //     Axis2d::Y => constraint.max.y() - total_size,
-        // };
+        let remaining_space = match axis {
+            Axis2d::X => size.x() - total_size,
+            Axis2d::Y => size.y() - total_size,
+        };
 
-        // // Second pass: Layout flexible children
-        // if let Some(total_flex) = total_flex {
-        //     if total_flex > 0. {
-        //         let space_per_flex = remaining_space.max(0.) / total_flex;
+        // Second pass: Layout flexible children
+        if let Some(total_flex) = total_flex {
+            if total_flex > 0. {
+                let space_per_flex = remaining_space.max(0.) / total_flex;
 
-        //         for child in &mut self.children {
-        //             if let Some(child_flex) =
-        //                 child.metadata::<AtomStyle>().and_then(|style| style.flex)
-        //             {
-        //                 let child_max = space_per_flex * child_flex;
-        //                 let mut child_constraint = constraint;
-        //                 match axis {
-        //                     Axis3d::Vertical => {
-        //                         child_constraint.min.set_y(0.0);
-        //                         child_constraint.max.set_y(child_max);
-        //                     }
-        //                     Axis3d::Horizontal => {
-        //                         child_constraint.min.set_x(0.0);
-        //                         child_constraint.max.set_x(child_max);
-        //                     }
-        //                 }
+                for child in &mut self.children {
+                    let child_flex = child.metadata::<NodeStyle>().and_then(|style| match axis {
+                        Axis2d::X => style.width.flex(),
+                        Axis2d::Y => style.height.flex(),
+                    });
+                    if let Some(child_flex) = child_flex {
+                        let child_max = space_per_flex * child_flex;
+                        let mut child_constraint = SizeConstraint::new(Vector2F::zero(), size);
+                        match axis {
+                            Axis2d::X => {
+                                child_constraint.min.set_x(0.0);
+                                child_constraint.max.set_x(child_max);
+                            }
+                            Axis2d::Y => {
+                                child_constraint.min.set_y(0.0);
+                                child_constraint.max.set_y(child_max);
+                            }
+                        }
 
-        //                 let child_size = child.layout(child_constraint, view, cx);
-
-        //                 cross_axis_max = match axis {
-        //                     Axis3d::Vertical => {
-        //                         total_size += child_size.y();
-        //                         cross_axis_max.max(child_size.x())
-        //                     }
-        //                     Axis3d::Horizontal => {
-        //                         total_size += child_size.x();
-        //                         cross_axis_max.max(child_size.y())
-        //                     }
-        //                 };
-        //             }
-        //         }
-        //     }
-        // }
+                        let child_size = child.layout(child_constraint, view, cx);
+                        cross_axis_max = match axis {
+                            Axis2d::X => {
+                                total_size += child_size.x();
+                                cross_axis_max.max(child_size.y())
+                            }
+                            Axis2d::Y => {
+                                total_size += child_size.y();
+                                cross_axis_max.max(child_size.x())
+                            }
+                        };
+                    }
+                }
+            }
+        }
 
         let size = match axis {
             Axis2d::X => vec2f(total_size, cross_axis_max),
@@ -297,17 +298,19 @@ impl<V: View> Element<V> for Node<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
+        dbg!(constraint.max);
+
         let mut size = Vector2F::zero();
         let margin_size = self.margin_size();
         match self.style.width {
+            Length::Hug => size.set_x(f32::INFINITY),
             Length::Fixed(width) => size.set_x(width + margin_size.x()),
-            Length::Auto { flex, min, max } => {
-                todo!()
-            }
+            Length::Auto { min, max, .. } => size.set_x(constraint.max.x().max(min).min(max)),
         }
         match self.style.height {
+            Length::Hug => size.set_y(f32::INFINITY),
             Length::Fixed(height) => size.set_y(height + margin_size.y()),
-            Length::Auto { flex, min, max } => todo!(),
+            Length::Auto { min, max, .. } => size.set_y(constraint.max.y().max(min).min(max)),
         }
 
         // Impose horizontal constraints
@@ -320,16 +323,24 @@ impl<V: View> Element<V> for Node<V> {
         if constraint.min.y().is_finite() {
             size.set_y(size.y().max(constraint.min.y()));
         }
-        size.set_x(size.y().min(constraint.max.y()));
+        size.set_y(size.y().min(constraint.max.y()));
 
-        let inner_size = size - margin_size - self.border_size() - self.padding_size();
+        let inset_size = self.inset_size();
+        let inner_size = size - inset_size;
         let size_of_children = match self.style.axis {
             Axis3d::X => self.layout_2d_children(Axis2d::X, inner_size, view, cx),
             Axis3d::Y => self.layout_2d_children(Axis2d::Y, inner_size, view, cx),
             Axis3d::Z => todo!(), // self.layout_stacked_children(inner_constraint, view, cx),
         };
 
-        (dbg!(size), dbg!(size_of_children))
+        if matches!(self.style.width, Length::Hug) {
+            size.set_x(size_of_children.x() + inset_size.x());
+        }
+        if matches!(self.style.height, Length::Hug) {
+            size.set_y(size_of_children.y() + inset_size.y());
+        }
+
+        (size, size_of_children)
     }
 
     fn paint(
@@ -418,71 +429,6 @@ impl<V: View> Element<V> for Node<V> {
                 ),
                 Axis3d::Z => todo!(),
             }
-
-            // match self.style.orientation {
-            //     Orientation::Axial(axis) => {
-            //         let mut child_origin = padded_bounds.origin();
-            //         // Align all children together along the primary axis
-            //         match axis {
-            //             Axis3d::Horizontal => align_child(
-            //                 &mut child_origin,
-            //                 parent_size,
-            //                 *size_of_children,
-            //                 child_aligment,
-            //                 true,
-            //                 false,
-            //             ),
-            //             Axis3d::Vertical => align_child(
-            //                 &mut child_origin,
-            //                 parent_size,
-            //                 *size_of_children,
-            //                 child_aligment,
-            //                 false,
-            //                 true,
-            //             ),
-            //         };
-
-            //         for child in &mut self.children {
-            //             // Align each child along the cross axis
-            //             match axis {
-            //                 Axis3d::Horizontal => {
-            //                     child_origin.set_y(padded_bounds.origin_y());
-            //                     align_child(
-            //                         &mut child_origin,
-            //                         parent_size,
-            //                         child.size(),
-            //                         child_aligment,
-            //                         false,
-            //                         true,
-            //                     );
-            //                 }
-            //                 Axis3d::Vertical => {
-            //                     child_origin.set_x(padded_bounds.origin_x());
-            //                     align_child(
-            //                         &mut child_origin,
-            //                         parent_size,
-            //                         child.size(),
-            //                         child_aligment,
-            //                         true,
-            //                         false,
-            //                     );
-            //                 }
-            //             }
-
-            //             child.paint(scene, child_origin, visible_bounds, view, cx);
-
-            //             // Advance along the cross axis by the size of this child
-            //             match axis {
-            //                 Axis3d::Horizontal => {
-            //                     child_origin.set_x(child_origin.x() + child.size().x())
-            //                 }
-            //                 Axis3d::Vertical => {
-            //                     child_origin.set_y(child_origin.x() + child.size().y())
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
         }
     }
 
@@ -628,20 +574,16 @@ impl Border {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Length {
+    #[default]
+    Hug,
     Fixed(f32),
-    Auto { flex: f32, min: f32, max: f32 },
-}
-
-impl Default for Length {
-    fn default() -> Self {
-        Length::Auto {
-            flex: 1.,
-            min: 0.,
-            max: f32::INFINITY,
-        }
-    }
+    Auto {
+        flex: f32,
+        min: f32,
+        max: f32,
+    },
 }
 
 impl From<f32> for Length {
@@ -651,17 +593,26 @@ impl From<f32> for Length {
 }
 
 impl Length {
-    pub fn max(&self) -> f32 {
-        match self {
-            Length::Fixed(value) => *value,
-            Length::Auto { max, .. } => *max,
+    pub fn auto(flex: f32) -> Self {
+        Length::Auto {
+            flex,
+            min: 0.,
+            max: f32::INFINITY,
+        }
+    }
+
+    pub fn auto_constrained(flex: f32, min: Option<f32>, max: Option<f32>) -> Self {
+        Length::Auto {
+            flex,
+            min: min.unwrap_or(0.),
+            max: max.unwrap_or(f32::INFINITY),
         }
     }
 
     pub fn flex(&self) -> Option<f32> {
         match self {
-            Length::Fixed(_) => None,
             Length::Auto { flex, .. } => Some(*flex),
+            _ => None,
         }
     }
 }

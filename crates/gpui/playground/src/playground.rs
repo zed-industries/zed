@@ -1,4 +1,4 @@
-use elements::{Node, NodeStyle};
+use elements::{Length, Node, NodeStyle};
 use gpui::{color::Color, AnyElement, Element, Entity, View, ViewContext};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -30,8 +30,7 @@ impl View for PlaygroundView {
         // Node::new().width(100.0).fill(Color::red())
         //
         Node::new()
-            .width(100.)
-            .height(100.)
+            .width(Length::auto(1.))
             .fill(Color::red())
             .row()
             .children([
