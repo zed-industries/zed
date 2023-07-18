@@ -975,7 +975,6 @@ impl SearchableItem for Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(matches);
         });
-
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {

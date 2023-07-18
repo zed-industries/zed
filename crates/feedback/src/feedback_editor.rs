@@ -414,7 +414,12 @@ impl SearchableItem for FeedbackEditor {
             .update(cx, |editor, cx| editor.activate_match(index, matches, cx))
     }
 
-    fn remove_match(&mut self, index: usize, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn remove_match(
+        &mut self,
+        index: usize,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.editor
             .update(cx, |editor, cx| editor.remove_match(index, matches, cx))
     }

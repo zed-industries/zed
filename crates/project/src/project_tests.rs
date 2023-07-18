@@ -3578,7 +3578,14 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", Option::<String>::None, false, true, Vec::new(), Vec::new()),
+            SearchQuery::text(
+                "TWO",
+                Option::<String>::None,
+                false,
+                true,
+                Vec::new(),
+                Vec::new()
+            ),
             cx
         )
         .await
@@ -3603,7 +3610,14 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", Option::<String>::None, false, true, Vec::new(), Vec::new()),
+            SearchQuery::text(
+                "TWO",
+                Option::<String>::None,
+                false,
+                true,
+                Vec::new(),
+                Vec::new()
+            ),
             cx
         )
         .await

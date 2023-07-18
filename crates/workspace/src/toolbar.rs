@@ -289,7 +289,8 @@ impl Toolbar {
                 initial_row_count = item.row_count(cx);
                 cx.notify();
             }
-        }).detach();
+        })
+        .detach();
         cx.subscribe(&item, |this, item, event, cx| {
             if let Some((_, current_location)) =
                 this.items.iter_mut().find(|(i, _)| i.id() == item.id())
