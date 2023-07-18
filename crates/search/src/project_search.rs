@@ -227,6 +227,7 @@ impl ProjectSearch {
         });
 
         self.out_of_date_ranges.extend(self.match_ranges.drain(..));
+        cx.notify();
     }
 
     fn replace(
@@ -276,7 +277,7 @@ impl View for ProjectSearchView {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let model = &self.model.read(cx);
-        if model.match_ranges.is_empty() && self.active_match_index.is_none() {
+        if self.active_match_index.is_none() {
             enum Status {}
 
             let theme = theme::current(cx).clone();
@@ -815,24 +816,25 @@ impl ProjectSearchView {
         handle.update(cx, |editor, cx| {
             editor.select_all(&SelectAll, cx);
         });
-        self.query_editor_was_focused = false;
         cx.focus(&handle);
+        cx.notify();
     }
 
     fn focus_query_editor(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_editor(self.query_editor.clone(), cx)
+        self.query_editor_was_focused = true;
+        self.focus_editor(self.query_editor.clone(), cx);
     }
 
     fn focus_replace_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.show_replace = true;
+        self.query_editor_was_focused = false;
         self.focus_editor(self.replace_editor.clone(), cx);
-        cx.notify();
     }
 
     fn focus_filter_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.show_filter = true;
+        self.query_editor_was_focused = false;
         self.focus_editor(self.included_files_editor.clone(), cx);
-        cx.notify();
     }
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
@@ -886,13 +888,19 @@ impl ProjectSearchView {
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         let results_editor = self.results_editor.read(cx);
+
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
+
         if self.active_match_index != Some(new_index) {
-            self.active_match_index = Some(new_index);
+            if self.model.read(cx).out_of_date_ranges.is_empty() && new_index.is_none() {
+                self.active_match_index = None;
+            } else {
+                self.active_match_index = Some(new_index);
+            }
             cx.notify();
         }
     }
@@ -1589,6 +1597,150 @@ pub mod tests {
     }
 
     #[gpui::test]
+    async fn test_project_search_replace(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
+        let (_, search_view) = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx));
+
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+            search_view.search(cx);
+        });
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
+            );
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.all_background_highlights(cx)),
+                &[
+                    (
+                        DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35),
+                        Color::red()
+                    ),
+                    (
+                        DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40),
+                        Color::red()
+                    ),
+                    (
+                        DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9),
+                        Color::red()
+                    )
+                ]
+            );
+            assert_eq!(search_view.active_match_index, Some(Some(0)));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
+            );
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view.show_replace = true;
+            search_view
+                .replace_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("SEVEN", cx));
+            search_view.replace(cx);
+        });
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst THREE: usize = one::ONE + SEVEN::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
+            );
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.all_background_highlights(cx)),
+                &[
+                    (
+                        DisplayPoint::new(2, 32)..DisplayPoint::new(2, 37),
+                        Color::blue()
+                    ),
+                    (
+                        DisplayPoint::new(2, 39)..DisplayPoint::new(2, 42),
+                        Color::red()
+                    ),
+                    (
+                        DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9),
+                        Color::red()
+                    )
+                ]
+            );
+            assert_eq!(search_view.active_match_index, Some(Some(0)));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                [DisplayPoint::new(2, 39)..DisplayPoint::new(2, 42)]
+            );
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view.replace_all(cx);
+        });
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst THREE: usize = one::ONE + SEVEN::SEVEN;\n\n\nconst SEVEN: usize = one::ONE + one::ONE;"
+            );
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.all_background_highlights(cx)),
+                &[
+                    (
+                        DisplayPoint::new(2, 32)..DisplayPoint::new(2, 37),
+                        Color::blue()
+                    ),
+                    (
+                        DisplayPoint::new(2, 39)..DisplayPoint::new(2, 44),
+                        Color::blue()
+                    ),
+                    (
+                        DisplayPoint::new(5, 6)..DisplayPoint::new(5, 11),
+                        Color::blue()
+                    )
+                ]
+            );
+            assert_eq!(search_view.active_match_index, Some(None));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                &[DisplayPoint::new(2, 44)..DisplayPoint::new(2, 44)]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_project_search_focus(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1726,8 +1878,8 @@ pub mod tests {
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
             assert!(
-                search_view.results_editor.is_focused(cx),
-                "Search view with matching query should still have its results editor focused after the toggle focus event",
+                search_view.query_editor.is_focused(cx),
+                "Search view with matching query should have its query editor focused after the toggle focus event",
             );
         });
 
@@ -1748,18 +1900,6 @@ pub mod tests {
                 "Focus should be moved into query editor again after search view 2nd open in a row"
             );
         });
-
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
-        .detach();
-        deterministic.run_until_parked();
-        search_view.update(cx, |search_view, cx| {
-            assert!(
-                search_view.results_editor.is_focused(cx),
-                "Search view with matching query should switch focus to the results editor after the toggle focus event",
-            );
-        });
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
@@ -1767,6 +1907,7 @@ pub mod tests {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
+        theme.search.out_of_date_match_background = Color::blue();
 
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));

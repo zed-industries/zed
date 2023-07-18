@@ -4616,6 +4616,7 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        dbg!("undo");
         // TODO make this fire in a way that feels good in the search view
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
