@@ -33,7 +33,6 @@ use mappings::mouse::{
 use procinfo::LocalProcessInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smol::channel::Sender;
 use util::truncate_and_trailoff;
 
 use std::{
@@ -90,12 +89,18 @@ pub enum Event {
     Wakeup,
     BlinkChanged,
     SelectionsChanged,
-    OpenUrl(String),
-    ProbePathOpen {
-        maybe_path: String,
-        can_open_tx: Sender<bool>,
-    },
-    OpenPath(String),
+    NewNavigationTarget(MaybeNavigationTarget),
+    Open(MaybeNavigationTarget),
+}
+
+/// A string inside terminal, potentially useful as a URI that can be opened.
+#[derive(Clone, Debug)]
+pub enum MaybeNavigationTarget {
+    /// HTTP, git, etc. string determined by the [`URL_REGEX`] regex.
+    Url(String),
+    /// File system path, absolute or relative, existing or not.
+    /// Might have line and column number(s) attached as `file.rs:1:23`
+    PathLike(String),
 }
 
 #[derive(Clone)]
@@ -502,6 +507,7 @@ impl TerminalBuilder {
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
             cmd_pressed: false,
+            found_word: false,
         };
 
         Ok(TerminalBuilder {
@@ -654,6 +660,7 @@ pub struct Terminal {
     next_link_id: usize,
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
+    found_word: bool,
 }
 
 impl Terminal {
@@ -834,7 +841,7 @@ impl Terminal {
                 .grid_clamp(term, alacritty_terminal::index::Boundary::Cursor);
 
                 let link = term.grid().index(point).hyperlink();
-                let found_url = if link.is_some() {
+                let found_word = if link.is_some() {
                     let mut min_index = point;
                     loop {
                         let new_min_index =
@@ -875,20 +882,21 @@ impl Terminal {
                     None
                 };
 
-                if let Some((maybe_url_or_path, is_url, url_match)) = found_url {
+                self.found_word = found_word.is_some();
+                if let Some((maybe_url_or_path, is_url, url_match)) = found_word {
                     if *open {
-                        let event = if is_url {
-                            Event::OpenUrl(maybe_url_or_path)
+                        let target = if is_url {
+                            MaybeNavigationTarget::Url(maybe_url_or_path)
                         } else {
-                            Event::OpenPath(maybe_url_or_path)
+                            MaybeNavigationTarget::PathLike(maybe_url_or_path)
                         };
-                        cx.emit(event);
+                        cx.emit(Event::Open(target));
                     } else {
                         self.update_selected_word(
                             prev_hovered_word,
-                            maybe_url_or_path,
                             url_match,
-                            !is_url,
+                            maybe_url_or_path,
+                            is_url,
                             cx,
                         );
                     }
@@ -900,9 +908,9 @@ impl Terminal {
     fn update_selected_word(
         &mut self,
         prev_word: Option<HoveredWord>,
-        word: String,
         word_match: RangeInclusive<Point>,
-        should_probe_word: bool,
+        word: String,
+        is_url: bool,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(prev_word) = prev_word {
@@ -912,43 +920,21 @@ impl Terminal {
                     word_match,
                     id: prev_word.id,
                 });
-            } else if should_probe_word {
-                let (can_open_tx, can_open_rx) = smol::channel::bounded(1);
-                cx.emit(Event::ProbePathOpen {
-                    maybe_path: word.clone(),
-                    can_open_tx,
-                });
-
-                cx.spawn(|terminal, mut cx| async move {
-                    let can_open = can_open_rx.recv().await.unwrap_or(false);
-                    terminal.update(&mut cx, |terminal, cx| {
-                        if can_open {
-                            terminal.last_content.last_hovered_word = Some(HoveredWord {
-                                word,
-                                word_match,
-                                id: terminal.next_link_id(),
-                            });
-                        } else {
-                            terminal.last_content.last_hovered_word.take();
-                        }
-                        cx.notify();
-                    });
-                })
-                .detach();
-            } else {
-                self.last_content.last_hovered_word = Some(HoveredWord {
-                    word,
-                    word_match,
-                    id: self.next_link_id(),
-                });
+                return;
             }
-        } else {
-            self.last_content.last_hovered_word = Some(HoveredWord {
-                word,
-                word_match,
-                id: self.next_link_id(),
-            });
         }
+
+        self.last_content.last_hovered_word = Some(HoveredWord {
+            word: word.clone(),
+            word_match,
+            id: self.next_link_id(),
+        });
+        let navigation_target = if is_url {
+            MaybeNavigationTarget::Url(word)
+        } else {
+            MaybeNavigationTarget::PathLike(word)
+        };
+        cx.emit(Event::NewNavigationTarget(navigation_target));
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -1031,17 +1017,8 @@ impl Terminal {
     }
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
-        let cmd = modifiers.cmd;
-        let changed = self.cmd_pressed != cmd;
-        if changed {
-            self.cmd_pressed = cmd;
-            if cmd {
-                self.refresh_hovered_word();
-            } else {
-                self.last_content.last_hovered_word.take();
-            }
-        }
-
+        let changed = self.cmd_pressed != modifiers.cmd;
+        self.cmd_pressed = modifiers.cmd;
         changed
     }
 
@@ -1336,7 +1313,7 @@ impl Terminal {
         }
     }
 
-    pub fn refresh_hovered_word(&mut self) {
+    fn refresh_hovered_word(&mut self) {
         self.word_from_position(self.last_mouse_position);
     }
 
@@ -1414,6 +1391,10 @@ impl Terminal {
                 )
             })
             .unwrap_or_else(|| "Terminal".to_string())
+    }
+
+    pub fn can_navigate_to_selected_word(&self) -> bool {
+        self.cmd_pressed && self.found_word
     }
 }
 

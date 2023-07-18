@@ -33,7 +33,7 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, Terminal, TerminalBlink, WorkingDirectory,
+    Event, MaybeNavigationTarget, Terminal, TerminalBlink, WorkingDirectory,
 };
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -93,6 +93,7 @@ pub struct TerminalView {
     blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
+    can_navigate_to_selected_word: bool,
     workspace_id: WorkspaceId,
 }
 
@@ -169,55 +170,61 @@ impl TerminalView {
                         .detach();
                 }
             }
-            Event::ProbePathOpen {
-                maybe_path,
-                can_open_tx,
-            } => {
-                let can_open = !possible_open_targets(&workspace, maybe_path, cx).is_empty();
-                can_open_tx.send_blocking(can_open).ok();
-            }
-            Event::OpenUrl(url) => cx.platform().open_url(url),
-            Event::OpenPath(maybe_path) => {
-                let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
-                if let Some(path) = potential_abs_paths.into_iter().next() {
-                    let visible = path.path_like.is_dir();
-                    let task_workspace = workspace.clone();
-                    cx.spawn(|_, mut cx| async move {
-                        let opened_item = task_workspace
-                            .update(&mut cx, |workspace, cx| {
-                                workspace.open_abs_path(path.path_like, visible, cx)
-                            })
-                            .context("workspace update")?
-                            .await
-                            .context("workspace update")?;
-                        if let Some(row) = path.row {
-                            let col = path.column.unwrap_or(0);
-                            if let Some(active_editor) = opened_item.downcast::<Editor>() {
-                                active_editor
-                                    .downgrade()
-                                    .update(&mut cx, |editor, cx| {
-                                        let snapshot = editor.snapshot(cx).display_snapshot;
-                                        let point = snapshot.buffer_snapshot.clip_point(
-                                            language::Point::new(
-                                                row.saturating_sub(1),
-                                                col.saturating_sub(1),
-                                            ),
-                                            Bias::Left,
-                                        );
-                                        editor.change_selections(
-                                            Some(Autoscroll::center()),
-                                            cx,
-                                            |s| s.select_ranges([point..point]),
-                                        );
-                                    })
-                                    .log_err();
-                            }
-                        }
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
+            Event::NewNavigationTarget(maybe_navigation_target) => {
+                this.can_navigate_to_selected_word = match maybe_navigation_target {
+                    MaybeNavigationTarget::Url(_) => true,
+                    MaybeNavigationTarget::PathLike(maybe_path) => {
+                        !possible_open_targets(&workspace, maybe_path, cx).is_empty()
+                    }
                 }
             }
+            Event::Open(maybe_navigation_target) => match maybe_navigation_target {
+                MaybeNavigationTarget::Url(url) => cx.platform().open_url(url),
+                MaybeNavigationTarget::PathLike(maybe_path) => {
+                    if !this.can_navigate_to_selected_word {
+                        return;
+                    }
+                    let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
+                    if let Some(path) = potential_abs_paths.into_iter().next() {
+                        let visible = path.path_like.is_dir();
+                        let task_workspace = workspace.clone();
+                        cx.spawn(|_, mut cx| async move {
+                            let opened_item = task_workspace
+                                .update(&mut cx, |workspace, cx| {
+                                    workspace.open_abs_path(path.path_like, visible, cx)
+                                })
+                                .context("workspace update")?
+                                .await
+                                .context("workspace update")?;
+                            if let Some(row) = path.row {
+                                let col = path.column.unwrap_or(0);
+                                if let Some(active_editor) = opened_item.downcast::<Editor>() {
+                                    active_editor
+                                        .downgrade()
+                                        .update(&mut cx, |editor, cx| {
+                                            let snapshot = editor.snapshot(cx).display_snapshot;
+                                            let point = snapshot.buffer_snapshot.clip_point(
+                                                language::Point::new(
+                                                    row.saturating_sub(1),
+                                                    col.saturating_sub(1),
+                                                ),
+                                                Bias::Left,
+                                            );
+                                            editor.change_selections(
+                                                Some(Autoscroll::center()),
+                                                cx,
+                                                |s| s.select_ranges([point..point]),
+                                            );
+                                        })
+                                        .log_err();
+                                }
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                }
+            },
             _ => cx.emit(event.clone()),
         })
         .detach();
@@ -231,6 +238,7 @@ impl TerminalView {
             blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
+            can_navigate_to_selected_word: false,
             workspace_id,
         }
     }
@@ -466,6 +474,7 @@ impl View for TerminalView {
                     terminal_handle,
                     focused,
                     self.should_show_cursor(focused, cx),
+                    self.can_navigate_to_selected_word,
                 )
                 .contained(),
             )

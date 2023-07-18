@@ -163,6 +163,7 @@ pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
     focused: bool,
     cursor_visible: bool,
+    can_navigate_to_selected_word: bool,
 }
 
 impl TerminalElement {
@@ -170,11 +171,13 @@ impl TerminalElement {
         terminal: WeakModelHandle<Terminal>,
         focused: bool,
         cursor_visible: bool,
+        can_navigate_to_selected_word: bool,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
             focused,
             cursor_visible,
+            can_navigate_to_selected_word,
         }
     }
 
@@ -580,13 +583,17 @@ impl Element<TerminalView> for TerminalElement {
         let background_color = terminal_theme.background;
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let last_hovered_hyperlink = terminal_handle.update(cx, |terminal, cx| {
+        let last_hovered_word = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
-            terminal.last_content.last_hovered_word.clone()
+            if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
+                terminal.last_content.last_hovered_word.clone()
+            } else {
+                None
+            }
         });
 
-        let hyperlink_tooltip = last_hovered_hyperlink.map(|hovered_word| {
+        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
             let mut tooltip = Overlay::new(
                 Empty::new()
                     .contained()
@@ -619,7 +626,6 @@ impl Element<TerminalView> for TerminalElement {
             cursor_char,
             selection,
             cursor,
-            last_hovered_word,
             ..
         } = { &terminal_handle.read(cx).last_content };
 
