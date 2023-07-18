@@ -63,7 +63,7 @@ impl CodeContextRetriever {
         ) {
             // log::info!("-----MATCH-----");
 
-            let mut name: Vec<&str> = vec![];
+            let mut name = Vec::new();
             let mut item: Option<&str> = None;
             let mut offset: Option<usize> = None;
             for capture in mat.captures {
@@ -91,11 +91,8 @@ impl CodeContextRetriever {
                     .replace("<language>", &pending_file.language.name().to_lowercase())
                     .replace("<item>", item.unwrap());
 
-                let mut truncated_span = context_span.clone();
-                truncated_span.truncate(100);
-
                 // log::info!("Name:       {:?}", name);
-                // log::info!("Span:       {:?}", truncated_span);
+                // log::info!("Span:       {:?}", util::truncate(&context_span, 100));
 
                 context_spans.push(context_span);
                 documents.push(Document {
