@@ -11,6 +11,7 @@ use futures::future::BoxFuture;
 use operations::{CreateBranch, Operation};
 use parking_lot::Mutex;
 use rope::Rope;
+use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{
     cmp::{self, Ordering},
@@ -23,7 +24,9 @@ use std::{
 use sum_tree::{Bias, SumTree, TreeMap};
 use uuid::Uuid;
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct RepoId(Uuid);
 
 type RevisionId = SmallVec<[OperationId; 2]>;
@@ -34,13 +37,13 @@ impl RepoId {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ReplicaId(u32);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct OperationCount(usize);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OperationId {
     replica_id: ReplicaId,
     operation_count: OperationCount,
@@ -69,10 +72,10 @@ impl sum_tree::Summary for OperationId {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoomName(Arc<str>);
 
-#[derive(Clone)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoomToken(Arc<str>);
 
 pub trait Request: Message {
@@ -80,7 +83,23 @@ pub trait Request: Message {
 }
 
 pub trait Message: 'static + Send + Sync {
+    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>>
+    where
+        Self: Sized;
     fn to_bytes(&self) -> Vec<u8>;
+}
+
+impl<T> Message for T
+where
+    T: 'static + Send + Sync + Serialize + for<'a> Deserialize<'a>,
+{
+    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>> {
+        serde_json::from_slice(&bytes).map_err(|_| bytes)
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap()
+    }
 }
 
 pub trait ServerNetwork: 'static + Send + Sync {
@@ -92,21 +111,28 @@ pub trait ServerNetwork: 'static + Send + Sync {
 }
 
 pub trait ClientNetwork: 'static + Send + Sync {
+    type Room: ClientRoom;
+
     fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>>;
-    fn broadcast<M: Message>(&self, credentials: RoomCredentials, message: M);
-    fn on_message<M, F>(&self, credentials: RoomCredentials, handle_message: F)
+    fn room(&self, credentials: RoomCredentials) -> Self::Room;
+}
+
+pub trait ClientRoom: 'static + Send + Sync {
+    fn connect(&mut self) -> BoxFuture<Result<()>>;
+    fn broadcast<M: Message>(&self, message: M);
+    fn on_message<M, F>(&self, handle_message: F)
     where
         M: Message,
         F: 'static + Send + Sync + Fn(M);
 }
 
-struct Client<N> {
+struct Client<N: ClientNetwork> {
     db: Db,
     network: Arc<N>,
-    repo_room_credentials: Arc<Mutex<collections::HashMap<RepoId, RoomCredentials>>>,
+    repo_rooms: Arc<Mutex<collections::HashMap<RepoId, N::Room>>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RoomCredentials {
     name: RoomName,
     token: RoomToken,
@@ -117,7 +143,7 @@ impl<N: ClientNetwork> Clone for Client<N> {
         Self {
             db: self.db.clone(),
             network: self.network.clone(),
-            repo_room_credentials: Default::default(),
+            repo_rooms: Default::default(),
         }
     }
 }
@@ -127,7 +153,7 @@ impl<N: ClientNetwork> Client<N> {
         let mut this = Self {
             db: Db::new(),
             network: Arc::new(network),
-            repo_room_credentials: Default::default(),
+            repo_rooms: Default::default(),
         };
         this.db.on_local_operation({
             let this = this.clone();
@@ -164,22 +190,22 @@ impl<N: ClientNetwork> Client<N> {
                 .network
                 .request(messages::PublishRepo { id, name })
                 .await?;
-            this.repo_room_credentials
-                .lock()
-                .insert(id, response.credentials.clone());
-            this.network.on_message(response.credentials, {
+            let room = this.network.room(response.credentials);
+            room.on_message({
                 let this = this.clone();
                 move |operation: Operation| {
                     this.handle_remote_operation(id, operation);
                 }
             });
+            this.repo_rooms.lock().insert(id, room);
+
             Ok(())
         }
     }
 
     fn handle_local_operation(&self, repo_id: RepoId, operation: Operation) {
-        if let Some(credentials) = self.repo_room_credentials.lock().get(&repo_id) {
-            self.network.broadcast(credentials.clone(), operation);
+        if let Some(room) = self.repo_rooms.lock().get(&repo_id) {
+            room.broadcast(operation);
         }
     }
 
@@ -817,16 +843,44 @@ struct Anchor {
     bias: Bias,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchorRange {
     document_id: OperationId,
     revision_id: RevisionId,
     start_insertion_id: OperationId,
     start_offset_in_insertion: usize,
+    #[serde(with = "bias_serialization")]
     start_bias: Bias,
     end_insertion_id: OperationId,
     end_offset_in_insertion: usize,
+    #[serde(with = "bias_serialization")]
     end_bias: Bias,
+}
+
+mod bias_serialization {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use sum_tree::Bias;
+
+    pub fn serialize<S>(field: &Bias, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match field {
+            Bias::Left => "left".serialize(serializer),
+            Bias::Right => "right".serialize(serializer),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bias, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?.as_str() {
+            "left" => Ok(Bias::Left),
+            "right" => Ok(Bias::Right),
+            _ => Err(serde::de::Error::custom("invalid bias")),
+        }
+    }
 }
 
 struct RopeBuilder<'a> {
@@ -939,12 +993,14 @@ struct Revision {
 
 #[cfg(test)]
 mod tests {
+    use gpui::executor::Deterministic;
+
     use super::*;
     use crate::test::TestNetwork;
 
     #[gpui::test]
-    async fn test_repo() {
-        let network = TestNetwork::default();
+    async fn test_repo(deterministic: Arc<Deterministic>) {
+        let network = TestNetwork::new(deterministic.build_background());
         let server = Server::new(network.server());
 
         let client_a = Client::new(network.client());

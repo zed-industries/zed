@@ -1735,6 +1735,7 @@ name = "crdb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "collections",
  "futures 0.3.28",
  "gpui",
@@ -1742,6 +1743,8 @@ dependencies = [
  "parking_lot 0.11.2",
  "rand 0.8.5",
  "rope",
+ "serde",
+ "serde_json",
  "smallvec",
  "sum_tree",
  "uuid 1.3.2",
@@ -6492,6 +6495,9 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smol"

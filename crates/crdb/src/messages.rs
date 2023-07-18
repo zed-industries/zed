@@ -1,27 +1,18 @@
 use crate::{Message, RepoId, Request, RoomCredentials};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PublishRepo {
     pub id: RepoId,
     pub name: Arc<str>,
-}
-
-impl Message for PublishRepo {
-    fn to_bytes(&self) -> Vec<u8> {
-        todo!()
-    }
 }
 
 impl Request for PublishRepo {
     type Response = PublishRepoResponse;
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PublishRepoResponse {
     pub credentials: RoomCredentials,
-}
-
-impl Message for PublishRepoResponse {
-    fn to_bytes(&self) -> Vec<u8> {
-        todo!()
-    }
 }

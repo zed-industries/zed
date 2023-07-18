@@ -16,9 +16,12 @@ anyhow.workspace = true
 futures.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
-uuid = { version = "1.3", features = ["v4", "fast-rng"] }
+uuid = { version = "1.3", features = ["v4", "fast-rng", "serde"] }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
+async-broadcast = "0.4"
 rand.workspace = true
