@@ -172,10 +172,11 @@ impl TerminalView {
             }
             Event::NewNavigationTarget(maybe_navigation_target) => {
                 this.can_navigate_to_selected_word = match maybe_navigation_target {
-                    MaybeNavigationTarget::Url(_) => true,
-                    MaybeNavigationTarget::PathLike(maybe_path) => {
+                    Some(MaybeNavigationTarget::Url(_)) => true,
+                    Some(MaybeNavigationTarget::PathLike(maybe_path)) => {
                         !possible_open_targets(&workspace, maybe_path, cx).is_empty()
                     }
+                    None => false,
                 }
             }
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {

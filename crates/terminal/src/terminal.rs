@@ -89,7 +89,7 @@ pub enum Event {
     Wakeup,
     BlinkChanged,
     SelectionsChanged,
-    NewNavigationTarget(MaybeNavigationTarget),
+    NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
 }
 
@@ -507,7 +507,7 @@ impl TerminalBuilder {
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
             cmd_pressed: false,
-            found_word: false,
+            hovered_word: false,
         };
 
         Ok(TerminalBuilder {
@@ -660,7 +660,7 @@ pub struct Terminal {
     next_link_id: usize,
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
-    found_word: bool,
+    hovered_word: bool,
 }
 
 impl Terminal {
@@ -882,23 +882,31 @@ impl Terminal {
                     None
                 };
 
-                self.found_word = found_word.is_some();
-                if let Some((maybe_url_or_path, is_url, url_match)) = found_word {
-                    if *open {
-                        let target = if is_url {
-                            MaybeNavigationTarget::Url(maybe_url_or_path)
+                match found_word {
+                    Some((maybe_url_or_path, is_url, url_match)) => {
+                        if *open {
+                            let target = if is_url {
+                                MaybeNavigationTarget::Url(maybe_url_or_path)
+                            } else {
+                                MaybeNavigationTarget::PathLike(maybe_url_or_path)
+                            };
+                            cx.emit(Event::Open(target));
                         } else {
-                            MaybeNavigationTarget::PathLike(maybe_url_or_path)
-                        };
-                        cx.emit(Event::Open(target));
-                    } else {
-                        self.update_selected_word(
-                            prev_hovered_word,
-                            url_match,
-                            maybe_url_or_path,
-                            is_url,
-                            cx,
-                        );
+                            self.update_selected_word(
+                                prev_hovered_word,
+                                url_match,
+                                maybe_url_or_path,
+                                is_url,
+                                cx,
+                            );
+                        }
+                        self.hovered_word = true;
+                    }
+                    None => {
+                        if self.hovered_word {
+                            cx.emit(Event::NewNavigationTarget(None));
+                        }
+                        self.hovered_word = false;
                     }
                 }
             }
@@ -934,7 +942,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(word)
         };
-        cx.emit(Event::NewNavigationTarget(navigation_target));
+        cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -1018,6 +1026,9 @@ impl Terminal {
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
         let changed = self.cmd_pressed != modifiers.cmd;
+        if !self.cmd_pressed && modifiers.cmd {
+            self.refresh_hovered_word();
+        }
         self.cmd_pressed = modifiers.cmd;
         changed
     }
@@ -1394,7 +1405,7 @@ impl Terminal {
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
-        self.cmd_pressed && self.found_word
+        self.cmd_pressed && self.hovered_word
     }
 }
 
