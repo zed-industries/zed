@@ -4834,7 +4834,14 @@ async fn test_project_search(
     let results = project_b
         .update(cx_b, |project, cx| {
             project.search(
-                SearchQuery::text("world", Option::<String>::None, false, false, Vec::new(), Vec::new()),
+                SearchQuery::text(
+                    "world",
+                    Option::<String>::None,
+                    false,
+                    false,
+                    Vec::new(),
+                    Vec::new(),
+                ),
                 cx,
             )
         })

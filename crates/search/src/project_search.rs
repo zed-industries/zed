@@ -953,6 +953,7 @@ impl ProjectSearchBar {
         _: &ToggleFocus,
         cx: &mut ViewContext<ProjectSearchBar>,
     ) {
+        dbg!("TOGGLE BAR FOCUS");
         if let Some(view) = &search_bar.active_project_search {
             view.update(cx, |view, cx| view.focus_results_editor(cx));
         }
@@ -1597,7 +1598,10 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_project_search_replace(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_project_search_replace(
+        deterministic: Arc<Deterministic>,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background());
