@@ -78,19 +78,19 @@ pub trait Request: 'static {
     type Response: 'static;
 }
 
-pub trait Message {
+pub trait Message: 'static + Send + Sync {
     fn to_bytes(&self) -> Vec<u8>;
 }
 
-pub trait ServerNetwork {
+pub trait ServerNetwork: Send + Sync {
     fn on_request<H, F, R>(&self, handle_request: H)
     where
-        H: 'static + Fn(R) -> F,
+        H: 'static + Send + Sync + Fn(R) -> F,
         F: 'static + Send + Sync + futures::Future<Output = Result<R::Response>>,
         R: Request;
 }
 
-pub trait ClientNetwork {
+pub trait ClientNetwork: Send + Sync {
     fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>>;
     fn broadcast<M: Message>(&self, room: RoomName, token: RoomToken, message: M);
 }
@@ -178,23 +178,31 @@ struct Server {
 }
 
 impl Server {
-    async fn new(network: impl ServerNetwork) -> Self {
+    fn new(network: impl ServerNetwork) -> Self {
         let this = Self { db: Db::new() };
-        // network.on_request({
-        //     let this = this.clone();
-        //     move |request| {
-        //         let this = this.clone();
-        //         async move { todo!() }
-        //     }
-        // });
+        this.on_request(network);
         this
+    }
+
+    fn on_request(&self, network: impl ServerNetwork) {
+        network.on_request({
+            let this = self.clone();
+            move |request: messages::PublishRepo| {
+                let this = this.clone();
+                async move { this.handle_publish_repo(request).await }
+            }
+        });
+    }
+
+    async fn handle_publish_repo(&self, request: messages::PublishRepo) -> Result<()> {
+        todo!()
     }
 }
 
 #[derive(Clone)]
 pub struct Db {
     snapshot: Arc<Mutex<DbSnapshot>>,
-    local_operation_created: Option<Arc<dyn Fn(RepoId, Operation)>>,
+    local_operation_created: Option<Arc<dyn Send + Sync + Fn(RepoId, Operation)>>,
 }
 
 impl Db {
@@ -205,7 +213,10 @@ impl Db {
         }
     }
 
-    fn on_local_operation(&mut self, operation_created: impl 'static + Fn(RepoId, Operation)) {
+    fn on_local_operation(
+        &mut self,
+        operation_created: impl 'static + Send + Sync + Fn(RepoId, Operation),
+    ) {
         self.local_operation_created = Some(Arc::new(operation_created));
     }
 }
@@ -918,6 +929,6 @@ mod tests {
 
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
         let db_b = Client::new(network.client());
-        let repo_b = db_b.clone_repo("repo-1");
+        let repo_b = db_b.clone_repo("repo-1").await.unwrap();
     }
 }

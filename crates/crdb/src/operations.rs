@@ -29,7 +29,7 @@ impl Operation {
 
 impl Message for Operation {
     fn to_bytes(&self) -> Vec<u8> {
-        serde_
+        todo!()
     }
 }
 
@@ -43,12 +43,12 @@ pub struct CreateBranch {
 #[derive(Clone, Debug)]
 pub struct CreateDocument {
     pub id: OperationId,
-    pub parent: SmallVec<[OperationId; 2]>,
+    pub parent: RevisionId,
 }
 
 #[derive(Clone, Debug)]
 pub struct Edit {
     pub id: OperationId,
-    pub parent: SmallVec<[OperationId; 2]>,
+    pub parent: RevisionId,
     pub edits: SmallVec<[(AnchorRange, Arc<str>); 2]>,
 }

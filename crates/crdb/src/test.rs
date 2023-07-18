@@ -3,7 +3,7 @@ use anyhow::Result;
 use futures::{future::BoxFuture, FutureExt};
 use parking_lot::Mutex;
 use std::{
-    any::{Any, TypeId},
+    any::{type_name, Any, TypeId},
     collections::BTreeMap,
     sync::Arc,
 };
@@ -23,8 +23,10 @@ impl TestNetwork {
 
 #[derive(Default)]
 struct NetworkState {
-    request_handlers:
-        BTreeMap<TypeId, Box<dyn Fn(Box<dyn Any>) -> BoxFuture<'static, Result<Box<dyn Any>>>>>,
+    request_handlers: BTreeMap<
+        TypeId,
+        Box<dyn Send + Fn(Box<dyn Any>) -> BoxFuture<'static, Result<Box<dyn Any>>>>,
+    >,
     rooms: BTreeMap<RoomName, Room>,
 }
 
@@ -37,7 +39,7 @@ pub struct TestServer(Arc<Mutex<NetworkState>>);
 impl ServerNetwork for TestServer {
     fn on_request<H, F, R>(&self, handle_request: H)
     where
-        H: 'static + Fn(R) -> F,
+        H: 'static + Send + Sync + Fn(R) -> F,
         F: 'static + Send + Sync + futures::Future<Output = Result<R::Response>>,
         R: crate::Request,
     {
@@ -69,7 +71,10 @@ impl ClientNetwork for TestClient {
             .lock()
             .request_handlers
             .get(&TypeId::of::<R>())
-            .unwrap()(Box::new(request));
+            .expect(&format!(
+                "handler for request {} not found",
+                type_name::<R>()
+            ))(Box::new(request));
         async move {
             request
                 .await
