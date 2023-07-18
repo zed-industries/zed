@@ -831,6 +831,7 @@ impl LanguageRegistry {
                                     Ok(language) => {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
+
                                         state.add(language.clone());
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {

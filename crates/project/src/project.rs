@@ -2709,7 +2709,6 @@ impl Project {
             Some(language_server) => language_server,
             None => return Ok(None),
         };
-
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
