@@ -838,7 +838,7 @@ impl Terminal {
                     self.last_content.size,
                     term.grid().display_offset(),
                 )
-                .grid_clamp(term, alacritty_terminal::index::Boundary::Cursor);
+                .grid_clamp(term, alacritty_terminal::index::Boundary::Grid);
 
                 let link = term.grid().index(point).hyperlink();
                 let found_word = if link.is_some() {
