@@ -110,7 +110,6 @@ struct SemanticSearchState {
     file_count: usize,
     outstanding_file_count: usize,
     _progress_task: Task<()>,
-    search_task: Option<Task<Result<()>>>,
 }
 
 pub struct ProjectSearchBar {
@@ -188,18 +187,17 @@ impl ProjectSearch {
         cx.notify();
     }
 
-    fn semantic_search(&mut self, query: String, cx: &mut ModelContext<Self>) -> Option<()> {
-        let project = self.project.clone();
-        let semantic_index = SemanticIndex::global(cx)?;
-        let search_task = semantic_index.update(cx, |semantic_index, cx| {
-            semantic_index.search_project(project, query.clone(), 10, cx)
+    fn semantic_search(&mut self, query: String, cx: &mut ModelContext<Self>) {
+        let search = SemanticIndex::global(cx).map(|index| {
+            index.update(cx, |semantic_index, cx| {
+                semantic_index.search_project(self.project.clone(), query.clone(), 10, cx)
+            })
         });
-
         self.search_id += 1;
         // self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let results = search_task.await.log_err()?;
+            let results = search?.await.log_err()?;
 
             let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
                 this.excerpts.update(cx, |excerpts, cx| {
@@ -231,8 +229,7 @@ impl ProjectSearch {
 
             None
         }));
-
-        Some(())
+        cx.notify();
     }
 }
 
@@ -257,12 +254,10 @@ impl View for ProjectSearchView {
             enum Status {}
 
             let theme = theme::current(cx).clone();
-            let text = if self.query_editor.read(cx).text(cx).is_empty() {
-                Cow::Borrowed("")
+            let text = if model.pending_search.is_some() {
+                Cow::Borrowed("Searching...")
             } else if let Some(semantic) = &self.semantic {
-                if semantic.search_task.is_some() {
-                    Cow::Borrowed("Searching...")
-                } else if semantic.outstanding_file_count > 0 {
+                if semantic.outstanding_file_count > 0 {
                     Cow::Owned(format!(
                         "Indexing. {} of {}...",
                         semantic.file_count - semantic.outstanding_file_count,
@@ -271,8 +266,8 @@ impl View for ProjectSearchView {
                 } else {
                     Cow::Borrowed("Indexing complete")
                 }
-            } else if model.pending_search.is_some() {
-                Cow::Borrowed("Searching...")
+            } else if self.query_editor.read(cx).text(cx).is_empty() {
+                Cow::Borrowed("")
             } else {
                 Cow::Borrowed("No results")
             };
@@ -978,10 +973,10 @@ impl ProjectSearchBar {
                         let (files_to_index, mut files_remaining_rx) = index_task.await?;
 
                         search_view.update(&mut cx, |search_view, cx| {
+                            cx.notify();
                             search_view.semantic = Some(SemanticSearchState {
                                 file_count: files_to_index,
                                 outstanding_file_count: files_to_index,
-                                search_task: None,
                                 _progress_task: cx.spawn(|search_view, mut cx| async move {
                                     while let Some(count) = files_remaining_rx.recv().await {
                                         search_view
@@ -1006,6 +1001,7 @@ impl ProjectSearchBar {
                     })
                     .detach_and_log_err(cx);
                 }
+                cx.notify();
             });
             cx.notify();
             true
