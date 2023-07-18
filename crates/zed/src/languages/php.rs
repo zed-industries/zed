@@ -45,9 +45,6 @@ impl LspAdapter for IntelephenseLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // At the time of writing the latest vscode-eslint release was released in 2020 and requires
-        // special custom LSP protocol extensions be handled to fully initialize. Download the latest
-        // prerelease instead to sidestep this issue
         Ok(Box::new(IntelephenseVersion(
             self.node.npm_package_latest_version("intelephense").await?,
         )) as Box<_>)
