@@ -106,7 +106,7 @@ impl OpenAIEmbeddings {
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
-        const BACKOFF_SECONDS: [usize; 3] = [65, 180, 360];
+        const BACKOFF_SECONDS: [usize; 3] = [45, 75, 125];
         const MAX_RETRIES: usize = 3;
 
         let api_key = OPENAI_API_KEY
@@ -133,6 +133,10 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             match response.status() {
                 StatusCode::TOO_MANY_REQUESTS => {
                     let delay = Duration::from_secs(BACKOFF_SECONDS[request_number - 1] as u64);
+                    log::trace!(
+                        "open ai rate limiting, delaying request by {:?} seconds",
+                        delay.as_secs()
+                    );
                     self.executor.timer(delay).await;
                 }
                 StatusCode::BAD_REQUEST => {
