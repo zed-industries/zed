@@ -78,10 +78,10 @@ impl sum_tree::Summary for OperationId {
     }
 }
 
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoomName(Arc<str>);
 
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoomToken(Arc<str>);
 
 #[derive(Clone)]
@@ -93,7 +93,7 @@ pub trait Request: Message {
     type Response: Message;
 }
 
-pub trait Message: 'static + Send + Sync {
+pub trait Message: 'static + Send {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>>
     where
         Self: Sized;
@@ -102,7 +102,7 @@ pub trait Message: 'static + Send + Sync {
 
 impl<T> Message for T
 where
-    T: 'static + Send + Sync + Serialize + for<'a> Deserialize<'a>,
+    T: 'static + Send + Serialize + for<'a> Deserialize<'a>,
 {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>> {
         serde_json::from_slice(&bytes).map_err(|_| bytes)
@@ -137,7 +137,7 @@ pub trait ClientRoom: 'static + Send + Sync {
     fn on_message<M, F>(&self, handle_message: F)
     where
         M: Message,
-        F: 'static + Send + Sync + Fn(M);
+        F: 'static + Send + Fn(M);
 }
 
 struct Client<N: ClientNetwork> {
