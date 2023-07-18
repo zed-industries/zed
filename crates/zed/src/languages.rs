@@ -13,9 +13,11 @@ mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
+mod php;
 mod python;
 mod ruby;
 mod rust;
+mod svelte;
 mod typescript;
 mod yaml;
 
@@ -135,7 +137,19 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
     language(
         "yaml",
         tree_sitter_yaml::language(),
-        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime))],
+        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
+    );
+    language(
+        "svelte",
+        tree_sitter_svelte::language(),
+        vec![Arc::new(svelte::SvelteLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
+    language(
+        "php",
+        tree_sitter_php::language(),
+        vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
     );
 }
 

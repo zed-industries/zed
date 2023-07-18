@@ -647,7 +647,11 @@ impl SearchableItem for TerminalView {
     }
 
     /// Convert events raised by this item into search-relevant events (if applicable)
-    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+    fn to_search_event(
+        &mut self,
+        event: &Self::Event,
+        _: &mut ViewContext<Self>,
+    ) -> Option<SearchEvent> {
         match event {
             Event::Wakeup => Some(SearchEvent::MatchesInvalidated),
             Event::SelectionsChanged => Some(SearchEvent::ActiveMatchChanged),
@@ -679,6 +683,13 @@ impl SearchableItem for TerminalView {
     fn activate_match(&mut self, index: usize, _: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.terminal()
             .update(cx, |term, _| term.activate_match(index));
+        cx.notify();
+    }
+
+    /// Add selections for all matches given.
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.terminal()
+            .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
     }
 

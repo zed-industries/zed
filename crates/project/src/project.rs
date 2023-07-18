@@ -2709,7 +2709,6 @@ impl Project {
             Some(language_server) => language_server,
             None => return Ok(None),
         };
-
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
@@ -3045,6 +3044,8 @@ impl Project {
     ) -> Task<(Option<PathBuf>, Vec<WorktreeId>)> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
+            log::info!("stopping language server {}", key.1 .0);
+
             // Remove other entries for this language server as well
             let mut orphaned_worktrees = vec![worktree_id];
             let other_keys = self.language_server_ids.keys().cloned().collect::<Vec<_>>();

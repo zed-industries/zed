@@ -1533,47 +1533,9 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
         ])
     });
 
-    let html_language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "HTML".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_html::language()),
-        )
-        .with_indents_query(
-            "
-            (element
-              (start_tag) @start
-              (end_tag)? @end) @indent
-            ",
-        )
-        .unwrap()
-        .with_injection_query(
-            r#"
-            (script_element
-                (raw_text) @content
-                (#set! "language" "javascript"))
-            "#,
-        )
-        .unwrap(),
-    );
+    let html_language = Arc::new(html_lang());
 
-    let javascript_language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "JavaScript".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_javascript::language()),
-        )
-        .with_indents_query(
-            r#"
-            (object "}" @end) @indent
-            "#,
-        )
-        .unwrap(),
-    );
+    let javascript_language = Arc::new(javascript_lang());
 
     let language_registry = Arc::new(LanguageRegistry::test());
     language_registry.add(html_language.clone());
@@ -1669,7 +1631,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_language_config_at(cx: &mut AppContext) {
+fn test_language_scope_at(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
     cx.add_model(|cx| {
@@ -1709,7 +1671,7 @@ fn test_language_config_at(cx: &mut AppContext) {
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_javascript::language()),
+            Some(tree_sitter_typescript::language_tsx()),
         )
         .with_override_query(
             r#"
@@ -1751,6 +1713,54 @@ fn test_language_config_at(cx: &mut AppContext) {
             element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
         );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.add_model(|cx| {
+        let text = r#"
+            <ol>
+            <% people.each do |person| %>
+                <li>
+                    <%= person.name %>
+                </li>
+            <% end %>
+            </ol>
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test());
+        language_registry.add(Arc::new(ruby_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(erb_lang()));
+
+        let mut buffer = Buffer::new(0, text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("ERB")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+        let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
+        assert_eq!(html_config.line_comment_prefix(), None);
+        assert_eq!(
+            html_config.block_comment_delimiters(),
+            Some((&"<!--".into(), &"-->".into()))
+        );
+
+        let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
+        assert_eq!(ruby_config.line_comment_prefix().unwrap().as_ref(), "# ");
+        assert_eq!(ruby_config.block_comment_delimiters(), None);
 
         buffer
     });
@@ -2143,6 +2153,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             path_suffixes: vec!["rb".to_string()],
+            line_comment: Some("# ".into()),
             ..Default::default()
         },
         Some(tree_sitter_ruby::language()),
@@ -2153,6 +2164,61 @@ fn ruby_lang() -> Language {
             (method "end" @end) @indent
             (rescue) @outdent
             (then) @indent
+        "#,
+    )
+    .unwrap()
+}
+
+fn html_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            block_comment: Some(("<!--".into(), "-->".into())),
+            ..Default::default()
+        },
+        Some(tree_sitter_html::language()),
+    )
+    .with_indents_query(
+        "
+        (element
+          (start_tag) @start
+          (end_tag)? @end) @indent
+        ",
+    )
+    .unwrap()
+    .with_injection_query(
+        r#"
+        (script_element
+            (raw_text) @content
+            (#set! "language" "javascript"))
+        "#,
+    )
+    .unwrap()
+}
+
+fn erb_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "ERB".into(),
+            path_suffixes: vec!["erb".to_string()],
+            block_comment: Some(("<%#".into(), "%>".into())),
+            ..Default::default()
+        },
+        Some(tree_sitter_embedded_template::language()),
+    )
+    .with_injection_query(
+        r#"
+            (
+                (code) @content
+                (#set! "language" "ruby")
+                (#set! "combined")
+            )
+
+            (
+                (content) @content
+                (#set! "language" "html")
+                (#set! "combined")
+            )
         "#,
     )
     .unwrap()
@@ -2227,12 +2293,18 @@ fn javascript_lang() -> Language {
             name: "JavaScript".into(),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     )
     .with_brackets_query(
         r#"
         ("{" @open "}" @close)
         ("(" @open ")" @close)
+        "#,
+    )
+    .unwrap()
+    .with_indents_query(
+        r#"
+        (object "}" @end) @indent
         "#,
     )
     .unwrap()

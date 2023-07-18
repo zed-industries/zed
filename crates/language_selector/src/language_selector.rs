@@ -93,7 +93,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         self.matches.len()
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let language_name = &self.candidates[mat.candidate_id].string;
             let language = self.language_registry.language_for_name(language_name);

@@ -1243,9 +1243,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.3.14"
+version = "4.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98330784c494e49850cb23b8e2afcca13587d2500b2e3f1f78ae20248059c9be"
+checksum = "8f644d0dac522c8b05ddc39aaaccc5b136d5dc4ff216610c5641e3be5becf56c"
 dependencies = [
  "clap_builder",
  "clap_derive 4.3.12",
@@ -1254,9 +1254,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.3.14"
+version = "4.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e182eb5f2562a67dda37e2c57af64d720a9e010c5e860ed87c056586aeafa52e"
+checksum = "af410122b9778e024f9e0fb35682cc09cc3f85cad5e8d3ba8f47a9702df6e73d"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2253,7 +2253,6 @@ dependencies = [
  "theme",
  "tree-sitter",
  "tree-sitter-html",
- "tree-sitter-javascript",
  "tree-sitter-rust",
  "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
  "unindent",
@@ -3750,15 +3749,16 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-elixir 0.1.0 (git+https://github.com/elixir-lang/tree-sitter-elixir?rev=4ba9dab6e2602960d95b2b625f3386c27e08084e)",
  "tree-sitter-embedded-template",
+ "tree-sitter-heex",
  "tree-sitter-html",
- "tree-sitter-javascript",
- "tree-sitter-json 0.19.0",
+ "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
- "tree-sitter-typescript 0.20.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
  "unicase",
  "unindent",
  "util",
@@ -8084,16 +8084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-javascript"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2490fab08630b2c8943c320f7b63473cbf65511c8d83aec551beb9b4375906ed"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-json"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8126,6 +8116,15 @@ dependencies = [
 name = "tree-sitter-markdown"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown?rev=330ecab87a3e3a7211ac69bbadc19eabecdb1cca#330ecab87a3e3a7211ac69bbadc19eabecdb1cca"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-php"
+version = "0.19.1"
+source = "git+https://github.com/tree-sitter/tree-sitter-php?rev=d43130fd1525301e9826f420c5393a4d169819fc#d43130fd1525301e9826f420c5393a4d169819fc"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8174,6 +8173,15 @@ dependencies = [
 name = "tree-sitter-scheme"
 version = "0.2.0"
 source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-svelte"
+version = "0.10.2"
+source = "git+https://github.com/Himujjal/tree-sitter-svelte?rev=697bb515471871e85ff799ea57a76298a71a9cca#697bb515471871e85ff799ea57a76298a71a9cca"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9449,7 +9457,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap 4.3.14",
+ "clap 4.3.15",
  "schemars",
  "serde_json",
  "theme",
@@ -9580,11 +9588,13 @@ dependencies = [
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
  "tree-sitter-markdown",
+ "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-racket",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
+ "tree-sitter-svelte",
  "tree-sitter-toml 0.5.1",
  "tree-sitter-typescript 0.20.2 (git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259)",
  "tree-sitter-yaml",

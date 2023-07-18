@@ -569,10 +569,18 @@ impl SyntaxSnapshot {
                                 range.end = range.end.saturating_sub(step_start_byte);
                             }
 
-                            included_ranges = splice_included_ranges(
+                            let changed_indices;
+                            (included_ranges, changed_indices) = splice_included_ranges(
                                 old_tree.included_ranges(),
                                 &parent_layer_changed_ranges,
                                 &included_ranges,
+                            );
+                            insert_newlines_between_ranges(
+                                changed_indices,
+                                &mut included_ranges,
+                                &text,
+                                step_start_byte,
+                                step_start_point,
                             );
                         }
 
@@ -586,7 +594,7 @@ impl SyntaxSnapshot {
                         }
 
                         log::trace!(
-                            "update layer. language:{}, start:{:?}, ranges:{:?}",
+                            "update layer. language:{}, start:{:?}, included_ranges:{:?}",
                             language.name(),
                             LogAnchorRange(&step.range, text),
                             LogIncludedRanges(&included_ranges),
@@ -608,6 +616,16 @@ impl SyntaxSnapshot {
                             }),
                         );
                     } else {
+                        if matches!(step.mode, ParseMode::Combined { .. }) {
+                            insert_newlines_between_ranges(
+                                0..included_ranges.len(),
+                                &mut included_ranges,
+                                text,
+                                step_start_byte,
+                                step_start_point,
+                            );
+                        }
+
                         if included_ranges.is_empty() {
                             included_ranges.push(tree_sitter::Range {
                                 start_byte: 0,
@@ -771,8 +789,10 @@ impl SyntaxSnapshot {
         range: Range<T>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = SyntaxLayerInfo> {
-        let start = buffer.anchor_before(range.start.to_offset(buffer));
-        let end = buffer.anchor_after(range.end.to_offset(buffer));
+        let start_offset = range.start.to_offset(buffer);
+        let end_offset = range.end.to_offset(buffer);
+        let start = buffer.anchor_before(start_offset);
+        let end = buffer.anchor_after(end_offset);
 
         let mut cursor = self.layers.filter::<_, ()>(move |summary| {
             if summary.max_depth > summary.min_depth {
@@ -787,20 +807,21 @@ impl SyntaxSnapshot {
         cursor.next(buffer);
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
+                let mut info = None;
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
-                    let info = SyntaxLayerInfo {
+                    let layer_start_offset = layer.range.start.to_offset(buffer);
+                    let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
+
+                    info = Some(SyntaxLayerInfo {
                         tree,
                         language,
                         depth: layer.depth,
-                        offset: (
-                            layer.range.start.to_offset(buffer),
-                            layer.range.start.to_point(buffer).to_ts_point(),
-                        ),
-                    };
-                    cursor.next(buffer);
-                    return Some(info);
-                } else {
-                    cursor.next(buffer);
+                        offset: (layer_start_offset, layer_start_point),
+                    });
+                }
+                cursor.next(buffer);
+                if info.is_some() {
+                    return info;
                 }
             }
             None
@@ -1272,14 +1293,20 @@ fn get_injections(
     }
 }
 
+/// Update the given list of included `ranges`, removing any ranges that intersect
+/// `removed_ranges`, and inserting the given `new_ranges`.
+///
+/// Returns a new vector of ranges, and the range of the vector that was changed,
+/// from the previous `ranges` vector.
 pub(crate) fn splice_included_ranges(
     mut ranges: Vec<tree_sitter::Range>,
     removed_ranges: &[Range<usize>],
     new_ranges: &[tree_sitter::Range],
-) -> Vec<tree_sitter::Range> {
+) -> (Vec<tree_sitter::Range>, Range<usize>) {
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
     let mut new_ranges = new_ranges.into_iter().cloned().peekable();
     let mut ranges_ix = 0;
+    let mut changed_portion = usize::MAX..0;
     loop {
         let next_new_range = new_ranges.peek();
         let next_removed_range = removed_ranges.peek();
@@ -1341,11 +1368,69 @@ pub(crate) fn splice_included_ranges(
             }
         }
 
+        changed_portion.start = changed_portion.start.min(start_ix);
+        changed_portion.end = changed_portion.end.max(if insert.is_some() {
+            start_ix + 1
+        } else {
+            start_ix
+        });
+
         ranges.splice(start_ix..end_ix, insert);
         ranges_ix = start_ix;
     }
 
-    ranges
+    if changed_portion.end < changed_portion.start {
+        changed_portion = 0..0;
+    }
+
+    (ranges, changed_portion)
+}
+
+/// Ensure there are newline ranges in between content range that appear on
+/// different lines. For performance, only iterate through the given range of
+/// indices. All of the ranges in the array are relative to a given start byte
+/// and point.
+fn insert_newlines_between_ranges(
+    indices: Range<usize>,
+    ranges: &mut Vec<tree_sitter::Range>,
+    text: &text::BufferSnapshot,
+    start_byte: usize,
+    start_point: Point,
+) {
+    let mut ix = indices.end + 1;
+    while ix > indices.start {
+        ix -= 1;
+        if 0 == ix || ix == ranges.len() {
+            continue;
+        }
+
+        let range_b = ranges[ix].clone();
+        let range_a = &mut ranges[ix - 1];
+        if range_a.end_point.column == 0 {
+            continue;
+        }
+
+        if range_a.end_point.row < range_b.start_point.row {
+            let end_point = start_point + Point::from_ts_point(range_a.end_point);
+            let line_end = Point::new(end_point.row, text.line_len(end_point.row));
+            if end_point.column as u32 >= line_end.column {
+                range_a.end_byte += 1;
+                range_a.end_point.row += 1;
+                range_a.end_point.column = 0;
+            } else {
+                let newline_offset = text.point_to_offset(line_end);
+                ranges.insert(
+                    ix,
+                    tree_sitter::Range {
+                        start_byte: newline_offset - start_byte,
+                        end_byte: newline_offset - start_byte + 1,
+                        start_point: (line_end - start_point).to_ts_point(),
+                        end_point: ((line_end - start_point) + Point::new(1, 0)).to_ts_point(),
+                    },
+                )
+            }
+        }
+    }
 }
 
 impl OwnedSyntaxLayerInfo {

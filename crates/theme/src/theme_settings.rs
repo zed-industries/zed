@@ -13,6 +13,7 @@ use std::sync::Arc;
 use util::ResultExt as _;
 
 const MIN_FONT_SIZE: f32 = 6.0;
+const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(Clone, JsonSchema)]
 pub struct ThemeSettings {
@@ -20,6 +21,7 @@ pub struct ThemeSettings {
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub(crate) buffer_font_size: f32,
+    pub(crate) buffer_line_height: BufferLineHeight,
     #[serde(skip)]
     pub theme: Arc<Theme>,
 }
@@ -33,9 +35,30 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub buffer_line_height: Option<BufferLineHeight>,
+    #[serde(default)]
     pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
     pub theme: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BufferLineHeight {
+    #[default]
+    Comfortable,
+    Standard,
+    Custom(f32),
+}
+
+impl BufferLineHeight {
+    pub fn value(&self) -> f32 {
+        match self {
+            BufferLineHeight::Comfortable => 1.618,
+            BufferLineHeight::Standard => 1.3,
+            BufferLineHeight::Custom(line_height) => *line_height,
+        }
+    }
 }
 
 impl ThemeSettings {
@@ -46,6 +69,10 @@ impl ThemeSettings {
             self.buffer_font_size
         }
         .max(MIN_FONT_SIZE)
+    }
+
+    pub fn line_height(&self) -> f32 {
+        f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 }
 
@@ -106,6 +133,7 @@ impl settings::Setting for ThemeSettings {
             buffer_font_family_name: defaults.buffer_font_family.clone().unwrap(),
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
+            buffer_line_height: defaults.buffer_line_height.unwrap(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
         };
 
@@ -136,6 +164,7 @@ impl settings::Setting for ThemeSettings {
             }
 
             merge(&mut this.buffer_font_size, value.buffer_font_size);
+            merge(&mut this.buffer_line_height, value.buffer_line_height);
         }
 
         Ok(this)
@@ -149,8 +178,8 @@ impl settings::Setting for ThemeSettings {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = cx
             .global::<Arc<ThemeRegistry>>()
-            .list(params.staff_mode)
-            .map(|theme| Value::String(theme.name.clone()))
+            .list_names(params.staff_mode)
+            .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
 
         let theme_name_schema = SchemaObject {

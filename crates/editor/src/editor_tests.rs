@@ -3836,7 +3836,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     ));
 
     let registry = Arc::new(LanguageRegistry::test());
@@ -5383,7 +5383,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comment: Some("// ".into()),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     ));
 
     let registry = Arc::new(LanguageRegistry::test());

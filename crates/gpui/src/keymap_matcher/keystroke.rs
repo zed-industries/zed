@@ -3,7 +3,7 @@ use std::fmt::Write;
 use anyhow::anyhow;
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Eq, PartialEq, Default, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
 pub struct Keystroke {
     pub ctrl: bool,
     pub alt: bool,

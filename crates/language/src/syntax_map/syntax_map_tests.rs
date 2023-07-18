@@ -11,7 +11,7 @@ use util::test::marked_text_ranges;
 fn test_splice_included_ranges() {
     let ranges = vec![ts_range(20..30), ts_range(50..60), ts_range(80..90)];
 
-    let new_ranges = splice_included_ranges(
+    let (new_ranges, change) = splice_included_ranges(
         ranges.clone(),
         &[54..56, 58..68],
         &[ts_range(50..54), ts_range(59..67)],
@@ -25,14 +25,16 @@ fn test_splice_included_ranges() {
             ts_range(80..90),
         ]
     );
+    assert_eq!(change, 1..3);
 
-    let new_ranges = splice_included_ranges(ranges.clone(), &[70..71, 91..100], &[]);
+    let (new_ranges, change) = splice_included_ranges(ranges.clone(), &[70..71, 91..100], &[]);
     assert_eq!(
         new_ranges,
         &[ts_range(20..30), ts_range(50..60), ts_range(80..90)]
     );
+    assert_eq!(change, 2..3);
 
-    let new_ranges =
+    let (new_ranges, change) =
         splice_included_ranges(ranges.clone(), &[], &[ts_range(0..2), ts_range(70..75)]);
     assert_eq!(
         new_ranges,
@@ -44,16 +46,21 @@ fn test_splice_included_ranges() {
             ts_range(80..90)
         ]
     );
+    assert_eq!(change, 0..4);
 
-    let new_ranges = splice_included_ranges(ranges.clone(), &[30..50], &[ts_range(25..55)]);
+    let (new_ranges, change) =
+        splice_included_ranges(ranges.clone(), &[30..50], &[ts_range(25..55)]);
     assert_eq!(new_ranges, &[ts_range(25..55), ts_range(80..90)]);
+    assert_eq!(change, 0..1);
 
     // does not create overlapping ranges
-    let new_ranges = splice_included_ranges(ranges.clone(), &[0..18], &[ts_range(20..32)]);
+    let (new_ranges, change) =
+        splice_included_ranges(ranges.clone(), &[0..18], &[ts_range(20..32)]);
     assert_eq!(
         new_ranges,
         &[ts_range(20..32), ts_range(50..60), ts_range(80..90)]
     );
+    assert_eq!(change, 0..1);
 
     fn ts_range(range: Range<usize>) -> tree_sitter::Range {
         tree_sitter::Range {
@@ -511,7 +518,7 @@ fn test_removing_injection_by_replacing_across_boundary() {
 }
 
 #[gpui::test]
-fn test_combined_injections() {
+fn test_combined_injections_simple() {
     let (buffer, syntax_map) = test_edit_sequence(
         "ERB",
         &[
@@ -653,32 +660,77 @@ fn test_combined_injections_editing_after_last_injection() {
 
 #[gpui::test]
 fn test_combined_injections_inside_injections() {
-    let (_buffer, _syntax_map) = test_edit_sequence(
+    let (buffer, syntax_map) = test_edit_sequence(
         "Markdown",
         &[
             r#"
-                here is some ERB code:
+                here is
+                some
+                ERB code:
 
                 ```erb
                 <ul>
                 <% people.each do |person| %>
                     <li><%= person.name %></li>
+                    <li><%= person.age %></li>
                 <% end %>
                 </ul>
                 ```
             "#,
             r#"
-                here is some ERB code:
+                here is
+                some
+                ERB code:
 
                 ```erb
                 <ul>
                 <% people«2».each do |person| %>
                     <li><%= person.name %></li>
+                    <li><%= person.age %></li>
+                <% end %>
+                </ul>
+                ```
+            "#,
+            // Inserting a comment character inside one code directive
+            // does not cause the other code directive to become a comment,
+            // because newlines are included in between each injection range.
+            r#"
+                here is
+                some
+                ERB code:
+
+                ```erb
+                <ul>
+                <% people2.each do |person| %>
+                    <li><%= «# »person.name %></li>
+                    <li><%= person.age %></li>
                 <% end %>
                 </ul>
                 ```
             "#,
         ],
+    );
+
+    // Check that the code directive below the ruby comment is
+    // not parsed as a comment.
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["method"],
+        "
+            here is
+            some
+            ERB code:
+
+            ```erb
+            <ul>
+            <% people2.«each» do |person| %>
+                <li><%= # person.name %></li>
+                <li><%= person.«age» %></li>
+            <% end %>
+            </ul>
+            ```
+        ",
     );
 }
 
@@ -711,11 +763,7 @@ fn test_empty_combined_injections_inside_injections() {
 }
 
 #[gpui::test(iterations = 50)]
-fn test_random_syntax_map_edits(mut rng: StdRng) {
-    let operations = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(10);
-
+fn test_random_syntax_map_edits_rust_macros(rng: StdRng) {
     let text = r#"
         fn test_something() {
             let vec = vec![5, 1, 3, 8];
@@ -736,68 +784,12 @@ fn test_random_syntax_map_edits(mut rng: StdRng) {
     let registry = Arc::new(LanguageRegistry::test());
     let language = Arc::new(rust_lang());
     registry.add(language.clone());
-    let mut buffer = Buffer::new(0, 0, text);
 
-    let mut syntax_map = SyntaxMap::new();
-    syntax_map.set_language_registry(registry.clone());
-    syntax_map.reparse(language.clone(), &buffer);
-
-    let mut reference_syntax_map = SyntaxMap::new();
-    reference_syntax_map.set_language_registry(registry.clone());
-
-    log::info!("initial text:\n{}", buffer.text());
-
-    for _ in 0..operations {
-        let prev_buffer = buffer.snapshot();
-        let prev_syntax_map = syntax_map.snapshot();
-
-        buffer.randomly_edit(&mut rng, 3);
-        log::info!("text:\n{}", buffer.text());
-
-        syntax_map.interpolate(&buffer);
-        check_interpolation(&prev_syntax_map, &syntax_map, &prev_buffer, &buffer);
-
-        syntax_map.reparse(language.clone(), &buffer);
-
-        reference_syntax_map.clear();
-        reference_syntax_map.reparse(language.clone(), &buffer);
-    }
-
-    for i in 0..operations {
-        let i = operations - i - 1;
-        buffer.undo();
-        log::info!("undoing operation {}", i);
-        log::info!("text:\n{}", buffer.text());
-
-        syntax_map.interpolate(&buffer);
-        syntax_map.reparse(language.clone(), &buffer);
-
-        reference_syntax_map.clear();
-        reference_syntax_map.reparse(language.clone(), &buffer);
-        assert_eq!(
-            syntax_map.layers(&buffer).len(),
-            reference_syntax_map.layers(&buffer).len(),
-            "wrong number of layers after undoing edit {i}"
-        );
-    }
-
-    let layers = syntax_map.layers(&buffer);
-    let reference_layers = reference_syntax_map.layers(&buffer);
-    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter()) {
-        assert_eq!(
-            edited_layer.node().to_sexp(),
-            reference_layer.node().to_sexp()
-        );
-        assert_eq!(edited_layer.node().range(), reference_layer.node().range());
-    }
+    test_random_edits(text, registry, language, rng);
 }
 
 #[gpui::test(iterations = 50)]
-fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
-    let operations = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(10);
-
+fn test_random_syntax_map_edits_with_erb(rng: StdRng) {
     let text = r#"
         <div id="main">
         <% if one?(:two) %>
@@ -814,13 +806,60 @@ fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
         </div>
     "#
     .unindent()
-    .repeat(8);
+    .repeat(5);
 
     let registry = Arc::new(LanguageRegistry::test());
     let language = Arc::new(erb_lang());
     registry.add(language.clone());
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+#[gpui::test(iterations = 50)]
+fn test_random_syntax_map_edits_with_heex(rng: StdRng) {
+    let text = r#"
+        defmodule TheModule do
+            def the_method(assigns) do
+                ~H"""
+                <%= if @empty do %>
+                    <div class="h-4"></div>
+                <% else %>
+                    <div class="max-w-2xl w-full animate-pulse">
+                    <div class="flex-1 space-y-4">
+                        <div class={[@bg_class, "h-4 rounded-lg w-3/4"]}></div>
+                        <div class={[@bg_class, "h-4 rounded-lg"]}></div>
+                        <div class={[@bg_class, "h-4 rounded-lg w-5/6"]}></div>
+                    </div>
+                    </div>
+                <% end %>
+                """
+            end
+        end
+    "#
+    .unindent()
+    .repeat(3);
+
+    let registry = Arc::new(LanguageRegistry::test());
+    let language = Arc::new(elixir_lang());
+    registry.add(language.clone());
+    registry.add(Arc::new(heex_lang()));
+    registry.add(Arc::new(html_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+fn test_random_edits(
+    text: String,
+    registry: Arc<LanguageRegistry>,
+    language: Arc<Language>,
+    mut rng: StdRng,
+) {
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
     let mut buffer = Buffer::new(0, 0, text);
 
     let mut syntax_map = SyntaxMap::new();
@@ -984,11 +1023,14 @@ fn check_interpolation(
 
 fn test_edit_sequence(language_name: &str, steps: &[&str]) -> (Buffer, SyntaxMap) {
     let registry = Arc::new(LanguageRegistry::test());
+    registry.add(Arc::new(elixir_lang()));
+    registry.add(Arc::new(heex_lang()));
     registry.add(Arc::new(rust_lang()));
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
     registry.add(Arc::new(erb_lang()));
     registry.add(Arc::new(markdown_lang()));
+
     let language = registry
         .language_for_name(language_name)
         .now_or_never()
@@ -1074,6 +1116,7 @@ fn ruby_lang() -> Language {
         r#"
             ["if" "do" "else" "end"] @keyword
             (instance_variable) @ivar
+            (call method: (identifier) @method)
         "#,
     )
     .unwrap()
@@ -1153,6 +1196,52 @@ fn markdown_lang() -> Language {
                 (info_string
                     (language) @language)
                 (code_fence_content) @content)
+        "#,
+    )
+    .unwrap()
+}
+
+fn elixir_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Elixir".into(),
+            path_suffixes: vec!["ex".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_elixir::language()),
+    )
+    .with_highlights_query(
+        r#"
+
+        "#,
+    )
+    .unwrap()
+}
+
+fn heex_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "HEEx".into(),
+            path_suffixes: vec!["heex".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_heex::language()),
+    )
+    .with_injection_query(
+        r#"
+        (
+          (directive
+            [
+              (partial_expression_value)
+              (expression_value)
+              (ending_expression_value)
+            ] @content)
+          (#set! language "elixir")
+          (#set! combined)
+        )
+
+        ((expression (expression_value) @content)
+         (#set! language "elixir"))
         "#,
     )
     .unwrap()

@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use crate::{AppState, FollowerStatesByLeader, Pane, Workspace, WorkspaceSettings};
+use crate::{
+    pane_group::element::PaneAxisElement, AppState, FollowerStatesByLeader, Pane, Workspace,
+};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
@@ -13,7 +15,11 @@ use project::Project;
 use serde::Deserialize;
 use theme::Theme;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+const HANDLE_HITBOX_SIZE: f32 = 4.0;
+const HORIZONTAL_MIN_SIZE: f32 = 80.;
+const VERTICAL_MIN_SIZE: f32 = 100.;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaneGroup {
     pub(crate) root: Member,
 }
@@ -77,6 +83,7 @@ impl PaneGroup {
     ) -> AnyElement<Workspace> {
         self.root.render(
             project,
+            0,
             theme,
             follower_states,
             active_call,
@@ -94,7 +101,7 @@ impl PaneGroup {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(ViewHandle<Pane>),
@@ -119,7 +126,7 @@ impl Member {
             Down | Right => vec![Member::Pane(old_pane), Member::Pane(new_pane)],
         };
 
-        Member::Axis(PaneAxis { axis, members })
+        Member::Axis(PaneAxis::new(axis, members))
     }
 
     fn contains(&self, needle: &ViewHandle<Pane>) -> bool {
@@ -132,6 +139,7 @@ impl Member {
     pub fn render(
         &self,
         project: &ModelHandle<Project>,
+        basis: usize,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
@@ -272,6 +280,7 @@ impl Member {
             }
             Member::Axis(axis) => axis.render(
                 project,
+                basis + 1,
                 theme,
                 follower_states,
                 active_call,
@@ -295,13 +304,35 @@ impl Member {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
+    pub flexes: Rc<RefCell<Vec<f32>>>,
 }
 
 impl PaneAxis {
+    pub fn new(axis: Axis, members: Vec<Member>) -> Self {
+        let flexes = Rc::new(RefCell::new(vec![1.; members.len()]));
+        Self {
+            axis,
+            members,
+            flexes,
+        }
+    }
+
+    pub fn load(axis: Axis, members: Vec<Member>, flexes: Option<Vec<f32>>) -> Self {
+        let flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
+        debug_assert!(members.len() == flexes.len());
+
+        let flexes = Rc::new(RefCell::new(flexes));
+        Self {
+            axis,
+            members,
+            flexes,
+        }
+    }
+
     fn split(
         &mut self,
         old_pane: &ViewHandle<Pane>,
@@ -323,6 +354,7 @@ impl PaneAxis {
                             }
 
                             self.members.insert(idx, Member::Pane(new_pane.clone()));
+                            *self.flexes.borrow_mut() = vec![1.; self.members.len()];
                         } else {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -362,10 +394,13 @@ impl PaneAxis {
         if found_pane {
             if let Some(idx) = remove_member {
                 self.members.remove(idx);
+                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
             }
 
             if self.members.len() == 1 {
-                Ok(self.members.pop())
+                let result = self.members.pop();
+                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
+                Ok(result)
             } else {
                 Ok(None)
             }
@@ -377,6 +412,7 @@ impl PaneAxis {
     fn render(
         &self,
         project: &ModelHandle<Project>,
+        basis: usize,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
@@ -385,40 +421,50 @@ impl PaneAxis {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        let last_member_ix = self.members.len() - 1;
-        Flex::new(self.axis)
-            .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut flex = 1.0;
-                if member.contains(active_pane) {
-                    flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+        debug_assert!(self.members.len() == self.flexes.borrow().len());
+
+        let mut pane_axis = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
+        let mut active_pane_ix = None;
+
+        let mut members = self.members.iter().enumerate().peekable();
+        while let Some((ix, member)) = members.next() {
+            let last = members.peek().is_none();
+
+            if member.contains(active_pane) {
+                active_pane_ix = Some(ix);
+            }
+
+            let mut member = member.render(
+                project,
+                (basis + ix) * 10,
+                theme,
+                follower_state,
+                active_call,
+                active_pane,
+                zoomed,
+                app_state,
+                cx,
+            );
+
+            if !last {
+                let mut border = theme.workspace.pane_divider;
+                border.left = false;
+                border.right = false;
+                border.top = false;
+                border.bottom = false;
+
+                match self.axis {
+                    Axis::Vertical => border.bottom = true,
+                    Axis::Horizontal => border.right = true,
                 }
 
-                let mut member = member.render(
-                    project,
-                    theme,
-                    follower_state,
-                    active_call,
-                    active_pane,
-                    zoomed,
-                    app_state,
-                    cx,
-                );
-                if ix < last_member_ix {
-                    let mut border = theme.workspace.pane_divider;
-                    border.left = false;
-                    border.right = false;
-                    border.top = false;
-                    border.bottom = false;
-                    match self.axis {
-                        Axis::Vertical => border.bottom = true,
-                        Axis::Horizontal => border.right = true,
-                    }
-                    member = member.contained().with_border(border).into_any();
-                }
+                member = member.contained().with_border(border).into_any();
+            }
 
-                FlexItem::new(member).flex(flex, true)
-            }))
-            .into_any()
+            pane_axis = pane_axis.with_child(member.into_any());
+        }
+        pane_axis.set_active_pane(active_pane_ix);
+        pane_axis.into_any()
     }
 }
 
@@ -471,6 +517,339 @@ impl SplitDirection {
         match self {
             Self::Left | Self::Up => false,
             Self::Down | Self::Right => true,
+        }
+    }
+}
+
+mod element {
+    use std::{cell::RefCell, ops::Range, rc::Rc};
+
+    use gpui::{
+        geometry::{
+            rect::RectF,
+            vector::{vec2f, Vector2F},
+        },
+        json::{self, ToJson},
+        platform::{CursorStyle, MouseButton},
+        AnyElement, Axis, CursorRegion, Element, LayoutContext, MouseRegion, RectFExt,
+        SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
+    };
+
+    use crate::{
+        pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
+        Workspace, WorkspaceSettings,
+    };
+
+    pub struct PaneAxisElement {
+        axis: Axis,
+        basis: usize,
+        active_pane_ix: Option<usize>,
+        flexes: Rc<RefCell<Vec<f32>>>,
+        children: Vec<AnyElement<Workspace>>,
+    }
+
+    impl PaneAxisElement {
+        pub fn new(axis: Axis, basis: usize, flexes: Rc<RefCell<Vec<f32>>>) -> Self {
+            Self {
+                axis,
+                basis,
+                flexes,
+                active_pane_ix: None,
+                children: Default::default(),
+            }
+        }
+
+        pub fn set_active_pane(&mut self, active_pane_ix: Option<usize>) {
+            self.active_pane_ix = active_pane_ix;
+        }
+
+        fn layout_children(
+            &mut self,
+            active_pane_magnification: f32,
+            constraint: SizeConstraint,
+            remaining_space: &mut f32,
+            remaining_flex: &mut f32,
+            cross_axis_max: &mut f32,
+            view: &mut Workspace,
+            cx: &mut LayoutContext<Workspace>,
+        ) {
+            let flexes = self.flexes.borrow();
+            let cross_axis = self.axis.invert();
+            for (ix, child) in self.children.iter_mut().enumerate() {
+                let flex = if active_pane_magnification != 1. {
+                    if let Some(active_pane_ix) = self.active_pane_ix {
+                        if ix == active_pane_ix {
+                            active_pane_magnification
+                        } else {
+                            1.
+                        }
+                    } else {
+                        1.
+                    }
+                } else {
+                    flexes[ix]
+                };
+
+                let child_size = if *remaining_flex == 0.0 {
+                    *remaining_space
+                } else {
+                    let space_per_flex = *remaining_space / *remaining_flex;
+                    space_per_flex * flex
+                };
+
+                let child_constraint = match self.axis {
+                    Axis::Horizontal => SizeConstraint::new(
+                        vec2f(child_size, constraint.min.y()),
+                        vec2f(child_size, constraint.max.y()),
+                    ),
+                    Axis::Vertical => SizeConstraint::new(
+                        vec2f(constraint.min.x(), child_size),
+                        vec2f(constraint.max.x(), child_size),
+                    ),
+                };
+                let child_size = child.layout(child_constraint, view, cx);
+                *remaining_space -= child_size.along(self.axis);
+                *remaining_flex -= flex;
+                *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
+            }
+        }
+    }
+
+    impl Extend<AnyElement<Workspace>> for PaneAxisElement {
+        fn extend<T: IntoIterator<Item = AnyElement<Workspace>>>(&mut self, children: T) {
+            self.children.extend(children);
+        }
+    }
+
+    impl Element<Workspace> for PaneAxisElement {
+        type LayoutState = f32;
+        type PaintState = ();
+
+        fn layout(
+            &mut self,
+            constraint: SizeConstraint,
+            view: &mut Workspace,
+            cx: &mut LayoutContext<Workspace>,
+        ) -> (Vector2F, Self::LayoutState) {
+            debug_assert!(self.children.len() == self.flexes.borrow().len());
+
+            let active_pane_magnification =
+                settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+
+            let mut remaining_flex = 0.;
+
+            if active_pane_magnification != 1. {
+                let active_pane_flex = self
+                    .active_pane_ix
+                    .map(|_| active_pane_magnification)
+                    .unwrap_or(1.);
+                remaining_flex += self.children.len() as f32 - 1. + active_pane_flex;
+            } else {
+                for flex in self.flexes.borrow().iter() {
+                    remaining_flex += flex;
+                }
+            }
+
+            let mut cross_axis_max: f32 = 0.0;
+            let mut remaining_space = constraint.max_along(self.axis);
+
+            if remaining_space.is_infinite() {
+                panic!("flex contains flexible children but has an infinite constraint along the flex axis");
+            }
+
+            self.layout_children(
+                active_pane_magnification,
+                constraint,
+                &mut remaining_space,
+                &mut remaining_flex,
+                &mut cross_axis_max,
+                view,
+                cx,
+            );
+
+            let mut size = match self.axis {
+                Axis::Horizontal => vec2f(constraint.max.x() - remaining_space, cross_axis_max),
+                Axis::Vertical => vec2f(cross_axis_max, constraint.max.y() - remaining_space),
+            };
+
+            if constraint.min.x().is_finite() {
+                size.set_x(size.x().max(constraint.min.x()));
+            }
+            if constraint.min.y().is_finite() {
+                size.set_y(size.y().max(constraint.min.y()));
+            }
+
+            if size.x() > constraint.max.x() {
+                size.set_x(constraint.max.x());
+            }
+            if size.y() > constraint.max.y() {
+                size.set_y(constraint.max.y());
+            }
+
+            (size, remaining_space)
+        }
+
+        fn paint(
+            &mut self,
+            scene: &mut SceneBuilder,
+            bounds: RectF,
+            visible_bounds: RectF,
+            remaining_space: &mut Self::LayoutState,
+            view: &mut Workspace,
+            cx: &mut ViewContext<Workspace>,
+        ) -> Self::PaintState {
+            let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
+            let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
+            let overflowing = *remaining_space < 0.;
+            if overflowing {
+                scene.push_layer(Some(visible_bounds));
+            }
+
+            let mut child_origin = bounds.origin();
+
+            let mut children_iter = self.children.iter_mut().enumerate().peekable();
+            while let Some((ix, child)) = children_iter.next() {
+                let child_start = child_origin.clone();
+                child.paint(scene, child_origin, visible_bounds, view, cx);
+
+                match self.axis {
+                    Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
+                    Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
+                }
+
+                if let Some(Some((next_ix, next_child))) = can_resize.then(|| children_iter.peek())
+                {
+                    scene.push_stacking_context(None, None);
+
+                    let handle_origin = match self.axis {
+                        Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
+                        Axis::Vertical => child_origin - vec2f(0.0, HANDLE_HITBOX_SIZE / 2.),
+                    };
+
+                    let handle_bounds = match self.axis {
+                        Axis::Horizontal => RectF::new(
+                            handle_origin,
+                            vec2f(HANDLE_HITBOX_SIZE, visible_bounds.height()),
+                        ),
+                        Axis::Vertical => RectF::new(
+                            handle_origin,
+                            vec2f(visible_bounds.width(), HANDLE_HITBOX_SIZE),
+                        ),
+                    };
+
+                    let style = match self.axis {
+                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                        Axis::Vertical => CursorStyle::ResizeUpDown,
+                    };
+
+                    scene.push_cursor_region(CursorRegion {
+                        bounds: handle_bounds,
+                        style,
+                    });
+
+                    let axis = self.axis;
+                    let child_size = child.size();
+                    let next_child_size = next_child.size();
+                    let drag_bounds = visible_bounds.clone();
+                    let flexes = self.flexes.clone();
+                    let current_flex = flexes.borrow()[ix];
+                    let next_ix = *next_ix;
+                    let next_flex = flexes.borrow()[next_ix];
+                    enum ResizeHandle {}
+                    let mut mouse_region = MouseRegion::new::<ResizeHandle>(
+                        cx.view_id(),
+                        self.basis + ix,
+                        handle_bounds,
+                    );
+                    mouse_region = mouse_region.on_drag(
+                        MouseButton::Left,
+                        move |drag, workspace: &mut Workspace, cx| {
+                            let min_size = match axis {
+                                Axis::Horizontal => HORIZONTAL_MIN_SIZE,
+                                Axis::Vertical => VERTICAL_MIN_SIZE,
+                            };
+                            // Don't allow resizing to less than the minimum size, if elements are already too small
+                            if min_size - 1. > child_size.along(axis)
+                                || min_size - 1. > next_child_size.along(axis)
+                            {
+                                return;
+                            }
+
+                            let mut current_target_size = (drag.position - child_start).along(axis);
+
+                            let proposed_current_pixel_change =
+                                current_target_size - child_size.along(axis);
+
+                            if proposed_current_pixel_change < 0. {
+                                current_target_size = f32::max(current_target_size, min_size);
+                            } else if proposed_current_pixel_change > 0. {
+                                // TODO: cascade this change to other children if current item is at min size
+                                let next_target_size = f32::max(
+                                    next_child_size.along(axis) - proposed_current_pixel_change,
+                                    min_size,
+                                );
+                                current_target_size = f32::min(
+                                    current_target_size,
+                                    child_size.along(axis) + next_child_size.along(axis)
+                                        - next_target_size,
+                                );
+                            }
+
+                            let current_pixel_change = current_target_size - child_size.along(axis);
+                            let flex_change = current_pixel_change / drag_bounds.length_along(axis);
+                            let current_target_flex = current_flex + flex_change;
+                            let next_target_flex = next_flex - flex_change;
+
+                            let mut borrow = flexes.borrow_mut();
+                            *borrow.get_mut(ix).unwrap() = current_target_flex;
+                            *borrow.get_mut(next_ix).unwrap() = next_target_flex;
+
+                            workspace.schedule_serialize(cx);
+                            cx.notify();
+                        },
+                    );
+                    scene.push_mouse_region(mouse_region);
+
+                    scene.pop_stacking_context();
+                }
+            }
+
+            if overflowing {
+                scene.pop_layer();
+            }
+        }
+
+        fn rect_for_text_range(
+            &self,
+            range_utf16: Range<usize>,
+            _: RectF,
+            _: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &Workspace,
+            cx: &ViewContext<Workspace>,
+        ) -> Option<RectF> {
+            self.children
+                .iter()
+                .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
+        }
+
+        fn debug(
+            &self,
+            bounds: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            view: &Workspace,
+            cx: &ViewContext<Workspace>,
+        ) -> json::Value {
+            serde_json::json!({
+                "type": "PaneAxis",
+                "bounds": bounds.to_json(),
+                "axis": self.axis.to_json(),
+                "flexes": *self.flexes.borrow(),
+                "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
+            })
         }
     }
 }

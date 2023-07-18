@@ -151,16 +151,17 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stout = server.stdout.take().unwrap();
         let mut server = Self::new_internal(
-            server_id,
+            server_id.clone(),
             stdin,
             stout,
             Some(server),
             root_path,
             code_action_kinds,
             cx,
-            |notification| {
+            move |notification| {
                 log::info!(
-                    "unhandled notification {}:\n{}",
+                    "{} unhandled notification {}:\n{}",
+                    server_id,
                     notification.method,
                     serde_json::to_string_pretty(
                         &notification
