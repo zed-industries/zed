@@ -1,4 +1,4 @@
-use crate::{ClientNetwork, Message, RoomName, RoomToken, ServerNetwork};
+use crate::{ClientNetwork, Message, RoomCredentials, RoomName, RoomToken, ServerNetwork};
 use anyhow::Result;
 use futures::{future::BoxFuture, FutureExt};
 use parking_lot::Mutex;
@@ -83,7 +83,15 @@ impl ClientNetwork for TestClient {
         .boxed()
     }
 
-    fn broadcast<M: Message>(&self, room: RoomName, token: RoomToken, message: M) {
+    fn broadcast<M: Message>(&self, credentials: RoomCredentials, message: M) {
+        todo!()
+    }
+
+    fn on_message<M, F>(&self, credentials: RoomCredentials, handle_message: F)
+    where
+        M: Message,
+        F: 'static + Send + Sync + Fn(M),
+    {
         todo!()
     }
 }

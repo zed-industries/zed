@@ -4,7 +4,8 @@ mod operations;
 #[cfg(test)]
 mod test;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use collections::{hash_map, HashMap};
 use dense_id::DenseId;
 use futures::future::BoxFuture;
 use operations::{CreateBranch, Operation};
@@ -74,15 +75,15 @@ pub struct RoomName(Arc<str>);
 #[derive(Clone)]
 pub struct RoomToken(Arc<str>);
 
-pub trait Request: 'static {
-    type Response: 'static;
+pub trait Request: Message {
+    type Response: Message;
 }
 
 pub trait Message: 'static + Send + Sync {
     fn to_bytes(&self) -> Vec<u8>;
 }
 
-pub trait ServerNetwork: Send + Sync {
+pub trait ServerNetwork: 'static + Send + Sync {
     fn on_request<H, F, R>(&self, handle_request: H)
     where
         H: 'static + Send + Sync + Fn(R) -> F,
@@ -90,9 +91,13 @@ pub trait ServerNetwork: Send + Sync {
         R: Request;
 }
 
-pub trait ClientNetwork: Send + Sync {
+pub trait ClientNetwork: 'static + Send + Sync {
     fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>>;
-    fn broadcast<M: Message>(&self, room: RoomName, token: RoomToken, message: M);
+    fn broadcast<M: Message>(&self, credentials: RoomCredentials, message: M);
+    fn on_message<M, F>(&self, credentials: RoomCredentials, handle_message: F)
+    where
+        M: Message,
+        F: 'static + Send + Sync + Fn(M);
 }
 
 struct Client<N> {
@@ -101,7 +106,8 @@ struct Client<N> {
     repo_room_credentials: Arc<Mutex<collections::HashMap<RepoId, RoomCredentials>>>,
 }
 
-struct RoomCredentials {
+#[derive(Clone)]
+pub struct RoomCredentials {
     name: RoomName,
     token: RoomToken,
 }
@@ -116,7 +122,7 @@ impl<N: ClientNetwork> Clone for Client<N> {
     }
 }
 
-impl<N: 'static + ClientNetwork> Client<N> {
+impl<N: ClientNetwork> Client<N> {
     pub fn new(network: N) -> Self {
         let mut this = Self {
             db: Db::new(),
@@ -154,48 +160,75 @@ impl<N: 'static + ClientNetwork> Client<N> {
         let id = repo.id;
         let name = name.into();
         async move {
-            this.network
+            let response = this
+                .network
                 .request(messages::PublishRepo { id, name })
                 .await?;
+            this.repo_room_credentials
+                .lock()
+                .insert(id, response.credentials.clone());
+            this.network.on_message(response.credentials, {
+                let this = this.clone();
+                move |operation: Operation| {
+                    this.handle_remote_operation(id, operation);
+                }
+            });
             Ok(())
         }
     }
 
     fn handle_local_operation(&self, repo_id: RepoId, operation: Operation) {
         if let Some(credentials) = self.repo_room_credentials.lock().get(&repo_id) {
-            self.network.broadcast(
-                credentials.name.clone(),
-                credentials.token.clone(),
-                operation,
-            );
+            self.network.broadcast(credentials.clone(), operation);
         }
     }
+
+    fn handle_remote_operation(&self, repo_id: RepoId, operation: Operation) {}
 }
 
 #[derive(Clone)]
 struct Server {
     db: Db,
+    repo_ids_by_name: Arc<Mutex<HashMap<Arc<str>, RepoId>>>,
 }
 
 impl Server {
     fn new(network: impl ServerNetwork) -> Self {
-        let this = Self { db: Db::new() };
-        this.on_request(network);
+        let this = Self {
+            db: Db::new(),
+            repo_ids_by_name: Default::default(),
+        };
+        this.on_request(network, Self::handle_publish_repo);
         this
     }
 
-    fn on_request(&self, network: impl ServerNetwork) {
+    fn on_request<F, Fut, R, S>(&self, network: S, handle_request: F)
+    where
+        F: 'static + Send + Sync + Fn(Self, R) -> Fut,
+        Fut: 'static + Send + Sync + Future<Output = Result<R::Response>>,
+        R: Request,
+        S: ServerNetwork,
+    {
         network.on_request({
             let this = self.clone();
-            move |request: messages::PublishRepo| {
-                let this = this.clone();
-                async move { this.handle_publish_repo(request).await }
-            }
+            move |request| handle_request(this.clone(), request)
         });
     }
 
-    async fn handle_publish_repo(&self, request: messages::PublishRepo) -> Result<()> {
-        todo!()
+    async fn handle_publish_repo(
+        self,
+        request: messages::PublishRepo,
+    ) -> Result<messages::PublishRepoResponse> {
+        // TODO: handle repositories that had already been published.
+        match self.repo_ids_by_name.lock().entry(request.name) {
+            hash_map::Entry::Occupied(_) => Err(anyhow!("repo name taken")),
+            hash_map::Entry::Vacant(entry) => {
+                let mut db = self.db.snapshot.lock();
+                db.repos.insert(request.id, Default::default());
+                entry.insert(request.id);
+                todo!()
+            }
+        }
     }
 }
 
