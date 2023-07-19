@@ -6,13 +6,6 @@ OUTPUT_FILE=$(pwd)/assets/licenses.md
 
 > $OUTPUT_FILE
 
-echo -e "# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
-
-echo "Generating icon licenses"
-
-cat script/licenses/willow_license.txt >> $OUTPUT_FILE
-echo -e "" >> $OUTPUT_FILE
-
 echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
 
 echo "Generating theme licenses"
