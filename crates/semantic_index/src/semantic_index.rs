@@ -33,7 +33,7 @@ use util::{
     ResultExt,
 };
 
-const SEMANTIC_INDEX_VERSION: usize = 4;
+const SEMANTIC_INDEX_VERSION: usize = 5;
 const EMBEDDINGS_BATCH_SIZE: usize = 80;
 
 pub fn init(

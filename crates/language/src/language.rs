@@ -526,7 +526,7 @@ pub struct OutlineConfig {
 pub struct EmbeddingConfig {
     pub query: Query,
     pub item_capture_ix: u32,
-    pub name_capture_ix: u32,
+    pub name_capture_ix: Option<u32>,
     pub context_capture_ix: Option<u32>,
     pub collapse_capture_ix: Option<u32>,
     pub keep_capture_ix: Option<u32>,
@@ -1263,7 +1263,7 @@ impl Language {
                 ("collapse", &mut collapse_capture_ix),
             ],
         );
-        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
+        if let Some(item_capture_ix) = item_capture_ix {
             grammar.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,

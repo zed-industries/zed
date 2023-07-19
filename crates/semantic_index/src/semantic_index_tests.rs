@@ -170,9 +170,7 @@ async fn test_code_context_retrieval_rust() {
     "
     .unindent();
 
-    let documents = retriever
-        .parse_file(Path::new("foo.rs"), &text, language)
-        .unwrap();
+    let documents = retriever.parse_file(&text, language).unwrap();
 
     assert_documents_eq(
         &documents,
@@ -226,6 +224,76 @@ async fn test_code_context_retrieval_rust() {
                 text.find("fn function_2").unwrap(),
             ),
         ],
+    );
+}
+
+#[gpui::test]
+async fn test_code_context_retrieval_json() {
+    let language = json_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        {
+            "array": [1, 2, 3, 4],
+            "string": "abcdefg",
+            "nested_object": {
+                "array_2": [5, 6, 7, 8],
+                "string_2": "hijklmnop",
+                "boolean": true,
+                "none": null
+            }
+        }
+    "#
+    .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[(
+            r#"
+                {
+                    "array": [],
+                    "string": "",
+                    "nested_object": {
+                        "array_2": [],
+                        "string_2": "",
+                        "boolean": true,
+                        "none": null
+                    }
+                }"#
+            .unindent(),
+            text.find("{").unwrap(),
+        )],
+    );
+
+    let text = r#"
+        [
+            {
+                "name": "somebody",
+                "age": 42
+            },
+            {
+                "name": "somebody else",
+                "age": 43
+            }
+        ]
+    "#
+    .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[(
+            r#"
+            [{
+                    "name": "",
+                    "age": 42
+                }]"#
+            .unindent(),
+            text.find("[").unwrap(),
+        )],
     );
 }
 
@@ -907,6 +975,35 @@ fn rust_lang() -> Arc<Language> {
                         name: (_) @name)
                 ] @item
             )
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn json_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JSON".into(),
+                path_suffixes: vec!["json".into()],
+                ..Default::default()
+            },
+            Some(tree_sitter_json::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (document) @item
+
+            (array
+                "[" @keep
+                .
+                (object)? @keep
+                "]" @keep) @collapse
+
+            (pair value: (string
+                "\"" @keep
+                "\"" @keep) @collapse)
             "#,
         )
         .unwrap(),
