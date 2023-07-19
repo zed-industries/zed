@@ -633,11 +633,15 @@ impl Repo {
     }
 
     fn apply_operations(&self, operations: impl IntoIterator<Item = Operation>) {
-        self.db
-            .snapshot
-            .lock()
-            .repos
-            .update(&self.id, |repo| todo!());
+        self.db.snapshot.lock().repos.update(&self.id, |repo| {
+            for operation in operations {
+                match operation {
+                    Operation::CreateDocument(_) => todo!(),
+                    Operation::Edit(_) => todo!(),
+                    Operation::CreateBranch(_) => todo!(),
+                }
+            }
+        });
     }
 }
 
