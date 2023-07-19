@@ -2659,11 +2659,16 @@ impl Editor {
             InlayRefreshReason::RefreshRequested => (InvalidationStrategy::RefreshRequested, None),
         };
 
-        self.inlay_hint_cache.refresh_inlay_hints(
+        if let Some(InlaySplice {
+            to_remove,
+            to_insert,
+        }) = self.inlay_hint_cache.spawn_hint_refresh(
             self.excerpt_visible_offsets(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,
-        )
+        ) {
+            self.splice_inlay_hints(to_remove, to_insert, cx);
+        }
     }
 
     fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
