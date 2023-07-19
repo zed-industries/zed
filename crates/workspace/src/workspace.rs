@@ -152,6 +152,9 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct ActivatePaneInDirection(pub SplitDirection);
+
 #[derive(Deserialize)]
 pub struct Toast {
     id: usize,
@@ -197,7 +200,7 @@ impl Clone for Toast {
     }
 }
 
-impl_actions!(workspace, [ActivatePane, Toast]);
+impl_actions!(workspace, [ActivatePane, ActivatePaneInDirection, Toast]);
 
 pub type WorkspaceId = i64;
 
@@ -262,6 +265,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
+
+    cx.add_action(
+        |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
+            workspace.activate_pane_in_direction(action.0, cx)
+        },
+    );
+
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
     });
@@ -2054,6 +2064,40 @@ impl Workspace {
         }
     }
 
+    pub fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let bounding_box = match self.center.bounding_box_for_pane(&self.active_pane) {
+            Some(coordinates) => coordinates,
+            None => {
+                return;
+            }
+        };
+        let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
+        let center = match cursor {
+            Some(cursor) => cursor,
+            None => bounding_box.center(),
+        };
+
+        // currently there's a small gap between panes, so we can't just look "1px to the left"
+        // instead of trying to calcuate this exactly, we assume it'll always be smaller than
+        // "pane_gap" pixels (and that no-one uses panes smaller in any dimension than pane_gap).
+        let pane_gap = 20.;
+
+        let target = match direction {
+            SplitDirection::Left => vec2f(bounding_box.origin_x() - pane_gap, center.y()),
+            SplitDirection::Right => vec2f(bounding_box.max_x() + pane_gap, center.y()),
+            SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - pane_gap),
+            SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + pane_gap),
+        };
+
+        if let Some(pane) = self.center.pane_at_pixel_position(target) {
+            cx.focus(pane);
+        }
+    }
+
     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
             self.active_pane = pane.clone();
@@ -3030,6 +3074,7 @@ impl Workspace {
                     axis,
                     members,
                     flexes,
+                    bounding_boxes: _,
                 }) => SerializedPaneGroup::Group {
                     axis: *axis,
                     children: members

@@ -61,6 +61,7 @@ enum FoldMarkers {}
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
+    is_newest: bool,
     range: Range<DisplayPoint>,
 }
 
@@ -70,6 +71,7 @@ impl SelectionLayout {
         line_mode: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
+        is_newest: bool,
     ) -> Self {
         if line_mode {
             let selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
@@ -77,6 +79,7 @@ impl SelectionLayout {
             Self {
                 head: selection.head().to_display_point(map),
                 cursor_shape,
+                is_newest,
                 range: point_range.start.to_display_point(map)
                     ..point_range.end.to_display_point(map),
             }
@@ -85,6 +88,7 @@ impl SelectionLayout {
             Self {
                 head: selection.head(),
                 cursor_shape,
+                is_newest,
                 range: selection.range(),
             }
         }
@@ -864,6 +868,12 @@ impl EditorElement {
                         let x = cursor_character_x - scroll_left;
                         let y = cursor_position.row() as f32 * layout.position_map.line_height
                             - scroll_top;
+                        if selection.is_newest {
+                            editor.pixel_position_of_newest_cursor = Some(vec2f(
+                                bounds.origin_x() + x + block_width / 2.,
+                                bounds.origin_y() + y + layout.position_map.line_height / 2.,
+                            ));
+                        }
                         cursors.push(Cursor {
                             color: selection_style.cursor,
                             block_width,
@@ -2108,6 +2118,7 @@ impl Element<Editor> for EditorElement {
                     line_mode,
                     cursor_shape,
                     &snapshot.display_snapshot,
+                    false,
                 ));
         }
         selections.extend(remote_selections);
@@ -2117,6 +2128,7 @@ impl Element<Editor> for EditorElement {
                 .selections
                 .disjoint_in_range(start_anchor..end_anchor, cx);
             local_selections.extend(editor.selections.pending(cx));
+            let newest = editor.selections.newest(cx);
             for selection in &local_selections {
                 let is_empty = selection.start == selection.end;
                 let selection_start = snapshot.prev_line_boundary(selection.start).1;
@@ -2139,11 +2151,13 @@ impl Element<Editor> for EditorElement {
                 local_selections
                     .into_iter()
                     .map(|selection| {
+                        let is_newest = selection == newest;
                         SelectionLayout::new(
                             selection,
                             editor.selections.line_mode,
                             editor.cursor_shape,
                             &snapshot.display_snapshot,
+                            is_newest,
                         )
                     })
                     .collect(),

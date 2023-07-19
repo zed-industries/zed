@@ -7,8 +7,10 @@ use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, AsyncAppContext, Entity, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*,
+    geometry::vector::{vec2f, Vector2F},
+    AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -748,6 +750,10 @@ impl Item for Editor {
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+        self.pixel_position_of_newest_cursor
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {

@@ -542,6 +542,12 @@ impl Pane {
         self.items.get(self.active_item_index).cloned()
     }
 
+    pub fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
+        self.items
+            .get(self.active_item_index)?
+            .pixel_position_of_cursor(cx)
+    }
+
     pub fn item_for_entry(
         &self,
         entry_id: ProjectEntryId,
