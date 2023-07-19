@@ -3,6 +3,7 @@ use crate::{
     OperationCount, OperationId, ReplicaId, RepoId, Request, RevisionId, RoomCredentials,
 };
 use collections::BTreeMap;
+use lazy_static::__Deref;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, sync::Arc};
 
@@ -141,7 +142,7 @@ impl Operation {
         }
     }
 
-    pub fn parent(&self) -> &RevisionId {
+    pub fn revision(&self) -> &RevisionId {
         match self {
             Operation::CreateDocument(op) => &op.parent,
             Operation::Edit(op) => &op.parent,

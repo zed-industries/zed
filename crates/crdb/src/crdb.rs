@@ -24,7 +24,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use sum_tree::{Bias, SumTree, TreeMap};
+use sum_tree::{Bias, Edit, SumTree, TreeMap};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -634,13 +634,7 @@ impl Repo {
 
     fn apply_operations(&self, operations: impl IntoIterator<Item = Operation>) {
         self.db.snapshot.lock().repos.update(&self.id, |repo| {
-            for operation in operations {
-                match operation {
-                    Operation::CreateDocument(_) => todo!(),
-                    Operation::Edit(_) => todo!(),
-                    Operation::CreateBranch(_) => todo!(),
-                }
-            }
+            repo.apply_operations(operations);
         });
     }
 }
@@ -935,8 +929,7 @@ impl Document {
                             let mut suffix = old_fragments.item().unwrap().clone();
                             suffix.insertion_subrange.start +=
                                 fragment_start - old_fragments.start().visible_len;
-                            new_insertions
-                                .push(sum_tree::Edit::Insert(InsertionFragment::new(&suffix)));
+                            new_insertions.push(Edit::Insert(InsertionFragment::new(&suffix)));
                             new_ropes.push_fragment(&suffix, suffix.visible());
                             new_fragments.push(suffix, &());
                         }
@@ -977,7 +970,7 @@ impl Document {
                     prefix.insertion_subrange.end = prefix.insertion_subrange.start + prefix_len;
                     prefix.location =
                         DenseId::between(&new_fragments.summary().max_location, &prefix.location);
-                    new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&prefix)));
+                    new_insertions.push(Edit::Insert(InsertionFragment::new(&prefix)));
                     new_ropes.push_fragment(&prefix, prefix.visible());
                     new_fragments.push(prefix, &());
                     fragment_start = range.start;
@@ -997,7 +990,7 @@ impl Document {
                         tombstones: Default::default(),
                         undo_count: 0,
                     };
-                    new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&fragment)));
+                    new_insertions.push(Edit::Insert(InsertionFragment::new(&fragment)));
                     new_ropes.push_str(new_text.as_ref());
                     new_fragments.push(fragment, &());
                     insertion_offset += new_text.len();
@@ -1026,9 +1019,7 @@ impl Document {
                         });
                     }
                     if intersection.len() > 0 {
-                        new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(
-                            &intersection,
-                        )));
+                        new_insertions.push(Edit::Insert(InsertionFragment::new(&intersection)));
                         new_ropes.push_fragment(&intersection, fragment.visible());
                         new_fragments.push(intersection, &());
                         fragment_start = intersection_end;
@@ -1080,7 +1071,7 @@ impl Document {
                     suffix.insertion_subrange.start +=
                         fragment_start - old_fragments.start().visible_len;
                     suffix.insertion_subrange.end = suffix.insertion_subrange.start + suffix_len;
-                    new_insertions.push(sum_tree::Edit::Insert(InsertionFragment::new(&suffix)));
+                    new_insertions.push(Edit::Insert(InsertionFragment::new(&suffix)));
                     new_ropes.push_fragment(&suffix, suffix.visible());
                     new_fragments.push(suffix, &());
                 }
@@ -1257,12 +1248,13 @@ impl<'a> RopeBuilder<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct RepoSnapshot {
+pub struct RepoSnapshot {
     last_operation_id: OperationId,
     branches: TreeMap<OperationId, BranchSnapshot>,
     operations: TreeMap<OperationId, Operation>,
     revisions: TreeMap<RevisionId, Revision>,
     max_operation_ids: TreeMap<ReplicaId, OperationCount>,
+    deferred_operations: SumTree<DeferredOperation>,
 }
 
 impl RepoSnapshot {
@@ -1320,6 +1312,76 @@ impl RepoSnapshot {
             }
         }
         new_operations
+    }
+
+    fn apply_operations(&mut self, operations: impl IntoIterator<Item = Operation>) {
+        let mut deferred_operations: Vec<Edit<DeferredOperation>> = Vec::new();
+        for operation in operations {
+            if operation
+                .revision()
+                .iter()
+                .all(|parent| self.operations.contains_key(&parent))
+            {
+                match operation {
+                    Operation::CreateDocument(op) => op.apply(self),
+                    Operation::Edit(op) => op.apply(self),
+                    Operation::CreateBranch(op) => op.apply(self),
+                }
+                .log_err();
+            } else {
+                deferred_operations.extend(operation.revision().iter().map(|parent| {
+                    Edit::Insert(DeferredOperation {
+                        operation: operation.clone(),
+                        parent: *parent,
+                    })
+                }))
+            }
+        }
+        self.deferred_operations.edit(deferred_operations, &());
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DeferredOperation {
+    parent: OperationId,
+    operation: Operation,
+}
+
+impl PartialEq for DeferredOperation {
+    fn eq(&self, other: &Self) -> bool {
+        self.parent == other.parent && self.operation.id() == other.operation.id()
+    }
+}
+
+impl Eq for DeferredOperation {}
+
+impl PartialOrd for DeferredOperation {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DeferredOperation {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.parent
+            .cmp(&other.parent)
+            .then_with(|| self.operation.id().cmp(&other.operation.id()))
+    }
+}
+
+impl sum_tree::Item for DeferredOperation {
+    type Summary = OperationId;
+
+    fn summary(&self) -> Self::Summary {
+        self.parent
+    }
+}
+
+impl sum_tree::KeyedItem for DeferredOperation {
+    type Key = (OperationId, OperationId);
+
+    fn key(&self) -> Self::Key {
+        (self.parent, self.operation.id())
     }
 }
 
