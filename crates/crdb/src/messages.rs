@@ -11,6 +11,7 @@ pub enum RequestEnvelope {
     PublishRepo(PublishRepo),
     CloneRepo(CloneRepo),
     SyncRepo(SyncRepo),
+    PublishOperations(PublishOperations),
 }
 
 impl RequestEnvelope {
@@ -19,6 +20,7 @@ impl RequestEnvelope {
             RequestEnvelope::PublishRepo(request) => Box::new(request),
             RequestEnvelope::CloneRepo(request) => Box::new(request),
             RequestEnvelope::SyncRepo(request) => Box::new(request),
+            RequestEnvelope::PublishOperations(request) => Box::new(request),
         }
     }
 }
@@ -91,6 +93,23 @@ impl Into<RequestEnvelope> for SyncRepo {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SyncRepoResponse {
     pub operations: Vec<Operation>,
+    pub max_operation_ids: BTreeMap<ReplicaId, OperationCount>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PublishOperations {
+    pub repo_id: RepoId,
+    pub operations: Vec<Operation>,
+}
+
+impl Request for PublishOperations {
+    type Response = ();
+}
+
+impl Into<RequestEnvelope> for PublishOperations {
+    fn into(self) -> RequestEnvelope {
+        RequestEnvelope::PublishOperations(self)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

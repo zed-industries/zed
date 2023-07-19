@@ -8,7 +8,7 @@ mod test;
 use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, Bound, HashMap};
 use dense_id::DenseId;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
 use operations::CreateBranch;
 use parking_lot::{Mutex, RwLock};
@@ -27,6 +27,8 @@ use std::{
 use sum_tree::{Bias, SumTree, TreeMap};
 use util::ResultExt;
 use uuid::Uuid;
+
+const CHUNK_SIZE: usize = 64;
 
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -139,38 +141,80 @@ pub trait ClientRoom: 'static + Send + Sync {
     fn handle_messages(&self, handle_message: impl 'static + Send + Fn(Vec<u8>));
 }
 
-struct Client<N: ClientNetwork> {
+pub trait Executor: 'static + Send + Sync {
+    fn spawn<F>(&self, future: F)
+    where
+        F: 'static + Send + Future<Output = ()>;
+}
+
+struct Client<E, N: ClientNetwork> {
     db: Db,
     network: Arc<N>,
-    repo_rooms: Arc<Mutex<HashMap<RepoId, RepoRoom<N>>>>,
+    checkouts: Arc<Mutex<HashMap<RepoId, Checkout<E, N>>>>,
+    executor: Arc<E>,
 }
 
-struct RepoRoom<N: ClientNetwork> {
-    network_room: N::Room,
+struct Checkout<E, N: ClientNetwork> {
+    repo: Repo,
+    network_room: Arc<N::Room>,
+    operations_tx: mpsc::UnboundedSender<Operation>,
     message_handlers:
-        Arc<RwLock<HashMap<TypeId, Box<dyn Send + Sync + Fn(Client<N>, RepoId, Box<dyn Any>)>>>>,
+        Arc<RwLock<HashMap<TypeId, Box<dyn Send + Sync + Fn(Client<E, N>, RepoId, Box<dyn Any>)>>>>,
 }
 
-impl<N: ClientNetwork> RepoRoom<N> {
-    fn new(client: Client<N>, repo_id: RepoId, network_room: N::Room) -> Self {
+impl<E, N: ClientNetwork> Clone for Checkout<E, N> {
+    fn clone(&self) -> Self {
+        Self {
+            repo: self.repo.clone(),
+            network_room: self.network_room.clone(),
+            operations_tx: self.operations_tx.clone(),
+            message_handlers: self.message_handlers.clone(),
+        }
+    }
+}
+
+impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
+    fn new(client: Client<E, N>, repo: Repo, network_room: N::Room) -> Self {
+        let (operations_tx, operations_rx) = mpsc::unbounded();
         let this = Self {
-            network_room,
+            repo: repo.clone(),
+            network_room: Arc::new(network_room),
+            operations_tx,
             message_handlers: Default::default(),
         };
 
         {
             let handlers = this.message_handlers.clone();
+            let client = client.clone();
             this.network_room.handle_messages(move |message| {
                 if let Some(envelope) =
                     serde_bare::from_slice::<MessageEnvelope>(&message).log_err()
                 {
                     let message = envelope.unwrap();
                     if let Some(handler) = handlers.read().get(&message.as_ref().type_id()) {
-                        handler(client.clone(), repo_id, message);
+                        handler(client.clone(), repo.id, message);
                     }
                 };
             });
         }
+
+        client.executor.spawn({
+            let this = this.clone();
+            let client = client.clone();
+            async move {
+                this.sync(&client).await.expect("network is infallible");
+                let mut operations_rx = operations_rx.ready_chunks(CHUNK_SIZE);
+                while let Some(operations) = operations_rx.next().await {
+                    client
+                        .request(messages::PublishOperations {
+                            repo_id: this.repo.id,
+                            operations,
+                        })
+                        .await
+                        .expect("network is infallible");
+                }
+            }
+        });
 
         this
     }
@@ -178,7 +222,7 @@ impl<N: ClientNetwork> RepoRoom<N> {
     fn handle_messages<M: Message, H>(&self, handle_message: H)
     where
         M: Message,
-        H: 'static + Fn(Client<N>, RepoId, M) + Send + Sync,
+        H: 'static + Fn(Client<E, N>, RepoId, M) + Send + Sync,
     {
         self.message_handlers.write().insert(
             TypeId::of::<M>(),
@@ -188,8 +232,37 @@ impl<N: ClientNetwork> RepoRoom<N> {
         );
     }
 
-    fn broadcast<M: Message>(&self, message: M) {
+    fn broadcast<M: Message>(&self, message: &M) {
         self.network_room.broadcast(message.to_bytes());
+    }
+
+    fn broadcast_operation(&self, operation: Operation) {
+        self.broadcast(&operation);
+        self.operations_tx.unbounded_send(operation).unwrap();
+    }
+
+    async fn sync(&self, client: &Client<E, N>) -> Result<()> {
+        let response = client
+            .request(messages::SyncRepo {
+                id: self.repo.id,
+                max_operation_ids: self.repo.read(|repo| (&repo.max_operation_ids).into()),
+            })
+            .await?;
+
+        let operations = self
+            .repo
+            .operations_since(&(&response.max_operation_ids).into());
+
+        for chunk in operations.chunks(CHUNK_SIZE) {
+            client
+                .request(messages::PublishOperations {
+                    repo_id: self.repo.id,
+                    operations: chunk.to_vec(),
+                })
+                .await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -199,22 +272,24 @@ pub struct RoomCredentials {
     token: RoomToken,
 }
 
-impl<N: ClientNetwork> Clone for Client<N> {
+impl<E, N: ClientNetwork> Clone for Client<E, N> {
     fn clone(&self) -> Self {
         Self {
             db: self.db.clone(),
             network: self.network.clone(),
-            repo_rooms: self.repo_rooms.clone(),
+            checkouts: self.checkouts.clone(),
+            executor: self.executor.clone(),
         }
     }
 }
 
-impl<N: ClientNetwork> Client<N> {
-    pub fn new(network: N) -> Self {
+impl<E: Executor, N: ClientNetwork> Client<E, N> {
+    pub fn new(executor: E, network: N) -> Self {
         let mut this = Self {
             db: Db::new(),
             network: Arc::new(network),
-            repo_rooms: Default::default(),
+            checkouts: Default::default(),
+            executor: Arc::new(executor),
         };
         this.db.on_local_operation({
             let this = this.clone();
@@ -240,23 +315,25 @@ impl<N: ClientNetwork> Client<N> {
         async move {
             let response = this.request(messages::CloneRepo { name }).await?;
             let repo_id = response.repo_id;
-            let room = RepoRoom::new(
-                this.clone(),
-                repo_id,
-                this.network.room(response.credentials),
-            );
-            room.handle_messages(Self::handle_remote_operation);
-            this.repo_rooms.lock().insert(repo_id, room);
+            let repo = Repo {
+                id: repo_id,
+                db: this.db.clone(),
+            };
             this.db
                 .snapshot
                 .lock()
                 .repos
                 .insert(repo_id, Default::default());
 
-            Ok(Repo {
-                id: repo_id,
-                db: this.db.clone(),
-            })
+            let checkout = Checkout::new(
+                this.clone(),
+                repo.clone(),
+                this.network.room(response.credentials),
+            );
+            checkout.handle_messages(Self::handle_remote_operation);
+            this.checkouts.lock().insert(repo_id, checkout);
+
+            Ok(repo)
         }
     }
 
@@ -266,21 +343,27 @@ impl<N: ClientNetwork> Client<N> {
         name: impl Into<Arc<str>>,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
-        let id = repo.id;
         let name = name.into();
+        let repo = repo.clone();
         async move {
-            let response = this.request(messages::PublishRepo { id, name }).await?;
-            let room = RepoRoom::new(this.clone(), id, this.network.room(response.credentials));
-            room.handle_messages(Self::handle_remote_operation);
-            this.repo_rooms.lock().insert(id, room);
+            let response = this
+                .request(messages::PublishRepo { id: repo.id, name })
+                .await?;
+            let checkout = Checkout::new(
+                this.clone(),
+                repo.clone(),
+                this.network.room(response.credentials),
+            );
+            checkout.handle_messages(Self::handle_remote_operation);
+            this.checkouts.lock().insert(repo.id, checkout);
 
             Ok(())
         }
     }
 
     fn handle_local_operation(&self, repo_id: RepoId, operation: Operation) {
-        if let Some(room) = self.repo_rooms.lock().get(&repo_id) {
-            room.broadcast(operation);
+        if let Some(checkout) = self.checkouts.lock().get(&repo_id) {
+            checkout.broadcast_operation(operation);
         }
     }
 
@@ -454,35 +537,11 @@ impl<N: ServerNetwork> Server<N> {
             .get(&request.id)
             .ok_or_else(|| anyhow!("repo not found"))?
             .clone();
-        let mut response = messages::SyncRepoResponse {
-            operations: Default::default(),
-        };
-        for (replica_id, end_op_count) in repo.max_operation_ids.iter() {
-            let end_op = OperationId {
-                replica_id: *replica_id,
-                operation_count: *end_op_count,
-            };
-            if let Some(start_op_count) = request.max_operation_ids.get(&replica_id) {
-                let start_op = OperationId {
-                    replica_id: *replica_id,
-                    operation_count: *start_op_count,
-                };
-                response.operations.extend(
-                    repo.operations
-                        .range((Bound::Excluded(&start_op), Bound::Included(&end_op)))
-                        .map(|(_, op)| op.clone()),
-                );
-            } else {
-                let start_op = OperationId::new(*replica_id);
-                response.operations.extend(
-                    repo.operations
-                        .range((Bound::Included(&start_op), Bound::Included(&end_op)))
-                        .map(|(_, op)| op.clone()),
-                );
-            }
-        }
 
-        Ok(response)
+        Ok(messages::SyncRepoResponse {
+            operations: repo.operations_since(&(&request.max_operation_ids).into()),
+            max_operation_ids: (&repo.max_operation_ids).into(),
+        })
     }
 }
 
@@ -506,6 +565,17 @@ impl Db {
     ) {
         self.local_operation_created = Some(Arc::new(operation_created));
     }
+
+    fn repo(&self, id: RepoId) -> Option<Repo> {
+        self.snapshot
+            .lock()
+            .repos
+            .contains_key(&id)
+            .then_some(Repo {
+                id,
+                db: self.clone(),
+            })
+    }
 }
 
 #[derive(Clone)]
@@ -521,6 +591,10 @@ impl Repo {
             id: branch_id,
             repo: self.clone(),
         }
+    }
+
+    fn operations_since(&self, version: &TreeMap<ReplicaId, OperationCount>) -> Vec<Operation> {
+        self.read(|repo| repo.operations_since(version))
     }
 
     fn read<F, T>(&self, f: F) -> T
@@ -549,8 +623,8 @@ impl Repo {
                     repo.max_operation_ids.insert(replica_id, count);
                 }
 
-                if let Some(operation_created) = self.db.local_operation_created.as_ref() {
-                    operation_created(self.id, operation);
+                if let Some(local_operation_created) = self.db.local_operation_created.as_ref() {
+                    local_operation_created(self.id, operation);
                 }
                 result
             })
@@ -1209,6 +1283,35 @@ impl RepoSnapshot {
     fn apply_operation(&mut self, operation: Operation) {
         todo!()
     }
+
+    fn operations_since(&self, version: &TreeMap<ReplicaId, OperationCount>) -> Vec<Operation> {
+        let mut new_operations = Vec::new();
+        for (replica_id, end_op_count) in self.max_operation_ids.iter() {
+            let end_op = OperationId {
+                replica_id: *replica_id,
+                operation_count: *end_op_count,
+            };
+            if let Some(start_op_count) = version.get(&replica_id) {
+                let start_op = OperationId {
+                    replica_id: *replica_id,
+                    operation_count: *start_op_count,
+                };
+                new_operations.extend(
+                    self.operations
+                        .range((Bound::Excluded(&start_op), Bound::Included(&end_op)))
+                        .map(|(_, op)| op.clone()),
+                );
+            } else {
+                let start_op = OperationId::new(*replica_id);
+                new_operations.extend(
+                    self.operations
+                        .range((Bound::Included(&start_op), Bound::Included(&end_op)))
+                        .map(|(_, op)| op.clone()),
+                );
+            }
+        }
+        new_operations
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1228,7 +1331,7 @@ struct Revision {
 
 #[cfg(test)]
 mod tests {
-    use gpui::executor::Deterministic;
+    use gpui::executor::{Background, Deterministic};
 
     use super::*;
     use crate::test::TestNetwork;
@@ -1238,7 +1341,7 @@ mod tests {
         let network = TestNetwork::new(deterministic.build_background());
         let server = Server::new(network.server());
 
-        let client_a = Client::new(network.client("client-a"));
+        let client_a = Client::new(deterministic.build_background(), network.client("client-a"));
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
 
@@ -1252,7 +1355,16 @@ mod tests {
         assert_eq!(doc2.text().to_string(), "def");
 
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
-        let db_b = Client::new(network.client("client-b"));
+        let db_b = Client::new(deterministic.build_background(), network.client("client-b"));
         let repo_b = db_b.clone_repo("repo-1").await.unwrap();
+    }
+
+    impl Executor for Arc<Background> {
+        fn spawn<F>(&self, future: F)
+        where
+            F: 'static + Send + Future<Output = ()>,
+        {
+            todo!()
+        }
     }
 }

@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::BTreeMap,
     fmt::Debug,
     ops::{Bound, RangeBounds},
 };
@@ -29,7 +30,11 @@ pub struct TreeSet<K>(TreeMap<K, ()>)
 where
     K: Clone + Debug + Default + Ord;
 
-impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
+impl<K, V> TreeMap<K, V>
+where
+    K: Clone + Debug + Default + Ord,
+    V: Clone + Debug,
+{
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = (K, V)>) -> Self {
         let tree = SumTree::from_iter(
             entries
@@ -56,6 +61,10 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         } else {
             None
         }
+    }
+
+    pub fn contains_key<'a>(&self, key: &'a K) -> bool {
+        self.get(key).is_some()
     }
 
     pub fn insert(&mut self, key: K, value: V) {
@@ -189,6 +198,28 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
             .collect();
 
         self.0.edit(edits, &());
+    }
+}
+
+impl<K, V> Into<BTreeMap<K, V>> for &TreeMap<K, V>
+where
+    K: Clone + Debug + Default + Ord,
+    V: Clone + Debug,
+{
+    fn into(self) -> BTreeMap<K, V> {
+        self.iter()
+            .map(|(replica_id, count)| (replica_id.clone(), count.clone()))
+            .collect()
+    }
+}
+
+impl<K, V> From<&BTreeMap<K, V>> for TreeMap<K, V>
+where
+    K: Clone + Debug + Default + Ord,
+    V: Clone + Debug,
+{
+    fn from(value: &BTreeMap<K, V>) -> Self {
+        TreeMap::from_ordered_entries(value.into_iter().map(|(k, v)| (k.clone(), v.clone())))
     }
 }
 
