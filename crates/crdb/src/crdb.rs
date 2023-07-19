@@ -164,9 +164,9 @@ impl<N: ClientNetwork> RepoRoom<N> {
                 if let Some(envelope) =
                     serde_bare::from_slice::<MessageEnvelope>(&message).log_err()
                 {
-                    let request = envelope.unwrap();
-                    if let Some(handler) = handlers.read().get(&request.type_id()) {
-                        handler(client.clone(), repo_id, request);
+                    let message = envelope.unwrap();
+                    if let Some(handler) = handlers.read().get(&message.as_ref().type_id()) {
+                        handler(client.clone(), repo_id, message);
                     }
                 };
             });
@@ -308,15 +308,15 @@ impl<N: ServerNetwork> Server<N> {
             request_handlers: Default::default(),
         };
 
-        this.clone().handle_requests(Self::handle_publish_repo);
+        this.handle_requests(Self::handle_publish_repo);
         let request_handlers = this.request_handlers.clone();
 
         network.handle_requests(move |user, request_bytes| {
-            let envelope = MessageEnvelope::from_bytes(request_bytes)?;
+            let envelope = RequestEnvelope::from_bytes(request_bytes)?;
             let request = envelope.unwrap();
             let request_handlers = request_handlers.read();
             let request_handler = request_handlers
-                .get(&request.type_id())
+                .get(&request.as_ref().type_id())
                 .ok_or_else(|| anyhow!("no request handler"))?;
             let response = (request_handler)(user, request);
             Ok(response)
@@ -325,7 +325,7 @@ impl<N: ServerNetwork> Server<N> {
         this
     }
 
-    fn handle_requests<F, Fut, R>(self, handle_request: F)
+    fn handle_requests<F, Fut, R>(&self, handle_request: F)
     where
         F: 'static + Send + Sync + Fn(Self, User, R) -> Fut,
         Fut: 'static + Send + Future<Output = Result<R::Response>>,
