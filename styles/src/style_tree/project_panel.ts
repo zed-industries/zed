@@ -47,7 +47,7 @@ export default function project_panel(): any {
             height: 22,
             background: background(theme.middle),
             chevron_color: foreground(theme.middle, "variant"),
-            icon_color: foreground(theme.middle, "active"),
+            icon_color: with_opacity(foreground(theme.middle, "active"), 0.3),
             chevron_size: 7,
             icon_size: 14,
             icon_spacing: 6,

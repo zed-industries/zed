@@ -46,6 +46,7 @@
     "ppt": "document",
     "pptx": "document",
     "prettierrc": "prettier",
+    "prettierignore": "prettier",
     "ps1": "terminal",
     "psd": "image",
     "py": "code",
