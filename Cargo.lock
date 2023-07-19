@@ -6486,6 +6486,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "rpc",
@@ -7991,7 +7992,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=49226023693107fba9a1191136a4f47f38cdca73#49226023693107fba9a1191136a4f47f38cdca73"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=1c65ca24bc9a734ab70115188f465e12eecf224e#1c65ca24bc9a734ab70115188f465e12eecf224e"
 dependencies = [
  "cc",
  "regex",

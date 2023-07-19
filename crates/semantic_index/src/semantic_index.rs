@@ -409,7 +409,11 @@ impl SemanticIndex {
     ) {
         if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
             if let Some(documents) = retriever
-                .parse_file(&pending_file.relative_path, &content, pending_file.language)
+                .parse_file_with_template(
+                    &pending_file.relative_path,
+                    &content,
+                    pending_file.language,
+                )
                 .log_err()
             {
                 log::trace!(
@@ -656,6 +660,8 @@ impl SemanticIndex {
                     database.top_k_search(&worktree_db_ids, &phrase_embedding, limit)
                 })
                 .await?;
+
+            dbg!(&documents);
 
             let mut tasks = Vec::new();
             let mut ranges = Vec::new();

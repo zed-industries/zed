@@ -130,7 +130,7 @@ tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml",
 tree-sitter-lua = "0.0.14"
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "49226023693107fba9a1191136a4f47f38cdca73" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1c65ca24bc9a734ab70115188f465e12eecf224e" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457

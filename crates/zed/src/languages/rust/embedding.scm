@@ -1,50 +1,28 @@
 (
-    (line_comment)* @context
+    [(line_comment) (attribute_item)]* @context
     .
-    (enum_item
-        name: (_) @name) @item
-)
+    [
+        (struct_item
+            name: (_) @name)
 
-(
-    (line_comment)* @context
-    .
-    (struct_item
-        name: (_) @name) @item
-)
+        (enum_item
+            name: (_) @name)
 
-(
-    (line_comment)* @context
-    .
-    (impl_item
-        trait: (_)? @name
-        "for"? @name
-        type: (_) @name) @item
-)
+        (impl_item
+            trait: (_)? @name
+            "for"? @name
+            type: (_) @name)
 
-(
-    (line_comment)* @context
-    .
-    (trait_item
-        name: (_) @name) @item
-)
+        (trait_item
+            name: (_) @name)
 
-(
-    (line_comment)* @context
-    .
-    (function_item
-        name: (_) @name) @item
-)
+        (function_item
+            name: (_) @name
+            body: (block
+                "{" @keep
+                "}" @keep) @collapse)
 
-(
-    (line_comment)* @context
-    .
-    (macro_definition
-        name: (_) @name) @item
-)
-
-(
-    (line_comment)* @context
-    .
-    (function_signature_item
-        name: (_) @name) @item
-)
+        (macro_definition
+            name: (_) @name)
+        ] @item
+    )

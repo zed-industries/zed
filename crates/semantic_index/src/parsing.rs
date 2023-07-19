@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Ok, Result};
-use language::Language;
-use std::{ops::Range, path::Path, sync::Arc};
+use language::{Grammar, Language};
+use std::{cmp, collections::HashSet, ops::Range, path::Path, sync::Arc};
 use tree_sitter::{Parser, QueryCursor};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -20,6 +20,20 @@ pub const PARSEABLE_ENTIRE_FILE_TYPES: [&str; 4] = ["TOML", "YAML", "JSON", "CSS
 pub struct CodeContextRetriever {
     pub parser: Parser,
     pub cursor: QueryCursor,
+}
+
+// Every match has an item, this represents the fundamental treesitter symbol and anchors the search
+// Every match has one or more 'name' captures. These indicate the display range of the item for deduplication.
+// If there are preceeding comments, we track this with a context capture
+// If there is a piece that should be collapsed in hierarchical queries, we capture it with a collapse capture
+// If there is a piece that should be kept inside a collapsed node, we capture it with a keep capture
+#[derive(Debug, Clone)]
+pub struct CodeContextMatch {
+    pub start_col: usize,
+    pub item_range: Range<usize>,
+    pub name_range: Range<usize>,
+    pub context_ranges: Vec<Range<usize>>,
+    pub collapse_ranges: Vec<Range<usize>>,
 }
 
 impl CodeContextRetriever {
@@ -49,6 +63,82 @@ impl CodeContextRetriever {
         }])
     }
 
+    fn get_matches_in_file(
+        &mut self,
+        content: &str,
+        grammar: &Arc<Grammar>,
+    ) -> Result<Vec<CodeContextMatch>> {
+        let embedding_config = grammar
+            .embedding_config
+            .as_ref()
+            .ok_or_else(|| anyhow!("no embedding queries"))?;
+        self.parser.set_language(grammar.ts_language).unwrap();
+
+        let tree = self
+            .parser
+            .parse(&content, None)
+            .ok_or_else(|| anyhow!("parsing failed"))?;
+
+        let mut captures: Vec<CodeContextMatch> = Vec::new();
+        let mut collapse_ranges: Vec<Range<usize>> = Vec::new();
+        let mut keep_ranges: Vec<Range<usize>> = Vec::new();
+        for mat in self.cursor.matches(
+            &embedding_config.query,
+            tree.root_node(),
+            content.as_bytes(),
+        ) {
+            let mut start_col = 0;
+            let mut item_range: Option<Range<usize>> = None;
+            let mut name_range: Option<Range<usize>> = None;
+            let mut context_ranges: Vec<Range<usize>> = Vec::new();
+            collapse_ranges.clear();
+            keep_ranges.clear();
+            for capture in mat.captures {
+                if capture.index == embedding_config.item_capture_ix {
+                    item_range = Some(capture.node.byte_range());
+                    start_col = capture.node.start_position().column;
+                } else if capture.index == embedding_config.name_capture_ix {
+                    name_range = Some(capture.node.byte_range());
+                } else if Some(capture.index) == embedding_config.context_capture_ix {
+                    context_ranges.push(capture.node.byte_range());
+                } else if Some(capture.index) == embedding_config.collapse_capture_ix {
+                    collapse_ranges.push(capture.node.byte_range());
+                } else if Some(capture.index) == embedding_config.keep_capture_ix {
+                    keep_ranges.push(capture.node.byte_range());
+                }
+            }
+
+            if item_range.is_some() && name_range.is_some() {
+                let item_range = item_range.unwrap();
+                captures.push(CodeContextMatch {
+                    start_col,
+                    item_range,
+                    name_range: name_range.unwrap(),
+                    context_ranges,
+                    collapse_ranges: subtract_ranges(&collapse_ranges, &keep_ranges),
+                });
+            }
+        }
+        Ok(captures)
+    }
+
+    pub fn parse_file_with_template(
+        &mut self,
+        relative_path: &Path,
+        content: &str,
+        language: Arc<Language>,
+    ) -> Result<Vec<Document>> {
+        let language_name = language.name();
+        let mut documents = self.parse_file(relative_path, content, language)?;
+        for document in &mut documents {
+            document.content = CODE_CONTEXT_TEMPLATE
+                .replace("<path>", relative_path.to_string_lossy().as_ref())
+                .replace("<language>", language_name.as_ref())
+                .replace("item", &document.content);
+        }
+        Ok(documents)
+    }
+
     pub fn parse_file(
         &mut self,
         relative_path: &Path,
@@ -62,78 +152,131 @@ impl CodeContextRetriever {
         let grammar = language
             .grammar()
             .ok_or_else(|| anyhow!("no grammar for language"))?;
-        let embedding_config = grammar
-            .embedding_config
-            .as_ref()
-            .ok_or_else(|| anyhow!("no embedding queries"))?;
-
-        self.parser.set_language(grammar.ts_language).unwrap();
-
-        let tree = self
-            .parser
-            .parse(&content, None)
-            .ok_or_else(|| anyhow!("parsing failed"))?;
-
-        let mut documents = Vec::new();
 
         // Iterate through query matches
-        let mut name_ranges: Vec<Range<usize>> = vec![];
-        for mat in self.cursor.matches(
-            &embedding_config.query,
-            tree.root_node(),
-            content.as_bytes(),
-        ) {
-            let mut name: Vec<&str> = vec![];
-            let mut item: Option<&str> = None;
-            let mut byte_range: Option<Range<usize>> = None;
-            let mut context_spans: Vec<&str> = vec![];
-            for capture in mat.captures {
-                if capture.index == embedding_config.item_capture_ix {
-                    byte_range = Some(capture.node.byte_range());
-                    item = content.get(capture.node.byte_range());
-                } else if capture.index == embedding_config.name_capture_ix {
-                    let name_range = capture.node.byte_range();
-                    if name_ranges.contains(&name_range) {
-                        continue;
-                    }
-                    name_ranges.push(name_range.clone());
-                    if let Some(name_content) = content.get(name_range.clone()) {
-                        name.push(name_content);
-                    }
-                }
+        let matches = self.get_matches_in_file(content, grammar)?;
 
-                if let Some(context_capture_ix) = embedding_config.context_capture_ix {
-                    if capture.index == context_capture_ix {
-                        if let Some(context) = content.get(capture.node.byte_range()) {
-                            context_spans.push(context);
-                        }
-                    }
+        let language_scope = language.default_scope();
+        let placeholder = language_scope.collapsed_placeholder();
+
+        let mut documents = Vec::new();
+        let mut collapsed_ranges_within = Vec::new();
+        let mut parsed_name_ranges = HashSet::new();
+        for (i, context_match) in matches.iter().enumerate() {
+            if parsed_name_ranges.contains(&context_match.name_range) {
+                continue;
+            }
+
+            collapsed_ranges_within.clear();
+            for remaining_match in &matches[(i + 1)..] {
+                if context_match
+                    .item_range
+                    .contains(&remaining_match.item_range.start)
+                    && context_match
+                        .item_range
+                        .contains(&remaining_match.item_range.end)
+                {
+                    collapsed_ranges_within.extend(remaining_match.collapse_ranges.iter().cloned());
+                } else {
+                    break;
                 }
             }
 
-            if let Some((item, byte_range)) = item.zip(byte_range) {
-                if !name.is_empty() {
-                    let item = if context_spans.is_empty() {
-                        item.to_string()
-                    } else {
-                        format!("{}\n{}", context_spans.join("\n"), item)
-                    };
+            let mut document_content = String::new();
+            for context_range in &context_match.context_ranges {
+                document_content.push_str(&content[context_range.clone()]);
+                document_content.push_str("\n");
+            }
 
-                    let document_text = CODE_CONTEXT_TEMPLATE
-                        .replace("<path>", relative_path.to_str().unwrap())
-                        .replace("<language>", &language.name().to_lowercase())
-                        .replace("<item>", item.as_str());
-
-                    documents.push(Document {
-                        range: byte_range,
-                        content: document_text,
-                        embedding: Vec::new(),
-                        name: name.join(" ").to_string(),
-                    });
+            let mut offset = context_match.item_range.start;
+            for collapsed_range in &collapsed_ranges_within {
+                if collapsed_range.start > offset {
+                    add_content_from_range(
+                        &mut document_content,
+                        content,
+                        offset..collapsed_range.start,
+                        context_match.start_col,
+                    );
                 }
+                document_content.push_str(placeholder);
+                offset = collapsed_range.end;
+            }
+
+            if offset < context_match.item_range.end {
+                add_content_from_range(
+                    &mut document_content,
+                    content,
+                    offset..context_match.item_range.end,
+                    context_match.start_col,
+                );
+            }
+
+            if let Some(name) = content.get(context_match.name_range.clone()) {
+                parsed_name_ranges.insert(context_match.name_range.clone());
+                documents.push(Document {
+                    name: name.to_string(),
+                    content: document_content,
+                    range: context_match.item_range.clone(),
+                    embedding: vec![],
+                })
             }
         }
 
         return Ok(documents);
     }
+}
+
+pub(crate) fn subtract_ranges(
+    ranges: &[Range<usize>],
+    ranges_to_subtract: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    let mut result = Vec::new();
+
+    let mut ranges_to_subtract = ranges_to_subtract.iter().peekable();
+
+    for range in ranges {
+        let mut offset = range.start;
+
+        while offset < range.end {
+            if let Some(range_to_subtract) = ranges_to_subtract.peek() {
+                if offset < range_to_subtract.start {
+                    let next_offset = cmp::min(range_to_subtract.start, range.end);
+                    result.push(offset..next_offset);
+                    offset = next_offset;
+                } else {
+                    let next_offset = cmp::min(range_to_subtract.end, range.end);
+                    offset = next_offset;
+                }
+
+                if offset >= range_to_subtract.end {
+                    ranges_to_subtract.next();
+                }
+            } else {
+                result.push(offset..range.end);
+                offset = range.end;
+            }
+        }
+    }
+
+    result
+}
+
+fn add_content_from_range(
+    output: &mut String,
+    content: &str,
+    range: Range<usize>,
+    start_col: usize,
+) {
+    for mut line in content.get(range.clone()).unwrap_or("").lines() {
+        for _ in 0..start_col {
+            if line.starts_with(' ') {
+                line = &line[1..];
+            } else {
+                break;
+            }
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+    output.pop();
 }
