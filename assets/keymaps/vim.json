@@ -30,6 +30,8 @@
       "j": "vim::Down",
       "down": "vim::Down",
       "enter": "vim::NextLineStart",
+      "tab": "vim::Tab",
+      "shift-tab": "vim::Tab",
       "k": "vim::Up",
       "up": "vim::Up",
       "l": "vim::Right",
@@ -205,7 +207,7 @@
       "?": [
         "vim::Search",
         {
-          "backwards": true,
+          "backwards": true
         }
       ],
       "ctrl-f": "vim::PageDown",
@@ -282,7 +284,7 @@
     "bindings": {
       "t": "editor::ScrollCursorTop",
       "z": "editor::ScrollCursorCenter",
-      "b": "editor::ScrollCursorBottom",
+      "b": "editor::ScrollCursorBottom"
     }
   },
   {
@@ -337,7 +339,7 @@
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
-      "ctrl-[": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
     }
   },
   {
