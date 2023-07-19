@@ -44,14 +44,14 @@ impl FileAssociations {
             let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
             iife!({
-                let suffix =
-                    path.file_name()
-                        .and_then(|os_str| os_str.to_str())
-                        .and_then(|file_name| {
-                            file_name
-                                .find('.')
-                                .and_then(|dot_index| file_name.get(dot_index + 1..))
-                        } )?;
+                let suffix = path
+                    .file_name()
+                    .and_then(|os_str| os_str.to_str())
+                    .and_then(|file_name| {
+                        file_name
+                            .find('.')
+                            .and_then(|dot_index| file_name.get(dot_index + 1..))
+                    })?;
 
                 this.suffixes
                     .get(suffix)
