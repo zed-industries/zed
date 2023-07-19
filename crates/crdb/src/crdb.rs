@@ -6,6 +6,7 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
+use btree::Bias;
 use collections::{btree_map, BTreeMap, Bound, HashMap};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
@@ -24,11 +25,14 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use sum_tree::{Bias, Edit, SumTree, TreeMap};
 use util::ResultExt;
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 64;
+
+mod btree {
+    pub use sum_tree::{SumTree as Sequence, TreeMap as Map, TreeSet as Set, *};
+}
 
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -75,7 +79,7 @@ impl OperationId {
     }
 }
 
-impl sum_tree::Summary for OperationId {
+impl btree::Summary for OperationId {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
@@ -725,7 +729,7 @@ impl Branch {
 
 #[derive(Clone, Default)]
 struct DbSnapshot {
-    repos: TreeMap<RepoId, RepoSnapshot>,
+    repos: btree::Map<RepoId, RepoSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -758,7 +762,7 @@ impl DocumentFragment {
     }
 }
 
-impl sum_tree::Item for DocumentFragment {
+impl btree::Item for DocumentFragment {
     type Summary = DocumentFragmentSummary;
 
     fn summary(&self) -> DocumentFragmentSummary {
@@ -779,7 +783,7 @@ pub struct DocumentFragmentSummary {
     max_location: DenseId,
 }
 
-impl sum_tree::Summary for DocumentFragmentSummary {
+impl btree::Summary for DocumentFragmentSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
@@ -796,7 +800,7 @@ impl sum_tree::Summary for DocumentFragmentSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, DocumentFragmentSummary> for OperationId {
+impl<'a> btree::Dimension<'a, DocumentFragmentSummary> for OperationId {
     fn add_summary(&mut self, summary: &'a DocumentFragmentSummary, _: &()) {
         *self = summary.max_document_id
     }
@@ -825,7 +829,7 @@ impl InsertionFragment {
     }
 }
 
-impl sum_tree::Item for InsertionFragment {
+impl btree::Item for InsertionFragment {
     type Summary = InsertionFragmentSummary;
 
     fn summary(&self) -> Self::Summary {
@@ -836,11 +840,11 @@ impl sum_tree::Item for InsertionFragment {
     }
 }
 
-impl sum_tree::KeyedItem for InsertionFragment {
+impl btree::KeyedItem for InsertionFragment {
     type Key = InsertionFragmentSummary;
 
     fn key(&self) -> Self::Key {
-        sum_tree::Item::summary(self)
+        btree::Item::summary(self)
     }
 }
 
@@ -850,7 +854,7 @@ struct InsertionFragmentSummary {
     max_offset_in_insertion: usize,
 }
 
-impl sum_tree::Summary for InsertionFragmentSummary {
+impl btree::Summary for InsertionFragmentSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
@@ -929,7 +933,8 @@ impl Document {
                             let mut suffix = old_fragments.item().unwrap().clone();
                             suffix.insertion_subrange.start +=
                                 fragment_start - old_fragments.start().visible_len;
-                            new_insertions.push(Edit::Insert(InsertionFragment::new(&suffix)));
+                            new_insertions
+                                .push(btree::Edit::Insert(InsertionFragment::new(&suffix)));
                             new_ropes.push_fragment(&suffix, suffix.visible());
                             new_fragments.push(suffix, &());
                         }
@@ -970,7 +975,7 @@ impl Document {
                     prefix.insertion_subrange.end = prefix.insertion_subrange.start + prefix_len;
                     prefix.location =
                         DenseId::between(&new_fragments.summary().max_location, &prefix.location);
-                    new_insertions.push(Edit::Insert(InsertionFragment::new(&prefix)));
+                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
                     new_ropes.push_fragment(&prefix, prefix.visible());
                     new_fragments.push(prefix, &());
                     fragment_start = range.start;
@@ -990,7 +995,7 @@ impl Document {
                         tombstones: Default::default(),
                         undo_count: 0,
                     };
-                    new_insertions.push(Edit::Insert(InsertionFragment::new(&fragment)));
+                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
                     new_ropes.push_str(new_text.as_ref());
                     new_fragments.push(fragment, &());
                     insertion_offset += new_text.len();
@@ -1019,7 +1024,8 @@ impl Document {
                         });
                     }
                     if intersection.len() > 0 {
-                        new_insertions.push(Edit::Insert(InsertionFragment::new(&intersection)));
+                        new_insertions
+                            .push(btree::Edit::Insert(InsertionFragment::new(&intersection)));
                         new_ropes.push_fragment(&intersection, fragment.visible());
                         new_fragments.push(intersection, &());
                         fragment_start = intersection_end;
@@ -1071,7 +1077,7 @@ impl Document {
                     suffix.insertion_subrange.start +=
                         fragment_start - old_fragments.start().visible_len;
                     suffix.insertion_subrange.end = suffix.insertion_subrange.start + suffix_len;
-                    new_insertions.push(Edit::Insert(InsertionFragment::new(&suffix)));
+                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&suffix)));
                     new_ropes.push_fragment(&suffix, suffix.visible());
                     new_fragments.push(suffix, &());
                 }
@@ -1116,7 +1122,7 @@ pub struct LocalEditDimension {
     max_document_id: OperationId,
 }
 
-impl<'a> sum_tree::Dimension<'a, DocumentFragmentSummary> for LocalEditDimension {
+impl<'a> btree::Dimension<'a, DocumentFragmentSummary> for LocalEditDimension {
     fn add_summary(&mut self, summary: &'a DocumentFragmentSummary, _: &()) {
         self.visible_len += summary.visible_len;
         self.hidden_len += summary.hidden_len;
@@ -1125,19 +1131,19 @@ impl<'a> sum_tree::Dimension<'a, DocumentFragmentSummary> for LocalEditDimension
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for OperationId {
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for OperationId {
     fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
         Ord::cmp(self, &cursor_location.max_document_id)
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for usize {
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for usize {
     fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
         Ord::cmp(self, &cursor_location.visible_len)
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension>
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension>
     for (OperationId, usize)
 {
     fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
@@ -1170,8 +1176,8 @@ pub struct AnchorRange {
 }
 
 mod bias_serialization {
+    use crate::btree::Bias;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use sum_tree::Bias;
 
     pub fn serialize<S>(field: &Bias, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -1250,11 +1256,11 @@ impl<'a> RopeBuilder<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct RepoSnapshot {
     last_operation_id: OperationId,
-    branches: TreeMap<OperationId, BranchSnapshot>,
-    operations: TreeMap<OperationId, Operation>,
-    revisions: TreeMap<RevisionId, Revision>,
-    max_operation_ids: TreeMap<ReplicaId, OperationCount>,
-    deferred_operations: SumTree<DeferredOperation>,
+    branches: btree::Map<OperationId, BranchSnapshot>,
+    operations: btree::Map<OperationId, Operation>,
+    revisions: btree::Map<RevisionId, Revision>,
+    max_operation_ids: btree::Map<ReplicaId, OperationCount>,
+    deferred_operations: btree::Sequence<DeferredOperation>,
 }
 
 impl RepoSnapshot {
@@ -1285,7 +1291,7 @@ impl RepoSnapshot {
         (operation, branch_id)
     }
 
-    fn operations_since(&self, version: &TreeMap<ReplicaId, OperationCount>) -> Vec<Operation> {
+    fn operations_since(&self, version: &btree::Map<ReplicaId, OperationCount>) -> Vec<Operation> {
         let mut new_operations = Vec::new();
         for (replica_id, end_op_count) in self.max_operation_ids.iter() {
             let end_op = OperationId {
@@ -1315,7 +1321,7 @@ impl RepoSnapshot {
     }
 
     fn apply_operations(&mut self, operations: impl IntoIterator<Item = Operation>) -> Result<()> {
-        let mut deferred_operations: Vec<Edit<DeferredOperation>> = Vec::new();
+        let mut deferred_operations: Vec<btree::Edit<DeferredOperation>> = Vec::new();
         for operation in operations {
             if operation
                 .revision()
@@ -1334,7 +1340,7 @@ impl RepoSnapshot {
                 // than nest additional collections under the keys.
             } else {
                 deferred_operations.extend(operation.revision().iter().map(|parent| {
-                    Edit::Insert(DeferredOperation {
+                    btree::Edit::Insert(DeferredOperation {
                         operation: operation.clone(),
                         parent: *parent,
                     })
@@ -1374,7 +1380,7 @@ impl Ord for DeferredOperation {
     }
 }
 
-impl sum_tree::Item for DeferredOperation {
+impl btree::Item for DeferredOperation {
     type Summary = OperationId;
 
     fn summary(&self) -> Self::Summary {
@@ -1382,7 +1388,7 @@ impl sum_tree::Item for DeferredOperation {
     }
 }
 
-impl sum_tree::KeyedItem for DeferredOperation {
+impl btree::KeyedItem for DeferredOperation {
     type Key = (OperationId, OperationId);
 
     fn key(&self) -> Self::Key {
@@ -1398,9 +1404,9 @@ struct BranchSnapshot {
 
 #[derive(Default, Debug, Clone)]
 struct Revision {
-    document_metadata: TreeMap<OperationId, DocumentMetadata>,
-    document_fragments: SumTree<DocumentFragment>,
-    insertion_fragments: SumTree<InsertionFragment>,
+    document_metadata: btree::Map<OperationId, DocumentMetadata>,
+    document_fragments: btree::Sequence<DocumentFragment>,
+    insertion_fragments: btree::Sequence<InsertionFragment>,
     visible_text: Rope,
     hidden_text: Rope,
 }
