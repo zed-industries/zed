@@ -8126,6 +8126,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-swift"
+version = "0.3.6"
+source = "git+https://github.com/zed-industries/tree-sitter-swift.git?rev=a53156a9a43d10cdb2b8809a34ce10ad6fa35664#a53156a9a43d10cdb2b8809a34ce10ad6fa35664"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-toml"
 version = "0.5.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
@@ -9551,6 +9560,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-scheme",
  "tree-sitter-svelte",
+ "tree-sitter-swift",
  "tree-sitter-toml",
  "tree-sitter-typescript",
  "tree-sitter-yaml",

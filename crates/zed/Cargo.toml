@@ -122,6 +122,7 @@ tree-sitter-ruby.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-php.workspace = true
 tree-sitter-scheme.workspace = true
+tree-sitter-swift.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-yaml.workspace = true

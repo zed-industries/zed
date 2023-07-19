@@ -1,7 +1,8 @@
-; https://raw.githubusercontent.com/alex-pinkus/tree-sitter-swift/main/queries/highlights.scm
+; https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries/swift/highlights.scm
 
 [ "." ";" ":" "," ] @punctuation.delimiter
-[ "\\(" "(" ")" "[" "]" "{" "}"] @punctuation.bracket ; TODO: "\\(" ")" in interpolations should be @punctuation.special
+; TODO: "\\(" ")" in interpolations should be @punctuation.special
+[ "\\(" "(" ")" "[" "]" "{" "}"] @punctuation.bracket
 
 ; Identifiers
 (attribute) @variable
@@ -10,6 +11,7 @@
 
 ; Declarations
 "func" @keyword.function
+
 [
   (visibility_modifier)
   (member_modifier)
@@ -17,13 +19,11 @@
   (property_modifier)
   (parameter_modifier)
   (inheritance_modifier)
-] @keyword
+] @type.qualifier
 
 (function_declaration (simple_identifier) @method)
 (function_declaration ["init" @constructor])
 (throws) @keyword
-"async" @keyword
-"await" @keyword
 (where_keyword) @keyword
 (parameter external_name: (simple_identifier) @parameter)
 (parameter name: (simple_identifier) @parameter)
@@ -49,6 +49,11 @@
 ] @keyword
 
 [
+  "async"
+  "await"
+] @keyword.coroutine
+
+[
   (getter_specifier)
   (setter_specifier)
   (modify_specifier)
@@ -66,9 +71,9 @@
 (call_expression ; foo.bar.baz(): highlight the baz()
   (navigation_expression
     (navigation_suffix (simple_identifier) @function.call)))
-((navigation_expression
-   (simple_identifier) @type) ; SomeType.method(): highlight SomeType as a type
-   (.match? @type "^[A-Z]"))
+; ((navigation_expression
+;    (simple_identifier) @type) ; SomeType.method(): highlight SomeType as a type
+;    (.lua-match? @type "^[A-Z]"))
 
 (directive) @function.macro
 (diagnostic) @function.macro
@@ -104,6 +109,15 @@
  (multiline_comment)
 ] @comment @spell
 
+; ((comment) @comment.documentation
+;     (.lua-match? @comment.documentation "^///[^/]"))
+
+; ((comment) @comment.documentation
+;     (.lua-match? @comment.documentation "^///$"))
+
+; ((multiline_comment) @comment.documentation
+;     (.lua-match? @comment.documentation "^/[*][*][^*].*[*]/$"))
+
 ; String literals
 (line_str_text) @string
 (str_escaped_char) @string
@@ -125,7 +139,7 @@
 ] @number
 (real_literal) @float
 (boolean_literal) @boolean
-"nil" @variable.builtin
+"nil" @constant.builtin
 
 ; Regex literals
 (regex_literal) @string.regex

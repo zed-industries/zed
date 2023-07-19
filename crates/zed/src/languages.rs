@@ -140,6 +140,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_yaml::language(),
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
     );
+    language("swift", tree_sitter_swift::language(), vec![]);
     language(
         "svelte",
         tree_sitter_svelte::language(),
