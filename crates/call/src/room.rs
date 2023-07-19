@@ -20,7 +20,7 @@ use live_kit_client::{
 };
 use postage::stream::Stream;
 use project::Project;
-use std::{future::Future, mem, panic::Location, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1089,7 +1089,6 @@ impl Room {
 
     #[track_caller]
     pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        dbg!(Location::caller());
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         } else if self.is_sharing_mic() {
