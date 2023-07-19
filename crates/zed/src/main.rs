@@ -717,9 +717,7 @@ async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()>
 }
 
 #[cfg(not(debug_assertions))]
-fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    None
-}
+fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {}
 
 fn connect_to_cli(
     server_name: &str,
