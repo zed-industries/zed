@@ -261,10 +261,14 @@ impl TerminalPanel {
                         .create_terminal(working_directory, window_id, cx)
                         .log_err()
                 }) {
-                    let terminal =
-                        Box::new(cx.add_view(|cx| {
-                            TerminalView::new(terminal, workspace.database_id(), cx)
-                        }));
+                    let terminal = Box::new(cx.add_view(|cx| {
+                        TerminalView::new(
+                            terminal,
+                            workspace.weak_handle(),
+                            workspace.database_id(),
+                            cx,
+                        )
+                    }));
                     pane.update(cx, |pane, cx| {
                         let focus = pane.has_focus();
                         pane.add_item(terminal, true, focus, None, cx);

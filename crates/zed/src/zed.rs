@@ -2334,7 +2334,7 @@ mod tests {
             editor::init(cx);
             project_panel::init_settings(cx);
             pane::init(cx);
-            project_panel::init(cx);
+            project_panel::init((), cx);
             terminal_view::init(cx);
             ai::init(cx);
             app_state

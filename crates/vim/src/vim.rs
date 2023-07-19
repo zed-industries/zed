@@ -295,11 +295,15 @@ impl Vim {
             if self.enabled && editor.mode() == EditorMode::Full {
                 editor.set_cursor_shape(cursor_shape, cx);
                 editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
+                editor.set_collapse_matches(true);
                 editor.set_input_enabled(!state.vim_controlled());
                 editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
                 let context_layer = state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(context_layer, cx);
             } else {
+                // Note: set_collapse_matches is not in unhook_vim_settings, as that method is called on blur,
+                // but we need collapse_matches to persist when the search bar is focused.
+                editor.set_collapse_matches(false);
                 Self::unhook_vim_settings(editor, cx);
             }
         });

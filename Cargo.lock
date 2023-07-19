@@ -1052,6 +1052,10 @@ dependencies = [
  "media",
  "postage",
  "project",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
  "settings",
  "util",
 ]
@@ -5360,6 +5364,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "collections",
  "context_menu",
  "db",
  "drag_and_drop",
@@ -6469,6 +6474,7 @@ name = "search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "client",
  "collections",
  "editor",
@@ -9457,7 +9463,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.96.0"
+version = "0.97.0"
 dependencies = [
  "activity_indicator",
  "ai",

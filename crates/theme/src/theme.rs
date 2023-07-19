@@ -480,8 +480,10 @@ pub struct ProjectPanelEntry {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,
-    pub icon_color: Color,
     pub icon_size: f32,
+    pub icon_color: Color,
+    pub chevron_color: Color,
+    pub chevron_size: f32,
     pub icon_spacing: f32,
     pub status: EntryStatus,
 }

@@ -1,9 +1,12 @@
+pub mod file_associations;
 mod project_panel_settings;
 
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
+use file_associations::FileAssociations;
+
 use futures::stream::StreamExt;
 use gpui::{
     actions,
@@ -15,8 +18,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AnyElement, AppContext, AssetSource, AsyncAppContext, ClipboardItem, Element, Entity,
+    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -94,6 +97,7 @@ pub enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct EntryDetails {
     filename: String,
+    icon: Option<Arc<str>>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -129,8 +133,9 @@ pub fn init_settings(cx: &mut AppContext) {
     settings::register::<ProjectPanelSettings>(cx);
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
+    file_associations::init(assets, cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::select_prev);
@@ -227,6 +232,11 @@ impl ProjectPanel {
                     this.edit_state = None;
                     this.update_visible_entries(None, cx);
                 }
+            })
+            .detach();
+
+            cx.observe_global::<FileAssociations, _>(|_, cx| {
+                cx.notify();
             })
             .detach();
 
@@ -1166,7 +1176,10 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let git_status_setting = settings::get::<ProjectPanelSettings>(cx).git_status;
+            let (git_status_setting, show_file_icons) = {
+                let settings = settings::get::<ProjectPanelSettings>(cx);
+                (settings.git_status, settings.file_icons)
+            };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
@@ -1179,6 +1192,11 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
+                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+                    let icon = show_file_icons.then(|| match entry.kind {
+                        EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx),
+                        _ => FileAssociations::get_folder_icon(is_expanded, cx),
+                    });
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1187,11 +1205,12 @@ impl ProjectPanel {
                             .unwrap_or(root_name)
                             .to_string_lossy()
                             .to_string(),
+                        icon,
                         path: entry.path.clone(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
-                        is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
+                        is_expanded,
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
@@ -1254,23 +1273,36 @@ impl ProjectPanel {
             .unwrap_or(style.text.color);
 
         Flex::row()
-            .with_child(
-                if kind.is_dir() {
-                    if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
-                    } else {
-                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
-                    }
+            .with_child(if let Some(icon) = &details.icon {
+                Svg::new(icon.to_string())
+                    .with_color(style.icon_color)
                     .constrained()
+                    .with_max_width(style.icon_size)
+                    .with_max_height(style.icon_size)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.icon_size)
+            } else if kind.is_dir() {
+                if details.is_expanded {
+                    Svg::new("icons/chevron_down_8.svg").with_color(style.chevron_color)
                 } else {
-                    Empty::new().constrained()
+                    Svg::new("icons/chevron_right_8.svg").with_color(style.chevron_color)
                 }
-                .with_max_width(style.icon_size)
-                .with_max_height(style.icon_size)
+                .constrained()
+                .with_max_width(style.chevron_size)
+                .with_max_height(style.chevron_size)
                 .aligned()
                 .constrained()
-                .with_width(style.icon_size),
-            )
+                .with_width(style.chevron_size)
+            } else {
+                Empty::new()
+                    .constrained()
+                    .with_max_width(style.chevron_size)
+                    .with_max_height(style.chevron_size)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.chevron_size)
+            })
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
                     .contained()
@@ -2581,7 +2613,7 @@ mod tests {
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
-            crate::init(cx);
+            crate::init((), cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
         });
@@ -2596,7 +2628,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
-            crate::init(cx);
+            crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
         });

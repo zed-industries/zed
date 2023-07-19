@@ -154,7 +154,7 @@ fn main() {
         file_finder::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(cx);
+        project_panel::init(Assets, cx);
         diagnostics::init(cx);
         search::init(cx);
         vector_store::init(fs.clone(), http.clone(), languages.clone(), cx);
@@ -166,6 +166,7 @@ fn main() {
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
+        watch_file_types(fs.clone(), cx);
 
         languages.set_theme(theme::current(cx).clone());
         cx.observe_global::<SettingsStore, _>({
@@ -685,6 +686,26 @@ async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> O
     Some(())
 }
 
+#[cfg(debug_assertions)]
+fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    cx.spawn(|mut cx| async move {
+        let mut events = fs
+            .watch(
+                "assets/icons/file_icons/file_types.json".as_ref(),
+                Duration::from_millis(100),
+            )
+            .await;
+        while (events.next().await).is_some() {
+            cx.update(|cx| {
+                cx.update_global(|file_types, _| {
+                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                });
+            })
+        }
+    })
+    .detach()
+}
+
 #[cfg(not(debug_assertions))]
 async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
     None
@@ -694,6 +715,9 @@ async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
 async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
     None
 }
+
+#[cfg(not(debug_assertions))]
+fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {}
 
 fn connect_to_cli(
     server_name: &str,
@@ -895,7 +919,14 @@ pub fn dock_default_item_factory(
         })
         .notify_err(workspace, cx)?;
 
-    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+    let terminal_view = cx.add_view(|cx| {
+        TerminalView::new(
+            terminal,
+            workspace.weak_handle(),
+            workspace.database_id(),
+            cx,
+        )
+    });
 
     Some(Box::new(terminal_view))
 }

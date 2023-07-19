@@ -66,6 +66,11 @@
   // 3. Draw all invisible symbols:
   //   "all"
   "show_whitespaces": "selection",
+  // Settings related to calls in Zed
+  "calls": {
+    // Join calls with the microphone muted by default
+    "mute_on_join": true
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
@@ -99,6 +104,8 @@
   "project_panel": {
     // Whether to show the git status in the project panel.
     "git_status": true,
+    // Whether to show file icons in the project panel.
+    "file_icons": true,
     // Where to dock project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the project panel.

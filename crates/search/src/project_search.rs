@@ -1,5 +1,5 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use anyhow::Result;
@@ -51,12 +51,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
-    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
-    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext) {
+fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| {
@@ -89,9 +89,7 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: bool,
+    search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
@@ -408,9 +406,7 @@ impl ProjectSearchView {
         let project;
         let excerpts;
         let mut query_text = String::new();
-        let mut regex = false;
-        let mut case_sensitive = false;
-        let mut whole_word = false;
+        let mut options = SearchOptions::NONE;
 
         {
             let model = model.read(cx);
@@ -418,9 +414,7 @@ impl ProjectSearchView {
             excerpts = model.excerpts.clone();
             if let Some(active_query) = model.active_query.as_ref() {
                 query_text = active_query.as_str().to_string();
-                regex = active_query.is_regex();
-                case_sensitive = active_query.case_sensitive();
-                whole_word = active_query.whole_word();
+                options = SearchOptions::from_query(active_query);
             }
         }
         cx.observe(&model, |this, _, cx| this.model_changed(cx))
@@ -496,9 +490,7 @@ impl ProjectSearchView {
             model,
             query_editor,
             results_editor,
-            case_sensitive,
-            whole_word,
-            regex,
+            search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
@@ -594,11 +586,11 @@ impl ProjectSearchView {
                     return None;
                 }
             };
-        if self.regex {
+        if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
-                self.whole_word,
-                self.case_sensitive,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
             ) {
@@ -615,8 +607,8 @@ impl ProjectSearchView {
         } else {
             Some(SearchQuery::text(
                 text,
-                self.whole_word,
-                self.case_sensitive,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
             ))
@@ -635,7 +627,7 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, cx)
+                editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });
 
             let range_to_select = match_ranges[new_index].clone();
@@ -676,7 +668,6 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             self.active_match_index = Some(0);
-            self.select_match(Direction::Next, cx);
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
@@ -768,9 +759,7 @@ impl ProjectSearchBar {
                         search_view.query_editor.update(cx, |editor, cx| {
                             editor.set_text(old_query.as_str(), cx);
                         });
-                        search_view.regex = old_query.is_regex();
-                        search_view.whole_word = old_query.whole_word();
-                        search_view.case_sensitive = old_query.case_sensitive();
+                        search_view.search_options = SearchOptions::from_query(&old_query);
                     }
                 }
                 new_query
@@ -858,15 +847,10 @@ impl ProjectSearchBar {
         });
     }
 
-    fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let value = match option {
-                    SearchOption::WholeWord => &mut search_view.whole_word,
-                    SearchOption::CaseSensitive => &mut search_view.case_sensitive,
-                    SearchOption::Regex => &mut search_view.regex,
-                };
-                *value = !*value;
+                search_view.search_options.toggle(option);
                 search_view.search(cx);
             });
             cx.notify();
@@ -923,12 +907,12 @@ impl ProjectSearchBar {
     fn render_option_button(
         &self,
         icon: &'static str,
-        option: SearchOption,
+        option: SearchOptions,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
+        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
                 .search
@@ -944,7 +928,7 @@ impl ProjectSearchBar {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self>(
-            option as usize,
+            option.bits as usize,
             format!("Toggle {}", option.label()),
             Some(option.to_toggle_action()),
             tooltip_style,
@@ -953,14 +937,9 @@ impl ProjectSearchBar {
         .into_any()
     }
 
-    fn is_option_enabled(&self, option: SearchOption, cx: &AppContext) -> bool {
+    fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
-            match option {
-                SearchOption::WholeWord => search.whole_word,
-                SearchOption::CaseSensitive => search.case_sensitive,
-                SearchOption::Regex => search.regex,
-            }
+            search.read(cx).search_options.contains(option)
         } else {
             false
         }
@@ -1051,17 +1030,17 @@ impl View for ProjectSearchBar {
                             Flex::row()
                                 .with_child(self.render_option_button(
                                     "Case",
-                                    SearchOption::CaseSensitive,
+                                    SearchOptions::CASE_SENSITIVE,
                                     cx,
                                 ))
                                 .with_child(self.render_option_button(
                                     "Word",
-                                    SearchOption::WholeWord,
+                                    SearchOptions::WHOLE_WORD,
                                     cx,
                                 ))
                                 .with_child(self.render_option_button(
                                     "Regex",
-                                    SearchOption::Regex,
+                                    SearchOptions::REGEX,
                                     cx,
                                 ))
                                 .contained()
