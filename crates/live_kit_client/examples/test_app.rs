@@ -63,7 +63,7 @@ fn main() {
             let audio_track = LocalAudioTrack::create();
             let audio_track_publication = room_a.publish_audio_track(&audio_track).await.unwrap();
 
-            if let RemoteAudioTrackUpdate::Subscribed(track) =
+            if let RemoteAudioTrackUpdate::Subscribed(track, _) =
                 audio_track_updates.next().await.unwrap()
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
