@@ -8171,9 +8171,9 @@ fn build_style(
 
         line_height_scalar = match mode {
             EditorMode::Full => line_height_scalar,
-            EditorMode::AutoHeight { .. } | EditorMode::SingleLine => {
-                cx.font_cache().line_height(field_editor_theme.text.font_size)
-            }
+            EditorMode::AutoHeight { .. } | EditorMode::SingleLine => cx
+                .font_cache()
+                .line_height(field_editor_theme.text.font_size),
         };
 
         EditorStyle {
