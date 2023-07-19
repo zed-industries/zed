@@ -1,9 +1,11 @@
+pub mod call_settings;
 pub mod participant;
 pub mod room;
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use call_settings::CallSettings;
 use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
@@ -19,6 +21,8 @@ pub use participant::ParticipantLocation;
 pub use room::Room;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
+    settings::register::<CallSettings>(cx);
+
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }

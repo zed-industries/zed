@@ -66,6 +66,11 @@
   // 3. Draw all invisible symbols:
   //   "all"
   "show_whitespaces": "selection",
+  // Settings related to calls in Zed
+  "calls": {
+    // Join calls with the microphone muted by default
+    "mute_on_join": true
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
