@@ -43,6 +43,8 @@ impl FileAssociations {
         iife!({
             let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
+            // FIXME: Associate a type with the languages and have the file's langauge
+            //        override these associations
             iife!({
                 let suffix = path
                     .file_name()
