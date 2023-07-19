@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::{
+    cmp::Ordering,
+    fmt::Debug,
+    ops::{Bound, RangeBounds},
+};
 
 use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
@@ -91,6 +95,32 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         cursor.seek(&key, Bias::Right, &());
         cursor.prev(&());
         cursor.item().map(|item| (&item.key, &item.value))
+    }
+
+    pub fn range<'a, R>(&self, range: R) -> impl Iterator<Item = (&K, &V)>
+    where
+        K: 'a,
+        R: RangeBounds<&'a K>,
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        match range.start_bound() {
+            Bound::Included(start) => {
+                let start = MapKeyRef(Some(*start));
+                cursor.seek(&start, Bias::Left, &());
+            }
+            Bound::Excluded(start) => {
+                let start = MapKeyRef(Some(*start));
+                cursor.seek(&start, Bias::Right, &());
+            }
+            Bound::Unbounded => cursor.next(&()),
+        }
+        cursor
+            .map(|entry| (&entry.key, &entry.value))
+            .take_while(move |(key, _)| match range.end_bound() {
+                Bound::Included(end) => key <= end,
+                Bound::Excluded(end) => key < end,
+                Bound::Unbounded => true,
+            })
     }
 
     pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&K, &V)> + '_ {

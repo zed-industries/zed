@@ -1,20 +1,25 @@
 use crate::{
     operations::{CreateBranch, CreateDocument, Edit},
-    OperationId, RepoId, Request, RevisionId, RoomCredentials,
+    OperationCount, OperationId, ReplicaId, RepoId, Request, RevisionId, RoomCredentials,
 };
+use collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, sync::Arc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RequestEnvelope {
     PublishRepo(PublishRepo),
+    CloneRepo(CloneRepo),
+    SyncRepo(SyncRepo),
 }
 
 impl RequestEnvelope {
     pub fn unwrap(self) -> Box<dyn Any> {
-        Box::new(match self {
-            RequestEnvelope::PublishRepo(request) => request,
-        })
+        match self {
+            RequestEnvelope::PublishRepo(request) => Box::new(request),
+            RequestEnvelope::CloneRepo(request) => Box::new(request),
+            RequestEnvelope::SyncRepo(request) => Box::new(request),
+        }
     }
 }
 
@@ -43,6 +48,49 @@ impl Into<RequestEnvelope> for PublishRepo {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PublishRepoResponse {
     pub credentials: RoomCredentials,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CloneRepo {
+    pub name: Arc<str>,
+}
+
+impl Request for CloneRepo {
+    type Response = CloneRepoResponse;
+}
+
+impl Into<RequestEnvelope> for CloneRepo {
+    fn into(self) -> RequestEnvelope {
+        RequestEnvelope::CloneRepo(self)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CloneRepoResponse {
+    pub repo_id: RepoId,
+    pub replica_id: ReplicaId,
+    pub credentials: RoomCredentials,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyncRepo {
+    pub id: RepoId,
+    pub max_operation_ids: BTreeMap<ReplicaId, OperationCount>,
+}
+
+impl Request for SyncRepo {
+    type Response = SyncRepoResponse;
+}
+
+impl Into<RequestEnvelope> for SyncRepo {
+    fn into(self) -> RequestEnvelope {
+        RequestEnvelope::SyncRepo(self)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SyncRepoResponse {
+    pub operations: Vec<Operation>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
