@@ -1,0 +1,149 @@
+{
+  "suffixes": {
+    "aac": "audio",
+    "bash": "terminal",
+    "bmp": "image",
+    "c": "code",
+    "conf": "settings",
+    "cpp": "code",
+    "cc": "code",
+    "css": "code",
+    "doc": "document",
+    "docx": "document",
+    "eslintrc": "eslint",
+    "eslintrc.js": "eslint",
+    "eslintrc.json": "eslint",
+    "flac": "audio",
+    "fish": "terminal",
+    "gitattributes": "vcs",
+    "gitignore": "vcs",
+    "gif": "image",
+    "go": "code",
+    "h": "code",
+    "handlebars": "code",
+    "hbs": "template",
+    "htm": "template",
+    "html": "template",
+    "svelte": "template",
+    "hpp": "code",
+    "ico": "image",
+    "ini": "settings",
+    "java": "code",
+    "jpeg": "image",
+    "jpg": "image",
+    "js": "code",
+    "json": "storage",
+    "lock": "lock",
+    "log": "log",
+    "md": "document",
+    "mdx": "document",
+    "mp3": "audio",
+    "mp4": "video",
+    "ods": "document",
+    "odp": "document",
+    "odt": "document",
+    "ogg": "video",
+    "pdf": "document",
+    "php": "code",
+    "png": "image",
+    "ppt": "document",
+    "pptx": "document",
+    "prettierrc": "prettier",
+    "prettierignore": "prettier",
+    "ps1": "terminal",
+    "psd": "image",
+    "py": "code",
+    "rb": "code",
+    "rkt": "code",
+    "rs": "rust",
+    "rtf": "document",
+    "scm": "code",
+    "sh": "terminal",
+    "bashrc": "terminal",
+    "bash_profile": "terminal",
+    "bash_aliases": "terminal",
+    "bash_logout": "terminal",
+    "profile": "terminal",
+    "zshrc": "terminal",
+    "zshenv": "terminal",
+    "zsh_profile": "terminal",
+    "zsh_aliases": "terminal",
+    "zsh_histfile": "terminal",
+    "zlogin": "terminal",
+    "sql": "code",
+    "svg": "image",
+    "swift": "code",
+    "tiff": "image",
+    "toml": "settings",
+    "ts": "typescript",
+    "tsx": "code",
+    "txt": "document",
+    "wav": "audio",
+    "webm": "video",
+    "xls": "document",
+    "xlsx": "document",
+    "xml": "template",
+    "yaml": "settings",
+    "yml": "settings",
+    "zsh": "terminal"
+  },
+  "types": {
+    "audio": {
+      "icon": "icons/file_icons/file.svg"
+    },
+    "code": {
+      "icon": "icons/file_icons/code.svg"
+    },
+    "default": {
+      "icon": "icons/file_icons/file.svg"
+    },
+    "directory": {
+      "icon": "icons/file_icons/folder.svg"
+    },
+    "document": {
+      "icon": "icons/file_icons/book.svg"
+    },
+    "eslint": {
+      "icon": "icons/file_icons/eslint.svg"
+    },
+    "expanded_directory": {
+      "icon": "icons/file_icons/folder-open.svg"
+    },
+    "image": {
+      "icon": "icons/file_icons/image.svg"
+    },
+    "lock": {
+      "icon": "icons/file_icons/lock.svg"
+    },
+    "log": {
+      "icon": "icons/file_icons/info.svg"
+    },
+    "prettier": {
+      "icon": "icons/file_icons/prettier.svg"
+    },
+    "rust": {
+      "icon": "icons/file_icons/rust.svg"
+    },
+    "settings": {
+      "icon": "icons/file_icons/settings.svg"
+    },
+    "storage": {
+      "icon": "icons/file_icons/database.svg"
+    },
+    "template": {
+      "icon": "icons/file_icons/html.svg"
+    },
+    "terminal": {
+      "icon": "icons/file_icons/terminal.svg"
+    },
+    "typescript": {
+      "icon": "icons/file_icons/typescript.svg"
+    },
+    "vcs": {
+      "icon": "icons/file_icons/git.svg"
+    },
+    "video": {
+      "icon": "icons/file_icons/file.svg"
+    }
+  }
+}
