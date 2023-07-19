@@ -1440,18 +1440,21 @@ impl Pane {
         .with_width(tab_style.close_icon_width)
         .aligned();
 
-        let close_right = settings::get::<ItemSettings>(cx).close_position.right();
+        let close_button = settings::get::<ItemSettings>(cx).close_button;
+        match close_button {
+            crate::item::CloseButton::Left => Flex::row()
+                .with_child(close_element)
+                .with_child(title_element)
+                .with_child(buffer_jewel_element),
 
-        if close_right {
-            Flex::row()
+            crate::item::CloseButton::Right => Flex::row()
                 .with_child(buffer_jewel_element)
                 .with_child(title_element)
-                .with_child(close_element)
-        } else {
-            Flex::row()
-                .with_child(close_element)
-                .with_child(title_element)
+                .with_child(close_element),
+
+            crate::item::CloseButton::Off => Flex::row()
                 .with_child(buffer_jewel_element)
+                .with_child(title_element),
         }
         .contained()
         .with_style(container)
