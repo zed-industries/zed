@@ -1,16 +1,9 @@
-use crate::{
-    ClientNetwork, ClientRoom, Message, RoomCredentials, RoomName, RoomToken, ServerNetwork, User,
-};
+use crate::{ClientNetwork, ClientRoom, RoomCredentials, RoomName, RoomToken, ServerNetwork, User};
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use gpui::executor::Background;
 use parking_lot::Mutex;
-use std::{
-    any::{type_name, Any, TypeId},
-    collections::BTreeMap,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 pub struct TestNetwork(Arc<Mutex<NetworkState>>);
 
@@ -18,7 +11,7 @@ impl TestNetwork {
     pub fn new(executor: Arc<Background>) -> Self {
         Self(Arc::new(Mutex::new(NetworkState {
             executor,
-            request_handlers: Default::default(),
+            request_handler: None,
             rooms: Default::default(),
         })))
     }
@@ -39,10 +32,8 @@ impl TestNetwork {
 
 struct NetworkState {
     executor: Arc<Background>,
-    request_handlers: BTreeMap<
-        TypeId,
-        Box<dyn Send + Fn(User, Box<dyn Any>) -> BoxFuture<'static, Result<Box<dyn Any>>>>,
-    >,
+    request_handler:
+        Option<Box<dyn Send + Fn(User, Vec<u8>) -> Result<BoxFuture<'static, Result<Vec<u8>>>>>>,
     rooms: BTreeMap<RoomName, Room>,
 }
 
@@ -56,27 +47,6 @@ pub struct Room {
 pub struct TestServer(Arc<Mutex<NetworkState>>);
 
 impl ServerNetwork for TestServer {
-    fn on_request<H, F, R>(&self, handle_request: H)
-    where
-        H: 'static + Send + Fn(User, R) -> F,
-        F: 'static + Send + futures::Future<Output = Result<R::Response>>,
-        R: crate::Request,
-    {
-        self.0.lock().request_handlers.insert(
-            TypeId::of::<R>(),
-            Box::new(move |user, request| {
-                let request = request.downcast::<R>().unwrap();
-                let response = handle_request(user, *request);
-                async move {
-                    response
-                        .await
-                        .map(|response| Box::new(response) as Box<dyn Any>)
-                }
-                .boxed()
-            }),
-        );
-    }
-
     fn create_room(&self, name: &RoomName) -> BoxFuture<Result<()>> {
         let network = self.0.clone();
         let room = name.clone();
@@ -98,6 +68,16 @@ impl ServerNetwork for TestServer {
         room.authorized_users.insert(token.clone(), user.into());
         token
     }
+
+    fn handle_requests<H, F>(&self, handle_request: H)
+    where
+        H: 'static + Send + Fn(User, Vec<u8>) -> Result<F>,
+        F: 'static + Send + futures::Future<Output = Result<Vec<u8>>>,
+    {
+        self.0.lock().request_handler = Some(Box::new(move |user, request| {
+            handle_request(user, request.clone()).map(FutureExt::boxed)
+        }));
+    }
 }
 
 pub struct TestClient {
@@ -108,35 +88,17 @@ pub struct TestClient {
 impl ClientNetwork for TestClient {
     type Room = TestClientRoom;
 
-    fn request<R: crate::Request>(
-        &self,
-        request: R,
-    ) -> futures::future::BoxFuture<anyhow::Result<R::Response>> {
-        let network = self.network.lock();
-        let executor = network.executor.clone();
-        let request = network
-            .request_handlers
-            .get(&TypeId::of::<R>())
-            .expect(&format!(
-                "handler for request {} not found",
-                type_name::<R>()
-            ))(self.user.clone(), Box::new(request));
-        async move {
-            executor.simulate_random_delay().await;
-            let response = request
-                .await
-                .map(|response| *response.downcast::<R::Response>().unwrap());
-            executor.simulate_random_delay().await;
-            response
-        }
-        .boxed()
+    fn request(&self, request: Vec<u8>) -> BoxFuture<Result<Vec<u8>>> {
+        let response =
+            self.network.lock().request_handler.as_ref().unwrap()(self.user.clone(), request);
+        async move { response?.await }.boxed()
     }
 
     fn room(&self, credentials: RoomCredentials) -> Self::Room {
         TestClientRoom {
             outbox: Default::default(),
             credentials,
-            message_handlers: Default::default(),
+            message_handler: Default::default(),
             network: self.network.clone(),
         }
     }
@@ -145,8 +107,7 @@ impl ClientNetwork for TestClient {
 pub struct TestClientRoom {
     outbox: Option<mpsc::UnboundedSender<Vec<u8>>>,
     credentials: RoomCredentials,
-    message_handlers:
-        Arc<Mutex<HashMap<TypeId, Box<dyn Send + Fn(Vec<u8>) -> Result<(), Vec<u8>>>>>>,
+    message_handler: Arc<Mutex<Option<Box<dyn Send + Fn(Vec<u8>)>>>>,
     network: Arc<Mutex<NetworkState>>,
 }
 
@@ -182,17 +143,14 @@ impl ClientRoom for TestClientRoom {
                 "client should not connect twice with the same token"
             );
         }
-        let message_handlers = self.message_handlers.clone();
+        let message_handler = self.message_handler.clone();
         self.network
             .lock()
             .executor
             .spawn(async move {
-                while let Some(mut message) = inbox_rx.next().await {
-                    for handler in message_handlers.lock().values() {
-                        match handler(message) {
-                            Ok(()) => break,
-                            Err(unhandled_message) => message = unhandled_message,
-                        }
+                while let Some(message) = inbox_rx.next().await {
+                    if let Some(handler) = message_handler.lock().as_ref() {
+                        handler(message);
                     }
                 }
             })
@@ -229,23 +187,14 @@ impl ClientRoom for TestClientRoom {
         async { Ok(()) }.boxed()
     }
 
-    fn broadcast<M: Message>(&self, message: M) {
+    fn broadcast(&self, message: Vec<u8>) {
         let tx = self.outbox.as_ref().expect("must be connected");
-        tx.unbounded_send(message.to_bytes())
-            .expect("channel must be open");
+        tx.unbounded_send(message).expect("channel must be open");
     }
 
-    fn on_message<M, F>(&self, handle_message: F)
-    where
-        M: Message,
-        F: 'static + Send + Fn(M),
-    {
-        self.message_handlers.lock().insert(
-            TypeId::of::<M>(),
-            Box::new(move |bytes| {
-                handle_message(M::from_bytes(bytes)?);
-                Ok(())
-            }),
-        );
+    fn handle_messages(&self, handle_message: impl 'static + Send + Fn(Vec<u8>)) {
+        self.message_handler
+            .lock()
+            .replace(Box::new(handle_message));
     }
 }

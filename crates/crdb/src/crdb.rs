@@ -6,15 +6,17 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
-use collections::{hash_map, HashMap};
+use collections::{btree_map, BTreeMap, HashMap};
 use dense_id::DenseId;
-use futures::future::BoxFuture;
-use operations::{CreateBranch, Operation};
-use parking_lot::Mutex;
+use futures::{future::BoxFuture, FutureExt};
+use messages::{MessageEnvelope, Operation, RequestEnvelope};
+use operations::CreateBranch;
+use parking_lot::{Mutex, RwLock};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{
+    any::{Any, TypeId},
     cmp::{self, Ordering},
     fmt::{self, Debug, Display},
     future::Future,
@@ -23,6 +25,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, SumTree, TreeMap};
+use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(
@@ -90,12 +93,12 @@ pub struct User {
     login: Arc<str>,
 }
 
-pub trait Request: Message {
+pub trait Request: Message + Into<RequestEnvelope> {
     type Response: Message;
 }
 
 pub trait Message: 'static + Send {
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>>
+    fn from_bytes(bytes: Vec<u8>) -> Result<Self>
     where
         Self: Sized;
     fn to_bytes(&self) -> Vec<u8>;
@@ -105,22 +108,20 @@ impl<T> Message for T
 where
     T: 'static + Send + Serialize + for<'a> Deserialize<'a>,
 {
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Vec<u8>> {
-        serde_json::from_slice(&bytes).map_err(|_| bytes)
+    fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Ok(serde_bare::from_slice(&bytes)?)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap()
+        serde_bare::to_vec(self).unwrap()
     }
 }
 
 pub trait ServerNetwork: 'static + Send + Sync {
-    fn on_request<H, F, R>(&self, handle_request: H)
+    fn handle_requests<H, F>(&self, handle_request: H)
     where
-        H: 'static + Send + Fn(User, R) -> F,
-        F: 'static + Send + futures::Future<Output = Result<R::Response>>,
-        R: Request;
-
+        H: 'static + Send + Fn(User, Vec<u8>) -> Result<F>,
+        F: 'static + Send + futures::Future<Output = Result<Vec<u8>>>;
     fn create_room(&self, room: &RoomName) -> BoxFuture<Result<()>>;
     fn grant_room_access(&self, room: &RoomName, user: &str) -> RoomToken;
 }
@@ -128,23 +129,68 @@ pub trait ServerNetwork: 'static + Send + Sync {
 pub trait ClientNetwork: 'static + Send + Sync {
     type Room: ClientRoom;
 
-    fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>>;
+    fn request(&self, request: Vec<u8>) -> BoxFuture<Result<Vec<u8>>>;
     fn room(&self, credentials: RoomCredentials) -> Self::Room;
 }
 
 pub trait ClientRoom: 'static + Send + Sync {
     fn connect(&mut self) -> BoxFuture<Result<()>>;
-    fn broadcast<M: Message>(&self, message: M);
-    fn on_message<M, F>(&self, handle_message: F)
-    where
-        M: Message,
-        F: 'static + Send + Fn(M);
+    fn broadcast(&self, message: Vec<u8>);
+    fn handle_messages(&self, handle_message: impl 'static + Send + Fn(Vec<u8>));
 }
 
 struct Client<N: ClientNetwork> {
     db: Db,
     network: Arc<N>,
-    repo_rooms: Arc<Mutex<collections::HashMap<RepoId, N::Room>>>,
+    repo_rooms: Arc<Mutex<HashMap<RepoId, RepoRoom<N>>>>,
+}
+
+struct RepoRoom<N: ClientNetwork> {
+    network_room: N::Room,
+    message_handlers:
+        Arc<RwLock<HashMap<TypeId, Box<dyn Send + Sync + Fn(Client<N>, RepoId, Box<dyn Any>)>>>>,
+}
+
+impl<N: ClientNetwork> RepoRoom<N> {
+    fn new(client: Client<N>, repo_id: RepoId, network_room: N::Room) -> Self {
+        let this = Self {
+            network_room,
+            message_handlers: Default::default(),
+        };
+
+        {
+            let handlers = this.message_handlers.clone();
+            this.network_room.handle_messages(move |message| {
+                if let Some(envelope) =
+                    serde_bare::from_slice::<MessageEnvelope>(&message).log_err()
+                {
+                    let request = envelope.unwrap();
+                    if let Some(handler) = handlers.read().get(&request.type_id()) {
+                        handler(client.clone(), repo_id, request);
+                    }
+                };
+            });
+        }
+
+        this
+    }
+
+    fn handle_messages<M: Message, H>(&self, handle_message: H)
+    where
+        M: Message,
+        H: 'static + Fn(Client<N>, RepoId, M) + Send + Sync,
+    {
+        self.message_handlers.write().insert(
+            TypeId::of::<M>(),
+            Box::new(move |client, repo_id, message| {
+                handle_message(client, repo_id, *message.downcast().unwrap())
+            }),
+        );
+    }
+
+    fn broadcast<M: Message>(&self, message: M) {
+        self.network_room.broadcast(message.to_bytes());
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -201,17 +247,9 @@ impl<N: ClientNetwork> Client<N> {
         let id = repo.id;
         let name = name.into();
         async move {
-            let response = this
-                .network
-                .request(messages::PublishRepo { id, name })
-                .await?;
-            let room = this.network.room(response.credentials);
-            room.on_message({
-                let this = this.clone();
-                move |operation: Operation| {
-                    this.handle_remote_operation(id, operation);
-                }
-            });
+            let response = this.request(messages::PublishRepo { id, name }).await?;
+            let room = RepoRoom::new(this.clone(), id, this.network.room(response.credentials));
+            room.handle_messages(Self::handle_remote_operation);
             this.repo_rooms.lock().insert(id, room);
 
             Ok(())
@@ -224,13 +262,29 @@ impl<N: ClientNetwork> Client<N> {
         }
     }
 
-    fn handle_remote_operation(&self, repo_id: RepoId, operation: Operation) {}
+    fn handle_remote_operation(self, repo_id: RepoId, operation: Operation) {}
+
+    fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>> {
+        let envelope: RequestEnvelope = request.into();
+        let response = self.network.request(envelope.to_bytes());
+        async { Ok(R::Response::from_bytes(response.await?)?) }.boxed()
+    }
 }
 
 struct Server<N> {
     db: Db,
     network: Arc<N>,
-    repo_ids_by_name: Arc<Mutex<HashMap<Arc<str>, RepoId>>>,
+    request_handlers: Arc<
+        RwLock<
+            BTreeMap<
+                TypeId,
+                Box<
+                    dyn Send + Sync + Fn(User, Box<dyn Any>) -> BoxFuture<'static, Result<Vec<u8>>>,
+                >,
+            >,
+        >,
+    >,
+    repo_ids_by_name: Arc<Mutex<BTreeMap<Arc<str>, RepoId>>>,
 }
 
 impl<N: ServerNetwork> Clone for Server<N> {
@@ -239,31 +293,61 @@ impl<N: ServerNetwork> Clone for Server<N> {
             db: self.db.clone(),
             network: self.network.clone(),
             repo_ids_by_name: Default::default(),
+            request_handlers: Default::default(),
         }
     }
 }
 
 impl<N: ServerNetwork> Server<N> {
     fn new(network: N) -> Self {
+        let network = Arc::new(network);
         let this = Self {
             db: Db::new(),
-            network: Arc::new(network),
+            network: network.clone(),
             repo_ids_by_name: Default::default(),
+            request_handlers: Default::default(),
         };
-        this.on_request(Self::handle_publish_repo);
+
+        this.clone().handle_requests(Self::handle_publish_repo);
+        let request_handlers = this.request_handlers.clone();
+
+        network.handle_requests(move |user, request_bytes| {
+            let envelope = MessageEnvelope::from_bytes(request_bytes)?;
+            let request = envelope.unwrap();
+            let request_handlers = request_handlers.read();
+            let request_handler = request_handlers
+                .get(&request.type_id())
+                .ok_or_else(|| anyhow!("no request handler"))?;
+            let response = (request_handler)(user, request);
+            Ok(response)
+        });
+
         this
     }
 
-    fn on_request<F, Fut, R>(&self, handle_request: F)
+    fn handle_requests<F, Fut, R>(self, handle_request: F)
     where
-        F: 'static + Send + Fn(Self, User, R) -> Fut,
+        F: 'static + Send + Sync + Fn(Self, User, R) -> Fut,
         Fut: 'static + Send + Future<Output = Result<R::Response>>,
         R: Request,
     {
-        self.network.on_request({
-            let this = self.clone();
-            move |user, request| handle_request(this.clone(), user, request)
-        });
+        let request_handlers = self.request_handlers.clone();
+
+        request_handlers.write().insert(
+            TypeId::of::<R>(),
+            Box::new({
+                let this = self.clone();
+                move |user, request| {
+                    let request = *request.downcast::<R>().unwrap();
+                    let response = handle_request(this.clone(), user, request);
+                    async move {
+                        let response = response.await;
+                        response.map(|response| response.to_bytes())
+                    }
+                    .boxed()
+                }
+            }),
+        );
     }
 
     async fn handle_publish_repo(
@@ -273,20 +357,20 @@ impl<N: ServerNetwork> Server<N> {
     ) -> Result<messages::PublishRepoResponse> {
         // TODO: handle repositories that had already been published.
         match self.repo_ids_by_name.lock().entry(request.name.clone()) {
-            hash_map::Entry::Occupied(_) => return Err(anyhow!("repo name taken")),
-            hash_map::Entry::Vacant(entry) => {
+            btree_map::Entry::Occupied(_) => return Err(anyhow!("repo name taken")),
+            btree_map::Entry::Vacant(entry) => {
                 let mut db = self.db.snapshot.lock();
                 db.repos.insert(request.id, Default::default());
                 entry.insert(request.id);
             }
         }
 
-        let room = RoomName(request.id.to_string().into());
-        self.network.create_room(&room).await?;
-        let token = self.network.grant_room_access(&room, user.login.as_ref());
+        let name = RoomName(request.id.to_string().into());
+        self.network.create_room(&name).await?;
+        let token = self.network.grant_room_access(&name, user.login.as_ref());
 
         Ok(messages::PublishRepoResponse {
-            credentials: RoomCredentials { name: room, token },
+            credentials: RoomCredentials { name, token },
         })
     }
 }

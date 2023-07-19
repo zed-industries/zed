@@ -73,7 +73,7 @@ default-members = ["crates/zed"]
 resolver = "2"
 
 [workspace.dependencies]
-anyhow = { version = "1.0.57" }
+anyhow = { version = "1.0.57", features = ["backtrace"] }
 async-trait = { version = "0.1" }
 ctor = { version = "0.1" }
 env_logger = { version = "0.9" }
