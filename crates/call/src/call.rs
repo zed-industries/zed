@@ -1,6 +1,6 @@
+pub mod call_settings;
 pub mod participant;
 pub mod room;
-pub mod call_settings;
 
 use std::sync::Arc;
 

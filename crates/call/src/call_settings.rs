@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 use settings::Setting;
 
 #[derive(Deserialize, Debug)]

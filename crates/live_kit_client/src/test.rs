@@ -227,7 +227,10 @@ impl TestServer {
                     .lock()
                     .audio_track_updates
                     .0
-                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(track.clone(), publication.clone()))
+                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(
+                        track.clone(),
+                        publication.clone(),
+                    ))
                     .unwrap();
             }
         }

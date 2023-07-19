@@ -376,12 +376,19 @@ impl Room {
         rx
     }
 
-    fn did_subscribe_to_remote_audio_track(&self, track: RemoteAudioTrack, publication: RemoteTrackPublication) {
+    fn did_subscribe_to_remote_audio_track(
+        &self,
+        track: RemoteAudioTrack,
+        publication: RemoteTrackPublication,
+    ) {
         let track = Arc::new(track);
         let publication = Arc::new(publication);
         self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(track.clone(), publication.clone()))
-                .is_ok()
+            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(
+                track.clone(),
+                publication.clone(),
+            ))
+            .is_ok()
         });
     }
 
