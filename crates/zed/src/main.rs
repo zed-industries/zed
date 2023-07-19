@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Weak,
     },
     thread,
@@ -405,11 +405,18 @@ struct PanicRequest {
     token: String,
 }
 
+static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
+
 fn init_panic_hook(app: &App, installation_id: Option<String>) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
     panic::set_hook(Box::new(move |info| {
+        let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
+        if prior_panic_count > 0 {
+            std::panic::resume_unwind(Box::new(()));
+        }
+
         let app_version = ZED_APP_VERSION
             .or_else(|| platform.app_version().ok())
             .map_or("dev".to_string(), |v| v.to_string());
@@ -464,7 +471,6 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
         if is_pty {
             if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
                 eprintln!("{}", panic_data_json);
-                return;
             }
         } else {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
@@ -481,6 +487,8 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 }
             }
         }
+
+        std::process::abort();
     }));
 }
 
@@ -887,7 +895,14 @@ pub fn dock_default_item_factory(
         })
         .notify_err(workspace, cx)?;
 
-    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+    let terminal_view = cx.add_view(|cx| {
+        TerminalView::new(
+            terminal,
+            workspace.weak_handle(),
+            workspace.database_id(),
+            cx,
+        )
+    });
 
     Some(Box::new(terminal_view))
 }

@@ -3,18 +3,21 @@ pub mod terminal_element;
 pub mod terminal_panel;
 
 use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
+use anyhow::Context;
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions,
     elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack},
     geometry::vector::Vector2F,
     impl_actions,
     keymap_matcher::{KeymapContext, Keystroke},
-    platform::KeyDownEvent,
+    platform::{KeyDownEvent, ModifiersChangedEvent},
     AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
+use language::Bias;
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use smallvec::{smallvec, SmallVec};
@@ -30,9 +33,9 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, Terminal, TerminalBlink, WorkingDirectory,
+    Event, MaybeNavigationTarget, Terminal, TerminalBlink, WorkingDirectory,
 };
-use util::ResultExt;
+use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
@@ -90,6 +93,7 @@ pub struct TerminalView {
     blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
+    can_navigate_to_selected_word: bool,
     workspace_id: WorkspaceId,
 }
 
@@ -117,19 +121,27 @@ impl TerminalView {
             .notify_err(workspace, cx);
 
         if let Some(terminal) = terminal {
-            let view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+            let view = cx.add_view(|cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.weak_handle(),
+                    workspace.database_id(),
+                    cx,
+                )
+            });
             workspace.add_item(Box::new(view), cx)
         }
     }
 
     pub fn new(
         terminal: ModelHandle<Terminal>,
+        workspace: WeakViewHandle<Workspace>,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let view_id = cx.view_id();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&terminal, |this, _, event, cx| match event {
+        cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
@@ -158,7 +170,63 @@ impl TerminalView {
                         .detach();
                 }
             }
-            _ => cx.emit(*event),
+            Event::NewNavigationTarget(maybe_navigation_target) => {
+                this.can_navigate_to_selected_word = match maybe_navigation_target {
+                    Some(MaybeNavigationTarget::Url(_)) => true,
+                    Some(MaybeNavigationTarget::PathLike(maybe_path)) => {
+                        !possible_open_targets(&workspace, maybe_path, cx).is_empty()
+                    }
+                    None => false,
+                }
+            }
+            Event::Open(maybe_navigation_target) => match maybe_navigation_target {
+                MaybeNavigationTarget::Url(url) => cx.platform().open_url(url),
+                MaybeNavigationTarget::PathLike(maybe_path) => {
+                    if !this.can_navigate_to_selected_word {
+                        return;
+                    }
+                    let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
+                    if let Some(path) = potential_abs_paths.into_iter().next() {
+                        let visible = path.path_like.is_dir();
+                        let task_workspace = workspace.clone();
+                        cx.spawn(|_, mut cx| async move {
+                            let opened_item = task_workspace
+                                .update(&mut cx, |workspace, cx| {
+                                    workspace.open_abs_path(path.path_like, visible, cx)
+                                })
+                                .context("workspace update")?
+                                .await
+                                .context("workspace update")?;
+                            if let Some(row) = path.row {
+                                let col = path.column.unwrap_or(0);
+                                if let Some(active_editor) = opened_item.downcast::<Editor>() {
+                                    active_editor
+                                        .downgrade()
+                                        .update(&mut cx, |editor, cx| {
+                                            let snapshot = editor.snapshot(cx).display_snapshot;
+                                            let point = snapshot.buffer_snapshot.clip_point(
+                                                language::Point::new(
+                                                    row.saturating_sub(1),
+                                                    col.saturating_sub(1),
+                                                ),
+                                                Bias::Left,
+                                            );
+                                            editor.change_selections(
+                                                Some(Autoscroll::center()),
+                                                cx,
+                                                |s| s.select_ranges([point..point]),
+                                            );
+                                        })
+                                        .log_err();
+                                }
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                }
+            },
+            _ => cx.emit(event.clone()),
         })
         .detach();
 
@@ -171,6 +239,7 @@ impl TerminalView {
             blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
+            can_navigate_to_selected_word: false,
             workspace_id,
         }
     }
@@ -344,6 +413,40 @@ impl TerminalView {
     }
 }
 
+fn possible_open_targets(
+    workspace: &WeakViewHandle<Workspace>,
+    maybe_path: &String,
+    cx: &mut ViewContext<'_, '_, TerminalView>,
+) -> Vec<PathLikeWithPosition<PathBuf>> {
+    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |path_str| {
+        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
+    })
+    .expect("infallible");
+    let maybe_path = path_like.path_like;
+    let potential_abs_paths = if maybe_path.is_absolute() {
+        vec![maybe_path]
+    } else if let Some(workspace) = workspace.upgrade(cx) {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
+                .collect()
+        })
+    } else {
+        Vec::new()
+    };
+
+    potential_abs_paths
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(|path| PathLikeWithPosition {
+            path_like: path,
+            row: path_like.row,
+            column: path_like.column,
+        })
+        .collect()
+}
+
 pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
     let searcher = match query {
         project::search::SearchQuery::Text { query, .. } => RegexSearch::new(&query),
@@ -372,6 +475,7 @@ impl View for TerminalView {
                     terminal_handle,
                     focused,
                     self.should_show_cursor(focused, cx),
+                    self.can_navigate_to_selected_word,
                 )
                 .contained(),
             )
@@ -391,6 +495,20 @@ impl View for TerminalView {
             terminal.focus_out();
         });
         cx.notify();
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let handled = self
+            .terminal()
+            .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+        if handled {
+            cx.notify();
+        }
+        handled
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
@@ -618,7 +736,7 @@ impl Item for TerminalView {
                 project.create_terminal(cwd, window_id, cx)
             })?;
             Ok(pane.update(&mut cx, |_, cx| {
-                cx.add_view(|cx| TerminalView::new(terminal, workspace_id, cx))
+                cx.add_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
             })?)
         })
     }

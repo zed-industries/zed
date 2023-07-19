@@ -60,6 +60,7 @@ pub(crate) struct FeedbackEditor {
     system_specs: SystemSpecs,
     editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
+    pub allow_submission: bool,
 }
 
 impl FeedbackEditor {
@@ -82,10 +83,15 @@ impl FeedbackEditor {
             system_specs: system_specs.clone(),
             editor,
             project,
+            allow_submission: true,
         }
     }
 
     pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        if !self.allow_submission {
+            return Task::ready(Ok(()));
+        }
+
         let feedback_text = self.editor.read(cx).text(cx);
         let feedback_char_count = feedback_text.chars().count();
         let feedback_text = feedback_text.trim().to_string();
@@ -122,19 +128,26 @@ impl FeedbackEditor {
             let answer = answer.recv().await;
 
             if answer == Some(0) {
+                this.update(&mut cx, |feedback_editor, cx| {
+                    feedback_editor.set_allow_submission(false, cx);
+                })
+                .log_err();
+
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
                     Ok(_) => {
                         this.update(&mut cx, |_, cx| cx.emit(editor::Event::Closed))
                             .log_err();
                     }
+
                     Err(error) => {
                         log::error!("{}", error);
-                        this.update(&mut cx, |_, cx| {
+                        this.update(&mut cx, |feedback_editor, cx| {
                             cx.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
                                 &["OK"],
                             );
+                            feedback_editor.set_allow_submission(true, cx);
                         })
                         .log_err();
                     }
@@ -144,6 +157,11 @@ impl FeedbackEditor {
         .detach();
 
         Task::ready(Ok(()))
+    }
+
+    fn set_allow_submission(&mut self, allow_submission: bool, cx: &mut ViewContext<Self>) {
+        self.allow_submission = allow_submission;
+        cx.notify();
     }
 
     async fn submit_feedback(

@@ -46,10 +46,28 @@ impl View for SubmitFeedbackButton {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx).clone();
+        let allow_submission = self
+            .active_item
+            .as_ref()
+            .map_or(true, |i| i.read(cx).allow_submission);
+
         enum SubmitFeedbackButton {}
         MouseEventHandler::<SubmitFeedbackButton, Self>::new(0, cx, |state, _| {
-            let style = theme.feedback.submit_button.style_for(state);
-            Label::new("Submit as Markdown", style.text.clone())
+            let text;
+            let style = if allow_submission {
+                text = "Submit as Markdown";
+                theme.feedback.submit_button.style_for(state)
+            } else {
+                text = "Submitting...";
+                theme
+                    .feedback
+                    .submit_button
+                    .disabled
+                    .as_ref()
+                    .unwrap_or(&theme.feedback.submit_button.default)
+            };
+
+            Label::new(text, style.text.clone())
                 .contained()
                 .with_style(style.container)
         })

@@ -198,7 +198,7 @@ fn show_hover(
 
             // Construct new hover popover from hover request
             let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
-                if hover_result.contents.is_empty() {
+                if hover_result.is_empty() {
                     return None;
                 }
 
@@ -420,7 +420,7 @@ fn render_blocks(
 
     RenderedInfo {
         theme_id,
-        text,
+        text: text.trim().to_string(),
         highlights,
         region_ranges,
         regions,
@@ -813,6 +813,118 @@ mod tests {
                     kind: HoverBlockKind::Markdown,
                 }]
             )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_empty_hovers_filtered(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Array(vec![
+                    lsp::MarkedString::String("regular text for hover to show".to_string()),
+                    lsp::MarkedString::String("".to_string()),
+                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                        language: "Rust".to_string(),
+                        value: "".to_string(),
+                    }),
+                ]),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _| {
+            assert_eq!(
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "regular text for hover to show".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }],
+                "No empty string hovers should be shown"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+
+        let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
+        let markdown_string = format!("\n```rust\n{code_str}```");
+
+        let closure_markdown_string = markdown_string.clone();
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+            let future_markdown_string = closure_markdown_string.clone();
+            async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: future_markdown_string,
+                    }),
+                    range: Some(symbol_range),
+                }))
+            }
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, cx| {
+            let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
+            assert_eq!(
+                blocks,
+                vec![HoverBlock {
+                    text: markdown_string,
+                    kind: HoverBlockKind::Markdown,
+                }],
+            );
+
+            let style = editor.style(cx);
+            let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
+            assert_eq!(
+                rendered.text,
+                code_str.trim(),
+                "Should not have extra line breaks at end of rendered hover"
+            );
         });
     }
 

@@ -13,6 +13,7 @@ mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
+mod php;
 mod python;
 mod ruby;
 mod rust;
@@ -39,6 +40,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
 
+    language("bash", tree_sitter_bash::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
@@ -144,6 +146,11 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![Arc::new(svelte::SvelteLspAdapter::new(
             node_runtime.clone(),
         ))],
+    );
+    language(
+        "php",
+        tree_sitter_php::language(),
+        vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
     );
 }
 

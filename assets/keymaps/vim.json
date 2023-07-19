@@ -101,6 +101,10 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "ctrl+[": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
@@ -239,10 +243,6 @@
       "h": "editor::Hover",
       "t": "pane::ActivateNextItem",
       "shift-t": "pane::ActivatePrevItem",
-      "escape": [
-        "vim::SwitchMode",
-        "Normal"
-      ],
       "d": "editor::GoToDefinition",
       "shift-d": "editor::GoToTypeDefinition",
       "*": [
@@ -283,10 +283,6 @@
       "t": "editor::ScrollCursorTop",
       "z": "editor::ScrollCursorCenter",
       "b": "editor::ScrollCursorBottom",
-      "escape": [
-        "vim::SwitchMode",
-        "Normal"
-      ]
     }
   },
   {
@@ -340,7 +336,8 @@
     "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
-      "ctrl-c": "vim::NormalBefore"
+      "ctrl-c": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore",
     }
   },
   {
@@ -349,6 +346,10 @@
       "tab": "vim::Tab",
       "enter": "vim::Enter",
       "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl+[": [
         "vim::SwitchMode",
         "Normal"
       ]

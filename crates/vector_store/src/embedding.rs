@@ -67,11 +67,13 @@ impl EmbeddingProvider for DummyEmbeddings {
     }
 }
 
+const INPUT_LIMIT: usize = 8190;
+
 impl OpenAIEmbeddings {
-    async fn truncate(span: String) -> String {
+    fn truncate(span: String) -> String {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span.as_ref());
-        if tokens.len() > 8190 {
-            tokens.truncate(8190);
+        if tokens.len() > INPUT_LIMIT {
+            tokens.truncate(INPUT_LIMIT);
             let result = OPENAI_BPE_TOKENIZER.decode(tokens.clone());
             if result.is_ok() {
                 let transformed = result.unwrap();
@@ -80,7 +82,7 @@ impl OpenAIEmbeddings {
             }
         }
 
-        return span.to_string();
+        span
     }
 
     async fn send_request(&self, api_key: &str, spans: Vec<&str>) -> Result<Response<AsyncBody>> {
@@ -137,7 +139,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     // Don't worry about delaying bad request, as we can assume
                     // we haven't been rate limited yet.
                     for span in spans.iter_mut() {
-                        *span = Self::truncate(span.to_string()).await;
+                        *span = Self::truncate(span.to_string());
                     }
                 }
                 StatusCode::OK => {

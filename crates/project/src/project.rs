@@ -425,6 +425,12 @@ pub struct Hover {
     pub language: Option<Arc<Language>>,
 }
 
+impl Hover {
+    pub fn is_empty(&self) -> bool {
+        self.contents.iter().all(|block| block.text.is_empty())
+    }
+}
+
 #[derive(Default)]
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
 
@@ -1909,7 +1915,9 @@ impl Project {
                 return;
             }
 
-            let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+            let abs_path = file.abs_path(cx);
+            let uri = lsp::Url::from_file_path(&abs_path)
+                .unwrap_or_else(|()| panic!("Failed to register file {abs_path:?}"));
             let initial_snapshot = buffer.text_snapshot();
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
@@ -2709,7 +2717,6 @@ impl Project {
             Some(language_server) => language_server,
             None => return Ok(None),
         };
-
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),

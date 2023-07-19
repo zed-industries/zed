@@ -350,6 +350,7 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+    pub git: GitProjectStatus,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -722,12 +723,12 @@ pub struct Scrollbar {
     pub thumb: ContainerStyle,
     pub width: f32,
     pub min_height_factor: f32,
-    pub git: GitDiffColors,
+    pub git: BufferGitDiffColors,
     pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct GitDiffColors {
+pub struct BufferGitDiffColors {
     pub inserted: Color,
     pub modified: Color,
     pub deleted: Color,
