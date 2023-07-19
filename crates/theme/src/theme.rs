@@ -49,6 +49,7 @@ pub struct Theme {
     pub copilot: Copilot,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
+    pub channels_panel: ChanelsPanelStyle,
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
@@ -880,6 +881,16 @@ impl<T> Interactive<T> {
     }
 }
 
+impl<T> Toggleable<Interactive<T>> {
+    pub fn style_for(&self, active: bool, state: &mut MouseState) -> &T {
+        self.in_state(active).style_for(state)
+    }
+
+    pub fn default_style(&self) -> &T {
+        &self.inactive.default
+    }
+}
+
 impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1043,6 +1054,75 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct Contained<T> {
+    container: ContainerStyle,
+    contained: T,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct FlexStyle {
+    // Between item spacing
+    item_spacing: f32,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ChannelProjectStyle {
+    // TODO: Implement Contained Flex
+    // ContainerStyle + Spacing between elements
+    // Negative spacing overlaps elements instead of spacing them out
+    pub container: Contained<FlexStyle>,
+    pub host: ImageStyle,
+    pub title: ContainedText,
+    pub members: Contained<FlexStyle>,
+    pub member: ImageStyle
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ChanneltemStyle {
+    pub icon: IconStyle,
+    pub title: TextStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ChannelListStyle {
+    pub section_title: ContainedText,
+    pub channel: Toggleable<Contained<ChanneltemStyle>>,
+    pub project: ChannelProjectStyle
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ContactItemStyle {
+    pub container: Contained<FlexStyle>,
+    pub avatar: IconStyle,
+    pub name: TextStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ContactsListStyle {
+    pub section_title: ContainedText,
+    pub contact: ContactItemStyle,
+}
+
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ChannelTreeStyle {
+    pub channel_indent: f32,
+    pub channel_name: TextStyle,
+    pub root_name: TextStyle,
+    pub channel_icon: Toggleable<Interactive<IconStyle>>,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ChanelsPanelStyle {
+    pub channel_tree: ChannelTreeStyle,
+    pub spacing: f32,
+    // TODO: Uncomment:
+    // pub container: ContainerStyle,
+    // pub channel_list: ChannelListStyle,
+    // pub contacts_list: ContactsListStyle
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

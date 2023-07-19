@@ -9,6 +9,7 @@ use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
+use channels::ChannelsPanel;
 pub use client;
 use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
 use collections::VecDeque;
@@ -222,6 +223,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_action(
+        |workspace: &mut Workspace, _: &channels::ToggleFocus, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<channels::ChannelsPanel>(cx);
+        },
+    );
+    cx.add_action(
         |workspace: &mut Workspace,
          _: &terminal_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
@@ -339,9 +345,13 @@ pub fn initialize_workspace(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-        let (project_panel, terminal_panel, assistant_panel) =
-            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
-
+        let channels_panel = ChannelsPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel, assistant_panel, channels_panel) = futures::try_join!(
+            project_panel,
+            terminal_panel,
+            assistant_panel,
+            channels_panel
+        )?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel_with_extra_event_handler(
@@ -359,6 +369,7 @@ pub fn initialize_workspace(
             );
             workspace.add_panel(terminal_panel, cx);
             workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(channels_panel, cx);
 
             if !was_deserialized
                 && workspace

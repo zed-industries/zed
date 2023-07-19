@@ -1,0 +1,38 @@
+[package]
+name = "channels"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/channels.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+context_menu = { path = "../context_menu" }
+client = { path = "../client" }
+db = { path = "../db" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+theme = { path = "../theme" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }
+menu = { path = "../menu" }
+util = { path = "../util" }
+
+log.workspace = true
+anyhow.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+client = { path = "../client", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
+serde_json.workspace = true

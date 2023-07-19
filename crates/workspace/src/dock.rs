@@ -20,13 +20,27 @@ pub trait Panel: View {
         None
     }
     fn should_change_position_on_event(_: &Self::Event) -> bool;
-    fn should_zoom_in_on_event(_: &Self::Event) -> bool;
-    fn should_zoom_out_on_event(_: &Self::Event) -> bool;
-    fn is_zoomed(&self, cx: &WindowContext) -> bool;
-    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>);
-    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>);
-    fn should_activate_on_event(_: &Self::Event) -> bool;
-    fn should_close_on_event(_: &Self::Event) -> bool;
+    fn should_zoom_in_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_zoom_out_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn is_zoomed(&self, _cx: &WindowContext) -> bool {
+        false
+    }
+    fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
+
+    }
+    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {
+
+    }
+    fn should_activate_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_close_on_event(_: &Self::Event) -> bool {
+        false
+    }
     fn has_focus(&self, cx: &WindowContext) -> bool;
     fn is_focus_event(_: &Self::Event) -> bool;
 }

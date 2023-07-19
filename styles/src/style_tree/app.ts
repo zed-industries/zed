@@ -24,6 +24,7 @@ import { titlebar } from "./titlebar"
 import editor from "./editor"
 import feedback from "./feedback"
 import { useTheme } from "../common"
+import channels_panel from "./channels_panel"
 
 export default function app(): any {
     const theme = useTheme()
@@ -46,6 +47,7 @@ export default function app(): any {
         editor: editor(),
         project_diagnostics: project_diagnostics(),
         project_panel: project_panel(),
+        channels_panel: channels_panel(),
         contacts_popover: contacts_popover(),
         contact_finder: contact_finder(),
         contact_list: contact_list(),
