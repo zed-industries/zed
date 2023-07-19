@@ -1052,6 +1052,10 @@ dependencies = [
  "media",
  "postage",
  "project",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
  "settings",
  "util",
 ]
@@ -6470,7 +6474,7 @@ name = "search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags 1.3.2",
+ "bitflags",
  "client",
  "collections",
  "editor",

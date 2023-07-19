@@ -216,6 +216,8 @@ impl TestServer {
             publisher_id: identity.clone(),
         });
 
+        let publication = Arc::new(RemoteTrackPublication);
+
         room.audio_tracks.push(track.clone());
 
         for (id, client_room) in &room.client_rooms {
@@ -225,7 +227,7 @@ impl TestServer {
                     .lock()
                     .audio_track_updates
                     .0
-                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(track.clone()))
+                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(track.clone(), publication.clone()))
                     .unwrap();
             }
         }
@@ -501,6 +503,14 @@ impl RemoteTrackPublication {
     pub fn set_enabled(&self, _enabled: bool) -> impl Future<Output = Result<()>> {
         async { Ok(()) }
     }
+
+    pub fn is_muted(&self) -> bool {
+        false
+    }
+
+    pub fn sid(&self) -> String {
+        "".to_string()
+    }
 }
 
 #[derive(Clone)]
@@ -579,7 +589,7 @@ pub enum RemoteVideoTrackUpdate {
 pub enum RemoteAudioTrackUpdate {
     ActiveSpeakersChanged { speakers: Vec<Sid> },
     MuteChanged { track_id: Sid, muted: bool },
-    Subscribed(Arc<RemoteAudioTrack>),
+    Subscribed(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
