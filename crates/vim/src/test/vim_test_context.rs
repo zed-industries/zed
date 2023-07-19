@@ -90,6 +90,7 @@ impl<'a> VimTestContext<'a> {
         self.cx.set_state(text)
     }
 
+    #[track_caller]
     pub fn assert_state(&mut self, text: &str, mode: Mode) {
         self.assert_editor_state(text);
         assert_eq!(self.mode(), mode, "{}", self.assertion_context());

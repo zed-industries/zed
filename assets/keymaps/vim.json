@@ -60,6 +60,8 @@
           "ignorePunctuation": true
         }
       ],
+      "n": "search::SelectNextMatch",
+      "shift-n": "search::SelectPrevMatch",
       "%": "vim::Matching",
       "f": [
         "vim::PushOperator",
@@ -103,6 +105,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "*": "vim::MoveToNext",
+      "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "1": [
         "vim::Number",
@@ -197,10 +201,11 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "/": [
-        "buffer_search::Deploy",
+      "/": "vim::Search",
+      "?": [
+        "vim::Search",
         {
-          "focus": true
+          "backwards": true,
         }
       ],
       "ctrl-f": "vim::PageDown",
@@ -238,7 +243,20 @@
       "h": "editor::Hover",
       "t": "pane::ActivateNextItem",
       "shift-t": "pane::ActivatePrevItem",
-      "d": "editor::GoToDefinition"
+      "d": "editor::GoToDefinition",
+      "shift-d": "editor::GoToTypeDefinition",
+      "*": [
+        "vim::MoveToNext",
+        {
+          "partialWord": true
+        }
+      ],
+      "#": [
+        "vim::MoveToPrev",
+        {
+          "partialWord": true
+        }
+      ]
     }
   },
   {
@@ -310,8 +328,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
-      "> >": "editor::Indent",
-      "< <": "editor::Outdent"
+      ">": "editor::Indent",
+      "<": "editor::Outdent"
     }
   },
   {
@@ -335,6 +353,13 @@
         "vim::SwitchMode",
         "Normal"
       ]
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "enter": "vim::SearchSubmit",
+      "escape": "buffer_search::Dismiss"
     }
   }
 ]
