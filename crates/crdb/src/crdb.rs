@@ -1314,7 +1314,7 @@ impl RepoSnapshot {
         new_operations
     }
 
-    fn apply_operations(&mut self, operations: impl IntoIterator<Item = Operation>) {
+    fn apply_operations(&mut self, operations: impl IntoIterator<Item = Operation>) -> Result<()> {
         let mut deferred_operations: Vec<Edit<DeferredOperation>> = Vec::new();
         for operation in operations {
             if operation
@@ -1322,12 +1322,16 @@ impl RepoSnapshot {
                 .iter()
                 .all(|parent| self.operations.contains_key(&parent))
             {
+                let operation_id = operation.id();
                 match operation {
                     Operation::CreateDocument(op) => op.apply(self),
                     Operation::Edit(op) => op.apply(self),
                     Operation::CreateBranch(op) => op.apply(self),
-                }
-                .log_err();
+                }?;
+
+                todo!("flush deferred operations for this id");
+                // Think I want to try and make a TreeMultimap to do this rather
+                // than nest additional collections under the keys.
             } else {
                 deferred_operations.extend(operation.revision().iter().map(|parent| {
                     Edit::Insert(DeferredOperation {
@@ -1338,6 +1342,7 @@ impl RepoSnapshot {
             }
         }
         self.deferred_operations.edit(deferred_operations, &());
+        Ok(())
     }
 }
 
