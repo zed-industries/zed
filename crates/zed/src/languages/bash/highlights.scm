@@ -27,6 +27,8 @@
   "unset"
   "until"
   "while"
+  "local"
+  "declare"
 ] @keyword
 
 (comment) @comment
