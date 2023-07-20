@@ -292,6 +292,13 @@
           "backwards": true
         }
       ],
+      ";": "vim::RepeatFind",
+      ",": [
+        "vim::RepeatFind",
+        {
+          "backwards": true
+        }
+      ],
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
       "ctrl-b": "vim::PageUp",

@@ -3,6 +3,8 @@ use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
 
+use crate::motion::Motion;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
     Normal,
@@ -33,6 +35,8 @@ pub struct VimState {
     pub mode: Mode,
     pub operator_stack: Vec<Operator>,
     pub search: SearchState,
+
+    pub last_find: Option<Motion>,
 }
 
 pub struct SearchState {

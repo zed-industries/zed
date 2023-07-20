@@ -14,8 +14,8 @@ use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions,keymap_matcher::MatchResult, keymap_matcher::KeymapContext, AppContext, Subscription, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
+    Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -246,10 +246,14 @@ impl Vim {
 
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
-                motion::motion(Motion::FindForward { before, text }, cx)
+                let find = Motion::FindForward { before, text };
+                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                motion::motion(find, cx)
             }
             Some(Operator::FindBackward { after }) => {
-                motion::motion(Motion::FindBackward { after, text }, cx)
+                let find = Motion::FindBackward { after, text };
+                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                motion::motion(find, cx)
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
                 Mode::Normal => normal_replace(text, cx),
