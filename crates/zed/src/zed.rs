@@ -312,8 +312,10 @@ pub fn initialize_workspace(
                 feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
             });
             let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+            let vim_mode = cx.add_view(|cx| vim::ModeIndicator::new(cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_left_item(diagnostic_summary, cx);
+                status_bar.add_left_item(vim_mode, cx);
                 status_bar.add_left_item(activity_indicator, cx);
                 status_bar.add_right_item(feedback_button, cx);
                 status_bar.add_right_item(copilot, cx);

@@ -3,6 +3,7 @@ mod test;
 
 mod editor_events;
 mod insert;
+mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
@@ -18,6 +19,7 @@ use gpui::{
     ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
+pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;

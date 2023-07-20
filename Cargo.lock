@@ -8523,6 +8523,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "theme",
  "tokio",
  "util",
  "workspace",
