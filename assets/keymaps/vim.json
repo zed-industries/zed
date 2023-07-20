@@ -145,7 +145,75 @@
       "9": [
         "vim::Number",
         9
-      ]
+      ],
+      // window related commands (ctrl-w X)
+      "ctrl-w left": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w up": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w down": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w ctrl-h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w ctrl-l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w ctrl-k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w g t": "pane::ActivateNextItem",
+      "ctrl-w ctrl-g t": "pane::ActivateNextItem",
+      "ctrl-w g shift-t": "pane::ActivatePrevItem",
+      "ctrl-w ctrl-g shift-t": "pane::ActivatePrevItem",
+      "ctrl-w w": "workspace::ActivateNextPane",
+      "ctrl-w ctrl-w": "workspace::ActivateNextPane",
+      "ctrl-w p": "workspace::ActivatePreviousPane",
+      "ctrl-w ctrl-p": "workspace::ActivatePreviousPane",
+      "ctrl-w shift-w": "workspace::ActivatePreviousPane",
+      "ctrl-w ctrl-shift-w": "workspace::ActivatePreviousPane",
+      "ctrl-w v": "pane::SplitLeft",
+      "ctrl-w ctrl-v": "pane::SplitLeft",
+      "ctrl-w s": "pane::SplitUp",
+      "ctrl-w shift-s": "pane::SplitUp",
+      "ctrl-w ctrl-s": "pane::SplitUp",
+      "ctrl-w c": "pane::CloseAllItems",
+      "ctrl-w ctrl-c": "pane::CloseAllItems",
+      "ctrl-w q": "pane::CloseAllItems",
+      "ctrl-w ctrl-q": "pane::CloseAllItems"
     }
   },
   {

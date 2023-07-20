@@ -563,6 +563,7 @@ pub struct Editor {
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
+    pixel_position_of_newest_cursor: Option<Vector2F>,
 }
 
 pub struct EditorSnapshot {
@@ -1394,6 +1395,7 @@ impl Editor {
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
+            pixel_position_of_newest_cursor: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
