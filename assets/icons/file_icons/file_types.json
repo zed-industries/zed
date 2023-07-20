@@ -94,11 +94,14 @@
     "code": {
       "icon": "icons/file_icons/code.svg"
     },
+    "collapsed_chevron": {
+      "icon": "icons/file_icons/chevron_right.svg"
+    },
+    "collapsed_folder": {
+      "icon": "icons/file_icons/folder.svg"
+    },
     "default": {
       "icon": "icons/file_icons/file.svg"
-    },
-    "directory": {
-      "icon": "icons/file_icons/folder.svg"
     },
     "document": {
       "icon": "icons/file_icons/book.svg"
@@ -106,8 +109,11 @@
     "eslint": {
       "icon": "icons/file_icons/eslint.svg"
     },
-    "expanded_directory": {
-      "icon": "icons/file_icons/folder-open.svg"
+    "expanded_chevron": {
+      "icon": "icons/file_icons/chevron_down.svg"
+    },
+    "expanded_folder": {
+      "icon": "icons/file_icons/folder_open.svg"
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
