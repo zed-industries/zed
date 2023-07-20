@@ -1319,7 +1319,7 @@ impl RepoSnapshot {
                         op.branch_id,
                         op.parent.clone(),
                         op.id,
-                        |revision| op.apply(revision),
+                        |revision| Ok(op.apply(revision)),
                     ),
                     Operation::Edit(op) => self.apply_branch_operation(
                         op.branch_id,

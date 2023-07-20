@@ -42,7 +42,7 @@ pub struct CreateDocument {
 }
 
 impl CreateDocument {
-    pub fn apply(self, revision: &mut Revision) -> Result<()> {
+    pub fn apply(self, revision: &mut Revision) {
         let mut cursor = revision.document_fragments.cursor::<OperationId>();
         let mut new_document_fragments = cursor.slice(&self.id, Bias::Right, &());
         new_document_fragments.push(
@@ -67,8 +67,6 @@ impl CreateDocument {
                 last_change: self.id,
             },
         );
-
-        Ok(())
     }
 }
 
