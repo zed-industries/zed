@@ -74,7 +74,7 @@
     "svg": "image",
     "swift": "code",
     "tiff": "image",
-    "toml": "settings",
+    "toml": "toml",
     "ts": "typescript",
     "tsx": "code",
     "txt": "document",
@@ -89,7 +89,7 @@
   },
   "types": {
     "audio": {
-      "icon": "icons/file_icons/file.svg"
+      "icon": "icons/file_icons/audio.svg"
     },
     "code": {
       "icon": "icons/file_icons/code.svg"
@@ -136,6 +136,9 @@
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
     },
+    "toml": {
+      "icon": "icons/file_icons/toml.svg"
+    },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
     },
@@ -143,7 +146,7 @@
       "icon": "icons/file_icons/git.svg"
     },
     "video": {
-      "icon": "icons/file_icons/file.svg"
+      "icon": "icons/file_icons/video.svg"
     }
   }
 }
