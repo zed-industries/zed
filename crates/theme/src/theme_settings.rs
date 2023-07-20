@@ -13,7 +13,7 @@ use std::sync::Arc;
 use util::ResultExt as _;
 
 const MIN_FONT_SIZE: f32 = 6.0;
-const MIN_LINE_HEIGHT: f32 = 1.1;
+const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(Clone, JsonSchema)]
 pub struct ThemeSettings {
