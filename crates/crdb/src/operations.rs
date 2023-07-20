@@ -79,7 +79,7 @@ pub struct Edit {
 }
 
 impl Edit {
-    pub fn apply(self, repo: &mut Revision) -> Result<()> {
+    pub fn apply(self, parent_revision: &Revision, head_revision: &mut Revision) -> Result<()> {
         Err(anyhow!("not implemented"))
     }
 }

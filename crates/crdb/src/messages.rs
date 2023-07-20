@@ -3,7 +3,6 @@ use crate::{
     OperationCount, OperationId, ReplicaId, RepoId, Request, RevisionId, RoomCredentials,
 };
 use collections::BTreeMap;
-use lazy_static::__Deref;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, sync::Arc};
 

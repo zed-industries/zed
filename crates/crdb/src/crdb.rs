@@ -1355,13 +1355,13 @@ impl RepoSnapshot {
                         op.branch_id,
                         op.parent.clone(),
                         op.id,
-                        |revision| Ok(op.apply(revision)),
+                        |_, head_revision| Ok(op.apply(head_revision)),
                     ),
                     Operation::Edit(op) => self.apply_branch_operation(
                         op.branch_id,
                         op.parent.clone(),
                         op.id,
-                        |revision| op.apply(revision),
+                        |parent_revision, head_revision| op.apply(parent_revision, head_revision),
                     ),
                 };
                 match result {
@@ -1421,21 +1421,26 @@ impl RepoSnapshot {
         branch_id: OperationId,
         parent: RevisionId,
         operation_id: OperationId,
-        f: impl FnOnce(&mut Revision) -> Result<()>,
+        f: impl FnOnce(&Revision, &mut Revision) -> Result<()>,
     ) -> Result<()> {
         let branch = self
             .branches
             .get(&branch_id)
             .ok_or_else(|| anyhow!("branch {:?} not found", branch_id))?;
 
-        let mut revision = self
+        let parent_revision = self
+            .revisions
+            .get(&parent)
+            .ok_or_else(|| anyhow!("parent revision {:?} not found", parent))?;
+        let mut new_head_revision = self
             .revisions
             .get(&branch.head)
             .ok_or_else(|| {
                 anyhow!(
-                    "revision {:?} not found in branch {:?}",
+                    "branch {:?} ({:?}) head revision {:?} not found",
+                    branch_id,
+                    branch.name,
                     branch.head,
-                    branch_id
                 )
             })?
             .clone();
@@ -1448,11 +1453,11 @@ impl RepoSnapshot {
         }
         new_head.push(operation_id);
 
-        f(&mut revision)?;
+        f(&parent_revision, &mut new_head_revision)?;
 
         self.branches
             .update(&branch_id, |branch| branch.head = new_head.clone());
-        self.revisions.insert(new_head, revision);
+        self.revisions.insert(new_head, new_head_revision);
 
         Ok(())
     }
