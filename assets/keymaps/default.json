@@ -446,8 +446,22 @@
   },
   {
     "bindings": {
-      "cmd-k cmd-left": "workspace::ActivatePreviousPane",
-      "cmd-k cmd-right": "workspace::ActivateNextPane"
+      "cmd-k cmd-left": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "cmd-k cmd-right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "cmd-k cmd-up": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "cmd-k cmd-down": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ]
     }
   },
   // Bindings from Atom
