@@ -887,6 +887,7 @@ impl Document {
             let edits = edits.into_iter();
             let mut edit_op = operations::Edit {
                 id: operation_id,
+                document_id: self.id,
                 branch_id: self.branch.id,
                 parent: parent.clone(),
                 edits: SmallVec::with_capacity(edits.len()),

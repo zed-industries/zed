@@ -73,6 +73,7 @@ impl CreateDocument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Edit {
     pub id: OperationId,
+    pub document_id: OperationId,
     pub branch_id: OperationId,
     pub parent: RevisionId,
     pub edits: SmallVec<[(AnchorRange, Arc<str>); 2]>,
