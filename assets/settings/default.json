@@ -106,6 +106,8 @@
     "git_status": true,
     // Whether to show file icons in the project panel.
     "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the project panel.
+    "folder_icons": true,
     // Where to dock project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the project panel.
@@ -203,9 +205,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
