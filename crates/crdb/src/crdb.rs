@@ -1407,13 +1407,14 @@ impl RepoSnapshot {
                 )
             })?
             .clone();
-        let new_head = if parent == branch.head {
-            smallvec![operation_id]
-        } else {
-            let mut head = branch.head.clone();
-            head.push(operation_id);
-            head
-        };
+
+        // Calculate the new head revision by replacing operations in the current head
+        // that are parents of the new operation.
+        let mut new_head = branch.head.clone();
+        if parent.iter().all(|op_id| branch.head.contains(op_id)) {
+            new_head.retain(|op_id| !parent.contains(op_id));
+        }
+        new_head.push(operation_id);
 
         f(&mut revision)?;
 
