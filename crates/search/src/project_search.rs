@@ -18,7 +18,7 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, Entry, Project};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -499,6 +499,28 @@ impl ProjectSearchView {
         };
         this.model_changed(cx);
         this
+    }
+
+    pub fn new_search_in_directory(
+        workspace: &mut Workspace,
+        dir_entry: &Entry,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if !dir_entry.is_dir() {
+            return;
+        }
+        let filter_path = dir_entry.path.join("**");
+        let Some(filter_str) = filter_path.to_str() else { return; };
+
+        let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
+        workspace.add_item(Box::new(search.clone()), cx);
+        search.update(cx, |search, cx| {
+            search
+                .included_files_editor
+                .update(cx, |editor, cx| editor.set_text(filter_str, cx));
+            search.focus_query_editor(cx)
+        });
     }
 
     // Re-activate the most recently activated search or the most recent if it has been closed.
@@ -1410,6 +1432,134 @@ pub mod tests {
             assert!(
                 search_view.results_editor.is_focused(cx),
                 "Search view with matching query should switch focus to the results editor after the toggle focus event",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_project_search_in_directory(
+        deterministic: Arc<Deterministic>,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a": {
+                    "one.rs": "const ONE: usize = 1;",
+                    "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                },
+                "b": {
+                    "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                    "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let active_item = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_item.is_none(),
+            "Expected no search panel to be active, but got: {active_item:?}"
+        );
+
+        let one_file_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
+                .expect("no entry for /a/one.rs file")
+        });
+        assert!(one_file_entry.is_file());
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
+        });
+        let active_search_entry = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_search_entry.is_none(),
+            "Expected no search panel to be active for file entry"
+        );
+
+        let a_dir_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a").into(), cx)
+                .expect("no entry for /a/ directory")
+        });
+        assert!(a_dir_entry.is_dir());
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+        });
+
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search in directory event trigger")
+        };
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert!(
+                search_view.query_editor.is_focused(cx),
+                "On new search in directory, focus should be moved into query editor"
+            );
+            search_view.excluded_files_editor.update(cx, |editor, cx| {
+                assert!(
+                    editor.display_text(cx).is_empty(),
+                    "New search in directory should not have any excluded files"
+                );
+            });
+            search_view.included_files_editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    a_dir_entry.path.join("**").display().to_string(),
+                    "New search in directory should have included dir entry path"
+                );
+            });
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
+            search_view.search(cx);
+        });
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                "New search in directory should have a filter that matches a certain directory"
             );
         });
     }

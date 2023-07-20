@@ -512,7 +512,7 @@ pub struct Workspace {
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
-    active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
+    active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
@@ -3007,6 +3007,10 @@ impl Workspace {
 
     pub fn database_id(&self) -> WorkspaceId {
         self.database_id
+    }
+
+    pub fn push_subscription(&mut self, subscription: Subscription) {
+        self.subscriptions.push(subscription)
     }
 
     fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {

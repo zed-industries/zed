@@ -125,7 +125,8 @@ actions!(
         Paste,
         Delete,
         Rename,
-        ToggleFocus
+        ToggleFocus,
+        NewSearchInDirectory,
     ]
 );
 
@@ -151,6 +152,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.add_action(ProjectPanel::copy_path);
     cx.add_action(ProjectPanel::copy_relative_path);
     cx.add_action(ProjectPanel::reveal_in_finder);
+    cx.add_action(ProjectPanel::new_search_in_directory);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
             this.paste(action, cx);
@@ -169,6 +171,9 @@ pub enum Event {
     },
     DockPositionChanged,
     Focus,
+    NewSearchInDirectory {
+        dir_entry: Entry,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -417,6 +422,12 @@ impl ProjectPanel {
                 CopyRelativePath,
             ));
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
+            if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::action(
+                    "Search inside",
+                    NewSearchInDirectory,
+                ));
+            }
             if let Some(clipboard_entry) = self.clipboard_entry {
                 if clipboard_entry.worktree_id() == worktree.id() {
                     menu_entries.push(ContextMenuItem::action("Paste", Paste));
@@ -925,6 +936,20 @@ impl ProjectPanel {
     fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
+        }
+    }
+
+    pub fn new_search_in_directory(
+        &mut self,
+        _: &NewSearchInDirectory,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_dir() {
+                cx.emit(Event::NewSearchInDirectory {
+                    dir_entry: entry.clone(),
+                });
+            }
         }
     }
 
@@ -1677,7 +1702,11 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{collections::HashSet, path::Path};
+    use std::{
+        collections::HashSet,
+        path::Path,
+        sync::atomic::{self, AtomicUsize},
+    };
     use workspace::{pane, AppState};
 
     #[gpui::test]
@@ -2513,6 +2542,83 @@ mod tests {
                 "          third.rs"
             ],
             "File list should be unchanged after failed rename confirmation"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_search_in_directory_trigger(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        let new_search_events_count = Arc::new(AtomicUsize::new(0));
+        let _subscription = panel.update(cx, |_, cx| {
+            let subcription_count = Arc::clone(&new_search_events_count);
+            cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                if matches!(event, Event::NewSearchInDirectory { .. }) {
+                    subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+            })
+        });
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            0,
+            "Should not trigger new search in directory when called on a file"
+        );
+
+        select_path(&panel, "src/test", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test  <== selected",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            1,
+            "Should trigger new search in directory when called on a directory"
         );
     }
 

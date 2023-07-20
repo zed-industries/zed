@@ -338,6 +338,27 @@ pub fn initialize_workspace(
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
         let (project_panel, terminal_panel, assistant_panel) =
             futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
+
+        cx.update(|cx| {
+            if let Some(workspace) = workspace_handle.upgrade(cx) {
+                cx.update_window(project_panel.window_id(), |cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        let project_panel_subscription =
+                            cx.subscribe(&project_panel, move |workspace, _, event, cx| {
+                                if let project_panel::Event::NewSearchInDirectory { dir_entry } =
+                                    event
+                                {
+                                    search::ProjectSearchView::new_search_in_directory(
+                                        workspace, dir_entry, cx,
+                                    )
+                                }
+                            });
+                        workspace.push_subscription(project_panel_subscription);
+                    });
+                });
+            }
+        });
+
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
