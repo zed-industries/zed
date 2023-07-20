@@ -3,7 +3,7 @@ use crate::{
     embedding::EmbeddingProvider,
     parsing::{subtract_ranges, CodeContextRetriever, Document},
     semantic_index_settings::SemanticIndexSettings,
-    SemanticIndex,
+    SearchResult, SemanticIndex,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -46,21 +46,21 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
             "src": {
                 "file1.rs": "
                     fn aaa() {
-                        println!(\"aaaa!\");
+                        println!(\"aaaaaaaaaaaa!\");
                     }
 
-                    fn zzzzzzzzz() {
+                    fn zzzzz() {
                         println!(\"SLEEPING\");
                     }
                 ".unindent(),
                 "file2.rs": "
                     fn bbb() {
-                        println!(\"bbbb!\");
+                        println!(\"bbbbbbbbbbbbb!\");
                     }
                 ".unindent(),
                 "file3.toml": "
-                    ZZZZZZZ = 5
-                    ".unindent(),
+                    ZZZZZZZZZZZZZZZZZZ = 5
+                ".unindent(),
             }
         }),
     )
@@ -97,27 +97,37 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
 
     let search_results = store
         .update(cx, |store, cx| {
-            store.search_project(project.clone(), "aaaa".to_string(), 5, vec![], vec![], cx)
+            store.search_project(
+                project.clone(),
+                "aaaaaabbbbzz".to_string(),
+                5,
+                vec![],
+                vec![],
+                cx,
+            )
         })
         .await
         .unwrap();
 
-    search_results[0].buffer.read_with(cx, |buffer, _cx| {
-        assert_eq!(search_results[0].range.start.to_offset(buffer), 0);
-        assert_eq!(
-            buffer.file().unwrap().path().as_ref(),
-            Path::new("src/file1.rs")
-        );
-    });
+    assert_search_results(
+        &search_results,
+        &[
+            (Path::new("src/file1.rs").into(), 0),
+            (Path::new("src/file2.rs").into(), 0),
+            (Path::new("src/file3.toml").into(), 0),
+            (Path::new("src/file1.rs").into(), 45),
+        ],
+        cx,
+    );
 
     // Test Include Files Functonality
     let include_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
     let exclude_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
-    let search_results = store
+    let rust_only_search_results = store
         .update(cx, |store, cx| {
             store.search_project(
                 project.clone(),
-                "aaaa".to_string(),
+                "aaaaaabbbbzz".to_string(),
                 5,
                 include_files,
                 vec![],
@@ -127,23 +137,21 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    for res in &search_results {
-        res.buffer.read_with(cx, |buffer, _cx| {
-            assert!(buffer
-                .file()
-                .unwrap()
-                .path()
-                .to_str()
-                .unwrap()
-                .ends_with("rs"));
-        });
-    }
+    assert_search_results(
+        &rust_only_search_results,
+        &[
+            (Path::new("src/file1.rs").into(), 0),
+            (Path::new("src/file2.rs").into(), 0),
+            (Path::new("src/file1.rs").into(), 45),
+        ],
+        cx,
+    );
 
-    let search_results = store
+    let no_rust_search_results = store
         .update(cx, |store, cx| {
             store.search_project(
                 project.clone(),
-                "aaaa".to_string(),
+                "aaaaaabbbbzz".to_string(),
                 5,
                 vec![],
                 exclude_files,
@@ -153,17 +161,12 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    for res in &search_results {
-        res.buffer.read_with(cx, |buffer, _cx| {
-            assert!(!buffer
-                .file()
-                .unwrap()
-                .path()
-                .to_str()
-                .unwrap()
-                .ends_with("rs"));
-        });
-    }
+    assert_search_results(
+        &no_rust_search_results,
+        &[(Path::new("src/file3.toml").into(), 0)],
+        cx,
+    );
+
     fs.save(
         "/the-root/src/file2.rs".as_ref(),
         &"
@@ -193,6 +196,26 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         embedding_provider.embedding_count() - prev_embedding_count,
         2
     );
+}
+
+#[track_caller]
+fn assert_search_results(
+    actual: &[SearchResult],
+    expected: &[(Arc<Path>, usize)],
+    cx: &TestAppContext,
+) {
+    let actual = actual
+        .iter()
+        .map(|search_result| {
+            search_result.buffer.read_with(cx, |buffer, _cx| {
+                (
+                    buffer.file().unwrap().path().clone(),
+                    search_result.range.start.to_offset(buffer),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
 }
 
 #[gpui::test]

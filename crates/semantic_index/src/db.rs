@@ -1,6 +1,6 @@
 use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
 use anyhow::{anyhow, Context, Result};
-use globset::{Glob, GlobMatcher};
+use globset::GlobMatcher;
 use project::Fs;
 use rpc::proto::Timestamp;
 use rusqlite::{
@@ -257,16 +257,11 @@ impl VectorDatabase {
         exclude_globs: Vec<GlobMatcher>,
     ) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
         let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-        self.for_each_document(&worktree_ids, |relative_path, id, embedding| {
-            if (include_globs.is_empty()
-                || include_globs
-                    .iter()
-                    .any(|include_glob| include_glob.is_match(relative_path.clone())))
-                && (exclude_globs.is_empty()
-                    || !exclude_globs
-                        .iter()
-                        .any(|exclude_glob| exclude_glob.is_match(relative_path.clone())))
-            {
+        self.for_each_document(
+            &worktree_ids,
+            include_globs,
+            exclude_globs,
+            |id, embedding| {
                 let similarity = dot(&embedding, &query_embedding);
                 let ix = match results.binary_search_by(|(_, s)| {
                     similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
@@ -276,8 +271,8 @@ impl VectorDatabase {
                 };
                 results.insert(ix, (id, similarity));
                 results.truncate(limit);
-            }
-        })?;
+            },
+        )?;
 
         let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
         self.get_documents_by_ids(&ids)
@@ -286,26 +281,55 @@ impl VectorDatabase {
     fn for_each_document(
         &self,
         worktree_ids: &[i64],
-        mut f: impl FnMut(String, i64, Vec<f32>),
+        include_globs: Vec<GlobMatcher>,
+        exclude_globs: Vec<GlobMatcher>,
+        mut f: impl FnMut(i64, Vec<f32>),
     ) -> Result<()> {
+        let mut file_query = self.db.prepare(
+            "
+            SELECT
+                id, relative_path
+            FROM
+                files
+            WHERE
+                worktree_id IN rarray(?)
+            ",
+        )?;
+
+        let mut file_ids = Vec::<i64>::new();
+        let mut rows = file_query.query([ids_to_sql(worktree_ids)])?;
+        while let Some(row) = rows.next()? {
+            let file_id = row.get(0)?;
+            let relative_path = row.get_ref(1)?.as_str()?;
+            let included = include_globs.is_empty()
+                || include_globs
+                    .iter()
+                    .any(|glob| glob.is_match(relative_path));
+            let excluded = exclude_globs
+                .iter()
+                .any(|glob| glob.is_match(relative_path));
+            if included && !excluded {
+                file_ids.push(file_id);
+            }
+        }
+
         let mut query_statement = self.db.prepare(
             "
             SELECT
-                files.relative_path, documents.id, documents.embedding
+                id, embedding
             FROM
-                documents, files
+                documents
             WHERE
-                documents.file_id = files.id AND
-                files.worktree_id IN rarray(?)
+                file_id IN rarray(?)
             ",
         )?;
 
         query_statement
-            .query_map(params![ids_to_sql(worktree_ids)], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get::<_, Embedding>(2)?))
+            .query_map(params![ids_to_sql(&file_ids)], |row| {
+                Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
             })?
             .filter_map(|row| row.ok())
-            .for_each(|(relative_path, id, embedding)| f(relative_path, id, embedding.0));
+            .for_each(|(id, embedding)| f(id, embedding.0));
         Ok(())
     }
 

@@ -669,7 +669,6 @@ impl ProjectSearchView {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Vec<GlobMatcher>, Vec<GlobMatcher>)> {
-        let text = self.query_editor.read(cx).text(cx);
         let included_files =
             match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
