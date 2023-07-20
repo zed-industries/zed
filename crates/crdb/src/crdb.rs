@@ -650,7 +650,7 @@ impl Branch {
                 branch_id: self.id,
                 parent,
             };
-            revision.apply_create_document(operation.clone());
+            operation.clone().apply(revision);
             let document = Document {
                 id: document_id,
                 branch: self.clone(),
@@ -1314,9 +1314,19 @@ impl RepoSnapshot {
             {
                 let operation_id = operation.id();
                 let result = match operation.clone() {
-                    Operation::CreateDocument(op) => op.apply(self),
-                    Operation::Edit(op) => op.apply(self),
                     Operation::CreateBranch(op) => op.apply(self),
+                    Operation::CreateDocument(op) => self.apply_branch_operation(
+                        op.branch_id,
+                        op.parent.clone(),
+                        op.id,
+                        |revision| op.apply(revision),
+                    ),
+                    Operation::Edit(op) => self.apply_branch_operation(
+                        op.branch_id,
+                        op.parent.clone(),
+                        op.id,
+                        |revision| op.apply(revision),
+                    ),
                 };
                 match result {
                     Ok(_) => {
@@ -1373,6 +1383,46 @@ impl RepoSnapshot {
             self.max_operation_ids.insert(replica_id, count);
         }
     }
+
+    fn apply_branch_operation(
+        &mut self,
+        branch_id: OperationId,
+        parent: RevisionId,
+        operation_id: OperationId,
+        f: impl FnOnce(&mut Revision) -> Result<()>,
+    ) -> Result<()> {
+        let branch = self
+            .branches
+            .get(&branch_id)
+            .ok_or_else(|| anyhow!("branch {:?} not found", branch_id))?;
+
+        let mut revision = self
+            .revisions
+            .get(&branch.head)
+            .ok_or_else(|| {
+                anyhow!(
+                    "revision {:?} not found in branch {:?}",
+                    branch.head,
+                    branch_id
+                )
+            })?
+            .clone();
+        let new_head = if parent == branch.head {
+            smallvec![operation_id]
+        } else {
+            let mut head = branch.head.clone();
+            head.push(operation_id);
+            head
+        };
+
+        f(&mut revision)?;
+
+        self.branches
+            .update(&branch_id, |branch| branch.head = new_head.clone());
+        self.revisions.insert(new_head, revision);
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1426,41 +1476,12 @@ struct BranchSnapshot {
 }
 
 #[derive(Default, Debug, Clone)]
-struct Revision {
+pub struct Revision {
     document_metadata: btree::Map<OperationId, DocumentMetadata>,
     document_fragments: btree::Sequence<DocumentFragment>,
     insertion_fragments: btree::Sequence<InsertionFragment>,
     visible_text: Rope,
     hidden_text: Rope,
-}
-
-impl Revision {
-    fn apply_create_document(&mut self, operation: operations::CreateDocument) {
-        let mut cursor = self.document_fragments.cursor::<OperationId>();
-        let mut new_document_fragments = cursor.slice(&operation.id, Bias::Right, &());
-        new_document_fragments.push(
-            DocumentFragment {
-                document_id: operation.id,
-                location: DenseId::min(),
-                insertion_id: operation.id,
-                insertion_subrange: 0..0,
-                tombstones: Default::default(),
-                undo_count: 0,
-            },
-            &(),
-        );
-        new_document_fragments.append(cursor.suffix(&()), &());
-        drop(cursor);
-
-        self.document_fragments = new_document_fragments;
-        self.document_metadata.insert(
-            operation.id,
-            DocumentMetadata {
-                path: None,
-                last_change: operation.id,
-            },
-        );
-    }
 }
 
 #[cfg(test)]

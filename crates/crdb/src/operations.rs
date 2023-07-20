@@ -42,36 +42,31 @@ pub struct CreateDocument {
 }
 
 impl CreateDocument {
-    pub fn apply(self, repo: &mut RepoSnapshot) -> Result<()> {
-        let branch_id = self.branch_id;
-        let branch = repo
-            .branches
-            .get(&self.branch_id)
-            .ok_or_else(|| anyhow!("branch {:?} not found", self.branch_id))?;
+    pub fn apply(self, revision: &mut Revision) -> Result<()> {
+        let mut cursor = revision.document_fragments.cursor::<OperationId>();
+        let mut new_document_fragments = cursor.slice(&self.id, Bias::Right, &());
+        new_document_fragments.push(
+            DocumentFragment {
+                document_id: self.id,
+                location: DenseId::min(),
+                insertion_id: self.id,
+                insertion_subrange: 0..0,
+                tombstones: Default::default(),
+                undo_count: 0,
+            },
+            &(),
+        );
+        new_document_fragments.append(cursor.suffix(&()), &());
+        drop(cursor);
 
-        let mut revision = repo
-            .revisions
-            .get(&branch.head)
-            .ok_or_else(|| {
-                anyhow!(
-                    "revision {:?} not found in branch {:?}",
-                    branch.head,
-                    self.branch_id
-                )
-            })?
-            .clone();
-        let new_head = if self.parent == branch.head {
-            smallvec![self.id]
-        } else {
-            let mut head = branch.head.clone();
-            head.push(self.id);
-            head
-        };
-
-        revision.apply_create_document(self);
-        repo.branches
-            .update(&branch_id, |branch| branch.head = new_head.clone());
-        repo.revisions.insert(new_head, revision);
+        revision.document_fragments = new_document_fragments;
+        revision.document_metadata.insert(
+            self.id,
+            DocumentMetadata {
+                path: None,
+                last_change: self.id,
+            },
+        );
 
         Ok(())
     }
@@ -86,7 +81,7 @@ pub struct Edit {
 }
 
 impl Edit {
-    pub fn apply(self, repo: &mut RepoSnapshot) -> Result<()> {
+    pub fn apply(self, repo: &mut Revision) -> Result<()> {
         Err(anyhow!("not implemented"))
     }
 }
