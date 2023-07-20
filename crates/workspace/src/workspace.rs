@@ -2077,8 +2077,8 @@ impl Workspace {
         };
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
-            Some(cursor) => cursor,
-            None => bounding_box.center(),
+            Some(cursor) if bounding_box.contains_point(cursor) => cursor,
+            _ => bounding_box.center(),
         };
 
         let distance_to_next = theme::current(cx).workspace.pane_divider.width + 1.;
