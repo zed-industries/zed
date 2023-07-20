@@ -25,7 +25,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use sum_tree::SumTree;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -621,13 +620,7 @@ impl Repo {
             .repos
             .update(&self.id, |repo| {
                 let (operation, result) = f(repo);
-                repo.operations.insert(operation.id(), operation.clone());
-                let replica_id = operation.id().replica_id;
-                let count = operation.id().operation_count;
-                if repo.max_operation_ids.get(&replica_id).copied() < Some(count) {
-                    repo.max_operation_ids.insert(replica_id, count);
-                }
-
+                repo.save_operation(&operation);
                 if let Some(local_operation_created) = self.db.local_operation_created.as_ref() {
                     local_operation_created(self.id, operation);
                 }
@@ -1326,6 +1319,8 @@ impl RepoSnapshot {
         let mut operations = operations.into();
 
         while let Some(operation) = operations.pop_front() {
+            self.save_operation(&operation);
+
             if operation
                 .revision()
                 .iter()
@@ -1343,8 +1338,8 @@ impl RepoSnapshot {
                 for parent in operation.revision() {
                     self.deferred_operations.insert_or_replace(
                         DeferredOperation {
-                            operation: operation.clone(),
                             parent: *parent,
+                            operation_id: operation.id(),
                         },
                         &(),
                     );
@@ -1367,23 +1362,41 @@ impl RepoSnapshot {
             cursor
                 .slice(&parent_id, Bias::Right, &())
                 .iter()
-                .map(|deferred| deferred.operation.clone()),
+                .map(|deferred| {
+                    self.operations
+                        .get(&deferred.operation_id)
+                        .expect("deferred operation must have been saved")
+                        .clone()
+                }),
         );
         remaining.append(cursor.suffix(&()), &());
         drop(cursor);
         self.deferred_operations = remaining;
+    }
+
+    fn save_operation(&mut self, operation: &Operation) {
+        if self.operations.contains_key(&operation.id()) {
+            return;
+        }
+
+        self.operations.insert(operation.id(), operation.clone());
+        let replica_id = operation.id().replica_id;
+        let count = operation.id().operation_count;
+        if self.max_operation_ids.get(&replica_id).copied() < Some(count) {
+            self.max_operation_ids.insert(replica_id, count);
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 struct DeferredOperation {
     parent: OperationId,
-    operation: Operation,
+    operation_id: OperationId,
 }
 
 impl PartialEq for DeferredOperation {
     fn eq(&self, other: &Self) -> bool {
-        self.parent == other.parent && self.operation.id() == other.operation.id()
+        self.parent == other.parent && self.operation_id == other.operation_id
     }
 }
 
@@ -1399,7 +1412,7 @@ impl Ord for DeferredOperation {
     fn cmp(&self, other: &Self) -> Ordering {
         self.parent
             .cmp(&other.parent)
-            .then_with(|| self.operation.id().cmp(&other.operation.id()))
+            .then_with(|| self.operation_id.cmp(&other.operation_id))
     }
 }
 
@@ -1415,7 +1428,7 @@ impl btree::KeyedItem for DeferredOperation {
     type Key = (OperationId, OperationId);
 
     fn key(&self) -> Self::Key {
-        (self.parent, self.operation.id())
+        (self.parent, self.operation_id)
     }
 }
 
