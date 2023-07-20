@@ -429,6 +429,8 @@ impl PaneAxis {
     }
 
     fn bounding_box_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<RectF> {
+        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+
         for (idx, member) in self.members.iter().enumerate() {
             match member {
                 Member::Pane(found) => {
@@ -447,6 +449,8 @@ impl PaneAxis {
     }
 
     fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&ViewHandle<Pane>> {
+        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+
         let bounding_boxes = self.bounding_boxes.borrow();
 
         for (idx, member) in self.members.iter().enumerate() {
