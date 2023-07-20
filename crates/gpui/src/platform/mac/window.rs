@@ -10,8 +10,8 @@ use crate::{
         mac::{
             platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer, screen::Screen,
         },
-        Event, InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-        MouseMovedEvent, Scene, WindowBounds, WindowKind,
+        Event, InputHandler, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+        MouseButtonEvent, MouseMovedEvent, Scene, WindowBounds, WindowKind,
     },
 };
 use block::ConcreteBlock;
@@ -1053,7 +1053,44 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     let window_height = window_state_borrow.content_size().y();
     let event = unsafe { Event::from_native(native_event, Some(window_height)) };
-    if let Some(event) = event {
+
+    if let Some(mut event) = event {
+        let synthesized_second_event = match &mut event {
+            Event::MouseDown(
+                event @ MouseButtonEvent {
+                    button: MouseButton::Left,
+                    modifiers: Modifiers { ctrl: true, .. },
+                    ..
+                },
+            ) => {
+                *event = MouseButtonEvent {
+                    button: MouseButton::Right,
+                    modifiers: Modifiers {
+                        ctrl: false,
+                        ..event.modifiers
+                    },
+                    click_count: 1,
+                    ..*event
+                };
+
+                Some(Event::MouseUp(MouseButtonEvent {
+                    button: MouseButton::Right,
+                    ..*event
+                }))
+            }
+
+            // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
+            // the ctrl-left_up to avoid having a mismatch in button down/up events if the
+            // user is still holding ctrl when releasing the left mouse button
+            Event::MouseUp(MouseButtonEvent {
+                button: MouseButton::Left,
+                modifiers: Modifiers { ctrl: true, .. },
+                ..
+            }) => return,
+
+            _ => None,
+        };
+
         match &event {
             Event::MouseMoved(
                 event @ MouseMovedEvent {
@@ -1105,6 +1142,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         if let Some(mut callback) = window_state_borrow.event_callback.take() {
             drop(window_state_borrow);
             callback(event);
+            if let Some(event) = synthesized_second_event {
+                callback(event);
+            }
             window_state.borrow_mut().event_callback = Some(callback);
         }
     }
