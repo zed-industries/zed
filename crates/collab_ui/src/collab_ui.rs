@@ -65,7 +65,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
 
 pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     let call = ActiveCall::global(cx).read(cx);
-    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+    if let Some(room) = call.room().cloned() {
         let client = call.client();
         room.update(cx, |room, cx| {
             if room.is_muted() {
