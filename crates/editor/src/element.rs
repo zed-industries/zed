@@ -559,7 +559,6 @@ impl EditorElement {
                     corner_radius: 0.,
                 });
             }
-
         }
     }
 

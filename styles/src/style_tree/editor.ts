@@ -171,7 +171,7 @@ export default function editor(): any {
         line_number_active: foreground(layer),
         rename_fade: 0.6,
         wrap_guide: with_opacity(foreground(layer), 0.1),
-        active_wrap_guide: with_opacity(foreground(layer), 0.1),
+        active_wrap_guide: with_opacity(foreground(layer), 0.2),
         unnecessary_code_fade: 0.5,
         selection: theme.players[0],
         whitespace: theme.ramps.neutral(0.5).hex(),
