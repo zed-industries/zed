@@ -752,63 +752,79 @@ mod element {
                     let child_size = child.size();
                     let next_child_size = next_child.size();
                     let drag_bounds = visible_bounds.clone();
-                    let flexes = self.flexes.clone();
-                    let current_flex = flexes.borrow()[ix];
+                    let flexes = self.flexes.borrow();
+                    let current_flex = flexes[ix];
                     let next_ix = *next_ix;
-                    let next_flex = flexes.borrow()[next_ix];
+                    let next_flex = flexes[next_ix];
+                    drop(flexes);
                     enum ResizeHandle {}
                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
                         cx.view_id(),
                         self.basis + ix,
                         handle_bounds,
                     );
-                    mouse_region = mouse_region.on_drag(
-                        MouseButton::Left,
-                        move |drag, workspace: &mut Workspace, cx| {
-                            let min_size = match axis {
-                                Axis::Horizontal => HORIZONTAL_MIN_SIZE,
-                                Axis::Vertical => VERTICAL_MIN_SIZE,
-                            };
-                            // Don't allow resizing to less than the minimum size, if elements are already too small
-                            if min_size - 1. > child_size.along(axis)
-                                || min_size - 1. > next_child_size.along(axis)
-                            {
-                                return;
+                    mouse_region = mouse_region
+                        .on_drag(MouseButton::Left, {
+                            let flexes = self.flexes.clone();
+                            move |drag, workspace: &mut Workspace, cx| {
+                                let min_size = match axis {
+                                    Axis::Horizontal => HORIZONTAL_MIN_SIZE,
+                                    Axis::Vertical => VERTICAL_MIN_SIZE,
+                                };
+                                // Don't allow resizing to less than the minimum size, if elements are already too small
+                                if min_size - 1. > child_size.along(axis)
+                                    || min_size - 1. > next_child_size.along(axis)
+                                {
+                                    return;
+                                }
+
+                                let mut current_target_size =
+                                    (drag.position - child_start).along(axis);
+
+                                let proposed_current_pixel_change =
+                                    current_target_size - child_size.along(axis);
+
+                                if proposed_current_pixel_change < 0. {
+                                    current_target_size = f32::max(current_target_size, min_size);
+                                } else if proposed_current_pixel_change > 0. {
+                                    // TODO: cascade this change to other children if current item is at min size
+                                    let next_target_size = f32::max(
+                                        next_child_size.along(axis) - proposed_current_pixel_change,
+                                        min_size,
+                                    );
+                                    current_target_size = f32::min(
+                                        current_target_size,
+                                        child_size.along(axis) + next_child_size.along(axis)
+                                            - next_target_size,
+                                    );
+                                }
+
+                                let current_pixel_change =
+                                    current_target_size - child_size.along(axis);
+                                let flex_change =
+                                    current_pixel_change / drag_bounds.length_along(axis);
+                                let current_target_flex = current_flex + flex_change;
+                                let next_target_flex = next_flex - flex_change;
+
+                                let mut borrow = flexes.borrow_mut();
+                                *borrow.get_mut(ix).unwrap() = current_target_flex;
+                                *borrow.get_mut(next_ix).unwrap() = next_target_flex;
+
+                                workspace.schedule_serialize(cx);
+                                cx.notify();
                             }
-
-                            let mut current_target_size = (drag.position - child_start).along(axis);
-
-                            let proposed_current_pixel_change =
-                                current_target_size - child_size.along(axis);
-
-                            if proposed_current_pixel_change < 0. {
-                                current_target_size = f32::max(current_target_size, min_size);
-                            } else if proposed_current_pixel_change > 0. {
-                                // TODO: cascade this change to other children if current item is at min size
-                                let next_target_size = f32::max(
-                                    next_child_size.along(axis) - proposed_current_pixel_change,
-                                    min_size,
-                                );
-                                current_target_size = f32::min(
-                                    current_target_size,
-                                    child_size.along(axis) + next_child_size.along(axis)
-                                        - next_target_size,
-                                );
+                        })
+                        .on_click(MouseButton::Left, {
+                            let flexes = self.flexes.clone();
+                            move |e, v: &mut Workspace, cx| {
+                                if e.click_count >= 2 {
+                                    let mut borrow = flexes.borrow_mut();
+                                    *borrow = vec![1.; borrow.len()];
+                                    v.schedule_serialize(cx);
+                                    cx.notify();
+                                }
                             }
-
-                            let current_pixel_change = current_target_size - child_size.along(axis);
-                            let flex_change = current_pixel_change / drag_bounds.length_along(axis);
-                            let current_target_flex = current_flex + flex_change;
-                            let next_target_flex = next_flex - flex_change;
-
-                            let mut borrow = flexes.borrow_mut();
-                            *borrow.get_mut(ix).unwrap() = current_target_flex;
-                            *borrow.get_mut(next_ix).unwrap() = next_target_flex;
-
-                            workspace.schedule_serialize(cx);
-                            cx.notify();
-                        },
-                    );
+                        });
                     scene.push_mouse_region(mouse_region);
 
                     scene.pop_stacking_context();
