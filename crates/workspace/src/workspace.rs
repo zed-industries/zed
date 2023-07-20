@@ -2081,16 +2081,13 @@ impl Workspace {
             None => bounding_box.center(),
         };
 
-        // currently there's a small gap between panes, so we can't just look "1px to the left"
-        // instead of trying to calcuate this exactly, we assume it'll always be smaller than
-        // "pane_gap" pixels (and that no-one uses panes smaller in any dimension than pane_gap).
-        let pane_gap = 20.;
+        let distance_to_next = theme::current(cx).workspace.pane_divider.width + 1.;
 
         let target = match direction {
-            SplitDirection::Left => vec2f(bounding_box.origin_x() - pane_gap, center.y()),
-            SplitDirection::Right => vec2f(bounding_box.max_x() + pane_gap, center.y()),
-            SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - pane_gap),
-            SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + pane_gap),
+            SplitDirection::Left => vec2f(bounding_box.origin_x() - distance_to_next, center.y()),
+            SplitDirection::Right => vec2f(bounding_box.max_x() + distance_to_next, center.y()),
+            SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
+            SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
         };
 
         if let Some(pane) = self.center.pane_at_pixel_position(target) {
