@@ -37,6 +37,7 @@ tiktoken-rs = "0.5.0"
 parking_lot.workspace = true
 rand.workspace = true
 schemars.workspace = true
+globset.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

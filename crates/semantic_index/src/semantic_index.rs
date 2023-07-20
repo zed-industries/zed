@@ -11,6 +11,7 @@ use anyhow::{anyhow, Result};
 use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
+use globset::{Glob, GlobMatcher};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
@@ -624,6 +625,8 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         phrase: String,
         limit: usize,
+        include_globs: Vec<GlobMatcher>,
+        exclude_globs: Vec<GlobMatcher>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<SearchResult>>> {
         let project_state = if let Some(state) = self.projects.get(&project.downgrade()) {
@@ -657,11 +660,15 @@ impl SemanticIndex {
                         .next()
                         .unwrap();
 
-                    database.top_k_search(&worktree_db_ids, &phrase_embedding, limit)
+                    database.top_k_search(
+                        &worktree_db_ids,
+                        &phrase_embedding,
+                        limit,
+                        include_globs,
+                        exclude_globs,
+                    )
                 })
                 .await?;
-
-            dbg!(&documents);
 
             let mut tasks = Vec::new();
             let mut ranges = Vec::new();

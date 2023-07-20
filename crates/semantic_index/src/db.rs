@@ -1,5 +1,6 @@
 use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
 use anyhow::{anyhow, Context, Result};
+use globset::{Glob, GlobMatcher};
 use project::Fs;
 use rpc::proto::Timestamp;
 use rusqlite::{
@@ -252,18 +253,30 @@ impl VectorDatabase {
         worktree_ids: &[i64],
         query_embedding: &Vec<f32>,
         limit: usize,
+        include_globs: Vec<GlobMatcher>,
+        exclude_globs: Vec<GlobMatcher>,
     ) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
         let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-        self.for_each_document(&worktree_ids, |id, embedding| {
-            let similarity = dot(&embedding, &query_embedding);
-            let ix = match results
-                .binary_search_by(|(_, s)| similarity.partial_cmp(&s).unwrap_or(Ordering::Equal))
+        self.for_each_document(&worktree_ids, |relative_path, id, embedding| {
+            if (include_globs.is_empty()
+                || include_globs
+                    .iter()
+                    .any(|include_glob| include_glob.is_match(relative_path.clone())))
+                && (exclude_globs.is_empty()
+                    || !exclude_globs
+                        .iter()
+                        .any(|exclude_glob| exclude_glob.is_match(relative_path.clone())))
             {
-                Ok(ix) => ix,
-                Err(ix) => ix,
-            };
-            results.insert(ix, (id, similarity));
-            results.truncate(limit);
+                let similarity = dot(&embedding, &query_embedding);
+                let ix = match results.binary_search_by(|(_, s)| {
+                    similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
+                }) {
+                    Ok(ix) => ix,
+                    Err(ix) => ix,
+                };
+                results.insert(ix, (id, similarity));
+                results.truncate(limit);
+            }
         })?;
 
         let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
@@ -273,12 +286,12 @@ impl VectorDatabase {
     fn for_each_document(
         &self,
         worktree_ids: &[i64],
-        mut f: impl FnMut(i64, Vec<f32>),
+        mut f: impl FnMut(String, i64, Vec<f32>),
     ) -> Result<()> {
         let mut query_statement = self.db.prepare(
             "
             SELECT
-                documents.id, documents.embedding
+                files.relative_path, documents.id, documents.embedding
             FROM
                 documents, files
             WHERE
@@ -289,10 +302,10 @@ impl VectorDatabase {
 
         query_statement
             .query_map(params![ids_to_sql(worktree_ids)], |row| {
-                Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
+                Ok((row.get(0)?, row.get(1)?, row.get::<_, Embedding>(2)?))
             })?
             .filter_map(|row| row.ok())
-            .for_each(|(id, embedding)| f(id, embedding.0));
+            .for_each(|(relative_path, id, embedding)| f(relative_path, id, embedding.0));
         Ok(())
     }
 

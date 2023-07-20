@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use globset::Glob;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use pretty_assertions::assert_eq;
@@ -96,7 +97,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
 
     let search_results = store
         .update(cx, |store, cx| {
-            store.search_project(project.clone(), "aaaa".to_string(), 5, cx)
+            store.search_project(project.clone(), "aaaa".to_string(), 5, vec![], vec![], cx)
         })
         .await
         .unwrap();
@@ -109,6 +110,60 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         );
     });
 
+    // Test Include Files Functonality
+    let include_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
+    let exclude_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
+    let search_results = store
+        .update(cx, |store, cx| {
+            store.search_project(
+                project.clone(),
+                "aaaa".to_string(),
+                5,
+                include_files,
+                vec![],
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    for res in &search_results {
+        res.buffer.read_with(cx, |buffer, _cx| {
+            assert!(buffer
+                .file()
+                .unwrap()
+                .path()
+                .to_str()
+                .unwrap()
+                .ends_with("rs"));
+        });
+    }
+
+    let search_results = store
+        .update(cx, |store, cx| {
+            store.search_project(
+                project.clone(),
+                "aaaa".to_string(),
+                5,
+                vec![],
+                exclude_files,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    for res in &search_results {
+        res.buffer.read_with(cx, |buffer, _cx| {
+            assert!(!buffer
+                .file()
+                .unwrap()
+                .path()
+                .to_str()
+                .unwrap()
+                .ends_with("rs"));
+        });
+    }
     fs.save(
         "/the-root/src/file2.rs".as_ref(),
         &"

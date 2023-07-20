@@ -6477,6 +6477,7 @@ dependencies = [
  "editor",
  "env_logger 0.9.3",
  "futures 0.3.28",
+ "globset",
  "gpui",
  "isahc",
  "language",

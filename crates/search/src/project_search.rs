@@ -187,14 +187,26 @@ impl ProjectSearch {
         cx.notify();
     }
 
-    fn semantic_search(&mut self, query: String, cx: &mut ModelContext<Self>) {
+    fn semantic_search(
+        &mut self,
+        query: String,
+        include_files: Vec<GlobMatcher>,
+        exclude_files: Vec<GlobMatcher>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let search = SemanticIndex::global(cx).map(|index| {
             index.update(cx, |semantic_index, cx| {
-                semantic_index.search_project(self.project.clone(), query.clone(), 10, cx)
+                semantic_index.search_project(
+                    self.project.clone(),
+                    query.clone(),
+                    10,
+                    include_files,
+                    exclude_files,
+                    cx,
+                )
             })
         });
         self.search_id += 1;
-        // self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
@@ -638,14 +650,52 @@ impl ProjectSearchView {
             }
 
             let query = self.query_editor.read(cx).text(cx);
-            self.model
-                .update(cx, |model, cx| model.semantic_search(query, cx));
+            if let Some((included_files, exclude_files)) =
+                self.get_included_and_excluded_globsets(cx)
+            {
+                self.model.update(cx, |model, cx| {
+                    model.semantic_search(query, included_files, exclude_files, cx)
+                });
+            }
             return;
         }
 
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
+    }
+
+    fn get_included_and_excluded_globsets(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Vec<GlobMatcher>, Vec<GlobMatcher>)> {
+        let text = self.query_editor.read(cx).text(cx);
+        let included_files =
+            match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
+                Ok(included_files) => {
+                    self.panels_with_errors.remove(&InputPanel::Include);
+                    included_files
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Include);
+                    cx.notify();
+                    return None;
+                }
+            };
+        let excluded_files =
+            match Self::load_glob_set(&self.excluded_files_editor.read(cx).text(cx)) {
+                Ok(excluded_files) => {
+                    self.panels_with_errors.remove(&InputPanel::Exclude);
+                    excluded_files
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Exclude);
+                    cx.notify();
+                    return None;
+                }
+            };
+
+        Some((included_files, excluded_files))
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
