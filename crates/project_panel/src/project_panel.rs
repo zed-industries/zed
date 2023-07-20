@@ -1332,7 +1332,8 @@ impl ProjectPanel {
     ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
-        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
+        let settings = settings::get::<ProjectPanelSettings>(cx);
+        let padding = theme.container.padding.left + details.depth as f32 * settings.indent_size;
 
         let entry_style = if details.is_cut {
             &theme.cut_entry
