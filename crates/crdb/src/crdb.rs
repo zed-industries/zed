@@ -1307,21 +1307,22 @@ impl RepoSnapshot {
     fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) {
         let mut operations = operations.into();
         while let Some(operation) = operations.pop_front() {
-            self.save_operation(&operation);
-
             if operation
                 .parent()
                 .iter()
                 .all(|parent| self.operations.contains_key(&parent))
             {
                 let operation_id = operation.id();
-                let result = match operation {
+                let result = match operation.clone() {
                     Operation::CreateDocument(op) => op.apply(self),
                     Operation::Edit(op) => op.apply(self),
                     Operation::CreateBranch(op) => op.apply(self),
                 };
                 match result {
-                    Ok(_) => self.flush_deferred_operations(operation_id, &mut operations),
+                    Ok(_) => {
+                        self.save_operation(&operation);
+                        self.flush_deferred_operations(operation_id, &mut operations);
+                    }
                     Err(error) => {
                         log::error!("error applying operation {:?}: {:?}", operation_id, error)
                     }
@@ -1331,7 +1332,7 @@ impl RepoSnapshot {
                     self.deferred_operations.insert_or_replace(
                         DeferredOperation {
                             parent: *parent,
-                            operation_id: operation.id(),
+                            operation: operation.clone(),
                         },
                         &(),
                     );
@@ -1353,12 +1354,7 @@ impl RepoSnapshot {
             cursor
                 .slice(&parent_id, Bias::Right, &())
                 .iter()
-                .map(|deferred| {
-                    self.operations
-                        .get(&deferred.operation_id)
-                        .expect("deferred operation must have been saved")
-                        .clone()
-                }),
+                .map(|deferred| deferred.operation.clone()),
         );
         remaining.append(cursor.suffix(&()), &());
         drop(cursor);
@@ -1382,12 +1378,12 @@ impl RepoSnapshot {
 #[derive(Clone, Debug)]
 struct DeferredOperation {
     parent: OperationId,
-    operation_id: OperationId,
+    operation: Operation,
 }
 
 impl PartialEq for DeferredOperation {
     fn eq(&self, other: &Self) -> bool {
-        self.parent == other.parent && self.operation_id == other.operation_id
+        self.parent == other.parent && self.operation.id() == other.operation.id()
     }
 }
 
@@ -1403,7 +1399,7 @@ impl Ord for DeferredOperation {
     fn cmp(&self, other: &Self) -> Ordering {
         self.parent
             .cmp(&other.parent)
-            .then_with(|| self.operation_id.cmp(&other.operation_id))
+            .then_with(|| self.operation.id().cmp(&other.operation.id()))
     }
 }
 
@@ -1419,7 +1415,7 @@ impl btree::KeyedItem for DeferredOperation {
     type Key = (OperationId, OperationId);
 
     fn key(&self) -> Self::Key {
-        (self.parent, self.operation_id)
+        (self.parent, self.operation.id())
     }
 }
 
