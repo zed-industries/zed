@@ -111,6 +111,8 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g .": "editor::ToggleCodeActions", // zed specific
+      "g shift-a": "editor::FindAllReferences", // zed specific
       "g *": [
         "vim::MoveToNext",
         {
@@ -321,7 +323,8 @@
   {
     "context": "Editor && vim_operator == c",
     "bindings": {
-      "c": "vim::CurrentLine"
+      "c": "vim::CurrentLine",
+      "d": "editor::Rename" // zed specific
     }
   },
   {

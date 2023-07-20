@@ -441,7 +441,7 @@ mod test {
     use indoc::indoc;
 
     use crate::{
-        state::Mode::{self, *},
+        state::Mode::{self},
         test::{ExemptionFeatures, NeovimBackedTestContext},
     };
 
