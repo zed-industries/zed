@@ -1178,7 +1178,11 @@ impl ProjectPanel {
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
             let (git_status_setting, show_file_icons, show_folder_icons) = {
                 let settings = settings::get::<ProjectPanelSettings>(cx);
-                (settings.git_status, settings.file_icons, settings.folder_icons)
+                (
+                    settings.git_status,
+                    settings.file_icons,
+                    settings.folder_icons,
+                )
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
@@ -1194,16 +1198,20 @@ impl ProjectPanel {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
-                        EntryKind::File(_) => if show_file_icons {
-                            Some(FileAssociations::get_icon(&entry.path, cx))
-                        } else {
-                            None
+                        EntryKind::File(_) => {
+                            if show_file_icons {
+                                Some(FileAssociations::get_icon(&entry.path, cx))
+                            } else {
+                                None
+                            }
                         }
-                        _ => if show_folder_icons {
-                            Some(FileAssociations::get_folder_icon(is_expanded, cx))
-                        } else {
-                            Some(FileAssociations::get_chevron_icon(is_expanded, cx))
-                        },
+                        _ => {
+                            if show_folder_icons {
+                                Some(FileAssociations::get_folder_icon(is_expanded, cx))
+                            } else {
+                                Some(FileAssociations::get_chevron_icon(is_expanded, cx))
+                            }
+                        }
                     };
 
                     let mut details = EntryDetails {
@@ -1289,7 +1297,7 @@ impl ProjectPanel {
                     .aligned()
                     .constrained()
                     .with_width(style.icon_size)
-            }  else {
+            } else {
                 Empty::new()
                     .constrained()
                     .with_max_width(style.icon_size)
