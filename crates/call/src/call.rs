@@ -284,21 +284,6 @@ impl ActiveCall {
         }
     }
 
-    pub fn toggle_screen_sharing(&self, cx: &mut AppContext) {
-        if let Some(room) = self.room().cloned() {
-            let toggle_screen_sharing = room.update(cx, |room, cx| {
-                if room.is_screen_sharing() {
-                    self.report_call_event("disable screen share", cx);
-                    Task::ready(room.unshare_screen(cx))
-                } else {
-                    self.report_call_event("enable screen share", cx);
-                    room.share_screen(cx)
-                }
-            });
-            toggle_screen_sharing.detach_and_log_err(cx);
-        }
-    }
-
     pub fn share_project(
         &mut self,
         project: ModelHandle<Project>,

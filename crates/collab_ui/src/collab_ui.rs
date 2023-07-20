@@ -64,10 +64,24 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
 }
 
 pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+    let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, Room::toggle_mute)
-            .map(|task| task.detach_and_log_err(cx))
-            .log_err();
+        let client = call.client();
+        room.update(cx, |room, cx| {
+            if room.is_muted() {
+                ActiveCall::report_call_event_for_room("enable microphone", room.id(), &client, cx);
+            } else {
+                ActiveCall::report_call_event_for_room(
+                    "disable microphone",
+                    room.id(),
+                    &client,
+                    cx,
+                );
+            }
+            room.toggle_mute(cx)
+        })
+        .map(|task| task.detach_and_log_err(cx))
+        .log_err();
     }
 }
 
