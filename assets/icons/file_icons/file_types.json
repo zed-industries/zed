@@ -17,6 +17,7 @@
     "fish": "terminal",
     "gitattributes": "vcs",
     "gitignore": "vcs",
+    "gitmodules": "vcs",
     "gif": "image",
     "go": "code",
     "h": "code",
@@ -74,7 +75,7 @@
     "svg": "image",
     "swift": "code",
     "tiff": "image",
-    "toml": "settings",
+    "toml": "toml",
     "ts": "typescript",
     "tsx": "code",
     "txt": "document",
@@ -89,16 +90,19 @@
   },
   "types": {
     "audio": {
-      "icon": "icons/file_icons/file.svg"
+      "icon": "icons/file_icons/audio.svg"
     },
     "code": {
       "icon": "icons/file_icons/code.svg"
     },
+    "collapsed_chevron": {
+      "icon": "icons/file_icons/chevron_right.svg"
+    },
+    "collapsed_folder": {
+      "icon": "icons/file_icons/folder.svg"
+    },
     "default": {
       "icon": "icons/file_icons/file.svg"
-    },
-    "directory": {
-      "icon": "icons/file_icons/folder.svg"
     },
     "document": {
       "icon": "icons/file_icons/book.svg"
@@ -106,8 +110,11 @@
     "eslint": {
       "icon": "icons/file_icons/eslint.svg"
     },
-    "expanded_directory": {
-      "icon": "icons/file_icons/folder-open.svg"
+    "expanded_chevron": {
+      "icon": "icons/file_icons/chevron_down.svg"
+    },
+    "expanded_folder": {
+      "icon": "icons/file_icons/folder_open.svg"
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
@@ -136,6 +143,9 @@
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
     },
+    "toml": {
+      "icon": "icons/file_icons/toml.svg"
+    },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
     },
@@ -143,7 +153,7 @@
       "icon": "icons/file_icons/git.svg"
     },
     "video": {
-      "icon": "icons/file_icons/file.svg"
+      "icon": "icons/file_icons/video.svg"
     }
   }
 }

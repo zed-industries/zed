@@ -102,14 +102,18 @@
     "show_other_hints": true
   },
   "project_panel": {
-    // Whether to show the git status in the project panel.
-    "git_status": true,
-    // Whether to show file icons in the project panel.
-    "file_icons": true,
+    // Default width of the project panel.
+    "default_width": 240,
     // Where to dock project panel. Can be 'left' or 'right'.
     "dock": "left",
-    // Default width of the project panel.
-    "default_width": 240
+    // Whether to show file icons in the project panel.
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the project panel.
+    "folder_icons": true,
+    // Whether to show the git status in the project panel.
+    "git_status": true,
+    // Amount of indentation for nested items.
+    "indent_size": 20
   },
   "assistant": {
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
@@ -203,9 +207,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {

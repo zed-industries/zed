@@ -12,18 +12,22 @@ pub enum ProjectPanelDockPosition {
 
 #[derive(Deserialize, Debug)]
 pub struct ProjectPanelSettings {
-    pub git_status: bool,
-    pub file_icons: bool,
-    pub dock: ProjectPanelDockPosition,
     pub default_width: f32,
+    pub dock: ProjectPanelDockPosition,
+    pub file_icons: bool,
+    pub folder_icons: bool,
+    pub git_status: bool,
+    pub indent_size: f32,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectPanelSettingsContent {
-    pub git_status: Option<bool>,
-    pub file_icons: Option<bool>,
-    pub dock: Option<ProjectPanelDockPosition>,
     pub default_width: Option<f32>,
+    pub dock: Option<ProjectPanelDockPosition>,
+    pub file_icons: Option<bool>,
+    pub folder_icons: Option<bool>,
+    pub git_status: Option<bool>,
+    pub indent_size: Option<f32>,
 }
 
 impl Setting for ProjectPanelSettings {
