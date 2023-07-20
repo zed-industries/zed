@@ -251,6 +251,7 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                 max_operation_ids: self.repo.read(|repo| (&repo.max_operation_ids).into()),
             })
             .await?;
+        self.repo.apply_operations(response.operations);
 
         let operations = self
             .repo
@@ -600,6 +601,24 @@ impl Repo {
         }
     }
 
+    fn branch(&self, name: &str) -> Result<Branch> {
+        let branch_id = self
+            .read(|repo| {
+                Some(
+                    *repo
+                        .branches
+                        .iter()
+                        .find(|(_, branch)| branch.name.as_ref() == name)?
+                        .0,
+                )
+            })
+            .ok_or_else(|| anyhow!("branch not found"))?;
+        Ok(Branch {
+            id: branch_id,
+            repo: self.clone(),
+        })
+    }
+
     fn read<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&RepoSnapshot) -> T,
@@ -657,6 +676,19 @@ impl Branch {
             };
 
             (Operation::CreateDocument(operation), document)
+        })
+    }
+
+    pub fn document(&self, id: OperationId) -> Result<Document> {
+        self.read(|revision| {
+            revision
+                .document_metadata
+                .get(&id)
+                .ok_or_else(|| anyhow!("document not found"))?;
+            Ok(Document {
+                branch: self.clone(),
+                id,
+            })
         })
     }
 
@@ -1307,6 +1339,10 @@ impl RepoSnapshot {
     fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) {
         let mut operations = operations.into();
         while let Some(operation) = operations.pop_front() {
+            if self.operations.contains_key(&operation.id()) {
+                continue;
+            }
+
             if operation
                 .parent()
                 .iter()
@@ -1372,10 +1408,6 @@ impl RepoSnapshot {
     }
 
     fn save_operation(&mut self, operation: &Operation) {
-        if self.operations.contains_key(&operation.id()) {
-            return;
-        }
-
         self.operations.insert(operation.id(), operation.clone());
         let replica_id = operation.id().replica_id;
         let count = operation.id().operation_count;
@@ -1512,18 +1544,25 @@ mod tests {
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
 
-        let doc1 = branch_a.create_document();
-        doc1.edit([(0..0, "abc")]);
+        let doc1_a = branch_a.create_document();
+        doc1_a.edit([(0..0, "abc")]);
 
-        let doc2 = branch_a.create_document();
-        doc2.edit([(0..0, "def")]);
+        let doc2_a = branch_a.create_document();
+        doc2_a.edit([(0..0, "def")]);
 
-        assert_eq!(doc1.text().to_string(), "abc");
-        assert_eq!(doc2.text().to_string(), "def");
+        assert_eq!(doc1_a.text().to_string(), "abc");
+        assert_eq!(doc2_a.text().to_string(), "def");
 
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
         let db_b = Client::new(deterministic.build_background(), network.client("client-b"));
         let repo_b = db_b.clone_repo("repo-1").await.unwrap();
+        deterministic.run_until_parked();
+        let branch_b = repo_b.branch("main").unwrap();
+
+        let doc1_b = branch_b.document(doc1_a.id).unwrap();
+        let doc2_b = branch_b.document(doc2_a.id).unwrap();
+        assert_eq!(doc1_b.text().to_string(), "abc");
+        assert_eq!(doc2_b.text().to_string(), "def");
     }
 
     impl Executor for Arc<Background> {
