@@ -541,6 +541,25 @@ impl EditorElement {
                     corner_radius: 0.,
                 });
             }
+
+            for (wrap_position, active) in layout.wrap_guides.iter() {
+                let x = text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.;
+                let color = if *active {
+                    self.style.active_wrap_guide
+                } else {
+                    self.style.wrap_guide
+                };
+                scene.push_quad(Quad {
+                    bounds: RectF::new(
+                        vec2f(x, text_bounds.origin_y()),
+                        vec2f(1., text_bounds.height()),
+                    ),
+                    background: Some(color),
+                    border: Border::new(0., Color::transparent_black()),
+                    corner_radius: 0.,
+                });
+            }
+
         }
     }
 
@@ -1320,16 +1339,15 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
-        let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
+    fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> f32 {
         let style = &self.style;
 
         cx.text_layout_cache()
             .layout_str(
-                "1".repeat(digit_count).as_str(),
+                " ".repeat(column).as_str(),
                 style.text.font_size,
                 &[(
-                    digit_count,
+                    column,
                     RunStyle {
                         font_id: style.text.font_id,
                         color: Color::black(),
@@ -1338,6 +1356,11 @@ impl EditorElement {
                 )],
             )
             .width()
+    }
+
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
+        let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
+        self.column_pixels(digit_count, cx)
     }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
@@ -2025,6 +2048,12 @@ impl Element<Editor> for EditorElement {
             }
         };
 
+        let wrap_guides = editor
+            .wrap_guides(cx)
+            .iter()
+            .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
+            .collect();
+
         let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
         if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
             size.set_y(
@@ -2385,6 +2414,7 @@ impl Element<Editor> for EditorElement {
                     snapshot,
                 }),
                 visible_display_row_range: start_row..end_row,
+                wrap_guides,
                 gutter_size,
                 gutter_padding,
                 text_size,
@@ -2535,6 +2565,7 @@ pub struct LayoutState {
     gutter_margin: f32,
     text_size: Vector2F,
     mode: EditorMode,
+    wrap_guides: SmallVec<[(f32, bool); 2]>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,

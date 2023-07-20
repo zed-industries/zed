@@ -691,6 +691,8 @@ pub struct Editor {
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
     pub diff: DiffStyle,
+    pub wrap_guide: Color,
+    pub active_wrap_guide: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
