@@ -142,7 +142,7 @@ impl Operation {
         }
     }
 
-    pub fn revision(&self) -> &RevisionId {
+    pub fn parent(&self) -> &RevisionId {
         match self {
             Operation::CreateDocument(op) => &op.parent,
             Operation::Edit(op) => &op.parent,

@@ -11,7 +11,6 @@ use collections::{btree_map, BTreeMap, Bound, HashMap, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
-use operations::CreateBranch;
 use parking_lot::{Mutex, RwLock};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -646,41 +645,18 @@ struct Branch {
 impl Branch {
     pub fn create_document(&self) -> Document {
         self.update(|document_id, parent, revision| {
-            let mut cursor = revision.document_fragments.cursor::<OperationId>();
-            let mut new_document_fragments = cursor.slice(&document_id, Bias::Right, &());
-            new_document_fragments.push(
-                DocumentFragment {
-                    document_id,
-                    location: DenseId::min(),
-                    insertion_id: document_id,
-                    insertion_subrange: 0..0,
-                    tombstones: Default::default(),
-                    undo_count: 0,
-                },
-                &(),
-            );
-            new_document_fragments.append(cursor.suffix(&()), &());
-            drop(cursor);
-
-            revision.document_fragments = new_document_fragments;
-            revision.document_metadata.insert(
-                document_id,
-                DocumentMetadata {
-                    path: None,
-                    last_change: document_id,
-                },
-            );
-
-            let operation = Operation::CreateDocument(operations::CreateDocument {
+            let operation = operations::CreateDocument {
                 id: document_id,
+                branch_id: self.id,
                 parent,
-            });
+            };
+            revision.apply_create_document(operation.clone());
             let document = Document {
                 id: document_id,
                 branch: self.clone(),
             };
 
-            (operation, document)
+            (Operation::CreateDocument(operation), document)
         })
     }
 
@@ -879,6 +855,7 @@ impl Document {
             let edits = edits.into_iter();
             let mut edit_op = operations::Edit {
                 id: operation_id,
+                branch_id: self.branch.id,
                 parent: parent.clone(),
                 edits: SmallVec::with_capacity(edits.len()),
             };
@@ -1247,7 +1224,7 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RepoSnapshot {
     last_operation_id: OperationId,
     branches: btree::Map<OperationId, BranchSnapshot>,
@@ -1255,6 +1232,22 @@ pub struct RepoSnapshot {
     revisions: btree::Map<RevisionId, Revision>,
     max_operation_ids: btree::Map<ReplicaId, OperationCount>,
     deferred_operations: btree::Sequence<DeferredOperation>,
+}
+
+impl Default for RepoSnapshot {
+    fn default() -> Self {
+        Self {
+            last_operation_id: Default::default(),
+            branches: Default::default(),
+            operations: Default::default(),
+            revisions: btree::Map::from_ordered_entries([(
+                RevisionId::default(),
+                Revision::default(),
+            )]),
+            max_operation_ids: Default::default(),
+            deferred_operations: Default::default(),
+        }
+    }
 }
 
 impl RepoSnapshot {
@@ -1268,21 +1261,17 @@ impl RepoSnapshot {
     fn create_empty_branch(&mut self, name: impl Into<Arc<str>>) -> (Operation, OperationId) {
         let name = name.into();
         let branch_id = self.last_operation_id.tick();
-        self.branches.insert(
-            branch_id,
-            BranchSnapshot {
-                name: name.clone(),
-                head: smallvec![branch_id],
-            },
-        );
-        self.revisions
-            .insert(smallvec![branch_id], Default::default());
-        let operation = Operation::CreateBranch(CreateBranch {
+        let operation = operations::CreateBranch {
             id: branch_id,
             name,
             parent: Default::default(),
-        });
-        (operation, branch_id)
+        };
+        operation
+            .clone()
+            .apply(self)
+            .expect("can always create empty branch");
+
+        (Operation::CreateBranch(operation), branch_id)
     }
 
     fn operations_since(&self, version: &btree::Map<ReplicaId, OperationCount>) -> Vec<Operation> {
@@ -1315,27 +1304,30 @@ impl RepoSnapshot {
     }
 
     /// Apply the given operations and any deferred operations that are now applicable.
-    fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) -> Result<()> {
+    fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) {
         let mut operations = operations.into();
-
         while let Some(operation) = operations.pop_front() {
             self.save_operation(&operation);
 
             if operation
-                .revision()
+                .parent()
                 .iter()
                 .all(|parent| self.operations.contains_key(&parent))
             {
                 let operation_id = operation.id();
-                match operation {
+                let result = match operation {
                     Operation::CreateDocument(op) => op.apply(self),
                     Operation::Edit(op) => op.apply(self),
                     Operation::CreateBranch(op) => op.apply(self),
-                }?;
-
-                self.flush_deferred_operations(operation_id, &mut operations);
+                };
+                match result {
+                    Ok(_) => self.flush_deferred_operations(operation_id, &mut operations),
+                    Err(error) => {
+                        log::error!("error applying operation {:?}: {:?}", operation_id, error)
+                    }
+                }
             } else {
-                for parent in operation.revision() {
+                for parent in operation.parent() {
                     self.deferred_operations.insert_or_replace(
                         DeferredOperation {
                             parent: *parent,
@@ -1346,7 +1338,6 @@ impl RepoSnapshot {
                 }
             }
         }
-        Ok(())
     }
 
     /// Remove any operations deferred on the given parent and add them to the
@@ -1447,12 +1438,52 @@ struct Revision {
     hidden_text: Rope,
 }
 
+impl Revision {
+    fn apply_create_document(&mut self, operation: operations::CreateDocument) {
+        let mut cursor = self.document_fragments.cursor::<OperationId>();
+        let mut new_document_fragments = cursor.slice(&operation.id, Bias::Right, &());
+        new_document_fragments.push(
+            DocumentFragment {
+                document_id: operation.id,
+                location: DenseId::min(),
+                insertion_id: operation.id,
+                insertion_subrange: 0..0,
+                tombstones: Default::default(),
+                undo_count: 0,
+            },
+            &(),
+        );
+        new_document_fragments.append(cursor.suffix(&()), &());
+        drop(cursor);
+
+        self.document_fragments = new_document_fragments;
+        self.document_metadata.insert(
+            operation.id,
+            DocumentMetadata {
+                path: None,
+                last_change: operation.id,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    } else {
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Error)
+            .init();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gpui::executor::{Background, Deterministic};
-
     use super::*;
     use crate::test::TestNetwork;
+    use gpui::executor::{Background, Deterministic};
 
     #[gpui::test]
     async fn test_repo(deterministic: Arc<Deterministic>) {
