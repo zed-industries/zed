@@ -2,12 +2,6 @@
   {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
-      "g": [
-        "vim::PushOperator",
-        {
-          "Namespace": "G"
-        }
-      ],
       "i": [
         "vim::PushOperator",
         {
@@ -110,6 +104,30 @@
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      // "g" commands
+      "g g": "vim::StartOfDocument",
+      "g h": "editor::Hover",
+      "g t": "pane::ActivateNextItem",
+      "g shift-t": "pane::ActivatePrevItem",
+      "g d": "editor::GoToDefinition",
+      "g shift-d": "editor::GoToTypeDefinition",
+      "g *": [
+        "vim::MoveToNext",
+        {
+          "partialWord": true
+        }
+      ],
+      "g #": [
+        "vim::MoveToPrev",
+        {
+          "partialWord": true
+        }
+      ],
+      // z commands
+      "z t": "editor::ScrollCursorTop",
+      "z z": "editor::ScrollCursorCenter",
+      "z b": "editor::ScrollCursorBottom",
+      // Count support
       "1": [
         "vim::Number",
         1
@@ -234,12 +252,6 @@
         "vim::PushOperator",
         "Yank"
       ],
-      "z": [
-        "vim::PushOperator",
-        {
-          "Namespace": "Z"
-        }
-      ],
       "i": [
         "vim::SwitchMode",
         "Insert"
@@ -307,29 +319,6 @@
     }
   },
   {
-    "context": "Editor && vim_operator == g",
-    "bindings": {
-      "g": "vim::StartOfDocument",
-      "h": "editor::Hover",
-      "t": "pane::ActivateNextItem",
-      "shift-t": "pane::ActivatePrevItem",
-      "d": "editor::GoToDefinition",
-      "shift-d": "editor::GoToTypeDefinition",
-      "*": [
-        "vim::MoveToNext",
-        {
-          "partialWord": true
-        }
-      ],
-      "#": [
-        "vim::MoveToPrev",
-        {
-          "partialWord": true
-        }
-      ]
-    }
-  },
-  {
     "context": "Editor && vim_operator == c",
     "bindings": {
       "c": "vim::CurrentLine"
@@ -345,14 +334,6 @@
     "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "Editor && vim_operator == z",
-    "bindings": {
-      "t": "editor::ScrollCursorTop",
-      "z": "editor::ScrollCursorCenter",
-      "b": "editor::ScrollCursorBottom"
     }
   },
   {

@@ -127,9 +127,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
-    if let Some(Operator::Namespace(_))
-    | Some(Operator::FindForward { .. })
-    | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()
+    if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
+        Vim::read(cx).active_operator()
     {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }

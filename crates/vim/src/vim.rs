@@ -14,7 +14,7 @@ use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, keymap_matcher::KeymapContext, AppContext, Subscription, ViewContext,
+    actions, impl_actions,keymap_matcher::MatchResult, keymap_matcher::KeymapContext, AppContext, Subscription, ViewContext,
     ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
@@ -90,7 +90,10 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub fn observe_keystrokes(cx: &mut WindowContext) {
-    cx.observe_keystrokes(|_keystroke, _result, handled_by, cx| {
+    cx.observe_keystrokes(|_keystroke, result, handled_by, cx| {
+        if result == &MatchResult::Pending {
+            return true;
+        }
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
             if handled_by.namespace() == "vim" {
