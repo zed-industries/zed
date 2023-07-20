@@ -17,6 +17,7 @@
     "fish": "terminal",
     "gitattributes": "vcs",
     "gitignore": "vcs",
+    "gitmodules": "vcs",
     "gif": "image",
     "go": "code",
     "h": "code",
