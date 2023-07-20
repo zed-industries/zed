@@ -7,7 +7,7 @@ mod test;
 
 use anyhow::{anyhow, Result};
 use btree::Bias;
-use collections::{btree_map, BTreeMap, Bound, HashMap};
+use collections::{btree_map, BTreeMap, Bound, HashMap, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
@@ -25,6 +25,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use sum_tree::SumTree;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -636,7 +637,7 @@ impl Repo {
             .expect("repo must exist")
     }
 
-    fn apply_operations(&self, operations: impl IntoIterator<Item = Operation>) {
+    fn apply_operations(&self, operations: impl Into<VecDeque<Operation>>) {
         self.db.snapshot.lock().repos.update(&self.id, |repo| {
             repo.apply_operations(operations);
         });
@@ -1320,9 +1321,11 @@ impl RepoSnapshot {
         new_operations
     }
 
-    fn apply_operations(&mut self, operations: impl IntoIterator<Item = Operation>) -> Result<()> {
-        let mut deferred_operations: Vec<btree::Edit<DeferredOperation>> = Vec::new();
-        for operation in operations {
+    /// Apply the given operations and any deferred operations that are now applicable.
+    fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) -> Result<()> {
+        let mut operations = operations.into();
+
+        while let Some(operation) = operations.pop_front() {
             if operation
                 .revision()
                 .iter()
@@ -1335,20 +1338,40 @@ impl RepoSnapshot {
                     Operation::CreateBranch(op) => op.apply(self),
                 }?;
 
-                todo!("flush deferred operations for this id");
-                // Think I want to try and make a TreeMultimap to do this rather
-                // than nest additional collections under the keys.
+                self.flush_deferred_operations(operation_id, &mut operations);
             } else {
-                deferred_operations.extend(operation.revision().iter().map(|parent| {
-                    btree::Edit::Insert(DeferredOperation {
-                        operation: operation.clone(),
-                        parent: *parent,
-                    })
-                }))
+                for parent in operation.revision() {
+                    self.deferred_operations.insert_or_replace(
+                        DeferredOperation {
+                            operation: operation.clone(),
+                            parent: *parent,
+                        },
+                        &(),
+                    );
+                }
             }
         }
-        self.deferred_operations.edit(deferred_operations, &());
         Ok(())
+    }
+
+    /// Remove any operations deferred on the given parent and add them to the
+    /// provided operation queue. This is called in `apply_operations`.
+    fn flush_deferred_operations(
+        &mut self,
+        parent_id: OperationId,
+        operations: &mut VecDeque<Operation>,
+    ) {
+        let mut cursor = self.deferred_operations.cursor::<OperationId>();
+        let mut remaining = cursor.slice(&parent_id, Bias::Left, &());
+        operations.extend(
+            cursor
+                .slice(&parent_id, Bias::Right, &())
+                .iter()
+                .map(|deferred| deferred.operation.clone()),
+        );
+        remaining.append(cursor.suffix(&()), &());
+        drop(cursor);
+        self.deferred_operations = remaining;
     }
 }
 
