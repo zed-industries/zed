@@ -8170,8 +8170,8 @@ fn build_style(
             .unwrap_or_default();
 
         line_height_scalar = match mode {
-            EditorMode::Full => line_height_scalar,
-            EditorMode::AutoHeight { .. } | EditorMode::SingleLine => cx
+            EditorMode::SingleLine | EditorMode::Full => line_height_scalar,
+            EditorMode::AutoHeight { .. } => cx
                 .font_cache()
                 .line_height(field_editor_theme.text.font_size),
         };
