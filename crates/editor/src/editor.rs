@@ -1300,7 +1300,7 @@ impl Editor {
         let editor_view_id = cx.view_id();
         let display_map = cx.add_model(|cx| {
             let settings = settings::get::<ThemeSettings>(cx);
-            let style = build_style(settings, get_field_editor_theme.as_deref(), None, &mode, cx);
+            let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 style.text.font_id,
@@ -1500,7 +1500,6 @@ impl Editor {
             settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
             self.override_text_style.as_deref(),
-            &self.mode,
             cx,
         )
     }
@@ -8153,11 +8152,10 @@ fn build_style(
     settings: &ThemeSettings,
     get_field_editor_theme: Option<&GetFieldEditorTheme>,
     override_text_style: Option<&OverrideTextStyle>,
-    mode: &EditorMode,
     cx: &AppContext,
 ) -> EditorStyle {
     let font_cache = cx.font_cache();
-    let mut line_height_scalar = settings.line_height();
+    let line_height_scalar = settings.line_height();
     let theme_id = settings.theme.meta.id;
     let mut theme = settings.theme.editor.clone();
     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
@@ -8168,14 +8166,6 @@ fn build_style(
             .container
             .background_color
             .unwrap_or_default();
-
-        line_height_scalar = match mode {
-            EditorMode::SingleLine | EditorMode::Full => line_height_scalar,
-            EditorMode::AutoHeight { .. } => cx
-                .font_cache()
-                .line_height(field_editor_theme.text.font_size),
-        };
-
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
