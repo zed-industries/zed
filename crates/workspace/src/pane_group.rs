@@ -826,10 +826,11 @@ mod element {
                     let child_size = child.size();
                     let next_child_size = next_child.size();
                     let drag_bounds = visible_bounds.clone();
-                    let flexes = self.flexes.clone();
-                    let current_flex = flexes.borrow()[ix];
+                    let flexes = self.flexes.borrow();
+                    let current_flex = flexes[ix];
                     let next_ix = *next_ix;
-                    let next_flex = flexes.borrow()[next_ix];
+                    let next_flex = flexes[next_ix];
+                    drop(flexes);
                     enum ResizeHandle {}
                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
                         cx.view_id(),
@@ -838,7 +839,9 @@ mod element {
                     );
                     mouse_region = mouse_region.on_drag(
                         MouseButton::Left,
-                        move |drag, workspace: &mut Workspace, cx| {
+                        {
+                            let flexes = self.flexes.clone();
+                            move |drag, workspace: &mut Workspace, cx| {
                             let min_size = match axis {
                                 Axis::Horizontal => HORIZONTAL_MIN_SIZE,
                                 Axis::Vertical => VERTICAL_MIN_SIZE,
@@ -881,8 +884,17 @@ mod element {
 
                             workspace.schedule_serialize(cx);
                             cx.notify();
-                        },
-                    );
+                        }},
+                    ).on_click(MouseButton::Left, {
+                        let flexes = self.flexes.clone();
+                        move |e, v: &mut Workspace, cx| {
+                        if e.click_count >= 2 {
+                            let mut borrow = flexes.borrow_mut();
+                            *borrow = vec![1.; borrow.len()];
+                            v.schedule_serialize(cx);
+                            cx.notify();
+                        }
+                    }});
                     scene.push_mouse_region(mouse_region);
 
                     scene.pop_stacking_context();
