@@ -1176,9 +1176,13 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons) = {
+            let (git_status_setting, show_file_icons, show_folder_icons) = {
                 let settings = settings::get::<ProjectPanelSettings>(cx);
-                (settings.git_status, settings.file_icons)
+                (
+                    settings.git_status,
+                    settings.file_icons,
+                    settings.folder_icons,
+                )
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
@@ -1193,10 +1197,22 @@ impl ProjectPanel {
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
-                    let icon = show_file_icons.then(|| match entry.kind {
-                        EntryKind::File(_) => FileAssociations::get_icon(&entry.path, cx),
-                        _ => FileAssociations::get_folder_icon(is_expanded, cx),
-                    });
+                    let icon = match entry.kind {
+                        EntryKind::File(_) => {
+                            if show_file_icons {
+                                Some(FileAssociations::get_icon(&entry.path, cx))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => {
+                            if show_folder_icons {
+                                Some(FileAssociations::get_folder_icon(is_expanded, cx))
+                            } else {
+                                Some(FileAssociations::get_chevron_icon(is_expanded, cx))
+                            }
+                        }
+                    };
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1258,7 +1274,6 @@ impl ProjectPanel {
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
     ) -> AnyElement<V> {
-        let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
         let mut filename_text_style = style.text.clone();
@@ -1282,26 +1297,14 @@ impl ProjectPanel {
                     .aligned()
                     .constrained()
                     .with_width(style.icon_size)
-            } else if kind.is_dir() {
-                if details.is_expanded {
-                    Svg::new("icons/chevron_down_8.svg").with_color(style.chevron_color)
-                } else {
-                    Svg::new("icons/chevron_right_8.svg").with_color(style.chevron_color)
-                }
-                .constrained()
-                .with_max_width(style.chevron_size)
-                .with_max_height(style.chevron_size)
-                .aligned()
-                .constrained()
-                .with_width(style.chevron_size)
             } else {
                 Empty::new()
                     .constrained()
-                    .with_max_width(style.chevron_size)
-                    .with_max_height(style.chevron_size)
+                    .with_max_width(style.icon_size)
+                    .with_max_height(style.icon_size)
                     .aligned()
                     .constrained()
-                    .with_width(style.chevron_size)
+                    .with_width(style.icon_size)
             })
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
@@ -1337,7 +1340,8 @@ impl ProjectPanel {
     ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
-        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
+        let settings = settings::get::<ProjectPanelSettings>(cx);
+        let padding = theme.container.padding.left + details.depth as f32 * settings.indent_size;
 
         let entry_style = if details.is_cut {
             &theme.cut_entry

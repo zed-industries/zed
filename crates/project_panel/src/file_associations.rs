@@ -17,8 +17,10 @@ pub struct FileAssociations {
     types: HashMap<String, TypeConfig>,
 }
 
-const DIRECTORY_TYPE: &'static str = "directory";
-const EXPANDED_DIRECTORY_TYPE: &'static str = "expanded_directory";
+const COLLAPSED_DIRECTORY_TYPE: &'static str = "collapsed_folder";
+const EXPANDED_DIRECTORY_TYPE: &'static str = "expanded_folder";
+const COLLAPSED_CHEVRON_TYPE: &'static str = "collapsed_chevron";
+const EXPANDED_CHEVRON_TYPE: &'static str = "expanded_chevron";
 pub const FILE_TYPES_ASSET: &'static str = "icons/file_icons/file_types.json";
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
@@ -72,7 +74,24 @@ impl FileAssociations {
             let key = if expanded {
                 EXPANDED_DIRECTORY_TYPE
             } else {
-                DIRECTORY_TYPE
+                COLLAPSED_DIRECTORY_TYPE
+            };
+
+            this.types
+                .get(key)
+                .map(|type_config| type_config.icon.clone())
+        })
+        .unwrap_or_else(|| Arc::from("".to_string()))
+    }
+
+    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Arc<str> {
+        iife!({
+            let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+
+            let key = if expanded {
+                EXPANDED_CHEVRON_TYPE
+            } else {
+                COLLAPSED_CHEVRON_TYPE
             };
 
             this.types
