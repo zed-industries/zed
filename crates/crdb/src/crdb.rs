@@ -1558,9 +1558,17 @@ impl RepoSnapshot {
                     .expect("operation must exist")
                     .clone()
                 {
-                    Operation::CreateDocument(_) => todo!(),
-                    Operation::Edit(_) => todo!(),
-                    Operation::CreateBranch(_) => todo!(),
+                    Operation::CreateDocument(op) => {
+                        op.apply(&mut common_ancestor_revision);
+                    }
+                    Operation::Edit(op) => {
+                        let parent_revision = self.revision(&op.parent)?;
+                        op.apply(&parent_revision, &mut common_ancestor_revision)?;
+                    }
+                    Operation::CreateBranch(_) => {
+                        // Creating a branch doesn't have an impact on the revision, so we
+                        // can ignore it.
+                    }
                 }
             }
 
