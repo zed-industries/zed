@@ -73,7 +73,9 @@ const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 lazy_static! {
-    // Regex Copied from alacritty's ui_config.rs
+    // Regex Copied from alacritty's ui_config.rs and modified its declaration slightly:
+    // * avoid Rust-specific escaping.
+    // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
     static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
     static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-~]+").unwrap();

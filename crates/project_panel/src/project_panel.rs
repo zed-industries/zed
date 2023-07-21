@@ -174,6 +174,7 @@ pub enum Event {
     NewSearchInDirectory {
         dir_entry: Entry,
     },
+    ActivatePanel,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -199,6 +200,9 @@ impl ProjectPanel {
                         this.autoscroll(cx);
                         cx.notify();
                     }
+                }
+                project::Event::ActivateProjectPanel => {
+                    cx.emit(Event::ActivatePanel);
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -1014,7 +1018,10 @@ impl ProjectPanel {
         None
     }
 
-    fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
+    pub fn selected_entry<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Worktree, &'a project::Entry)> {
         let (worktree, entry) = self.selected_entry_handle(cx)?;
         Some((worktree.read(cx), entry))
     }
