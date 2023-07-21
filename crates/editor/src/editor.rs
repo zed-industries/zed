@@ -5298,7 +5298,7 @@ impl Editor {
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let end = self.buffer.read(cx).read(cx).len();
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        self.change_selections(None, cx, |s| {
             s.select_ranges(vec![0..end]);
         });
     }
