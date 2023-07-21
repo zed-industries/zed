@@ -406,6 +406,7 @@
       "cmd-b": "workspace::ToggleLeftDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
+      "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "workspace::NewSearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
