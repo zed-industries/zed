@@ -1,15 +1,11 @@
 use crate::{
-    btree, dense_id::DenseId, Anchor, AnchorRange, BranchSnapshot, DocumentFragment,
-    DocumentFragmentSummary, DocumentMetadata, InsertionFragment, OperationId, RepoSnapshot,
-    Revision, RevisionId, RopeBuilder, Tombstone,
+    btree, dense_id::DenseId, AnchorRange, DocumentFragment, DocumentFragmentSummary,
+    DocumentMetadata, InsertionFragment, OperationId, Revision, RevisionId, RopeBuilder, Tombstone,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use smallvec::SmallVec;
+use std::{cmp, sync::Arc};
 use sum_tree::Bias;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +73,8 @@ impl Edit {
         let mut old_fragments = revision
             .document_fragments
             .cursor::<DocumentFragmentSummary>();
+
+        // Slice to the start of the document this to which this operation applies.
         let mut new_fragments = old_fragments.slice(&self.document_id, Bias::Left, &());
         let mut new_insertions = Vec::new();
         let mut new_ropes = RopeBuilder::new(
@@ -89,92 +87,137 @@ impl Edit {
         );
 
         let mut insertion_offset = 0;
-        let mut fragment = old_fragments.item().unwrap().clone();
+
+        // Every document begins with a sentinel fragment, which we can skip.
+        new_fragments.push(old_fragments.item().unwrap().clone(), &());
+        old_fragments.next(&());
+
+        let mut current_fragment = old_fragments.item().cloned();
         for (range, new_text) in self.edits {
-            // Locate all the fragments in the parent revision intersecting this edit.
-            for parent_fragment in parent_revision.visible_fragments_for_range(range.clone())? {
-                let insertion_id = parent_fragment.insertion_id;
-                let mut insertion_subrange = parent_fragment.insertion_subrange.clone();
+            // We need to tombstone the intersection of the edit's range with fragments that
+            // were visible in the operation's parent revision.
+            for mut parent_fragment in parent_revision
+                .visible_fragments_for_range(range.clone())?
+                .cloned()
+            {
+                // Intersect the parent fragment with the edit's range.
                 if parent_fragment.insertion_id == range.start_insertion_id {
-                    insertion_subrange.start = range.start_offset_in_insertion;
+                    parent_fragment.insertion_subrange.start = range.start_offset_in_insertion;
                 }
                 if parent_fragment.insertion_id == range.end_insertion_id {
-                    insertion_subrange.end =
-                        cmp::min(insertion_subrange.end, range.end_offset_in_insertion);
+                    parent_fragment.insertion_subrange.end = cmp::min(
+                        parent_fragment.insertion_subrange.end,
+                        range.end_offset_in_insertion,
+                    );
                 }
 
                 // Find the locations of the parent fragment in the new revision.
-                for fragment_location in
-                    revision.fragment_locations(insertion_id, insertion_subrange)
-                {
-                    // Flush the current fragment if we are about to move past it.
-                    if *fragment_location > fragment.location {
-                        dbg!("!!!!");
-                        if !fragment.insertion_subrange.is_empty() {
+                for fragment_location in revision.fragment_locations(
+                    parent_fragment.insertion_id,
+                    parent_fragment.insertion_subrange,
+                ) {
+                    if let Some(fragment) = current_fragment.take() {
+                        // Advance to fragment_location if it is greater than the location of the current fragment,
+                        if *fragment_location > fragment.location {
+                            // Flush the remainder of current fragment.
+                            if !fragment.insertion_subrange.is_empty() {
+                                new_ropes.push_fragment(&fragment, fragment.visible());
+                                new_fragments.push(fragment, &());
+                            }
+                            old_fragments.next(&());
+
+                            // Append all fragments between the previous fragment and the new fragment_location.
+                            let slice = old_fragments.slice(
+                                &(self.document_id, fragment_location),
+                                Bias::Left,
+                                &(),
+                            );
+                            new_ropes
+                                .append(slice.summary().visible_len, slice.summary().hidden_len);
+                            new_fragments.append(slice, &());
+                            current_fragment = old_fragments.item().cloned();
+
+                            // We should always find a fragment when seeking to fragment_location.
+                            debug_assert!(current_fragment.is_some());
+                        }
+                    }
+
+                    // If the edit starts at the end of the current fragment, flush it.
+                    if let Some(fragment) = current_fragment.take() {
+                        if fragment.insertion_id == range.start_insertion_id
+                            && fragment.insertion_subrange.end == range.start_offset_in_insertion
+                        {
                             new_ropes.push_fragment(&fragment, fragment.visible());
                             new_fragments.push(fragment, &());
+                            old_fragments.next(&());
+                            if let Some(next_fragment) = old_fragments.item() {
+                                if next_fragment.document_id == self.document_id {
+                                    current_fragment = Some(next_fragment.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(fragment) = current_fragment.take() {
+                        // If we haven't advanced off the end, then the current fragment intersects
+                        // the current edit's range.
+                        let (prefix, mut intersection, suffix) = fragment.intersect(range.clone());
+
+                        // If we have a prefix, push it.
+                        if let Some(prefix) = prefix {
+                            new_insertions
+                                .push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
+                            new_ropes.push_fragment(&prefix, prefix.visible());
+                            new_fragments.push(prefix, &());
                         }
 
-                        old_fragments.next(&());
-                        let slice = old_fragments.slice(
-                            &(self.document_id, fragment_location),
-                            Bias::Left,
-                            &(),
-                        );
-                        new_ropes.append(slice.summary().visible_len, slice.summary().hidden_len);
-                        new_fragments.append(slice, &());
-                        fragment = old_fragments.item().unwrap().clone();
-                    }
+                        // Then tombstone the intersecting portion.
+                        let was_visible = intersection.visible();
+                        intersection.tombstones.push(Tombstone {
+                            id: self.id,
+                            undo_count: 0,
+                        });
+                        new_ropes.push_fragment(&intersection, was_visible);
+                        new_fragments.push(intersection, &());
 
-                    dbg!(range.clone(), &fragment);
-                    if fragment.insertion_id == range.start_insertion_id
-                        && fragment.insertion_subrange.end == range.start_offset_in_insertion
-                    {
-                        new_ropes.push_fragment(&fragment, fragment.visible());
-                        new_fragments.push(fragment, &());
-                        old_fragments.next(&());
-                        fragment = old_fragments.item().unwrap().clone();
-                    }
-
-                    let (prefix, mut intersection, suffix) = fragment.intersect(range.clone());
-                    if let Some(prefix) = prefix {
-                        new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
-                        new_ropes.push_fragment(&prefix, prefix.visible());
-                        new_fragments.push(prefix, &());
-                    }
-
-                    let was_visible = intersection.visible();
-                    intersection.tombstones.push(Tombstone {
-                        id: self.id,
-                        undo_count: 0,
-                    });
-                    new_ropes.push_fragment(&intersection, was_visible);
-                    new_fragments.push(intersection, &());
-
-                    if let Some(suffix) = suffix {
-                        fragment = suffix;
-                    } else {
-                        old_fragments.next(&());
-                        fragment = old_fragments.item().unwrap().clone();
+                        if let Some(suffix) = suffix {
+                            // If we still have a suffix, the next edit may be inside of it, so set it as
+                            // the current fragment and continue the loop.
+                            current_fragment = Some(suffix);
+                        } else {
+                            // Otherwise, advance to the next fragment if it's still part of the same document.
+                            old_fragments.next(&());
+                            if let Some(next_fragment) = old_fragments.item() {
+                                if next_fragment.document_id == self.document_id {
+                                    current_fragment = Some(next_fragment.clone());
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             // Move past insertions that were causally after the current operation.
-            while fragment.insertion_id.is_causally_after(self.id) {
-                new_ropes.push_fragment(&fragment, fragment.visible());
-                new_fragments.push(fragment, &());
-                old_fragments.next(&());
-                fragment = old_fragments.item().unwrap().clone();
+            while let Some(fragment) = current_fragment.as_ref() {
+                if fragment.insertion_id.is_causally_after(self.id) {
+                    new_ropes.push_fragment(fragment, fragment.visible());
+                    new_fragments.push(fragment.clone(), &());
+                    old_fragments.next(&());
+                    current_fragment = old_fragments.item().cloned();
+                } else {
+                    break;
+                }
             }
 
-            // Finally insert the new text.
+            // Finally, insert a fragment containing the new text.
             if !new_text.is_empty() {
                 let fragment = DocumentFragment {
-                    document_id: self.id,
+                    document_id: self.document_id,
                     location: DenseId::between(
                         &new_fragments.summary().max_location,
-                        &fragment.location,
+                        current_fragment
+                            .as_ref()
+                            .map_or(DenseId::max_ref(), |fragment| &fragment.location),
                     ),
                     insertion_id: self.id,
                     insertion_subrange: insertion_offset..insertion_offset + new_text.len(),
@@ -188,11 +231,13 @@ impl Edit {
             }
         }
 
-        if !fragment.insertion_subrange.is_empty() {
-            new_ropes.push_fragment(&fragment, fragment.visible());
-            new_fragments.push(fragment, &());
+        if let Some(fragment) = current_fragment {
+            if !fragment.insertion_subrange.is_empty() {
+                new_ropes.push_fragment(&fragment, fragment.visible());
+                new_fragments.push(fragment, &());
+            }
+            old_fragments.next(&());
         }
-        old_fragments.next(&());
 
         let suffix = old_fragments.suffix(&());
         new_ropes.append(suffix.summary().visible_len, suffix.summary().hidden_len);
@@ -204,7 +249,6 @@ impl Edit {
         revision.insertion_fragments.edit(new_insertions, &());
         revision.visible_text = visible_text;
         revision.hidden_text = hidden_text;
-        dbg!(revision.document_fragments.items(&()));
 
         Ok(())
     }
