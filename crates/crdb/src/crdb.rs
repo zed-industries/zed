@@ -107,6 +107,11 @@ impl OperationId {
         self.operation_count.0 += 1;
         *self
     }
+
+    pub fn is_causally_after(&self, id: Self) -> bool {
+        self.operation_count > id.operation_count
+            || (self.operation_count == id.operation_count && self.replica_id > id.replica_id)
+    }
 }
 
 impl btree::Summary for OperationId {
@@ -843,6 +848,26 @@ impl<'a> btree::Dimension<'a, DocumentFragmentSummary> for OperationId {
     }
 }
 
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary> for OperationId {
+    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+        Ord::cmp(self, &cursor_location.max_document_id)
+    }
+}
+
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
+    for (OperationId, &'a DenseId)
+{
+    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+        Ord::cmp(
+            self,
+            &(
+                cursor_location.max_document_id,
+                &cursor_location.max_location,
+            ),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Tombstone {
     id: OperationId,
@@ -903,6 +928,20 @@ impl btree::Summary for InsertionFragmentSummary {
 
         self.max_insertion_id = summary.max_insertion_id;
         self.max_offset_in_insertion = summary.max_offset_in_insertion;
+    }
+}
+
+impl<'a> btree::SeekTarget<'a, InsertionFragmentSummary, InsertionFragmentSummary>
+    for (OperationId, usize)
+{
+    fn cmp(&self, cursor_location: &InsertionFragmentSummary, _: &()) -> Ordering {
+        Ord::cmp(
+            self,
+            &(
+                cursor_location.max_insertion_id,
+                cursor_location.max_offset_in_insertion,
+            ),
+        )
     }
 }
 
@@ -1214,6 +1253,24 @@ pub struct AnchorRange {
     end_bias: Bias,
 }
 
+impl AnchorRange {
+    fn start(&self) -> Anchor {
+        Anchor {
+            insertion_id: self.start_insertion_id,
+            offset_in_insertion: self.start_offset_in_insertion,
+            bias: self.start_bias,
+        }
+    }
+
+    fn end(&self) -> Anchor {
+        Anchor {
+            insertion_id: self.end_insertion_id,
+            offset_in_insertion: self.end_offset_in_insertion,
+            bias: self.end_bias,
+        }
+    }
+}
+
 mod bias_serialization {
     use crate::btree::Bias;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -1510,7 +1567,7 @@ impl RepoSnapshot {
                         .operation(*operation_id)
                         .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
                         .parent(),
-                })
+                });
             }
 
             let mut common_ancestor_revision = Revision::default();
@@ -1536,7 +1593,10 @@ impl RepoSnapshot {
                             .map(|operation_id| operation_id.operation_count)
                             .max()
                         {
-                            missing_operations_start = (max_operation_count, ReplicaId::default());
+                            missing_operations_start = (
+                                OperationCount(max_operation_count.0 + 1),
+                                ReplicaId::default(),
+                            );
                         }
                         break;
                     }
@@ -1643,6 +1703,31 @@ pub struct Revision {
     insertion_fragments: btree::Sequence<InsertionFragment>,
     visible_text: Rope,
     hidden_text: Rope,
+}
+
+impl Revision {
+    fn insertion_fragment(&self, anchor: Anchor) -> Option<&InsertionFragment> {
+        let mut cursor = self
+            .insertion_fragments
+            .cursor::<InsertionFragmentSummary>();
+        cursor.seek(
+            &(anchor.insertion_id, anchor.offset_in_insertion),
+            anchor.bias,
+            &(),
+        );
+        if cursor.item().map_or(true, |fragment| {
+            fragment.insertion_id != anchor.insertion_id
+        }) {
+            cursor.prev(&());
+        }
+
+        let fragment = cursor.item()?;
+        if fragment.insertion_id == anchor.insertion_id {
+            Some(fragment)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
