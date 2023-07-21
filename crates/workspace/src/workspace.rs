@@ -141,6 +141,7 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        CloseAllDocks,
     ]
 );
 
@@ -280,6 +281,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
         workspace.toggle_dock(DockPosition::Bottom, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+        workspace.close_all_docks(cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
@@ -1666,6 +1670,20 @@ impl Workspace {
             cx.focus_self();
         }
 
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
+
+    pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+
+        for dock in docks {
+            dock.update(cx, |dock, cx| {
+                dock.set_open(false, cx);
+            });
+        }
+
+        cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
     }
