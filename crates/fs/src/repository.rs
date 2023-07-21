@@ -25,24 +25,13 @@ pub struct Branch {
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
-
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
-
     fn branch_name(&self) -> Option<String>;
-
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
-
+    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus>;
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
-
-    fn branches(&self) -> Result<Vec<Branch>> {
-        Ok(vec![])
-    }
-    fn change_branch(&self, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn create_branch(&self, _: &str) -> Result<()> {
-        Ok(())
-    }
+    fn branches(&self) -> Result<Vec<Branch>>;
+    fn change_branch(&self, _: &str) -> Result<()>;
+    fn create_branch(&self, _: &str) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -89,24 +78,22 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
-        let statuses = self.statuses(None).log_err()?;
-
+    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
+        if let Some(statuses) = self.statuses(None).log_err() {
+            for status in statuses
+                .iter()
+                .filter(|status| !status.status().contains(git2::Status::IGNORED))
+            {
+                let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
+                let Some(status) = read_status(status.status()) else {
+                    continue
+                };
 
-        for status in statuses
-            .iter()
-            .filter(|status| !status.status().contains(git2::Status::IGNORED))
-        {
-            let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
-            let Some(status) = read_status(status.status()) else {
-                continue
-            };
-
-            map.insert(path, status)
+                map.insert(path, status)
+            }
         }
-
-        Some(map)
+        map
     }
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
@@ -213,18 +200,34 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
-        let state = self.state.lock();
+    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
+        let state = self.state.lock();
         for (repo_path, status) in state.worktree_statuses.iter() {
             map.insert(repo_path.to_owned(), status.to_owned());
         }
-        Some(map)
+        map
     }
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
         let state = self.state.lock();
         Ok(state.worktree_statuses.get(path).cloned())
+    }
+
+    fn branches(&self) -> Result<Vec<Branch>> {
+        Ok(vec![])
+    }
+
+    fn change_branch(&self, name: &str) -> Result<()> {
+        let mut state = self.state.lock();
+        state.branch_name = Some(name.to_owned());
+        Ok(())
+    }
+
+    fn create_branch(&self, name: &str) -> Result<()> {
+        let mut state = self.state.lock();
+        state.branch_name = Some(name.to_owned());
+        Ok(())
     }
 }
 
