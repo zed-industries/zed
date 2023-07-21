@@ -74,7 +74,7 @@ const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 lazy_static! {
     // Regex Copied from alacritty's ui_config.rs
-    static ref URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+    static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
     static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-]+").unwrap();
 }
@@ -875,8 +875,10 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &WORD_REGEX) {
                     let maybe_url_or_path =
                         term.bounds_to_string(*word_match.start(), *word_match.end());
-                    let is_url = regex_match_at(term, point, &URL_REGEX).is_some();
-
+                    let is_url = match regex_match_at(term, point, &URL_REGEX) {
+                        Some(url_match) => url_match == word_match,
+                        None => false,
+                    };
                     Some((maybe_url_or_path, is_url, word_match))
                 } else {
                     None
