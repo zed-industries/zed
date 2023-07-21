@@ -26,10 +26,10 @@ impl CreateBranch {
             self.id,
             BranchSnapshot {
                 name: self.name,
-                head: smallvec![self.id],
+                head: self.id.into(),
             },
         );
-        repo.revisions.insert(smallvec![self.id], revision);
+        repo.revisions.insert(self.id.into(), revision);
         Ok(())
     }
 }

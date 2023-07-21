@@ -50,7 +50,32 @@ impl Display for RepoId {
     }
 }
 
-type RevisionId = SmallVec<[OperationId; 2]>;
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
+pub struct RevisionId(SmallVec<[OperationId; 2]>);
+
+impl From<OperationId> for RevisionId {
+    fn from(id: OperationId) -> Self {
+        RevisionId(smallvec![id])
+    }
+}
+
+impl RevisionId {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn observe(&mut self, operation_id: OperationId, parent: &Self) {
+        if parent.0.iter().all(|op_id| self.0.contains(op_id)) {
+            self.0.retain(|op_id| !parent.0.contains(op_id));
+        }
+        self.0.push(operation_id);
+        self.0.sort();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &OperationId> {
+        self.0.iter()
+    }
+}
 
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
@@ -717,8 +742,8 @@ impl Branch {
             let operation_id = repo.last_operation_id.tick();
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
-                .update(&self.id, |branch| branch.head = smallvec![operation_id]);
-            repo.revisions.insert(smallvec![operation_id], revision);
+                .update(&self.id, |branch| branch.head = operation_id.into());
+            repo.revisions.insert(operation_id.into(), revision);
             (operation, result)
         })
     }
@@ -1381,7 +1406,7 @@ impl RepoSnapshot {
                     }
                 }
             } else {
-                for parent in operation.parent() {
+                for parent in operation.parent().iter() {
                     self.deferred_operations.insert_or_replace(
                         DeferredOperation {
                             parent: *parent,
@@ -1455,10 +1480,7 @@ impl RepoSnapshot {
         // Calculate the new head revision by replacing operations in the current head
         // that are parents of the new operation.
         let mut new_head = branch.head.clone();
-        if parent.iter().all(|op_id| branch.head.contains(op_id)) {
-            new_head.retain(|op_id| !parent.contains(op_id));
-        }
-        new_head.push(operation_id);
+        new_head.observe(operation_id, &parent);
 
         f(&parent_revision, &mut new_head_revision)?;
 
@@ -1533,7 +1555,7 @@ impl RepoSnapshot {
                     }
                 }
 
-                for operation_id in search.ancestor {
+                for operation_id in search.ancestor.iter() {
                     operations.insert((operation_id.operation_count, operation_id.replica_id));
                     searches.push_back(Search {
                         start: search.start,
