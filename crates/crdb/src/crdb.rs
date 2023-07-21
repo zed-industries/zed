@@ -7,7 +7,7 @@ mod test;
 
 use anyhow::{anyhow, Result};
 use btree::Bias;
-use collections::{btree_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
@@ -1480,41 +1480,64 @@ impl RepoSnapshot {
         // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
 
         self.revisions.get(revision_id).or_else(|| {
-            struct Search {
+            struct Search<'a> {
                 start: OperationId,
-                current: OperationId,
+                ancestor: &'a RevisionId,
             }
 
-            let mut ancestors = HashMap::<OperationId, HashSet<OperationId>>::default();
-            let mut searches: VecDeque<Search> = revision_id
-                .iter()
-                .map(|operation_id| Search {
+            let mut ancestors = HashMap::<&RevisionId, HashSet<OperationId>>::default();
+            let mut searches = VecDeque::new();
+            let mut operations = BTreeSet::new();
+            for operation_id in revision_id.iter() {
+                operations.insert((operation_id.operation_count, operation_id.replica_id));
+                searches.push_back(Search {
                     start: *operation_id,
-                    current: *operation_id,
+                    ancestor: self.operation(*operation_id)?.parent(),
                 })
-                .collect();
+            }
 
             while let Some(search) = searches.pop_front() {
-                let operation = self.operation(search.current)?;
-                for parent_id in operation.parent() {
-                    let reachable_from = ancestors.entry(search.current).or_default();
-                    reachable_from.insert(search.start);
+                let reachable_from = ancestors.entry(search.ancestor).or_default();
+                reachable_from.insert(search.start);
 
-                    // If the current operation is reachable from every operation in the original
-                    // revision id, it's a common ancestor.
-                    if reachable_from.len() == revision_id.len() {
-                        if let Some(revision) = self.revisions.get(&smallvec![search.current]) {
-                            // We've found a cached revision for a common ancestor.
-                            // TODO: We need to determine what operations are missing from
-                            // this common ancestor revision and apply them.
-                            todo!();
-                            return Some(revision);
+                // If the current revision is reachable from every operation in the original
+                // revision id, it's a common ancestor.
+                if reachable_from.len() == revision_id.len() {
+                    if let Some(revision) = self.revisions.get(search.ancestor) {
+                        // We've found a cached revision for a common ancestor. For it to
+                        // be a common ancestor means that all operations downstream of that
+                        // must have causally happened after it, which means we should be able
+                        // to use the maximum lamport timestamp in the revision and take only
+                        // the operations that we've seen in the backwards search which have
+                        // a higher lamport timestamp.
+                        let max_count = search
+                            .ancestor
+                            .iter()
+                            .map(|operation_id| operation_id.operation_count)
+                            .max()
+                            .map_or(Default::default(), |count| OperationCount(count.0 + 1));
+                        for (operation_count, replica_id) in
+                            operations.range((max_count, ReplicaId::default())..)
+                        {
+                            let missing_operation_id = OperationId {
+                                replica_id: *replica_id,
+                                operation_count: *operation_count,
+                            };
+                            match self.operation(missing_operation_id)?.clone() {
+                                Operation::CreateDocument(_) => todo!(),
+                                Operation::Edit(_) => todo!(),
+                                Operation::CreateBranch(_) => todo!(),
+                            }
                         }
+                        return Some(revision);
                     }
+                }
 
+                for operation_id in search.ancestor {
+                    operations.insert((operation_id.operation_count, operation_id.replica_id));
                     searches.push_back(Search {
                         start: search.start,
-                        current: *parent_id,
+                        ancestor: self.operation(*operation_id)?.parent(),
                     });
                 }
             }
