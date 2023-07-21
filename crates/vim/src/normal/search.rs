@@ -296,5 +296,7 @@ mod test {
         cx.assert_editor_state("«oneˇ» one one one");
         cx.simulate_keystrokes(["enter"]);
         cx.assert_editor_state("one «oneˇ» one one");
+        cx.simulate_keystrokes(["shift-enter"]);
+        cx.assert_editor_state("«oneˇ» one one one");
     }
 }
