@@ -1458,28 +1458,12 @@ impl RepoSnapshot {
         let branch = self
             .branches
             .get(&branch_id)
-            .ok_or_else(|| anyhow!("branch {:?} not found", branch_id))?;
-
-        let parent_revision = self
-            .revisions
-            .get(&parent)
-            .ok_or_else(|| anyhow!("parent revision {:?} not found", parent))?;
-        let mut new_head_revision = self
-            .revisions
-            .get(&branch.head)
-            .ok_or_else(|| {
-                anyhow!(
-                    "branch {:?} ({:?}) head revision {:?} not found",
-                    branch_id,
-                    branch.name,
-                    branch.head,
-                )
-            })?
+            .ok_or_else(|| anyhow!("branch {:?} not found", branch_id))?
             .clone();
+        let parent_revision = self.revision(&parent)?;
+        let mut new_head_revision = self.revision(&branch.head)?;
 
-        // Calculate the new head revision by replacing operations in the current head
-        // that are parents of the new operation.
-        let mut new_head = branch.head.clone();
+        let mut new_head = branch.head;
         new_head.observe(operation_id, &parent);
 
         f(&parent_revision, &mut new_head_revision)?;
@@ -1495,13 +1479,14 @@ impl RepoSnapshot {
         self.operations.get(&operation_id)
     }
 
-    fn revision(&self, revision_id: &RevisionId) -> Option<&Revision> {
+    fn revision(&mut self, revision_id: &RevisionId) -> Result<Revision> {
         // First, check if we have a revision cached for this revision id.
         // If not, we'll need to reconstruct it from a previous revision.
         // We need to find a cached revision that is an ancestor of the given revision id.
         // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
-
-        self.revisions.get(revision_id).or_else(|| {
+        if let Some(revision) = self.revisions.get(revision_id) {
+            Ok(revision.clone())
+        } else {
             struct Search<'a> {
                 start: OperationId,
                 ancestor: &'a RevisionId,
@@ -1514,10 +1499,15 @@ impl RepoSnapshot {
                 operations.insert((operation_id.operation_count, operation_id.replica_id));
                 searches.push_back(Search {
                     start: *operation_id,
-                    ancestor: self.operation(*operation_id)?.parent(),
+                    ancestor: self
+                        .operation(*operation_id)
+                        .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
+                        .parent(),
                 })
             }
 
+            let mut common_ancestor_revision = Revision::default();
+            let mut missing_operations_start = (OperationCount::default(), ReplicaId::default());
             while let Some(search) = searches.pop_front() {
                 let reachable_from = ancestors.entry(search.ancestor).or_default();
                 reachable_from.insert(search.start);
@@ -1532,26 +1522,16 @@ impl RepoSnapshot {
                         // use the maximum lamport timestamp in the common ancestor's revision
                         // and select only those operations we've found in the backwards search
                         // which have a higher lamport timestamp.
-                        let max_count = search
+                        common_ancestor_revision = revision.clone();
+                        if let Some(max_operation_count) = search
                             .ancestor
                             .iter()
                             .map(|operation_id| operation_id.operation_count)
                             .max()
-                            .map_or(Default::default(), |count| OperationCount(count.0 + 1));
-                        for (operation_count, replica_id) in
-                            operations.range((max_count, ReplicaId::default())..)
                         {
-                            let missing_operation_id = OperationId {
-                                replica_id: *replica_id,
-                                operation_count: *operation_count,
-                            };
-                            match self.operation(missing_operation_id)?.clone() {
-                                Operation::CreateDocument(_) => todo!(),
-                                Operation::Edit(_) => todo!(),
-                                Operation::CreateBranch(_) => todo!(),
-                            }
+                            missing_operations_start = (max_operation_count, ReplicaId::default());
                         }
-                        return Some(revision);
+                        break;
                     }
                 }
 
@@ -1559,13 +1539,35 @@ impl RepoSnapshot {
                     operations.insert((operation_id.operation_count, operation_id.replica_id));
                     searches.push_back(Search {
                         start: search.start,
-                        ancestor: self.operation(*operation_id)?.parent(),
+                        ancestor: self
+                            .operation(*operation_id)
+                            .expect("operation must exist")
+                            .parent(),
                     });
                 }
             }
 
-            None
-        })
+            // Apply all the missing operations to the found revision.
+            for (operation_count, replica_id) in operations.range(missing_operations_start..) {
+                let missing_operation_id = OperationId {
+                    replica_id: *replica_id,
+                    operation_count: *operation_count,
+                };
+                match self
+                    .operation(missing_operation_id)
+                    .expect("operation must exist")
+                    .clone()
+                {
+                    Operation::CreateDocument(_) => todo!(),
+                    Operation::Edit(_) => todo!(),
+                    Operation::CreateBranch(_) => todo!(),
+                }
+            }
+
+            self.revisions
+                .insert(revision_id.clone(), common_ancestor_revision.clone());
+            Ok(common_ancestor_revision)
+        }
     }
 }
 
