@@ -7086,6 +7086,20 @@ impl Editor {
             .text()
     }
 
+    pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
+        let mut wrap_guides = smallvec::smallvec![];
+
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        if settings.show_wrap_guides {
+            if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
+                wrap_guides.push((soft_wrap as usize, true));
+            }
+            wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
+        }
+
+        wrap_guides
+    }
+
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self
