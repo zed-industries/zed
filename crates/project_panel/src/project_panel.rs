@@ -4,7 +4,7 @@ mod project_panel_settings;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
-use editor::{Cancel, Editor};
+use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
 use file_associations::FileAssociations;
 
 use futures::stream::StreamExt;
@@ -730,13 +730,20 @@ impl ProjectPanel {
                         is_dir: entry.is_dir(),
                         processing_filename: None,
                     });
-                    let filename = entry
+                    let file_name = entry
                         .path
                         .file_name()
-                        .map_or(String::new(), |s| s.to_string_lossy().to_string());
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default()
+                        .to_string();
+                    let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
+                    let selection_end =
+                        file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     self.filename_editor.update(cx, |editor, cx| {
-                        editor.set_text(filename, cx);
-                        editor.select_all(&Default::default(), cx);
+                        editor.set_text(file_name, cx);
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([0..selection_end])
+                        })
                     });
                     cx.focus(&self.filename_editor);
                     self.update_visible_entries(None, cx);
@@ -1913,7 +1920,7 @@ mod tests {
             .update(cx, |panel, cx| {
                 panel
                     .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("another-filename", cx));
+                    .update(cx, |editor, cx| editor.set_text("another-filename.txt", cx));
                 panel.confirm(&Confirm, cx).unwrap()
             })
             .await
@@ -1927,14 +1934,14 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          another-filename  <== selected",
+                "          another-filename.txt  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
         );
 
-        select_path(&panel, "root1/b/another-filename", cx);
+        select_path(&panel, "root1/b/another-filename.txt", cx);
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -1945,7 +1952,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [EDITOR: 'another-filename']  <== selected",
+                "          [EDITOR: 'another-filename.txt']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1953,9 +1960,15 @@ mod tests {
         );
 
         let confirm = panel.update(cx, |panel, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("a-different-filename", cx));
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "another-filename".len(), "Should not select file extension");
+
+                editor.set_text("a-different-filename.tar.gz", cx)
+            });
             panel.confirm(&Confirm, cx).unwrap()
         });
         assert_eq!(
@@ -1967,7 +1980,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [PROCESSING: 'a-different-filename']  <== selected",
+                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1984,12 +1997,41 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          a-different-filename  <== selected",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
         );
+
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot");
+
+            });
+            panel.cancel(&Cancel, cx)
+        });
 
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
         assert_eq!(
@@ -2002,7 +2044,7 @@ mod tests {
                 "        > [EDITOR: '']  <== selected",
                 "        > 3",
                 "        > 4",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2025,7 +2067,7 @@ mod tests {
                 "        > [PROCESSING: 'new-dir']",
                 "        > 3  <== selected",
                 "        > 4",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2042,7 +2084,7 @@ mod tests {
                 "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2059,7 +2101,7 @@ mod tests {
                 "        > [EDITOR: '3']  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2077,7 +2119,7 @@ mod tests {
                 "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
