@@ -15,25 +15,6 @@ pub struct CreateBranch {
     pub name: Arc<str>,
 }
 
-impl CreateBranch {
-    pub fn apply(self, repo: &mut RepoSnapshot) -> Result<()> {
-        let revision = repo
-            .revisions
-            .get(&self.parent)
-            .ok_or_else(|| anyhow!("parent revision not found"))?
-            .clone();
-        repo.branches.insert(
-            self.id,
-            BranchSnapshot {
-                name: self.name,
-                head: self.id.into(),
-            },
-        );
-        repo.revisions.insert(self.id.into(), revision);
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateDocument {
     pub id: OperationId,
@@ -81,6 +62,6 @@ pub struct Edit {
 
 impl Edit {
     pub fn apply(self, parent_revision: &Revision, head_revision: &mut Revision) -> Result<()> {
-        Err(anyhow!("not implemented"))
+        Ok(())
     }
 }

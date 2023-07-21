@@ -652,11 +652,14 @@ impl Repo {
 
     fn read<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&RepoSnapshot) -> T,
+        F: FnOnce(&mut RepoSnapshot) -> T,
     {
-        let snapshot = self.db.snapshot.lock();
-        let repo = snapshot.repos.get(&self.id).expect("repo must exist");
-        f(repo)
+        self.db
+            .snapshot
+            .lock()
+            .repos
+            .update(&self.id, |repo| f(repo))
+            .expect("repo must exist")
     }
 
     fn update<F, T>(&self, f: F) -> T
@@ -669,7 +672,7 @@ impl Repo {
             .repos
             .update(&self.id, |repo| {
                 let (operation, result) = f(repo);
-                repo.save_operation(&operation);
+                repo.save_operation(operation.clone());
                 if let Some(local_operation_created) = self.db.local_operation_created.as_ref() {
                     local_operation_created(self.id, operation);
                 }
@@ -734,11 +737,7 @@ impl Branch {
                 .expect("branch must exist")
                 .head
                 .clone();
-            let mut revision = repo
-                .revisions
-                .get(&head)
-                .expect("revision must exist")
-                .clone();
+            let mut revision = repo.revision(&head).expect("revision must exist");
             let operation_id = repo.last_operation_id.tick();
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
@@ -753,9 +752,14 @@ impl Branch {
         F: FnOnce(&Revision) -> T,
     {
         self.repo.read(|repo| {
-            let head = &repo.branches.get(&self.id).expect("branch must exist").head;
-            let revision = repo.revisions.get(head).expect("revision must exist");
-            f(revision)
+            let head = repo
+                .branches
+                .get(&self.id)
+                .expect("branch must exist")
+                .head
+                .clone();
+            let revision = repo.revision(&head).expect("revision must exist");
+            f(&revision)
         })
     }
 }
@@ -1325,17 +1329,22 @@ impl RepoSnapshot {
     fn create_empty_branch(&mut self, name: impl Into<Arc<str>>) -> (Operation, OperationId) {
         let name = name.into();
         let branch_id = self.last_operation_id.tick();
-        let operation = operations::CreateBranch {
-            id: branch_id,
-            name,
-            parent: Default::default(),
-        };
-        operation
-            .clone()
-            .apply(self)
-            .expect("can always create empty branch");
+        self.branches.insert(
+            branch_id,
+            BranchSnapshot {
+                name: name.clone(),
+                head: branch_id.into(),
+            },
+        );
 
-        (Operation::CreateBranch(operation), branch_id)
+        (
+            Operation::CreateBranch(operations::CreateBranch {
+                id: branch_id,
+                name,
+                parent: Default::default(),
+            }),
+            branch_id,
+        )
     }
 
     fn operations_since(&self, version: &btree::Map<ReplicaId, OperationCount>) -> Vec<Operation> {
@@ -1381,29 +1390,54 @@ impl RepoSnapshot {
                 .all(|parent| self.operations.contains_key(&parent))
             {
                 let operation_id = operation.id();
-                let result = match operation.clone() {
-                    Operation::CreateBranch(op) => op.apply(self),
-                    Operation::CreateDocument(op) => self.apply_branch_operation(
-                        op.branch_id,
-                        op.parent.clone(),
-                        op.id,
-                        |_, head_revision| Ok(op.apply(head_revision)),
-                    ),
-                    Operation::Edit(op) => self.apply_branch_operation(
-                        op.branch_id,
-                        op.parent.clone(),
-                        op.id,
-                        |parent_revision, head_revision| op.apply(parent_revision, head_revision),
-                    ),
+                let mut new_head;
+                match &operation {
+                    Operation::CreateBranch(op) => {
+                        self.branches.insert(
+                            op.id,
+                            BranchSnapshot {
+                                name: op.name.clone(),
+                                head: op.id.into(),
+                            },
+                        );
+                        new_head = RevisionId::from(op.id);
+                    }
+                    Operation::CreateDocument(operations::CreateDocument {
+                        branch_id,
+                        parent,
+                        ..
+                    })
+                    | Operation::Edit(operations::Edit {
+                        branch_id, parent, ..
+                    }) => {
+                        if let Some(branch) = self.branches.get(branch_id).cloned() {
+                            new_head = branch.head;
+                            new_head.observe(operation_id, &parent);
+                            self.branches
+                                .update(&branch_id, |branch| branch.head = new_head.clone());
+                        } else {
+                            log::error!(
+                                "could not apply operation {:?}: branch {:?} does not exist",
+                                operation,
+                                branch_id
+                            );
+                            continue;
+                        }
+                    }
                 };
-                match result {
-                    Ok(_) => {
-                        self.save_operation(&operation);
-                        self.flush_deferred_operations(operation_id, &mut operations);
-                    }
-                    Err(error) => {
-                        log::error!("error applying operation {:?}: {:?}", operation_id, error)
-                    }
+
+                self.save_operation(operation);
+                self.flush_deferred_operations(operation_id, &mut operations);
+
+                // The following ensures that a revision for the branch head is always
+                // present.
+                if let Err(error) = self.revision(&new_head) {
+                    log::error!(
+                        "could not create revision for head {:?}: {:?}",
+                        new_head,
+                        error
+                    );
+                    continue;
                 }
             } else {
                 for parent in operation.parent().iter() {
@@ -1439,40 +1473,13 @@ impl RepoSnapshot {
         self.deferred_operations = remaining;
     }
 
-    fn save_operation(&mut self, operation: &Operation) {
-        self.operations.insert(operation.id(), operation.clone());
+    fn save_operation(&mut self, operation: Operation) {
         let replica_id = operation.id().replica_id;
         let count = operation.id().operation_count;
         if self.max_operation_ids.get(&replica_id).copied() < Some(count) {
             self.max_operation_ids.insert(replica_id, count);
         }
-    }
-
-    fn apply_branch_operation(
-        &mut self,
-        branch_id: OperationId,
-        parent: RevisionId,
-        operation_id: OperationId,
-        f: impl FnOnce(&Revision, &mut Revision) -> Result<()>,
-    ) -> Result<()> {
-        let branch = self
-            .branches
-            .get(&branch_id)
-            .ok_or_else(|| anyhow!("branch {:?} not found", branch_id))?
-            .clone();
-        let parent_revision = self.revision(&parent)?;
-        let mut new_head_revision = self.revision(&branch.head)?;
-
-        let mut new_head = branch.head;
-        new_head.observe(operation_id, &parent);
-
-        f(&parent_revision, &mut new_head_revision)?;
-
-        self.branches
-            .update(&branch_id, |branch| branch.head = new_head.clone());
-        self.revisions.insert(new_head, new_head_revision);
-
-        Ok(())
+        self.operations.insert(operation.id(), operation);
     }
 
     fn operation(&self, operation_id: OperationId) -> Option<&Operation> {
