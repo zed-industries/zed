@@ -62,6 +62,12 @@ struct PreviousWordStart {
     ignore_punctuation: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq)]
+struct RepeatFind {
+    #[serde(default)]
+    backwards: bool,
+}
+
 actions!(
     vim,
     [
@@ -82,7 +88,10 @@ actions!(
         NextLineStart,
     ]
 );
-impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
+impl_actions!(
+    vim,
+    [NextWordStart, NextWordEnd, PreviousWordStart, RepeatFind]
+);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
@@ -123,13 +132,15 @@ pub fn init(cx: &mut AppContext) {
          &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
-    cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx))
+    cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx));
+    cx.add_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
+        repeat_motion(action.backwards, cx)
+    })
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
-    if let Some(Operator::Namespace(_))
-    | Some(Operator::FindForward { .. })
-    | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()
+    if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
+        Vim::read(cx).active_operator()
     {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
@@ -144,6 +155,35 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         }
     }
     Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+}
+
+fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
+    let find = match Vim::read(cx).state.last_find.clone() {
+        Some(Motion::FindForward { before, text }) => {
+            if backwards {
+                Motion::FindBackward {
+                    after: before,
+                    text,
+                }
+            } else {
+                Motion::FindForward { before, text }
+            }
+        }
+
+        Some(Motion::FindBackward { after, text }) => {
+            if backwards {
+                Motion::FindForward {
+                    before: after,
+                    text,
+                }
+            } else {
+                Motion::FindBackward { after, text }
+            }
+        }
+        _ => return,
+    };
+
+    motion(find, cx)
 }
 
 // Motion handling is specified here:
@@ -742,5 +782,24 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes(["%"]).await;
         cx.assert_shared_state("func boop(ˇ) {\n}").await;
+    }
+
+    #[gpui::test]
+    async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["f", "o"]).await;
+        cx.assert_shared_state("one twˇo three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("one two three fˇour").await;
+        cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
+        cx.assert_shared_state("one two threeˇ four").await;
+        cx.simulate_shared_keystrokes(["3", ";"]).await;
+        cx.assert_shared_state("oneˇ two three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("one two thˇree four").await;
     }
 }

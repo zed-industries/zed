@@ -3,6 +3,8 @@ use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
 
+use crate::motion::Motion;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
     Normal,
@@ -17,15 +19,8 @@ impl Default for Mode {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
-pub enum Namespace {
-    G,
-    Z,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
     Number(usize),
-    Namespace(Namespace),
     Change,
     Delete,
     Yank,
@@ -40,6 +35,8 @@ pub struct VimState {
     pub mode: Mode,
     pub operator_stack: Vec<Operator>,
     pub search: SearchState,
+
+    pub last_find: Option<Motion>,
 }
 
 pub struct SearchState {
@@ -126,8 +123,6 @@ impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
             Operator::Number(_) => "n",
-            Operator::Namespace(Namespace::G) => "g",
-            Operator::Namespace(Namespace::Z) => "z",
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
