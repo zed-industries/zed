@@ -425,6 +425,16 @@ fn possible_open_targets(
     let maybe_path = path_like.path_like;
     let potential_abs_paths = if maybe_path.is_absolute() {
         vec![maybe_path]
+    } else if maybe_path.starts_with("~") {
+        if let Some(abs_path) = maybe_path
+            .strip_prefix("~")
+            .ok()
+            .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
+        {
+            vec![abs_path]
+        } else {
+            Vec::new()
+        }
     } else if let Some(workspace) = workspace.upgrade(cx) {
         workspace.update(cx, |workspace, cx| {
             workspace
