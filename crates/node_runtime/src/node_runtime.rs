@@ -62,6 +62,14 @@ impl NodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = |installation_path: PathBuf| async move {
+            let mut env_path = installation_path.join("bin").into_os_string();
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                if !existing_path.is_empty() {
+                    env_path.push(":");
+                    env_path.push(&existing_path);
+                }
+            }
+
             let node_binary = installation_path.join("bin/node");
             let npm_file = installation_path.join("bin/npm");
 
@@ -74,6 +82,7 @@ impl NodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
+            command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand).args(args);
 
             if let Some(directory) = directory {
