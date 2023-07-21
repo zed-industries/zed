@@ -4,7 +4,6 @@ mod tree_map;
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use std::marker::PhantomData;
-use std::ops::{Bound, RangeBounds};
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
