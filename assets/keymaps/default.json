@@ -22,6 +22,7 @@
       "alt-cmd-right": "pane::ActivateNextItem",
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": "pane::CloseInactiveItems",
+      "ctrl-alt-cmd-w": "workspace::CloseInactiveEditors",
       "cmd-k u": "pane::CloseCleanItems",
       "cmd-k cmd-w": "pane::CloseAllItems",
       "cmd-shift-w": "workspace::CloseWindow",

@@ -122,6 +122,7 @@ actions!(
         NewFile,
         NewWindow,
         CloseWindow,
+        CloseInactiveEditors,
         AddFolderToProject,
         Unfollow,
         Save,
@@ -239,6 +240,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
+    cx.add_async_action(Workspace::close_inactive_editors);
     cx.add_global_action(Workspace::close_global);
     cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
@@ -1631,6 +1633,34 @@ impl Workspace {
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    pub fn close_inactive_editors(
+        &mut self,
+        _: &CloseInactiveEditors,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let current_pane = self.active_pane();
+
+        // let mut tasks: Vec<Task<Result<()>>> = Vec::new();
+        current_pane
+            .update(cx, |pane, cx| {
+                pane.close_inactive_items(&CloseInactiveItems, cx).unwrap()
+            })
+            .detach_and_log_err(cx);
+
+        for pane in self.panes() {
+            if pane.id() == current_pane.id() {
+                continue;
+            }
+
+            pane.update(cx, |pane: &mut Pane, cx| {
+                pane.close_all_items(&CloseAllItems, cx).unwrap()
+            })
+            .detach_and_log_err(cx);
+        }
+
+        Some(Task::ready(Ok(())))
     }
 
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
