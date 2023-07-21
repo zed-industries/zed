@@ -791,6 +791,10 @@ struct DocumentFragment {
 }
 
 impl DocumentFragment {
+    fn is_sentinel(&self) -> bool {
+        self.insertion_id == self.document_id
+    }
+
     fn len(&self) -> usize {
         self.insertion_subrange.end - self.insertion_subrange.start
     }
@@ -1762,7 +1766,7 @@ impl Revision {
         cursor
             .take_while(move |item| {
                 item.insertion_id == insertion_id
-                    && item.offset_in_insertion < insertion_subrange.end
+                    && item.offset_in_insertion <= insertion_subrange.end
             })
             .map(|item| &item.fragment_location)
     }
@@ -1782,6 +1786,10 @@ impl Revision {
         cursor.seek(&(range.document_id, start_fragment_id), Bias::Left, &());
         Ok(std::iter::from_fn(move || {
             let fragment = cursor.item()?;
+            if fragment.document_id != range.document_id {
+                return None;
+            }
+
             let next_visible_ix = cursor.end(&()).visible_len;
             cursor.seek(&(range.document_id, next_visible_ix), Bias::Right, &());
             Some(fragment)

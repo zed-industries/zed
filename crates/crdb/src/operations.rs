@@ -109,21 +109,30 @@ impl Edit {
                 {
                     // Flush the current fragment if we are about to move past it.
                     if *fragment_location > fragment.location {
-                        if fragment.insertion_subrange.len() > 0 || fragment.insertion_id == self.id
-                        {
+                        dbg!("!!!!");
+                        if !fragment.insertion_subrange.is_empty() {
                             new_ropes.push_fragment(&fragment, fragment.visible());
                             new_fragments.push(fragment, &());
                         }
 
                         old_fragments.next(&());
-                        new_fragments.append(
-                            old_fragments.slice(
-                                &(self.document_id, fragment_location),
-                                Bias::Left,
-                                &(),
-                            ),
+                        let slice = old_fragments.slice(
+                            &(self.document_id, fragment_location),
+                            Bias::Left,
                             &(),
                         );
+                        new_ropes.append(slice.summary().visible_len, slice.summary().hidden_len);
+                        new_fragments.append(slice, &());
+                        fragment = old_fragments.item().unwrap().clone();
+                    }
+
+                    dbg!(range.clone(), &fragment);
+                    if fragment.insertion_id == range.start_insertion_id
+                        && fragment.insertion_subrange.end == range.start_offset_in_insertion
+                    {
+                        new_ropes.push_fragment(&fragment, fragment.visible());
+                        new_fragments.push(fragment, &());
+                        old_fragments.next(&());
                         fragment = old_fragments.item().unwrap().clone();
                     }
 
@@ -179,7 +188,7 @@ impl Edit {
             }
         }
 
-        if fragment.insertion_subrange.len() > 0 || fragment.insertion_id == self.id {
+        if !fragment.insertion_subrange.is_empty() {
             new_ropes.push_fragment(&fragment, fragment.visible());
             new_fragments.push(fragment, &());
         }
@@ -195,6 +204,7 @@ impl Edit {
         revision.insertion_fragments.edit(new_insertions, &());
         revision.visible_text = visible_text;
         revision.hidden_text = hidden_text;
+        dbg!(revision.document_fragments.items(&()));
 
         Ok(())
     }
