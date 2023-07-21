@@ -7,7 +7,7 @@ mod test;
 
 use anyhow::{anyhow, Result};
 use btree::Bias;
-use collections::{btree_map, BTreeMap, Bound, HashMap, VecDeque};
+use collections::{btree_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
@@ -52,13 +52,19 @@ impl Display for RepoId {
 
 type RevisionId = SmallVec<[OperationId; 2]>;
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
+)]
 pub struct ReplicaId(u32);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
+)]
 pub struct OperationCount(usize);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
+)]
 pub struct OperationId {
     pub replica_id: ReplicaId,
     pub operation_count: OperationCount,
@@ -1461,6 +1467,60 @@ impl RepoSnapshot {
         self.revisions.insert(new_head, new_head_revision);
 
         Ok(())
+    }
+
+    fn operation(&self, operation_id: OperationId) -> Option<&Operation> {
+        self.operations.get(&operation_id)
+    }
+
+    fn revision(&self, revision_id: &RevisionId) -> Option<&Revision> {
+        // First, check if we have a revision cached for this revision id.
+        // If not, we'll need to reconstruct it from a previous revision.
+        // We need to find a cached revision that is an ancestor of the given revision id.
+        // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
+
+        self.revisions.get(revision_id).or_else(|| {
+            struct Search {
+                start: OperationId,
+                current: OperationId,
+            }
+
+            let mut ancestors = HashMap::<OperationId, HashSet<OperationId>>::default();
+            let mut searches: VecDeque<Search> = revision_id
+                .iter()
+                .map(|operation_id| Search {
+                    start: *operation_id,
+                    current: *operation_id,
+                })
+                .collect();
+
+            while let Some(search) = searches.pop_front() {
+                let operation = self.operation(search.current)?;
+                for parent_id in operation.parent() {
+                    let reachable_from = ancestors.entry(search.current).or_default();
+                    reachable_from.insert(search.start);
+
+                    // If the current operation is reachable from every operation in the original
+                    // revision id, it's a common ancestor.
+                    if reachable_from.len() == revision_id.len() {
+                        if let Some(revision) = self.revisions.get(&smallvec![search.current]) {
+                            // We've found a cached revision for a common ancestor.
+                            // TODO: We need to determine what operations are missing from
+                            // this common ancestor revision and apply them.
+                            todo!();
+                            return Some(revision);
+                        }
+                    }
+
+                    searches.push_back(Search {
+                        start: search.start,
+                        current: *parent_id,
+                    });
+                }
+            }
+
+            None
+        })
     }
 }
 
