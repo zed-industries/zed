@@ -1,12 +1,15 @@
 use crate::{
-    btree, dense_id::DenseId, AnchorRange, BranchSnapshot, DocumentFragment,
+    btree, dense_id::DenseId, Anchor, AnchorRange, BranchSnapshot, DocumentFragment,
     DocumentFragmentSummary, DocumentMetadata, InsertionFragment, OperationId, RepoSnapshot,
-    Revision, RevisionId, RopeBuilder,
+    Revision, RevisionId, RopeBuilder, Tombstone,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
-use std::{cmp::Reverse, sync::Arc};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use sum_tree::Bias;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,6 +45,14 @@ impl CreateDocument {
         drop(cursor);
 
         revision.document_fragments = new_document_fragments;
+        revision.insertion_fragments.insert_or_replace(
+            InsertionFragment {
+                insertion_id: self.id,
+                offset_in_insertion: 0,
+                fragment_location: DenseId::min(),
+            },
+            &(),
+        );
         revision.document_metadata.insert(
             self.id,
             DocumentMetadata {
@@ -78,86 +89,80 @@ impl Edit {
         );
 
         let mut insertion_offset = 0;
-        let mut fragment_insertion_start = 0;
+        let mut fragment = old_fragments.item().unwrap().clone();
         for (range, new_text) in self.edits {
-            let start_insertion = revision
-                .insertion_fragment(range.start())
-                .ok_or_else(|| anyhow!("cannot find insertion start"))?;
-
-            let fragment = old_fragments.item().unwrap();
-            if start_insertion.insertion_id != fragment.insertion_id
-                || start_insertion.offset_in_insertion > fragment.insertion_subrange.end
-            {
-                if fragment_insertion_start > fragment.insertion_subrange.start {
-                    if fragment.insertion_subrange.end > fragment_insertion_start {
-                        let mut suffix = fragment.clone();
-                        suffix.insertion_subrange.start = fragment_insertion_start;
-                        new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&suffix)));
-                        new_ropes.push_fragment(&suffix, suffix.visible());
-                        new_fragments.push(suffix, &());
-                    }
-
-                    old_fragments.next(&());
+            // Locate all the fragments in the parent revision intersecting this edit.
+            for parent_fragment in parent_revision.visible_fragments_for_range(range.clone())? {
+                let insertion_id = parent_fragment.insertion_id;
+                let mut insertion_subrange = parent_fragment.insertion_subrange.clone();
+                if parent_fragment.insertion_id == range.start_insertion_id {
+                    insertion_subrange.start = range.start_offset_in_insertion;
+                }
+                if parent_fragment.insertion_id == range.end_insertion_id {
+                    insertion_subrange.end =
+                        cmp::min(insertion_subrange.end, range.end_offset_in_insertion);
                 }
 
-                new_fragments.append(
-                    old_fragments.slice(
-                        &(self.document_id, &start_insertion.fragment_location),
-                        Bias::Left,
-                        &(),
-                    ),
-                    &(),
-                );
-                fragment_insertion_start = old_fragments.item().unwrap().insertion_subrange.start;
+                // Find the locations of the parent fragment in the new revision.
+                for fragment_location in
+                    revision.fragment_locations(insertion_id, insertion_subrange)
+                {
+                    // Flush the current fragment if we are about to move past it.
+                    if *fragment_location > fragment.location {
+                        if fragment.insertion_subrange.len() > 0 || fragment.insertion_id == self.id
+                        {
+                            new_ropes.push_fragment(&fragment, fragment.visible());
+                            new_fragments.push(fragment, &());
+                        }
+
+                        old_fragments.next(&());
+                        new_fragments.append(
+                            old_fragments.slice(
+                                &(self.document_id, fragment_location),
+                                Bias::Left,
+                                &(),
+                            ),
+                            &(),
+                        );
+                        fragment = old_fragments.item().unwrap().clone();
+                    }
+
+                    let (prefix, mut intersection, suffix) = fragment.intersect(range.clone());
+                    if let Some(prefix) = prefix {
+                        new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
+                        new_ropes.push_fragment(&prefix, prefix.visible());
+                        new_fragments.push(prefix, &());
+                    }
+
+                    let was_visible = intersection.visible();
+                    intersection.tombstones.push(Tombstone {
+                        id: self.id,
+                        undo_count: 0,
+                    });
+                    new_ropes.push_fragment(&intersection, was_visible);
+                    new_fragments.push(intersection, &());
+
+                    if let Some(suffix) = suffix {
+                        fragment = suffix;
+                    } else {
+                        old_fragments.next(&());
+                        fragment = old_fragments.item().unwrap().clone();
+                    }
+                }
             }
 
-            let fragment = old_fragments.item().unwrap();
-            if fragment.insertion_subrange.end == range.start_offset_in_insertion
-                && (fragment.insertion_subrange.end > fragment_insertion_start
-                    || fragment.insertion_id == self.document_id)
-            {
-                let mut fragment = fragment.clone();
-                fragment.insertion_subrange.start = fragment_insertion_start;
-                new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
+            // Move past insertions that were causally after the current operation.
+            while fragment.insertion_id.is_causally_after(self.id) {
                 new_ropes.push_fragment(&fragment, fragment.visible());
                 new_fragments.push(fragment, &());
                 old_fragments.next(&());
-                fragment_insertion_start = old_fragments.item().unwrap().insertion_subrange.start;
+                fragment = old_fragments.item().unwrap().clone();
             }
 
-            // Skip over insertions that are concurrent to this edit, but have a higher lamport
-            // timestamp.
-            while let Some(fragment) = old_fragments.item() {
-                if fragment.insertion_id.is_causally_after(self.id) {
-                    new_ropes.push_fragment(fragment, fragment.visible());
-                    new_fragments.push(fragment.clone(), &());
-                    old_fragments.next(&());
-                    fragment_insertion_start =
-                        old_fragments.item().unwrap().insertion_subrange.start;
-                } else {
-                    break;
-                }
-            }
-
-            let fragment = old_fragments.item().unwrap();
-            if fragment.insertion_id == range.start_insertion_id
-                && range.start_offset_in_insertion > fragment_insertion_start
-            {
-                let mut prefix = fragment.clone();
-                let prefix_len = range.start_offset_in_insertion - fragment_insertion_start;
-                prefix.insertion_subrange.start = fragment_insertion_start;
-                prefix.insertion_subrange.end = prefix.insertion_subrange.start + prefix_len;
-                prefix.location =
-                    DenseId::between(&new_fragments.summary().max_location, &prefix.location);
-                new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
-                new_ropes.push_fragment(&prefix, prefix.visible());
-                new_fragments.push(prefix, &());
-                fragment_insertion_start = range.start_offset_in_insertion;
-            }
-
+            // Finally insert the new text.
             if !new_text.is_empty() {
                 let fragment = DocumentFragment {
-                    document_id: self.document_id,
+                    document_id: self.id,
                     location: DenseId::between(
                         &new_fragments.summary().max_location,
                         &fragment.location,
@@ -172,37 +177,13 @@ impl Edit {
                 new_fragments.push(fragment, &());
                 insertion_offset += new_text.len();
             }
-
-            while let Some(fragment) = old_fragments.item() {
-                for parent_fragment in parent_revision.fragments_for_insertion_range(
-                    fragment.insertion_id,
-                    fragment.insertion_subrange,
-                ) {}
-
-                if fragment.insertion_id != range.end_insertion_id {
-                    todo!()
-                } else {
-                    // calculate intersection
-                    break;
-                }
-            }
         }
 
-        // If the current fragment has been partially consumed, then consume the rest of it
-        // and advance to the next fragment before slicing.
-        let fragment = old_fragments.item().unwrap();
-        if fragment_insertion_start > fragment.insertion_subrange.start {
-            if fragment.insertion_subrange.end > fragment_insertion_start {
-                let mut suffix = old_fragments.item().unwrap().clone();
-                let suffix_len = fragment.insertion_subrange.end - fragment_insertion_start;
-                suffix.insertion_subrange.start = fragment_insertion_start;
-                suffix.insertion_subrange.end = suffix.insertion_subrange.start + suffix_len;
-                new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&suffix)));
-                new_ropes.push_fragment(&suffix, suffix.visible());
-                new_fragments.push(suffix, &());
-            }
-            old_fragments.next(&());
+        if fragment.insertion_subrange.len() > 0 || fragment.insertion_id == self.id {
+            new_ropes.push_fragment(&fragment, fragment.visible());
+            new_fragments.push(fragment, &());
         }
+        old_fragments.next(&());
 
         let suffix = old_fragments.suffix(&());
         new_ropes.append(suffix.summary().visible_len, suffix.summary().hidden_len);

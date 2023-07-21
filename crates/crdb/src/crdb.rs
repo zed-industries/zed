@@ -802,6 +802,41 @@ impl DocumentFragment {
                 .iter()
                 .all(|tombstone| tombstone.undo_count % 2 == 1)
     }
+
+    fn intersect(
+        &self,
+        range: AnchorRange,
+    ) -> (
+        Option<DocumentFragment>,
+        DocumentFragment,
+        Option<DocumentFragment>,
+    ) {
+        let mut intersection = self.clone();
+
+        let prefix = if range.start_insertion_id == self.insertion_id
+            && range.start_offset_in_insertion > self.insertion_subrange.start
+        {
+            let mut prefix = intersection.clone();
+            prefix.insertion_subrange.end = range.start_offset_in_insertion;
+            intersection.insertion_subrange.start = range.start_offset_in_insertion;
+            Some(prefix)
+        } else {
+            None
+        };
+
+        let suffix = if range.end_insertion_id == self.insertion_id
+            && range.end_offset_in_insertion < self.insertion_subrange.end
+        {
+            let mut suffix = intersection.clone();
+            suffix.insertion_subrange.start = range.end_offset_in_insertion;
+            intersection.insertion_subrange.end = range.end_offset_in_insertion;
+            Some(suffix)
+        } else {
+            None
+        };
+
+        (prefix, intersection, suffix)
+    }
 }
 
 impl btree::Item for DocumentFragment {
@@ -864,6 +899,17 @@ impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
                 cursor_location.max_document_id,
                 &cursor_location.max_location,
             ),
+        )
+    }
+}
+
+impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
+    for (OperationId, usize)
+{
+    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+        Ord::cmp(
+            self,
+            &(cursor_location.max_document_id, cursor_location.visible_len),
         )
     }
 }
@@ -1133,7 +1179,6 @@ impl Document {
                 edit_op.edits.push((
                     AnchorRange {
                         document_id: self.id,
-                        revision_id: parent.clone(),
                         start_insertion_id: edit_start.insertion_id,
                         start_offset_in_insertion: edit_start.offset_in_insertion,
                         start_bias: edit_start.bias,
@@ -1242,7 +1287,6 @@ struct Anchor {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchorRange {
     document_id: OperationId,
-    revision_id: RevisionId,
     start_insertion_id: OperationId,
     start_offset_in_insertion: usize,
     #[serde(with = "bias_serialization")]
@@ -1706,27 +1750,42 @@ pub struct Revision {
 }
 
 impl Revision {
-    fn insertion_fragment(&self, anchor: Anchor) -> Option<&InsertionFragment> {
+    fn fragment_locations(
+        &self,
+        insertion_id: OperationId,
+        insertion_subrange: Range<usize>,
+    ) -> impl Iterator<Item = &DenseId> {
         let mut cursor = self
             .insertion_fragments
             .cursor::<InsertionFragmentSummary>();
-        cursor.seek(
-            &(anchor.insertion_id, anchor.offset_in_insertion),
-            anchor.bias,
-            &(),
-        );
-        if cursor.item().map_or(true, |fragment| {
-            fragment.insertion_id != anchor.insertion_id
-        }) {
-            cursor.prev(&());
-        }
+        cursor.seek(&(insertion_id, insertion_subrange.start), Bias::Left, &());
+        cursor
+            .take_while(move |item| {
+                item.insertion_id == insertion_id
+                    && item.offset_in_insertion < insertion_subrange.end
+            })
+            .map(|item| &item.fragment_location)
+    }
 
-        let fragment = cursor.item()?;
-        if fragment.insertion_id == anchor.insertion_id {
+    fn visible_fragments_for_range(
+        &self,
+        range: AnchorRange,
+    ) -> Result<impl Iterator<Item = &DocumentFragment>> {
+        let start_fragment_id = self
+            .fragment_locations(
+                range.start_insertion_id,
+                range.start_offset_in_insertion..usize::MAX,
+            )
+            .next()
+            .ok_or_else(|| anyhow!("start fragment not found"))?;
+        let mut cursor = self.document_fragments.cursor::<DocumentFragmentSummary>();
+        cursor.seek(&(range.document_id, start_fragment_id), Bias::Left, &());
+        Ok(std::iter::from_fn(move || {
+            let fragment = cursor.item()?;
+            let next_visible_ix = cursor.end(&()).visible_len;
+            cursor.seek(&(range.document_id, next_visible_ix), Bias::Right, &());
             Some(fragment)
-        } else {
-            None
-        }
+        }))
     }
 }
 
