@@ -91,6 +91,7 @@ impl VimState {
 
     pub fn keymap_context_layer(&self) -> KeymapContext {
         let mut context = KeymapContext::default();
+        context.add_identifier("VimEnabled");
         context.add_key(
             "vim_mode",
             match self.mode {

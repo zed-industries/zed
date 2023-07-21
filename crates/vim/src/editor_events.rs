@@ -13,7 +13,7 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
         cx.update_window(previously_active_editor.window_id(), |cx| {
             Vim::update(cx, |vim, cx| {
                 vim.update_active_editor(cx, |previously_active_editor, cx| {
-                    Vim::unhook_vim_settings(previously_active_editor, cx);
+                    vim.unhook_vim_settings(previously_active_editor, cx)
                 });
             });
         });
@@ -35,7 +35,7 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
                 }
             }
 
-            editor.update(cx, |editor, cx| Vim::unhook_vim_settings(editor, cx))
+            editor.update(cx, |editor, cx| vim.unhook_vim_settings(editor, cx))
         });
     });
 }

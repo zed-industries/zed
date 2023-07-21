@@ -282,4 +282,19 @@ mod test {
         cx.simulate_keystrokes(["enter"]);
         cx.assert_state("aa\nˇbb\ndd\ncc\nbb\n", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_non_vim_search(
+        cx: &mut gpui::TestAppContext,
+        deterministic: Arc<gpui::executor::Deterministic>,
+    ) {
+        let mut cx = VimTestContext::new(cx, false).await;
+        cx.set_state("ˇone one one one", Mode::Normal);
+        cx.simulate_keystrokes(["cmd-f"]);
+        deterministic.run_until_parked();
+
+        cx.assert_editor_state("«oneˇ» one one one");
+        cx.simulate_keystrokes(["enter"]);
+        cx.assert_editor_state("one «oneˇ» one one");
+    }
 }

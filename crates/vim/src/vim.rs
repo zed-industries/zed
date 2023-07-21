@@ -14,8 +14,8 @@ use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    actions, impl_actions, keymap_matcher::KeymapContext, AppContext, Subscription, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -304,17 +304,28 @@ impl Vim {
                 // Note: set_collapse_matches is not in unhook_vim_settings, as that method is called on blur,
                 // but we need collapse_matches to persist when the search bar is focused.
                 editor.set_collapse_matches(false);
-                Self::unhook_vim_settings(editor, cx);
+                self.unhook_vim_settings(editor, cx);
             }
         });
     }
 
-    fn unhook_vim_settings(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
-        editor.remove_keymap_context_layer::<Self>(cx);
+
+        // we set the VimEnabled context on all editors so that we
+        // can distinguish between vim mode and non-vim mode in the BufferSearchBar.
+        // This is a bit of a hack, but currently the search crate does not depend on vim,
+        // and it seems nice to keep it that way.
+        if self.enabled {
+            let mut context = KeymapContext::default();
+            context.add_identifier("VimEnabled");
+            editor.set_keymap_context_layer::<Self>(context, cx)
+        } else {
+            editor.remove_keymap_context_layer::<Self>(cx);
+        }
     }
 }
 
