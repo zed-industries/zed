@@ -1527,11 +1527,11 @@ impl RepoSnapshot {
                 if reachable_from.len() == revision_id.len() {
                     if let Some(revision) = self.revisions.get(search.ancestor) {
                         // We've found a cached revision for a common ancestor. For it to
-                        // be a common ancestor means that all operations downstream of that
-                        // must have causally happened after it, which means we should be able
-                        // to use the maximum lamport timestamp in the revision and take only
-                        // the operations that we've seen in the backwards search which have
-                        // a higher lamport timestamp.
+                        // be a common ancestor means that all its downstream operations must
+                        // have causally happened after it. Therefore, we should be able to
+                        // use the maximum lamport timestamp in the common ancestor's revision
+                        // and select only those operations we've found in the backwards search
+                        // which have a higher lamport timestamp.
                         let max_count = search
                             .ancestor
                             .iter()
