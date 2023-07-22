@@ -2162,10 +2162,12 @@ impl BackgroundScannerState {
         let path = entry.path.clone();
         let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
-        let containing_repository = self
-            .snapshot
-            .local_repo_for_path(&path)
-            .map(|(path, repo)| (path, repo.repo_ptr.lock().statuses()));
+        let mut containing_repository = None;
+        if !ignore_stack.is_all() {
+            if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
+                containing_repository = Some((workdir_path, repo.repo_ptr.lock().statuses()));
+            }
+        }
         if !ancestor_inodes.contains(&entry.inode) {
             ancestor_inodes.insert(entry.inode);
             scan_job_tx
@@ -3517,10 +3519,12 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-
-                if let Some((repository_dir, statuses)) = &job.containing_repository {
-                    if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
-                        child_entry.git_status = statuses.get(&RepoPath(repo_path.into())).copied();
+                if !child_entry.is_ignored {
+                    if let Some((repository_dir, statuses)) = &job.containing_repository {
+                        if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
+                            let repo_path = RepoPath(repo_path.into());
+                            child_entry.git_status = statuses.get(&repo_path).copied();
+                        }
                     }
                 }
             }

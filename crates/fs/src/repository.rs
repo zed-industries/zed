@@ -109,6 +109,7 @@ impl GitRepository for LibGitRepository {
             }
         }
     }
+
     fn branches(&self) -> Result<Vec<Branch>> {
         let local_branches = self.branches(Some(BranchType::Local))?;
         let valid_branches = local_branches
