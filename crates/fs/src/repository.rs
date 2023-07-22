@@ -10,6 +10,7 @@ use std::{
     os::unix::prelude::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use sum_tree::{MapSeekTarget, TreeMap};
 use util::ResultExt;
@@ -27,7 +28,8 @@ pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
     fn branch_name(&self) -> Option<String>;
-    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
+    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -78,10 +80,11 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
         let mut options = git2::StatusOptions::new();
         options.pathspec(path_prefix);
+        options.disable_pathspec_match(true);
         if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
             for status in statuses
                 .iter()
@@ -96,6 +99,27 @@ impl GitRepository for LibGitRepository {
             }
         }
         map
+    }
+
+    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
+        let index = self.index().log_err()?;
+        if let Some(entry) = index.get_path(&path, 0) {
+            let mtime = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err()?;
+            if entry.mtime.seconds() == mtime.as_secs() as i32
+                && entry.mtime.nanoseconds() == mtime.subsec_nanos()
+            {
+                None
+            } else {
+                let mut options = git2::StatusOptions::new();
+                options.pathspec(&path.0);
+                options.disable_pathspec_match(true);
+                let statuses = self.statuses(Some(&mut options)).log_err()?;
+                let status = statuses.get(0).and_then(|s| read_status(s.status()));
+                status
+            }
+        } else {
+            Some(GitFileStatus::Added)
+        }
     }
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
@@ -203,7 +227,7 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
         let state = self.state.lock();
         for (repo_path, status) in state.worktree_statuses.iter() {
@@ -212,6 +236,10 @@ impl GitRepository for FakeGitRepository {
             }
         }
         map
+    }
+
+    fn unstaged_status(&self, _path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
+        None
     }
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
