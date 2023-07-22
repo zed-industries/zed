@@ -27,7 +27,7 @@ pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
     fn branch_name(&self) -> Option<String>;
-    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus>;
+    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -78,9 +78,11 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus> {
+    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
-        if let Some(statuses) = self.statuses(None).log_err() {
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(path_prefix);
+        if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
             for status in statuses
                 .iter()
                 .filter(|status| !status.status().contains(git2::Status::IGNORED))
@@ -201,11 +203,13 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> TreeMap<RepoPath, GitFileStatus> {
+    fn statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
         let state = self.state.lock();
         for (repo_path, status) in state.worktree_statuses.iter() {
-            map.insert(repo_path.to_owned(), status.to_owned());
+            if repo_path.0.starts_with(path_prefix) {
+                map.insert(repo_path.to_owned(), status.to_owned());
+            }
         }
         map
     }

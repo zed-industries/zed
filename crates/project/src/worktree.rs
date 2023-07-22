@@ -2165,7 +2165,10 @@ impl BackgroundScannerState {
         let mut containing_repository = None;
         if !ignore_stack.is_all() {
             if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
-                containing_repository = Some((workdir_path, repo.repo_ptr.lock().statuses()));
+                if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
+                    containing_repository =
+                        Some((workdir_path, repo.repo_ptr.lock().statuses(repo_path)));
+                }
             }
         }
         if !ancestor_inodes.contains(&entry.inode) {
@@ -2357,7 +2360,7 @@ impl BackgroundScannerState {
                         .repository_entries
                         .update(&work_dir, |entry| entry.branch = branch.map(Into::into));
 
-                    let statuses = repository.statuses();
+                    let statuses = repository.statuses(Path::new(""));
                     self.update_git_statuses(&work_dir, &statuses);
                 }
             }
@@ -2415,7 +2418,7 @@ impl BackgroundScannerState {
             },
         );
 
-        let statuses = repo_lock.statuses();
+        let statuses = repo_lock.statuses(Path::new(""));
         self.update_git_statuses(&work_directory, &statuses);
         drop(repo_lock);
 
