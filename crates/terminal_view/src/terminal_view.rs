@@ -187,37 +187,56 @@ impl TerminalView {
                     }
                     let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
                     if let Some(path) = potential_abs_paths.into_iter().next() {
-                        let visible = path.path_like.is_dir();
+                        let is_dir = path.path_like.is_dir();
                         let task_workspace = workspace.clone();
                         cx.spawn(|_, mut cx| async move {
-                            let opened_item = task_workspace
+                            let opened_items = task_workspace
                                 .update(&mut cx, |workspace, cx| {
-                                    workspace.open_abs_path(path.path_like, visible, cx)
+                                    workspace.open_paths(vec![path.path_like], is_dir, cx)
                                 })
                                 .context("workspace update")?
-                                .await
-                                .context("workspace update")?;
-                            if let Some(row) = path.row {
-                                let col = path.column.unwrap_or(0);
-                                if let Some(active_editor) = opened_item.downcast::<Editor>() {
-                                    active_editor
-                                        .downgrade()
-                                        .update(&mut cx, |editor, cx| {
-                                            let snapshot = editor.snapshot(cx).display_snapshot;
-                                            let point = snapshot.buffer_snapshot.clip_point(
-                                                language::Point::new(
-                                                    row.saturating_sub(1),
-                                                    col.saturating_sub(1),
-                                                ),
-                                                Bias::Left,
-                                            );
-                                            editor.change_selections(
-                                                Some(Autoscroll::center()),
-                                                cx,
-                                                |s| s.select_ranges([point..point]),
-                                            );
-                                        })
-                                        .log_err();
+                                .await;
+                            anyhow::ensure!(
+                                opened_items.len() == 1,
+                                "For a single path open, expected single opened item"
+                            );
+                            let opened_item = opened_items
+                                .into_iter()
+                                .next()
+                                .unwrap()
+                                .transpose()
+                                .context("path open")?;
+                            if is_dir {
+                                task_workspace.update(&mut cx, |workspace, cx| {
+                                    workspace.project().update(cx, |_, cx| {
+                                        cx.emit(project::Event::ActivateProjectPanel);
+                                    })
+                                })?;
+                            } else {
+                                if let Some(row) = path.row {
+                                    let col = path.column.unwrap_or(0);
+                                    if let Some(active_editor) =
+                                        opened_item.and_then(|item| item.downcast::<Editor>())
+                                    {
+                                        active_editor
+                                            .downgrade()
+                                            .update(&mut cx, |editor, cx| {
+                                                let snapshot = editor.snapshot(cx).display_snapshot;
+                                                let point = snapshot.buffer_snapshot.clip_point(
+                                                    language::Point::new(
+                                                        row.saturating_sub(1),
+                                                        col.saturating_sub(1),
+                                                    ),
+                                                    Bias::Left,
+                                                );
+                                                editor.change_selections(
+                                                    Some(Autoscroll::center()),
+                                                    cx,
+                                                    |s| s.select_ranges([point..point]),
+                                                );
+                                            })
+                                            .log_err();
+                                    }
                                 }
                             }
                             anyhow::Ok(())
@@ -425,6 +444,16 @@ fn possible_open_targets(
     let maybe_path = path_like.path_like;
     let potential_abs_paths = if maybe_path.is_absolute() {
         vec![maybe_path]
+    } else if maybe_path.starts_with("~") {
+        if let Some(abs_path) = maybe_path
+            .strip_prefix("~")
+            .ok()
+            .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
+        {
+            vec![abs_path]
+        } else {
+            Vec::new()
+        }
     } else if let Some(workspace) = workspace.upgrade(cx) {
         workspace.update(cx, |workspace, cx| {
             workspace

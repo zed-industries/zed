@@ -338,9 +338,19 @@ pub fn initialize_workspace(
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
         let (project_panel, terminal_panel, assistant_panel) =
             futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
+
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
-            workspace.add_panel(project_panel, cx);
+            workspace.add_panel_with_extra_event_handler(
+                project_panel,
+                cx,
+                |workspace, _, event, cx| match event {
+                    project_panel::Event::ActivatePanel => {
+                        workspace.focus_panel::<ProjectPanel>(cx);
+                    }
+                    _ => {}
+                },
+            );
             workspace.add_panel(terminal_panel, cx);
             workspace.add_panel(assistant_panel, cx);
 
@@ -1085,8 +1095,46 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.window_ids().len(), 1);
+        let workspace = cx
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
+            .unwrap()
+            .downcast::<Workspace>()
+            .unwrap();
+
+        #[track_caller]
+        fn assert_project_panel_selection(
+            workspace: &Workspace,
+            expected_worktree_path: &Path,
+            expected_entry_path: &Path,
+            cx: &AppContext,
+        ) {
+            let project_panel = [
+                workspace.left_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.right_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
+            ]
+            .into_iter()
+            .find_map(std::convert::identity)
+            .expect("found no project panels")
+            .read(cx);
+            let (selected_worktree, selected_entry) = project_panel
+                .selected_entry(cx)
+                .expect("project panel should have a selected entry");
+            assert_eq!(
+                selected_worktree.abs_path().as_ref(),
+                expected_worktree_path,
+                "Unexpected project panel selected worktree path"
+            );
+            assert_eq!(
+                selected_entry.path.as_ref(),
+                expected_entry_path,
+                "Unexpected project panel selected entry path"
+            );
+        }
 
         // Open a file within an existing worktree.
         workspace
@@ -1095,9 +1143,10 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1118,8 +1167,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1132,7 +1182,6 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1153,8 +1202,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1167,7 +1217,6 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1188,8 +1237,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1202,7 +1252,6 @@ mod tests {
             );
 
             let visible_worktree_roots = workspace
-                .read(cx)
                 .visible_worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1216,7 +1265,6 @@ mod tests {
 
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()

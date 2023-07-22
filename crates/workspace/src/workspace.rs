@@ -885,6 +885,18 @@ impl Workspace {
     where
         T::Event: std::fmt::Debug,
     {
+        self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
+    }
+
+    pub fn add_panel_with_extra_event_handler<T: Panel, F>(
+        &mut self,
+        panel: ViewHandle<T>,
+        cx: &mut ViewContext<Self>,
+        handler: F,
+    ) where
+        T::Event: std::fmt::Debug,
+        F: Fn(&mut Self, &ViewHandle<T>, &T::Event, &mut ViewContext<Self>) + 'static,
+    {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -951,6 +963,8 @@ impl Workspace {
                     }
                     this.update_active_view_for_followers(cx);
                     cx.notify();
+                } else {
+                    handler(this, &panel, event, cx)
                 }
             }
         }));
@@ -1403,45 +1417,65 @@ impl Workspace {
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
         cx.spawn(|this, mut cx| async move {
-            let mut project_paths = Vec::new();
-            for path in &abs_paths {
-                if let Some(project_path) = this
+            let mut tasks = Vec::with_capacity(abs_paths.len());
+            for abs_path in &abs_paths {
+                let project_path = match this
                     .update(&mut cx, |this, cx| {
-                        Workspace::project_path_for_path(this.project.clone(), path, visible, cx)
+                        Workspace::project_path_for_path(
+                            this.project.clone(),
+                            abs_path,
+                            visible,
+                            cx,
+                        )
                     })
                     .log_err()
                 {
-                    project_paths.push(project_path.await.log_err());
-                } else {
-                    project_paths.push(None);
-                }
-            }
+                    Some(project_path) => project_path.await.log_err(),
+                    None => None,
+                };
 
-            let tasks = abs_paths
-                .iter()
-                .cloned()
-                .zip(project_paths.into_iter())
-                .map(|(abs_path, project_path)| {
-                    let this = this.clone();
-                    cx.spawn(|mut cx| {
-                        let fs = fs.clone();
-                        async move {
-                            let (_worktree, project_path) = project_path?;
-                            if fs.is_file(&abs_path).await {
-                                Some(
-                                    this.update(&mut cx, |this, cx| {
-                                        this.open_path(project_path, None, true, cx)
+                let this = this.clone();
+                let task = cx.spawn(|mut cx| {
+                    let fs = fs.clone();
+                    let abs_path = abs_path.clone();
+                    async move {
+                        let (worktree, project_path) = project_path?;
+                        if fs.is_file(&abs_path).await {
+                            Some(
+                                this.update(&mut cx, |this, cx| {
+                                    this.open_path(project_path, None, true, cx)
+                                })
+                                .log_err()?
+                                .await,
+                            )
+                        } else {
+                            this.update(&mut cx, |workspace, cx| {
+                                let worktree = worktree.read(cx);
+                                let worktree_abs_path = worktree.abs_path();
+                                let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                                    worktree.root_entry()
+                                } else {
+                                    abs_path
+                                        .strip_prefix(worktree_abs_path.as_ref())
+                                        .ok()
+                                        .and_then(|relative_path| {
+                                            worktree.entry_for_path(relative_path)
+                                        })
+                                }
+                                .map(|entry| entry.id);
+                                if let Some(entry_id) = entry_id {
+                                    workspace.project().update(cx, |_, cx| {
+                                        cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
                                     })
-                                    .log_err()?
-                                    .await,
-                                )
-                            } else {
-                                None
-                            }
+                                }
+                            })
+                            .log_err()?;
+                            None
                         }
-                    })
-                })
-                .collect::<Vec<_>>();
+                    }
+                });
+                tasks.push(task);
+            }
 
             futures::future::join_all(tasks).await
         })
