@@ -259,6 +259,7 @@ pub enum Event {
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
+    ActivateProjectPanel,
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
