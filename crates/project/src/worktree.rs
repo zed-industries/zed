@@ -3658,8 +3658,7 @@ impl BackgroundScanner {
                                 if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                     let repo_path = RepoPath(repo_path.into());
                                     let repo = repo.repo_ptr.lock();
-                                    fs_entry.git_status =
-                                        repo.status(&repo_path).log_err().flatten();
+                                    fs_entry.git_status = repo.status(&repo_path, fs_entry.mtime);
                                 }
                             }
                         }

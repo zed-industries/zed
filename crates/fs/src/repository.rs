@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
-use git2::{BranchType, ErrorCode};
+use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
@@ -28,9 +28,25 @@ pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
     fn branch_name(&self) -> Option<String>;
+
+    /// Get the statuses of all of the files in the index that start with the given
+    /// path and have changes with resepect to the HEAD commit. This is fast because
+    /// the index stores hashes of trees, so that unchanged directories can be skipped.
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
+
+    /// Get the status of a given file in the working directory with respect to
+    /// the index. In the common case, when there are no changes, this only requires
+    /// an index lookup. The index stores the mtime of each file when it was added,
+    /// so there's no work to do if the mtime matches.
     fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+
+    /// Get the status of a given file in the working directory with respect to
+    /// the HEAD commit. In the common case, when there are no changes, this only
+    /// requires an index lookup and blob comparison between the index and the HEAD
+    /// commit. The index stores the mtime of each file when it was added, so there's
+    /// no need to consider the working directory file if the mtime matches.
+    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
+
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
@@ -42,7 +58,6 @@ impl std::fmt::Debug for dyn GitRepository {
     }
 }
 
-#[async_trait::async_trait]
 impl GitRepository for LibGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.index() {
@@ -122,18 +137,21 @@ impl GitRepository for LibGitRepository {
         }
     }
 
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
-        let status = self.status_file(path);
-        match status {
-            Ok(status) => Ok(read_status(status)),
-            Err(e) => {
-                if e.code() == ErrorCode::NotFound {
-                    Ok(None)
-                } else {
-                    Err(e.into())
-                }
-            }
+    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(&path.0);
+        options.disable_pathspec_match(true);
+
+        // If the file has not changed since it was added to the index, then
+        // there's no need to examine the working directory file: just compare
+        // the blob in the index to the one in the HEAD commit.
+        if matches_index(self, path, mtime) {
+            options.show(StatusShow::Index);
         }
+
+        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let status = statuses.get(0).and_then(|s| read_status(s.status()));
+        status
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
@@ -176,6 +194,21 @@ impl GitRepository for LibGitRepository {
 
         Ok(())
     }
+}
+
+fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
+    if let Some(index) = repo.index().log_err() {
+        if let Some(entry) = index.get_path(&path, 0) {
+            if let Some(mtime) = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err() {
+                if entry.mtime.seconds() == mtime.as_secs() as i32
+                    && entry.mtime.nanoseconds() == mtime.subsec_nanos()
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn read_status(status: git2::Status) -> Option<GitFileStatus> {
@@ -242,9 +275,9 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
+    fn status(&self, path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
         let state = self.state.lock();
-        Ok(state.worktree_statuses.get(path).cloned())
+        state.worktree_statuses.get(path).cloned()
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
