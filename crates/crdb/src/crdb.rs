@@ -365,11 +365,9 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 .repos
                 .insert(repo_id, Default::default());
 
-            let checkout = Checkout::new(
-                this.clone(),
-                repo.clone(),
-                this.network.room(response.credentials),
-            );
+            let mut room = this.network.room(response.credentials);
+            room.connect().await?;
+            let checkout = Checkout::new(this.clone(), repo.clone(), room);
             checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo_id, checkout);
 
@@ -389,11 +387,9 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
             let response = this
                 .request(messages::PublishRepo { id: repo.id, name })
                 .await?;
-            let checkout = Checkout::new(
-                this.clone(),
-                repo.clone(),
-                this.network.room(response.credentials),
-            );
+            let mut room = this.network.room(response.credentials);
+            room.connect().await?;
+            let checkout = Checkout::new(this.clone(), repo.clone(), room);
             checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo.id, checkout);
 
@@ -1534,8 +1530,8 @@ impl RepoSnapshot {
                 self.save_operation(operation);
                 self.flush_deferred_operations(operation_id, &mut operations);
 
-                // The following ensures that a revision for the branch head is always
-                // present.
+                // The following ensures that a revision for the branch head is always present.
+                #[cfg(not(any(test, feature = "test-support")))]
                 if let Err(error) = self.revision(&new_head) {
                     log::error!(
                         "could not create revision for head {:?}: {:?}",
@@ -1544,6 +1540,8 @@ impl RepoSnapshot {
                     );
                     continue;
                 }
+                #[cfg(any(test, feature = "test-support"))]
+                self.revision(&new_head).unwrap();
             } else {
                 for parent in operation.parent().iter() {
                     self.deferred_operations.insert_or_replace(
@@ -1754,6 +1752,8 @@ pub struct Revision {
 }
 
 impl Revision {
+    /// Return the locations of all document fragments for a given insertion and
+    /// subrange of that insertion.
     fn fragment_locations(
         &self,
         insertion_id: OperationId,
@@ -1763,6 +1763,15 @@ impl Revision {
             .insertion_fragments
             .cursor::<InsertionFragmentSummary>();
         cursor.seek(&(insertion_id, insertion_subrange.start), Bias::Left, &());
+
+        // Avoid overshooting the last fragment.
+        if cursor
+            .item()
+            .map_or(false, |item| item.insertion_id > insertion_id)
+        {
+            cursor.prev(&());
+        }
+
         cursor
             .take_while(move |item| {
                 item.insertion_id == insertion_id
@@ -1781,7 +1790,13 @@ impl Revision {
                 range.start_offset_in_insertion..usize::MAX,
             )
             .next()
-            .ok_or_else(|| anyhow!("start fragment not found"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "start fragment not found. start_insertion_id: {:?}, start_offset_in_insertion: {}",
+                    range.start_insertion_id,
+                    range.start_offset_in_insertion,
+                )
+            })?;
         let mut cursor = self.document_fragments.cursor::<DocumentFragmentSummary>();
         cursor.seek(&(range.document_id, start_fragment_id), Bias::Left, &());
         Ok(std::iter::from_fn(move || {
@@ -1834,8 +1849,8 @@ mod tests {
         assert_eq!(doc2_a.text().to_string(), "def");
 
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
-        let db_b = Client::new(deterministic.build_background(), network.client("client-b"));
-        let repo_b = db_b.clone_repo("repo-1").await.unwrap();
+        let client_b = Client::new(deterministic.build_background(), network.client("client-b"));
+        let repo_b = client_b.clone_repo("repo-1").await.unwrap();
         deterministic.run_until_parked();
         let branch_b = repo_b.branch("main").unwrap();
 
@@ -1843,6 +1858,15 @@ mod tests {
         let doc2_b = branch_b.document(doc2_a.id).unwrap();
         assert_eq!(doc1_b.text().to_string(), "abc");
         assert_eq!(doc2_b.text().to_string(), "def");
+
+        doc1_a.edit([(1..2, "ghi")]);
+        assert_eq!(doc1_a.text().to_string(), "aghic");
+        assert_eq!(doc1_b.text().to_string(), "abc");
+
+        deterministic.run_until_parked();
+
+        assert_eq!(doc1_a.text().to_string(), "aghic");
+        assert_eq!(doc1_b.text().to_string(), "aghic");
     }
 
     impl Executor for Arc<Background> {
