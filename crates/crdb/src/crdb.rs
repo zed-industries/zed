@@ -271,12 +271,9 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
         );
     }
 
-    fn broadcast<M: Message>(&self, message: &M) {
-        self.network_room.broadcast(message.to_bytes());
-    }
-
     fn broadcast_operation(&self, operation: Operation) {
-        self.broadcast(&operation);
+        self.network_room
+            .broadcast(MessageEnvelope::Operation(operation.clone()).to_bytes());
         self.operations_tx.unbounded_send(operation).unwrap();
     }
 
