@@ -109,6 +109,7 @@ tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
+tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-heex.workspace = true

@@ -152,6 +152,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_php::language(),
         vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
     );
+    language("elm", tree_sitter_elm::language(), vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
