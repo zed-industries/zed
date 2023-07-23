@@ -114,6 +114,7 @@ tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev 
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "4ba9dab6e2602960d95b2b625f3386c27e08084e" }
 tree-sitter-elm = "5.6.4"
 tree-sitter-embedded-template = "0.20.0"
+tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }

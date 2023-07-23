@@ -8010,6 +8010,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-glsl"
+version = "0.1.4"
+source = "git+https://github.com/theHamsta/tree-sitter-glsl?rev=2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3#2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-go"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-go?rev=aeb2f33b366fd78d5789ff104956ce23508b85db#aeb2f33b366fd78d5789ff104956ce23508b85db"
@@ -9555,6 +9564,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
+ "tree-sitter-glsl",
  "tree-sitter-go",
  "tree-sitter-heex",
  "tree-sitter-html",
