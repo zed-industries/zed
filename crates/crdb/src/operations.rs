@@ -116,13 +116,13 @@ impl Edit {
                     parent_fragment.insertion_id,
                     parent_fragment.insertion_subrange,
                 ) {
-                    if let Some(fragment) = current_fragment.take() {
+                    if let Some(fragment) = current_fragment.as_ref() {
                         // Advance to fragment_location if it is greater than the location of the current fragment,
                         if *fragment_location > fragment.location {
                             // Flush the remainder of current fragment.
                             if !fragment.insertion_subrange.is_empty() {
-                                new_ropes.push_fragment(&fragment, fragment.visible());
-                                new_fragments.push(fragment, &());
+                                new_ropes.push_fragment(fragment, fragment.visible());
+                                new_fragments.push(fragment.clone(), &());
                             }
                             old_fragments.next(&());
 
@@ -143,10 +143,11 @@ impl Edit {
                     }
 
                     // If the edit starts at the end of the current fragment, flush it.
-                    if let Some(fragment) = current_fragment.take() {
+                    if let Some(fragment) = current_fragment.as_ref() {
                         if fragment.insertion_id == range.start_insertion_id
                             && fragment.insertion_subrange.end == range.start_offset_in_insertion
                         {
+                            let fragment = current_fragment.take().unwrap();
                             new_ropes.push_fragment(&fragment, fragment.visible());
                             new_fragments.push(fragment, &());
                             old_fragments.next(&());
