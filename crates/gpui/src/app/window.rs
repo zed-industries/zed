@@ -518,6 +518,18 @@ impl<'a> WindowContext<'a> {
                 // NOTE: The order of event pushes is important! MouseUp events MUST be fired
                 // before click events, and so the MouseUp events need to be pushed before
                 // MouseClick events.
+
+                // Synthesize one last drag event to end the drag
+                mouse_events.push(MouseEvent::Drag(MouseDrag {
+                    region: Default::default(),
+                    prev_mouse_position: self.window.mouse_position,
+                    platform_event: MouseMovedEvent {
+                        position: e.position,
+                        pressed_button: Some(e.button),
+                        modifiers: e.modifiers,
+                    },
+                    end: true,
+                }));
                 mouse_events.push(MouseEvent::Up(MouseUp {
                     region: Default::default(),
                     platform_event: e.clone(),
@@ -565,8 +577,16 @@ impl<'a> WindowContext<'a> {
                             region: Default::default(),
                             prev_mouse_position: self.window.mouse_position,
                             platform_event: e.clone(),
+                            end: false,
                         }));
                     } else if let Some((_, clicked_button)) = self.window.clicked_region {
+                        mouse_events.push(MouseEvent::Drag(MouseDrag {
+                            region: Default::default(),
+                            prev_mouse_position: self.window.mouse_position,
+                            platform_event: e.clone(),
+                            end: true,
+                        }));
+
                         // Mouse up event happened outside the current window. Simulate mouse up button event
                         let button_event = e.to_button_event(clicked_button);
                         mouse_events.push(MouseEvent::Up(MouseUp {
