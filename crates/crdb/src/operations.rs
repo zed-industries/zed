@@ -165,23 +165,22 @@ impl Edit {
                         let (prefix, mut intersection, suffix) = fragment.intersect(range.clone());
 
                         // If we have a prefix, push it.
-                        if let Some(prefix) = prefix {
+                        if let Some(mut prefix) = prefix {
+                            prefix.location = DenseId::between(
+                                &new_fragments.summary().max_location,
+                                &intersection.location,
+                            );
                             new_insertions
                                 .push(btree::Edit::Insert(InsertionFragment::new(&prefix)));
                             new_ropes.push_fragment(&prefix, prefix.visible());
                             new_fragments.push(prefix, &());
                         }
 
-                        // Then tombstone the intersecting portion.
-                        let was_visible = intersection.visible();
-                        intersection.tombstones.push(Tombstone {
-                            id: self.id,
-                            undo_count: 0,
-                        });
-                        new_ropes.push_fragment(&intersection, was_visible);
-                        new_fragments.push(intersection, &());
-
                         if let Some(suffix) = suffix {
+                            intersection.location = DenseId::between(
+                                &new_fragments.summary().max_location,
+                                &suffix.location,
+                            );
                             // If we still have a suffix, the next edit may be inside of it, so set it as
                             // the current fragment and continue the loop.
                             current_fragment = Some(suffix);
@@ -194,6 +193,15 @@ impl Edit {
                                 }
                             }
                         }
+
+                        // Then tombstone the intersecting portion.
+                        let was_visible = intersection.visible();
+                        intersection.tombstones.push(Tombstone {
+                            id: self.id,
+                            undo_count: 0,
+                        });
+                        new_ropes.push_fragment(&intersection, was_visible);
+                        new_fragments.push(intersection, &());
                     }
                 }
             }
