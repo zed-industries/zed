@@ -101,18 +101,17 @@ impl GitRepository for LibGitRepository {
         let mut options = git2::StatusOptions::new();
         options.pathspec(path_prefix);
         options.disable_pathspec_match(true);
+        options.show(StatusShow::Index);
 
         if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
-            for status in statuses
-                .iter()
-                .filter(|status| !status.status().contains(git2::Status::IGNORED))
-            {
+            for status in statuses.iter() {
                 let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
-                let Some(status) = read_status(status.status()) else {
-                    continue
-                };
-
-                map.insert(path, status)
+                let status = status.status();
+                if !status.contains(git2::Status::IGNORED) {
+                    if let Some(status) = read_status(status) {
+                        map.insert(path, status)
+                    }
+                }
             }
         }
         map
