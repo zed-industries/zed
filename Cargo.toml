@@ -129,6 +129,7 @@ tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", r
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a"}
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930"}
 tree-sitter-lua = "0.0.14"
+tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "49226023693107fba9a1191136a4f47f38cdca73" }

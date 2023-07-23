@@ -126,6 +126,7 @@ tree-sitter-svelte.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
+tree-sitter-nix.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"
