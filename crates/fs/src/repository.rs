@@ -97,9 +97,11 @@ impl GitRepository for LibGitRepository {
 
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
+
         let mut options = git2::StatusOptions::new();
         options.pathspec(path_prefix);
         options.disable_pathspec_match(true);
+
         if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
             for status in statuses
                 .iter()
@@ -117,30 +119,32 @@ impl GitRepository for LibGitRepository {
     }
 
     fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
-        let index = self.index().log_err()?;
-        if let Some(entry) = index.get_path(&path, 0) {
-            let mtime = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err()?;
-            if entry.mtime.seconds() == mtime.as_secs() as i32
-                && entry.mtime.nanoseconds() == mtime.subsec_nanos()
-            {
-                None
-            } else {
-                let mut options = git2::StatusOptions::new();
-                options.pathspec(&path.0);
-                options.disable_pathspec_match(true);
-                let statuses = self.statuses(Some(&mut options)).log_err()?;
-                let status = statuses.get(0).and_then(|s| read_status(s.status()));
-                status
-            }
-        } else {
-            Some(GitFileStatus::Added)
+        // If the file has not changed since it was added to the index, then
+        // there can't be any changes.
+        if matches_index(self, path, mtime) {
+            return None;
         }
+
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(&path.0);
+        options.disable_pathspec_match(true);
+        options.include_untracked(true);
+        options.recurse_untracked_dirs(true);
+        options.include_unmodified(true);
+        options.show(StatusShow::Workdir);
+
+        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let status = statuses.get(0).and_then(|s| read_status(s.status()));
+        status
     }
 
     fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
         let mut options = git2::StatusOptions::new();
         options.pathspec(&path.0);
         options.disable_pathspec_match(true);
+        options.include_untracked(true);
+        options.recurse_untracked_dirs(true);
+        options.include_unmodified(true);
 
         // If the file has not changed since it was added to the index, then
         // there's no need to examine the working directory file: just compare
