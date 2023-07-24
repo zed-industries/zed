@@ -1233,12 +1233,18 @@ impl Document {
                     insertion_offset += new_text.len();
                 }
 
-                let edit_end = {
-                    let end_fragment = end_fragment.or_else(|| old_fragments.prev_item()).unwrap();
+                let edit_end = if let Some(end_fragment) = end_fragment {
                     Anchor {
                         insertion_id: end_fragment.insertion_id,
                         offset_in_insertion: end_fragment.insertion_subrange.start
                             + (range.end - old_fragments.start().visible_len),
+                        bias: Bias::Left,
+                    }
+                } else {
+                    let end_fragment = old_fragments.prev_item().unwrap();
+                    Anchor {
+                        insertion_id: end_fragment.insertion_id,
+                        offset_in_insertion: end_fragment.insertion_subrange.end,
                         bias: Bias::Left,
                     }
                 };
