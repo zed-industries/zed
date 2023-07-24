@@ -26,6 +26,11 @@
 (type_annotation(lower_case_identifier) @function)
 (port_annotation(lower_case_identifier) @function)
 (function_declaration_left(lower_case_identifier) @function.definition)
+
+(function_call_expr
+    target: (value_expr
+        name: (value_qid (dot) (lower_case_identifier) @function)))
+
 (function_call_expr target: (value_expr) @identifier)
 
 (exposed_value(lower_case_identifier) @function)
