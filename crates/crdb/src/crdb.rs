@@ -1206,13 +1206,20 @@ impl Document {
                     }
                 }
 
+                let end_fragment = old_fragments.item().and_then(|item| {
+                    if item.document_id == self.id {
+                        Some(item)
+                    } else {
+                        None
+                    }
+                });
                 // Insert the new text before any existing fragments within the range.
                 if !new_text.is_empty() {
                     let fragment = DocumentFragment {
                         document_id: self.id,
                         location: DenseId::between(
                             &new_fragments.summary().max_location,
-                            start_fragment
+                            end_fragment
                                 .map_or(&DenseId::max(), |old_fragment| &old_fragment.location),
                         ),
                         insertion_id: edit_op.id,
@@ -1226,22 +1233,14 @@ impl Document {
                     insertion_offset += new_text.len();
                 }
 
-                let end_fragment = old_fragments
-                    .item()
-                    .and_then(|item| {
-                        if item.document_id == self.id {
-                            Some(item)
-                        } else {
-                            None
-                        }
-                    })
-                    .or_else(|| old_fragments.prev_item())
-                    .unwrap();
-                let edit_end = Anchor {
-                    insertion_id: end_fragment.insertion_id,
-                    offset_in_insertion: end_fragment.insertion_subrange.start
-                        + (range.end - old_fragments.start().visible_len),
-                    bias: Bias::Left,
+                let edit_end = {
+                    let end_fragment = end_fragment.or_else(|| old_fragments.prev_item()).unwrap();
+                    Anchor {
+                        insertion_id: end_fragment.insertion_id,
+                        offset_in_insertion: end_fragment.insertion_subrange.start
+                            + (range.end - old_fragments.start().visible_len),
+                        bias: Bias::Left,
+                    }
                 };
                 edit_op.edits.push((
                     AnchorRange {
