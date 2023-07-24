@@ -2389,7 +2389,7 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2417,7 +2417,7 @@ mod tests {
         ensure_no_open_items_and_panes(window_id, &workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
