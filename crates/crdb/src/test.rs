@@ -16,12 +16,12 @@ impl TestNetwork {
         })))
     }
 
-    pub fn server(&self) -> TestServer {
-        TestServer(self.0.clone())
+    pub fn server(&self) -> TestServerNetwork {
+        TestServerNetwork(self.0.clone())
     }
 
-    pub fn client(&self, login: impl Into<Arc<str>>) -> TestClient {
-        TestClient {
+    pub fn client(&self, login: impl Into<Arc<str>>) -> TestClientNetwork {
+        TestClientNetwork {
             user: User {
                 login: login.into(),
             },
@@ -44,9 +44,9 @@ pub struct Room {
     next_token_id: usize,
 }
 
-pub struct TestServer(Arc<Mutex<NetworkState>>);
+pub struct TestServerNetwork(Arc<Mutex<NetworkState>>);
 
-impl ServerNetwork for TestServer {
+impl ServerNetwork for TestServerNetwork {
     fn create_room(&self, name: &RoomName) -> BoxFuture<Result<()>> {
         let network = self.0.clone();
         let room = name.clone();
@@ -80,12 +80,12 @@ impl ServerNetwork for TestServer {
     }
 }
 
-pub struct TestClient {
+pub struct TestClientNetwork {
     user: User,
     network: Arc<Mutex<NetworkState>>,
 }
 
-impl ClientNetwork for TestClient {
+impl ClientNetwork for TestClientNetwork {
     type Room = TestClientRoom;
 
     fn request(&self, request: Vec<u8>) -> BoxFuture<Result<Vec<u8>>> {

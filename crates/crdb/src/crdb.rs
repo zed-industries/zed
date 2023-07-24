@@ -394,6 +394,32 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         }
     }
 
+    pub fn repo(&self, id: RepoId) -> Result<Repo> {
+        self.db
+            .snapshot
+            .lock()
+            .repos
+            .get(&id)
+            .map(|_| Repo {
+                id,
+                db: self.db.clone(),
+            })
+            .ok_or_else(|| anyhow!("repo not found"))
+    }
+
+    pub fn repos(&self) -> Vec<Repo> {
+        self.db
+            .snapshot
+            .lock()
+            .repos
+            .iter()
+            .map(|(id, _)| Repo {
+                id: *id,
+                db: self.db.clone(),
+            })
+            .collect()
+    }
+
     fn handle_local_operation(&self, repo_id: RepoId, operation: Operation) {
         if let Some(checkout) = self.checkouts.lock().get(&repo_id) {
             checkout.broadcast_operation(operation);
@@ -648,6 +674,18 @@ impl Repo {
         })
     }
 
+    fn branches(&self) -> Vec<Branch> {
+        self.read(|repo| {
+            repo.branches
+                .iter()
+                .map(|(branch_id, _)| Branch {
+                    id: *branch_id,
+                    repo: self.clone(),
+                })
+                .collect()
+        })
+    }
+
     fn read<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&mut RepoSnapshot) -> T,
@@ -694,6 +732,11 @@ struct Branch {
 }
 
 impl Branch {
+    pub fn name(&self) -> Arc<str> {
+        self.repo
+            .read(|repo| repo.branches.get(&self.id).unwrap().name.clone())
+    }
+
     pub fn create_document(&self) -> Document {
         self.update(|document_id, parent, revision| {
             let operation = operations::CreateDocument {
@@ -721,6 +764,19 @@ impl Branch {
                 branch: self.clone(),
                 id,
             })
+        })
+    }
+
+    pub fn documents(&self) -> Vec<Document> {
+        self.read(|revision| {
+            revision
+                .document_metadata
+                .iter()
+                .map(|(document_id, _)| Document {
+                    branch: self.clone(),
+                    id: *document_id,
+                })
+                .collect()
         })
     }
 
@@ -1221,16 +1277,24 @@ impl Document {
 
     fn text(&self) -> Rope {
         self.branch.read(|revision| {
-            let mut fragments = revision.document_fragments.cursor::<LocalEditDimension>();
-            fragments.seek(&self.id, Bias::Left, &());
-            let start = fragments.start().visible_len;
+            revision
+                .visible_text
+                .slice(revision.document_visible_range(self.id))
+        })
+    }
 
-            let mut next_doc_id = self.id;
-            next_doc_id.operation_count.0 += 1;
-            fragments.seek(&next_doc_id, Bias::Left, &());
-            let end = fragments.start().visible_len;
+    fn len(&self) -> usize {
+        self.branch
+            .read(|revision| revision.document_visible_range(self.id).len())
+    }
 
-            revision.visible_text.slice(start..end)
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.branch.read(|revision| {
+            let document_start = revision.document_visible_start(self.id);
+            revision
+                .visible_text
+                .clip_offset(document_start + offset, bias)
+                - document_start
         })
     }
 }
@@ -1807,6 +1871,25 @@ impl Revision {
             Some(fragment)
         }))
     }
+
+    fn document_visible_start(&self, document_id: OperationId) -> usize {
+        let mut fragments = self.document_fragments.cursor::<LocalEditDimension>();
+        fragments.seek(&document_id, Bias::Left, &());
+        fragments.start().visible_len
+    }
+
+    fn document_visible_range(&self, document_id: OperationId) -> Range<usize> {
+        let mut fragments = self.document_fragments.cursor::<LocalEditDimension>();
+        fragments.seek(&document_id, Bias::Left, &());
+        let start = fragments.start().visible_len;
+
+        let mut next_doc_id = document_id;
+        next_doc_id.operation_count.0 += 1;
+        fragments.seek(&next_doc_id, Bias::Left, &());
+        let end = fragments.start().visible_len;
+
+        start..end
+    }
 }
 
 #[cfg(test)]
@@ -1824,8 +1907,12 @@ fn init_logger() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::TestNetwork;
+    use crate::test::{TestClientNetwork, TestNetwork};
     use gpui::executor::{Background, Deterministic};
+    use rand::prelude::*;
+    use std::env;
+    use std::ops::Deref;
+    use util::post_inc;
 
     #[gpui::test]
     async fn test_repo(deterministic: Arc<Deterministic>) {
@@ -1864,6 +1951,229 @@ mod tests {
 
         assert_eq!(doc1_a.text().to_string(), "aghic");
         assert_eq!(doc1_b.text().to_string(), "aghic");
+    }
+
+    #[gpui::test(iterations = 100)]
+    async fn test_random_collaboration(deterministic: Arc<Deterministic>, mut rng: StdRng) {
+        deterministic.forbid_parking();
+
+        let max_peers = env::var("MAX_PEERS")
+            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+            .unwrap_or(3);
+        let max_operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let network = TestNetwork::new(deterministic.build_background());
+        let server = Server::new(network.server());
+        let mut clients: Vec<TestClient> = Vec::new();
+        let mut next_client_id = 0;
+        let mut next_branch_name = 0;
+
+        for _ in 0..max_operations {
+            let operation = if clients.is_empty()
+                || (clients.len() < max_peers && rng.gen_bool(0.1))
+            {
+                let client_id = post_inc(&mut next_client_id);
+                TestOperation::AddClient {
+                    id: client_id,
+                    name: format!("client-{}", client_id),
+                }
+            } else {
+                let client = clients.choose(&mut rng).unwrap();
+                let client_id = client.id;
+                let repos = client.repos();
+                if rng.gen_bool(0.3) {
+                    if rng.gen() {
+                        let count = rng.gen_range(1..=5);
+                        TestOperation::Yield { count }
+                    } else {
+                        TestOperation::Quiesce
+                    }
+                } else if repos.is_empty() || rng.gen_bool(0.1) {
+                    let repo_ids_by_name = server.repo_ids_by_name.lock().clone();
+                    if repo_ids_by_name.is_empty() || rng.gen_bool(0.1) {
+                        TestOperation::CreateRepo { client_id }
+                    } else {
+                        let repo_name = repo_ids_by_name.into_keys().choose(&mut rng).unwrap();
+                        TestOperation::CloneRepo {
+                            client_id,
+                            name: repo_name,
+                        }
+                    }
+                } else {
+                    let repo = repos.choose(&mut rng).unwrap().clone();
+                    let branches = repo.branches();
+                    if rng.gen_bool(0.05) {
+                        TestOperation::PublishRepo {
+                            client_id,
+                            id: repo.id,
+                            name: repo.id.to_string().into(),
+                        }
+                    } else if branches.is_empty() || rng.gen_bool(0.1) {
+                        TestOperation::CreateEmptyBranch {
+                            client_id,
+                            repo_id: repo.id,
+                            name: format!("branch-{}", post_inc(&mut next_branch_name)),
+                        }
+                    } else {
+                        let branch = branches.choose(&mut rng).unwrap().clone();
+                        let documents = branch.documents();
+                        if documents.is_empty() || rng.gen_bool(0.1) {
+                            TestOperation::CreateDocument {
+                                client_id,
+                                repo_id: repo.id,
+                                branch_name: branch.name(),
+                            }
+                        } else {
+                            let document = documents.choose(&mut rng).unwrap().clone();
+                            let end = document
+                                .clip_offset(rng.gen_range(0..=document.len()), Bias::Right);
+                            let start = document.clip_offset(rng.gen_range(0..=end), Bias::Left);
+                            let new_text_len = rng.gen_range(0..=3);
+                            let text = util::RandomCharIter::new(&mut rng)
+                                .take(new_text_len)
+                                .collect::<String>();
+                            TestOperation::EditDocument {
+                                client_id,
+                                repo_id: repo.id,
+                                branch_name: branch.name(),
+                                document_id: document.id,
+                                edits: vec![(start..end, text)],
+                            }
+                        }
+                    }
+                }
+            };
+
+            log::info!("{:?}", operation);
+            match operation {
+                TestOperation::Yield { count } => {
+                    for _ in 0..count {
+                        smol::future::yield_now().await;
+                    }
+                }
+                TestOperation::Quiesce => {
+                    deterministic.run_until_parked();
+                }
+                TestOperation::AddClient { id, name } => {
+                    let client =
+                        Client::new(deterministic.build_background(), network.client(name));
+                    clients.push(TestClient { id, client });
+                }
+                TestOperation::CreateRepo { client_id } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    client.create_repo();
+                }
+                TestOperation::PublishRepo {
+                    client_id,
+                    id,
+                    name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(id).unwrap();
+                    let publish = client.publish_repo(&repo, name);
+                    let publish = async move {
+                        publish.await.log_err();
+                    };
+                    deterministic.build_background().spawn(publish);
+                }
+                TestOperation::CloneRepo { client_id, name } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let clone = client.clone_repo(name);
+                    let clone = async move {
+                        clone.await.unwrap();
+                    };
+                    deterministic.build_background().spawn(clone);
+                }
+                TestOperation::CreateEmptyBranch {
+                    client_id,
+                    repo_id,
+                    name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    repo.create_empty_branch(name);
+                }
+                TestOperation::CreateDocument {
+                    client_id,
+                    repo_id,
+                    branch_name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    let branch = repo.branch(&branch_name).unwrap();
+                    branch.create_document();
+                }
+                TestOperation::EditDocument {
+                    client_id,
+                    repo_id,
+                    branch_name,
+                    document_id,
+                    edits,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    let branch = repo.branch(&branch_name).unwrap();
+                    let document = branch.document(document_id).unwrap();
+                    document.edit(edits);
+                }
+            }
+        }
+    }
+
+    struct TestClient {
+        id: usize,
+        client: Client<Arc<Background>, TestClientNetwork>,
+    }
+
+    impl Deref for TestClient {
+        type Target = Client<Arc<Background>, TestClientNetwork>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.client
+        }
+    }
+
+    #[derive(Debug)]
+    enum TestOperation {
+        Yield {
+            count: usize,
+        },
+        Quiesce,
+        AddClient {
+            id: usize,
+            name: String,
+        },
+        CreateRepo {
+            client_id: usize,
+        },
+        PublishRepo {
+            client_id: usize,
+            id: RepoId,
+            name: Arc<str>,
+        },
+        CloneRepo {
+            client_id: usize,
+            name: Arc<str>,
+        },
+        CreateEmptyBranch {
+            client_id: usize,
+            repo_id: RepoId,
+            name: String,
+        },
+        CreateDocument {
+            client_id: usize,
+            repo_id: RepoId,
+            branch_name: Arc<str>,
+        },
+        EditDocument {
+            client_id: usize,
+            repo_id: RepoId,
+            branch_name: Arc<str>,
+            document_id: OperationId,
+            edits: Vec<(Range<usize>, String)>,
+        },
     }
 
     impl Executor for Arc<Background> {

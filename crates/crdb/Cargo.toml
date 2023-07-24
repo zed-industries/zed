@@ -29,3 +29,4 @@ env_logger.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 async-broadcast = "0.4"
 rand.workspace = true
+smol.workspace = true

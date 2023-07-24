@@ -1752,6 +1752,7 @@ dependencies = [
  "serde",
  "serde_bare",
  "smallvec",
+ "smol",
  "sum_tree",
  "util",
  "uuid 1.3.2",
