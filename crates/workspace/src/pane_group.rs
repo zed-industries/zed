@@ -584,7 +584,7 @@ impl SplitDirection {
 }
 
 mod element {
-    use std::{cell::RefCell, ops::Range, rc::Rc};
+    use std::{cell::RefCell, iter::from_fn, ops::Range, rc::Rc};
 
     use gpui::{
         geometry::{
@@ -687,7 +687,7 @@ mod element {
         fn handle_resize(
             flexes: Rc<RefCell<Vec<f32>>>,
             axis: Axis,
-            ix: usize,
+            preceding_ix: usize,
             child_start: Vector2F,
             drag_bounds: RectF,
         ) -> impl Fn(MouseDrag, &mut Workspace, &mut EventContext<Workspace>) {
@@ -697,7 +697,7 @@ mod element {
 
             move |drag, workspace: &mut Workspace, cx| {
                 if drag.end {
-                    dbg!("FINISHED");
+                    // Clear cascading resize state
                     return;
                 }
                 let min_size = match axis {
@@ -707,60 +707,66 @@ mod element {
                 let mut flexes = flexes.borrow_mut();
 
                 // Don't allow resizing to less than the minimum size, if elements are already too small
-                if min_size - 1. > size(ix, flexes.as_slice()) {
+                if min_size - 1. > size(preceding_ix, flexes.as_slice()) {
                     return;
                 }
 
-                let mut current_target_size = (drag.position - child_start).along(axis);
-
-                let mut proposed_current_pixel_change =
-                    current_target_size - size(ix, flexes.as_slice());
+                let mut proposed_current_pixel_change = (drag.position - child_start).along(axis)
+                    - size(preceding_ix, flexes.as_slice());
 
                 let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
                     let flex_change = pixel_dx / drag_bounds.length_along(axis);
                     let current_target_flex = flexes[target_ix] + flex_change;
-                    let next_target_flex = flexes[(target_ix as isize + next) as usize] - flex_change;
+                    let next_target_flex =
+                        flexes[(target_ix as isize + next) as usize] - flex_change;
                     (current_target_flex, next_target_flex)
                 };
 
-                if proposed_current_pixel_change < 0. {
-                    current_target_size = f32::max(current_target_size, min_size);
-                    let current_pixel_change = current_target_size - size(ix, flexes.as_slice());
+                let mut successors = from_fn({
+                    let forward = proposed_current_pixel_change > 0.;
+                    let mut ix_offset = 0;
+                    let len = flexes.len();
+                    move || {
+                        let result = if forward {
+                            (preceding_ix + 1 + ix_offset < len).then(|| preceding_ix + ix_offset)
+                        } else {
+                            (preceding_ix as isize - ix_offset as isize >= 0)
+                                .then(|| preceding_ix - ix_offset)
+                        };
+
+                        ix_offset += 1;
+
+                        result
+                    }
+                });
+
+                while proposed_current_pixel_change.abs() > 0. {
+                    let Some(current_ix) = successors.next() else {
+                            break;
+                        };
+
+                    let next_target_size = f32::max(
+                        size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
+                        min_size,
+                    );
+
+                    let current_target_size = f32::max(
+                        size(current_ix, flexes.as_slice())
+                            + size(current_ix + 1, flexes.as_slice())
+                            - next_target_size,
+                        min_size,
+                    );
+
+                    let current_pixel_change =
+                        current_target_size - size(current_ix, flexes.as_slice());
 
                     let (current_target_flex, next_target_flex) =
-                        flex_changes(current_pixel_change, ix, 1, flexes.as_slice());
+                        flex_changes(current_pixel_change, current_ix, 1, flexes.as_slice());
 
-                    flexes[ix] = current_target_flex;
-                    flexes[ix + 1] = next_target_flex;
-                } else if proposed_current_pixel_change > 0. {
-                    let mut ix_offset = 0;
-                    while proposed_current_pixel_change > 0.01 && ix + 1 + ix_offset < flexes.len()
-                    {
-                        let current_ix = ix_offset + ix;
-                        let next_target_size = f32::max(
-                            size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
-                            min_size,
-                        );
+                    flexes[current_ix] = current_target_flex;
+                    flexes[current_ix + 1] = next_target_flex;
 
-                        current_target_size = f32::min(
-                            current_target_size,
-                            size(current_ix, flexes.as_slice())
-                                + size(current_ix + 1, flexes.as_slice())
-                                - next_target_size,
-                        );
-
-                        let current_pixel_change =
-                            current_target_size - size(current_ix, flexes.as_slice());
-
-                        let (current_target_flex, next_target_flex) =
-                            flex_changes(current_pixel_change, current_ix, 1, flexes.as_slice());
-
-                        flexes[current_ix] = current_target_flex;
-                        flexes[current_ix + 1] = next_target_flex;
-
-                        proposed_current_pixel_change -= current_pixel_change;
-                        ix_offset += 1;
-                    }
+                    proposed_current_pixel_change -= current_pixel_change;
                 }
 
                 workspace.schedule_serialize(cx);
@@ -924,7 +930,7 @@ mod element {
                             ),
                         )
                         .on_down(MouseButton::Left, |_, _: &mut Workspace, _| {
-                            dbg!("INITIATE");
+                            // Save cascading resize state
                         })
                         .on_click(MouseButton::Left, {
                             let flexes = self.flexes.clone();
