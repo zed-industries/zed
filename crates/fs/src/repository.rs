@@ -100,7 +100,6 @@ impl GitRepository for LibGitRepository {
 
         let mut options = git2::StatusOptions::new();
         options.pathspec(path_prefix);
-        options.disable_pathspec_match(true);
         options.show(StatusShow::Index);
 
         if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
