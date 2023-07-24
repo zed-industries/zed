@@ -1,23 +1,19 @@
 use std::sync::Arc;
 
-use crate::{
-    channels_panel_settings::{ChannelsPanelDockPosition, ChannelsPanelSettings},
-    Channel, Channels,
-};
+use crate::channels_panel_settings::{ChannelsPanelDockPosition, ChannelsPanelSettings};
 use anyhow::Result;
 use collections::HashMap;
 use context_menu::ContextMenu;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions,
-    elements::{ChildView, Empty, Flex, Label, MouseEventHandler, ParentElement, Stack},
-    serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, ModelHandle, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    elements::{ChildView, Flex, Label, ParentElement, Stack},
+    serde_json, AppContext, AsyncAppContext, Element, Entity, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
-use theme::ChannelTreeStyle;
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -37,7 +33,6 @@ pub struct ChannelsPanel {
     fs: Arc<dyn Fs>,
     has_focus: bool,
     pending_serialization: Task<Option<()>>,
-    channels: ModelHandle<Channels>,
     context_menu: ViewHandle<ContextMenu>,
     collapsed_channels: HashMap<u64, bool>,
 }
@@ -67,7 +62,6 @@ impl ChannelsPanel {
                 has_focus: false,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
-                channels: cx.global::<ModelHandle<Channels>>().clone(),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 collapsed_channels: HashMap::default(),
             };
@@ -138,101 +132,6 @@ impl ChannelsPanel {
             .log_err(),
         );
     }
-
-    fn render_channel(
-        &mut self,
-        depth: usize,
-        channel: &Channel,
-        style: &ChannelTreeStyle,
-        root: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let has_chilren = !channel.members().is_empty();
-
-        let sub_channel_details = has_chilren.then(|| {
-            let mut sub_channels = Flex::column();
-            let collapsed = self
-                .collapsed_channels
-                .get(&channel.id)
-                .copied()
-                .unwrap_or_default();
-            if !collapsed {
-                for sub_channel in channel.members() {
-                    sub_channels = sub_channels.with_child(self.render_channel(
-                        depth + 1,
-                        sub_channel,
-                        style,
-                        false,
-                        cx,
-                    ));
-                }
-            }
-            (sub_channels, collapsed)
-        });
-
-        let channel_id = channel.id;
-
-        enum ChannelCollapser {}
-        Flex::row()
-            .with_child(
-                Empty::new()
-                    .constrained()
-                    .with_width(depth as f32 * style.channel_indent),
-            )
-            .with_child(
-                Flex::column()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                sub_channel_details
-                                    .as_ref()
-                                    .map(|(_, expanded)| {
-                                        MouseEventHandler::<ChannelCollapser, _>::new(
-                                            channel.id as usize,
-                                            cx,
-                                            |state, _cx| {
-                                                let icon =
-                                                    style.channel_icon.style_for(!*expanded, state);
-                                                theme::ui::icon(icon)
-                                            },
-                                        )
-                                        .on_click(
-                                            gpui::platform::MouseButton::Left,
-                                            move |_, v, cx| {
-                                                let entry = v
-                                                    .collapsed_channels
-                                                    .entry(channel_id)
-                                                    .or_default();
-                                                *entry = !*entry;
-                                                v.serialize(cx);
-                                                cx.notify();
-                                            },
-                                        )
-                                        .into_any()
-                                    })
-                                    .unwrap_or_else(|| {
-                                        Empty::new()
-                                            .constrained()
-                                            .with_width(style.channel_icon.default_style().width())
-                                            .into_any()
-                                    }),
-                            )
-                            .with_child(
-                                Label::new(
-                                    channel.name().to_string(),
-                                    if root {
-                                        style.root_name.clone()
-                                    } else {
-                                        style.channel_name.clone()
-                                    },
-                                )
-                                .into_any(),
-                            ),
-                    )
-                    .with_children(sub_channel_details.map(|(elements, _)| elements)),
-            )
-            .into_any()
-    }
 }
 
 impl View for ChannelsPanel {
@@ -254,42 +153,11 @@ impl View for ChannelsPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
         let theme = theme::current(cx).clone();
 
-        let mut channels_column = Flex::column();
-        for channel in self.channels.read(cx).channels() {
-            channels_column = channels_column.with_child(self.render_channel(
-                0,
-                &channel,
-                &theme.channels_panel.channel_tree,
-                true,
-                cx,
-            ));
-        }
-
-        let spacing = theme.channels_panel.spacing;
-
         enum ChannelsPanelScrollTag {}
         Stack::new()
             .with_child(
                 // Full panel column
                 Flex::column()
-                    .with_spacing(spacing)
-                    .with_child(
-                        // Channels section column
-                        Flex::column()
-                            .with_child(
-                                Flex::row().with_child(
-                                    Label::new(
-                                        "Active Channels",
-                                        theme.editor.invalid_information_diagnostic.message.clone(),
-                                    )
-                                    .into_any(),
-                                ),
-                            )
-                            // Channels list column
-                            .with_child(channels_column),
-                    )
-                    // TODO: Replace with spacing implementation
-                    .with_child(Empty::new().constrained().with_height(spacing))
                     .with_child(
                         Flex::column().with_child(
                             Flex::row().with_child(

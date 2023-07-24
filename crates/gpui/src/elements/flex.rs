@@ -22,7 +22,6 @@ pub struct Flex<V: View> {
     children: Vec<AnyElement<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
     child_alignment: f32,
-    spacing: f32,
 }
 
 impl<V: View> Flex<V> {
@@ -32,7 +31,6 @@ impl<V: View> Flex<V> {
             children: Default::default(),
             scroll_state: None,
             child_alignment: -1.,
-            spacing: 0.,
         }
     }
 
@@ -42,11 +40,6 @@ impl<V: View> Flex<V> {
 
     pub fn column() -> Self {
         Self::new(Axis::Vertical)
-    }
-
-    pub fn with_spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing;
-        self
     }
 
     /// Render children centered relative to the cross-axis of the parent flex.

@@ -1069,60 +1069,8 @@ pub struct FlexStyle {
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ChannelProjectStyle {
-    // TODO: Implement Contained Flex
-    // ContainerStyle + Spacing between elements
-    // Negative spacing overlaps elements instead of spacing them out
-    pub container: Contained<FlexStyle>,
-    pub host: ImageStyle,
-    pub title: ContainedText,
-    pub members: Contained<FlexStyle>,
-    pub member: ImageStyle
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ChanneltemStyle {
-    pub icon: IconStyle,
-    pub title: TextStyle,
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ChannelListStyle {
-    pub section_title: ContainedText,
-    pub channel: Toggleable<Contained<ChanneltemStyle>>,
-    pub project: ChannelProjectStyle
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ContactItemStyle {
-    pub container: Contained<FlexStyle>,
-    pub avatar: IconStyle,
-    pub name: TextStyle,
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ContactsListStyle {
-    pub section_title: ContainedText,
-    pub contact: ContactItemStyle,
-}
-
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ChannelTreeStyle {
-    pub channel_indent: f32,
-    pub channel_name: TextStyle,
-    pub root_name: TextStyle,
-    pub channel_icon: Toggleable<Interactive<IconStyle>>,
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct ChanelsPanelStyle {
-    pub channel_tree: ChannelTreeStyle,
-    pub spacing: f32,
-    // TODO: Uncomment:
-    // pub container: ContainerStyle,
-    // pub channel_list: ChannelListStyle,
-    // pub contacts_list: ContactsListStyle
+    pub contacts_header: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
