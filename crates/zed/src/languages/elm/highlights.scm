@@ -14,10 +14,10 @@
     (import)
     (module)
     (type)
+    (arrow)
  ] @keyword
 
 [
-    (arrow)
     (eq)
     (operator_identifier)
     (colon)
