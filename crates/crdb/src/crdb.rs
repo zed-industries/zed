@@ -394,6 +394,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         }
     }
 
+    pub fn is_local_repo(&self, repo: &Repo) -> bool {
+        !self.checkouts.lock().contains_key(&repo.id)
+    }
+
     pub fn repo(&self, id: RepoId) -> Result<Repo> {
         self.db
             .snapshot
@@ -1158,26 +1162,6 @@ impl Document {
                     fragment_start = range.start;
                 }
 
-                // Insert the new text before any existing fragments within the range.
-                if !new_text.is_empty() {
-                    let fragment = DocumentFragment {
-                        document_id: self.id,
-                        location: DenseId::between(
-                            &new_fragments.summary().max_location,
-                            start_fragment
-                                .map_or(&DenseId::max(), |old_fragment| &old_fragment.location),
-                        ),
-                        insertion_id: edit_op.id,
-                        insertion_subrange: insertion_offset..insertion_offset + new_text.len(),
-                        tombstones: Default::default(),
-                        undo_count: 0,
-                    };
-                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
-                    new_ropes.push_str(new_text.as_ref());
-                    new_fragments.push(fragment, &());
-                    insertion_offset += new_text.len();
-                }
-
                 // Advance through every fragment that intersects this range, marking the intersecting
                 // portions as deleted.
                 while fragment_start < range.end {
@@ -1210,6 +1194,26 @@ impl Document {
                     if fragment_end <= range.end {
                         old_fragments.next(&());
                     }
+                }
+
+                // Insert the new text before any existing fragments within the range.
+                if !new_text.is_empty() {
+                    let fragment = DocumentFragment {
+                        document_id: self.id,
+                        location: DenseId::between(
+                            &new_fragments.summary().max_location,
+                            start_fragment
+                                .map_or(&DenseId::max(), |old_fragment| &old_fragment.location),
+                        ),
+                        insertion_id: edit_op.id,
+                        insertion_subrange: insertion_offset..insertion_offset + new_text.len(),
+                        tombstones: Default::default(),
+                        undo_count: 0,
+                    };
+                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
+                    new_ropes.push_str(new_text.as_ref());
+                    new_fragments.push(fragment, &());
+                    insertion_offset += new_text.len();
                 }
 
                 let end_fragment = old_fragments
@@ -1828,7 +1832,7 @@ impl Revision {
         // Avoid overshooting the last fragment.
         if cursor
             .item()
-            .map_or(false, |item| item.insertion_id > insertion_id)
+            .map_or(true, |item| item.insertion_id > insertion_id)
         {
             cursor.prev(&());
         }
@@ -1971,9 +1975,14 @@ mod tests {
         let mut next_branch_name = 0;
 
         for _ in 0..max_operations {
-            let operation = if clients.is_empty()
-                || (clients.len() < max_peers && rng.gen_bool(0.1))
-            {
+            let operation = if rng.gen_bool(0.2) {
+                if rng.gen() {
+                    let count = rng.gen_range(1..=5);
+                    TestOperation::Yield { count }
+                } else {
+                    TestOperation::Quiesce
+                }
+            } else if clients.is_empty() || (clients.len() < max_peers && rng.gen_bool(0.1)) {
                 let client_id = post_inc(&mut next_client_id);
                 TestOperation::AddClient {
                     id: client_id,
@@ -1983,19 +1992,20 @@ mod tests {
                 let client = clients.choose(&mut rng).unwrap();
                 let client_id = client.id;
                 let repos = client.repos();
-                if rng.gen_bool(0.3) {
-                    if rng.gen() {
-                        let count = rng.gen_range(1..=5);
-                        TestOperation::Yield { count }
-                    } else {
-                        TestOperation::Quiesce
-                    }
-                } else if repos.is_empty() || rng.gen_bool(0.1) {
-                    let repo_ids_by_name = server.repo_ids_by_name.lock().clone();
-                    if repo_ids_by_name.is_empty() || rng.gen_bool(0.1) {
+                if repos.is_empty() || rng.gen_bool(0.1) {
+                    let mut server_repo_ids_by_name = server.repo_ids_by_name.lock().clone();
+
+                    // Avoid cloning repos that were already published/cloned by this client.
+                    let client_repo_ids = repos.iter().map(|repo| repo.id).collect::<HashSet<_>>();
+                    server_repo_ids_by_name.retain(|_, id| !client_repo_ids.contains(id));
+
+                    if server_repo_ids_by_name.is_empty() || rng.gen_bool(0.1) {
                         TestOperation::CreateRepo { client_id }
                     } else {
-                        let repo_name = repo_ids_by_name.into_keys().choose(&mut rng).unwrap();
+                        let repo_name = server_repo_ids_by_name
+                            .into_keys()
+                            .choose(&mut rng)
+                            .unwrap();
                         TestOperation::CloneRepo {
                             client_id,
                             name: repo_name,
@@ -2004,7 +2014,7 @@ mod tests {
                 } else {
                     let repo = repos.choose(&mut rng).unwrap().clone();
                     let branches = repo.branches();
-                    if rng.gen_bool(0.05) {
+                    if client.is_local_repo(&repo) && rng.gen_bool(0.05) {
                         TestOperation::PublishRepo {
                             client_id,
                             id: repo.id,
@@ -2117,6 +2127,30 @@ mod tests {
                     let branch = repo.branch(&branch_name).unwrap();
                     let document = branch.document(document_id).unwrap();
                     document.edit(edits);
+                }
+            }
+        }
+
+        log::info!("Quiescing");
+        deterministic.run_until_parked();
+        for client in clients {
+            for client_repo in client.repos() {
+                if !client.is_local_repo(&client_repo) {
+                    let server_repo = server.db.repo(client_repo.id).unwrap();
+                    let client_branches = client_repo.branches();
+                    let server_branches = server_repo.branches();
+                    assert_eq!(
+                        client_branches
+                            .iter()
+                            .map(|branch| branch.id)
+                            .collect::<Vec<_>>(),
+                        server_branches
+                            .iter()
+                            .map(|branch| branch.id)
+                            .collect::<Vec<_>>(),
+                        "client {} branches != server branches",
+                        client.id
+                    );
                 }
             }
         }
