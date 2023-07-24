@@ -17,5 +17,6 @@
 (union_variant
     name: (upper_case_identifier) @name) @item
 
-(type_annotation
-    name: (_) @name) @item
+(value_declaration
+    functionDeclarationLeft:
+        (function_declaration_left(lower_case_identifier) @name)) @item
