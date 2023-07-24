@@ -247,10 +247,14 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                     client
                         .request(messages::PublishOperations {
                             repo_id: this.repo.id,
-                            operations,
+                            operations: operations.clone(),
                         })
                         .await
                         .expect("network is infallible");
+                    for operation in operations {
+                        this.network_room
+                            .broadcast(MessageEnvelope::Operation(operation.clone()).to_bytes());
+                    }
                 }
             }
         });
@@ -272,8 +276,6 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
     }
 
     fn broadcast_operation(&self, operation: Operation) {
-        self.network_room
-            .broadcast(MessageEnvelope::Operation(operation.clone()).to_bytes());
         self.operations_tx.unbounded_send(operation).unwrap();
     }
 
