@@ -125,6 +125,7 @@ actions!(
         Paste,
         Delete,
         Rename,
+        Open,
         ToggleFocus,
         NewSearchInDirectory,
     ]
@@ -146,6 +147,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
+    cx.add_async_action(ProjectPanel::open_file);
     cx.add_action(ProjectPanel::cancel);
     cx.add_action(ProjectPanel::cut);
     cx.add_action(ProjectPanel::copy);
@@ -560,15 +562,20 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         if let Some(task) = self.confirm_edit(cx) {
-            Some(task)
-        } else if let Some((_, entry)) = self.selected_entry(cx) {
+            return Some(task);
+        }
+
+        None
+    }
+
+    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
             }
-            None
-        } else {
-            None
         }
+
+        None
     }
 
     fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -2382,7 +2389,7 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2410,7 +2417,7 @@ mod tests {
         ensure_no_open_items_and_panes(window_id, &workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
