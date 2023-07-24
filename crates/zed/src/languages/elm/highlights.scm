@@ -29,9 +29,7 @@
 
 (function_call_expr
     target: (value_expr
-        name: (value_qid (dot) (lower_case_identifier) @function)))
-
-(function_call_expr target: (value_expr) @identifier)
+        name: (value_qid (lower_case_identifier) @function)))
 
 (exposed_value(lower_case_identifier) @function)
 (exposed_type(upper_case_identifier) @type)
