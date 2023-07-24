@@ -51,9 +51,6 @@
 (type_ref) @type
 (type_alias_declaration name: (upper_case_identifier) @type)
 
-(union_variant(upper_case_identifier) @variant)
-(union_pattern) @variant
-
 (value_expr(upper_case_qid(upper_case_identifier)) @type)
 
 [
