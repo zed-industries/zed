@@ -1,4 +1,4 @@
-use std::{any::TypeId, ops::Range};
+use std::ops::Range;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
@@ -96,14 +96,21 @@ impl StatusBar {
         cx.notify();
     }
 
-    pub fn position_of_item<T>(&mut self) -> Option<usize>
+    pub fn position_of_item<T>(&self) -> Option<usize>
     where
         T: StatusItemView,
     {
         self.position_of_named_item(T::ui_name())
     }
 
-    pub fn position_of_named_item(&mut self, name: &str) -> Option<usize> {
+    pub fn item_of_type<T: StatusItemView>(&self) -> Option<ViewHandle<T>> {
+        self.left_items
+            .iter()
+            .chain(self.right_items.iter())
+            .find_map(|item| item.as_any().clone().downcast())
+    }
+
+    pub fn position_of_named_item(&self, name: &str) -> Option<usize> {
         for (index, item) in self.left_items.iter().enumerate() {
             if item.as_ref().ui_name() == name {
                 return Some(index);
@@ -126,10 +133,10 @@ impl StatusBar {
         T: 'static + StatusItemView,
     {
         if position < self.left_items.len() {
-            self.left_items.insert(position, Box::new(item))
+            self.left_items.insert(position + 1, Box::new(item))
         } else {
             self.right_items
-                .insert(position - self.left_items.len(), Box::new(item))
+                .insert(position + 1 - self.left_items.len(), Box::new(item))
         }
         cx.notify()
     }

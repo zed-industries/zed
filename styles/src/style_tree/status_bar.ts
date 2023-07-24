@@ -27,7 +27,7 @@ export default function status_bar(): any {
         },
         border: border(layer, { top: true, overlay: true }),
         cursor_position: text(layer, "sans", "variant"),
-        vim_mode: text(layer, "sans", "variant"),
+        vim_mode_indicator: text(layer, "mono", "variant"),
         active_language: interactive({
             base: {
                 padding: { left: 6, right: 6 },
