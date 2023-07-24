@@ -532,25 +532,35 @@ impl<N: ServerNetwork> Server<N> {
         user: User,
         request: messages::PublishRepo,
     ) -> Result<messages::PublishRepoResponse> {
+        let room_name = RoomName(request.id.to_string().into());
+        self.network.create_room(&room_name).await?;
+
         // TODO: handle repositories that had already been published.
         match self.repo_ids_by_name.lock().entry(request.name.clone()) {
             btree_map::Entry::Occupied(_) => return Err(anyhow!("repo name taken")),
             btree_map::Entry::Vacant(entry) => {
-                let mut db = self.db.snapshot.lock();
-                db.repos.insert(request.id, Default::default());
                 entry.insert(request.id);
             }
         }
+
+        let token = self
+            .network
+            .grant_room_access(&room_name, user.login.as_ref());
+
+        self.db
+            .snapshot
+            .lock()
+            .repos
+            .insert(request.id, Default::default());
         self.next_replica_ids_by_repo_id
             .lock()
             .insert(request.id, ReplicaId(1));
 
-        let name = RoomName(request.id.to_string().into());
-        self.network.create_room(&name).await?;
-        let token = self.network.grant_room_access(&name, user.login.as_ref());
-
         Ok(messages::PublishRepoResponse {
-            credentials: RoomCredentials { name, token },
+            credentials: RoomCredentials {
+                name: room_name,
+                token,
+            },
         })
     }
 
