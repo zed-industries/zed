@@ -21,7 +21,6 @@ activity_indicator = { path = "../activity_indicator" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
-channels = { path = "../channels" }
 cli = { path = "../cli" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }

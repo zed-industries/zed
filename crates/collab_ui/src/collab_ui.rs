@@ -1,16 +1,14 @@
 mod collab_titlebar_item;
-mod contact_finder;
-mod contact_list;
 mod contact_notification;
-mod contacts_popover;
 mod face_pile;
 mod incoming_call_notification;
 mod notifications;
 mod project_shared_notification;
 mod sharing_status_indicator;
+pub mod panel;
 
 use call::{ActiveCall, Room};
-pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
+pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{actions, AppContext, Task};
 use std::sync::Arc;
 use util::ResultExt;
@@ -24,9 +22,7 @@ actions!(
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
-    contact_list::init(cx);
-    contact_finder::init(cx);
-    contacts_popover::init(cx);
+    panel::init(app_state.client.clone(), cx);
     incoming_call_notification::init(&app_state, cx);
     project_shared_notification::init(&app_state, cx);
     sharing_status_indicator::init(cx);

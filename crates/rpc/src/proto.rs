@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use super::{entity_messages, messages, request_messages, ConnectionId, TypedEnvelope};
 use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::Message as WebSocketMessage;

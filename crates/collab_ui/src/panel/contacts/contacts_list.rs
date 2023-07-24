@@ -1326,12 +1326,11 @@ impl View for ContactList {
         Flex::column()
             .with_child(
                 Flex::row()
-                    .with_child(
-                        ChildView::new(&self.filter_editor, cx)
-                            .contained()
-                            .with_style(theme.contact_list.user_query_editor.container)
-                            .flex(1., true),
-                    )
+                    // .with_child(
+                    //     ChildView::new(&self.filter_editor, cx)
+                    //         .contained()
+                    //         .with_style(theme.contact_list.user_query_editor.container)
+                    // )
                     .with_child(
                         MouseEventHandler::<AddContact, Self>::new(0, cx, |_, _| {
                             render_icon_button(
@@ -1354,7 +1353,7 @@ impl View for ContactList {
                     .constrained()
                     .with_height(theme.contact_list.user_query_editor_height),
             )
-            .with_child(List::new(self.list_state.clone()).flex(1., false))
+            // .with_child(List::new(self.list_state.clone()))
             .into_any()
     }
 

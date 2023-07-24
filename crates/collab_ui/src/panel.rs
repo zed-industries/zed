@@ -1,15 +1,17 @@
+mod contacts;
+mod panel_settings;
+
 use std::sync::Arc;
 
-use crate::channels_panel_settings::{ChannelsPanelDockPosition, ChannelsPanelSettings};
 use anyhow::Result;
-use collections::HashMap;
+use client::Client;
 use context_menu::ContextMenu;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Stack},
-    serde_json, AppContext, AsyncAppContext, Element, Entity, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    serde_json, AppContext, AsyncAppContext, Element, Entity, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
@@ -20,27 +22,32 @@ use workspace::{
     Workspace,
 };
 
-actions!(channels, [ToggleFocus]);
+use self::{
+    contacts::Contacts,
+    panel_settings::{ChannelsPanelDockPosition, ChannelsPanelSettings},
+};
+
+actions!(collab_panel, [ToggleFocus]);
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 
-pub fn init(cx: &mut AppContext) {
-    settings::register::<ChannelsPanelSettings>(cx);
+pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
+    settings::register::<panel_settings::ChannelsPanelSettings>(cx);
+    contacts::init(cx);
 }
 
-pub struct ChannelsPanel {
+pub struct CollabPanel {
     width: Option<f32>,
     fs: Arc<dyn Fs>,
     has_focus: bool,
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
-    collapsed_channels: HashMap<u64, bool>,
+    contacts: ViewHandle<contacts::Contacts>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct SerializedChannelsPanel {
     width: Option<f32>,
-    collapsed_channels: Option<HashMap<u64, bool>>,
 }
 
 #[derive(Debug)]
@@ -49,26 +56,34 @@ pub enum Event {
     Focus,
 }
 
-impl Entity for ChannelsPanel {
+impl Entity for CollabPanel {
     type Event = Event;
 }
 
-impl ChannelsPanel {
+impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         cx.add_view(|cx| {
             let view_id = cx.view_id();
+
             let this = Self {
                 width: None,
                 has_focus: false,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
-                collapsed_channels: HashMap::default(),
+                contacts: cx.add_view(|cx| {
+                    Contacts::new(
+                        workspace.project().clone(),
+                        workspace.user_store().clone(),
+                        workspace.weak_handle(),
+                        cx,
+                    )
+                }),
             };
 
             // Update the dock position when the setting changes.
             let mut old_dock_position = this.position(cx);
-            cx.observe_global::<SettingsStore, _>(move |this: &mut ChannelsPanel, cx| {
+            cx.observe_global::<SettingsStore, _>(move |this: &mut CollabPanel, cx| {
                 let new_dock_position = this.position(cx);
                 if new_dock_position != old_dock_position {
                     old_dock_position = new_dock_position;
@@ -99,12 +114,10 @@ impl ChannelsPanel {
             };
 
             workspace.update(&mut cx, |workspace, cx| {
-                let panel = ChannelsPanel::new(workspace, cx);
+                let panel = CollabPanel::new(workspace, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width;
-                        panel.collapsed_channels =
-                            serialized_panel.collapsed_channels.unwrap_or_default();
                         cx.notify();
                     });
                 }
@@ -115,16 +128,12 @@ impl ChannelsPanel {
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let width = self.width;
-        let collapsed_channels = self.collapsed_channels.clone();
         self.pending_serialization = cx.background().spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
                         CHANNELS_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedChannelsPanel {
-                            width,
-                            collapsed_channels: Some(collapsed_channels),
-                        })?,
+                        serde_json::to_string(&SerializedChannelsPanel { width })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -134,7 +143,7 @@ impl ChannelsPanel {
     }
 }
 
-impl View for ChannelsPanel {
+impl View for CollabPanel {
     fn ui_name() -> &'static str {
         "ChannelsPanel"
     }
@@ -159,18 +168,19 @@ impl View for ChannelsPanel {
                 // Full panel column
                 Flex::column()
                     .with_child(
-                        Flex::column().with_child(
-                            Flex::row().with_child(
-                                Label::new(
-                                    "Contacts",
-                                    theme.editor.invalid_information_diagnostic.message.clone(),
-                                )
-                                .into_any(),
-                            ),
-                        ),
+                        Flex::column()
+                            .with_child(
+                                Flex::row().with_child(
+                                    Label::new(
+                                        "Contacts",
+                                        theme.editor.invalid_information_diagnostic.message.clone(),
+                                    )
+                                    .into_any(),
+                                ),
+                            )
+                            .with_child(ChildView::new(&self.contacts, cx)),
                     )
-                    .scrollable::<ChannelsPanelScrollTag>(0, None, cx)
-                    .expanded(),
+                    .scrollable::<ChannelsPanelScrollTag>(0, None, cx),
             )
             .with_child(ChildView::new(&self.context_menu, cx))
             .into_any_named("channels panel")
@@ -178,7 +188,7 @@ impl View for ChannelsPanel {
     }
 }
 
-impl Panel for ChannelsPanel {
+impl Panel for CollabPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         match settings::get::<ChannelsPanelSettings>(cx).dock {
             ChannelsPanelDockPosition::Left => DockPosition::Left,
@@ -216,7 +226,7 @@ impl Panel for ChannelsPanel {
     }
 
     fn icon_path(&self) -> &'static str {
-        "icons/bolt_16.svg"
+        "icons/radix/person.svg"
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {

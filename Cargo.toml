@@ -6,7 +6,6 @@ members = [
     "crates/auto_update",
     "crates/breadcrumbs",
     "crates/call",
-    "crates/channels",
     "crates/cli",
     "crates/client",
     "crates/clock",

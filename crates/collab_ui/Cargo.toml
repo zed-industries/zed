@@ -23,6 +23,7 @@ test-support = [
 
 [dependencies]
 auto_update = { path = "../auto_update" }
+db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
 clock = { path = "../clock" }
@@ -48,6 +49,7 @@ zed-actions = {path = "../zed-actions"}
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true
+schemars.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

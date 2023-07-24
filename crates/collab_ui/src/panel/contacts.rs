@@ -1,7 +1,6 @@
-use crate::{
-    contact_finder::{build_contact_finder, ContactFinder},
-    contact_list::ContactList,
-};
+mod contact_finder;
+mod contacts_list;
+
 use client::UserStore;
 use gpui::{
     actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, View,
@@ -11,10 +10,14 @@ use picker::PickerEvent;
 use project::Project;
 use workspace::Workspace;
 
+use self::{contacts_list::ContactList, contact_finder::{ContactFinder, build_contact_finder}};
+
 actions!(contacts_popover, [ToggleContactFinder]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(ContactsPopover::toggle_contact_finder);
+    cx.add_action(Contacts::toggle_contact_finder);
+    contact_finder::init(cx);
+    contacts_list::init(cx);
 }
 
 pub enum Event {
@@ -26,7 +29,7 @@ enum Child {
     ContactFinder(ViewHandle<ContactFinder>),
 }
 
-pub struct ContactsPopover {
+pub struct Contacts {
     child: Child,
     project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
@@ -34,7 +37,7 @@ pub struct ContactsPopover {
     _subscription: Option<gpui::Subscription>,
 }
 
-impl ContactsPopover {
+impl Contacts {
     pub fn new(
         project: ModelHandle<Project>,
         user_store: ModelHandle<UserStore>,
@@ -61,7 +64,7 @@ impl ContactsPopover {
         }
     }
 
-    fn show_contact_finder(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
+    fn show_contact_finder(&mut self, editor_text: String, cx: &mut ViewContext<Contacts>) {
         let child = cx.add_view(|cx| {
             let finder = build_contact_finder(self.user_store.clone(), cx);
             finder.set_query(editor_text, cx);
@@ -75,7 +78,7 @@ impl ContactsPopover {
         cx.notify();
     }
 
-    fn show_contact_list(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
+    fn show_contact_list(&mut self, editor_text: String, cx: &mut ViewContext<Contacts>) {
         let child = cx.add_view(|cx| {
             ContactList::new(
                 self.project.clone(),
@@ -87,8 +90,8 @@ impl ContactsPopover {
         });
         cx.focus(&child);
         self._subscription = Some(cx.subscribe(&child, |this, _, event, cx| match event {
-            crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
-            crate::contact_list::Event::ToggleContactFinder => {
+            contacts_list::Event::Dismissed => cx.emit(Event::Dismissed),
+            contacts_list::Event::ToggleContactFinder => {
                 this.toggle_contact_finder(&Default::default(), cx)
             }
         }));
@@ -97,11 +100,11 @@ impl ContactsPopover {
     }
 }
 
-impl Entity for ContactsPopover {
+impl Entity for Contacts {
     type Event = Event;
 }
 
-impl View for ContactsPopover {
+impl View for Contacts {
     fn ui_name() -> &'static str {
         "ContactsPopover"
     }
@@ -113,9 +116,9 @@ impl View for ContactsPopover {
             Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
-        MouseEventHandler::<ContactsPopover, Self>::new(0, cx, |_, _| {
+        MouseEventHandler::<Contacts, Self>::new(0, cx, |_, _| {
             Flex::column()
-                .with_child(child.flex(1., true))
+                .with_child(child)
                 .contained()
                 .with_style(theme.contacts_popover.container)
                 .constrained()

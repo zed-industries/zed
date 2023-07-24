@@ -9,9 +9,8 @@ use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
-use channels::ChannelsPanel;
 pub use client;
-use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
+use collab_ui::CollabTitlebarItem; // TODO: Add back toggle collab ui shortcut
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
@@ -84,20 +83,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(
         |_: &mut Workspace, _: &ToggleFullScreen, cx: &mut ViewContext<Workspace>| {
             cx.toggle_full_screen();
-        },
-    );
-    cx.add_action(
-        |workspace: &mut Workspace, _: &ToggleContactsMenu, cx: &mut ViewContext<Workspace>| {
-            if let Some(item) = workspace
-                .titlebar_item()
-                .and_then(|item| item.downcast::<CollabTitlebarItem>())
-            {
-                cx.defer(move |_, cx| {
-                    item.update(cx, |item, cx| {
-                        item.toggle_contacts_popover(&Default::default(), cx);
-                    });
-                });
-            }
         },
     );
     cx.add_global_action(quit);
@@ -223,8 +208,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &channels::ToggleFocus, cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus::<channels::ChannelsPanel>(cx);
+        |workspace: &mut Workspace,
+         _: &collab_ui::panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<collab_ui::panel::CollabPanel>(cx);
         },
     );
     cx.add_action(
@@ -345,7 +332,8 @@ pub fn initialize_workspace(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-        let channels_panel = ChannelsPanel::load(workspace_handle.clone(), cx.clone());
+        let channels_panel =
+            collab_ui::panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let (project_panel, terminal_panel, assistant_panel, channels_panel) = futures::try_join!(
             project_panel,
             terminal_panel,

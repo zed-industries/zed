@@ -499,7 +499,8 @@
   {
     "bindings": {
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
-      "cmd-shift-c": "collab::ToggleContactsMenu",
+      // TODO: Move this to a dock open action
+      "cmd-shift-c": "collab_panel::ToggleFocus",
       "cmd-alt-i": "zed::DebugElements"
     }
   },
