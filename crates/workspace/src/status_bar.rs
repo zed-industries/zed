@@ -96,18 +96,18 @@ impl StatusBar {
         cx.notify();
     }
 
-    pub fn position_of_item<T>(&self) -> Option<usize>
-    where
-        T: StatusItemView,
-    {
-        self.position_of_named_item(T::ui_name())
-    }
-
     pub fn item_of_type<T: StatusItemView>(&self) -> Option<ViewHandle<T>> {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
             .find_map(|item| item.as_any().clone().downcast())
+    }
+
+    pub fn position_of_item<T>(&self) -> Option<usize>
+    where
+        T: StatusItemView,
+    {
+        self.position_of_named_item(T::ui_name())
     }
 
     pub fn position_of_named_item(&self, name: &str) -> Option<usize> {
