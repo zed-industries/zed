@@ -402,7 +402,7 @@ pub struct StatusBar {
     pub height: f32,
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
-    pub vim_mode_indicator: TextStyle,
+    pub vim_mode_indicator: ContainedText,
     pub active_language: Interactive<ContainedText>,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,

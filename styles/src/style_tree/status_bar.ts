@@ -1,6 +1,8 @@
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../common"
+import { text_button } from "../component/text_button"
+
 export default function status_bar(): any {
     const theme = useTheme()
 
@@ -26,21 +28,16 @@ export default function status_bar(): any {
             right: 6,
         },
         border: border(layer, { top: true, overlay: true }),
-        cursor_position: text(layer, "sans", "variant"),
-        vim_mode_indicator: text(layer, "mono", "variant"),
-        active_language: interactive({
-            base: {
-                padding: { left: 6, right: 6 },
-                ...text(layer, "sans", "variant"),
-            },
-            state: {
-                hovered: {
-                    ...text(layer, "sans", "on"),
-                },
-            },
+        cursor_position: text(layer, "sans", "variant", { size: "xs" }),
+        vim_mode_indicator: {
+            margin: { left: 6 },
+            ...text(layer, "mono", "variant", { size: "xs" }),
+        },
+        active_language: text_button({
+            color: "variant"
         }),
-        auto_update_progress_message: text(layer, "sans", "variant"),
-        auto_update_done_message: text(layer, "sans", "variant"),
+        auto_update_progress_message: text(layer, "sans", "variant", { size: "xs" }),
+        auto_update_done_message: text(layer, "sans", "variant", { size: "xs" }),
         lsp_status: interactive({
             base: {
                 ...diagnostic_status_container,
@@ -60,9 +57,9 @@ export default function status_bar(): any {
         }),
         diagnostic_message: interactive({
             base: {
-                ...text(layer, "sans"),
+                ...text(layer, "sans", { size: "xs" }),
             },
-            state: { hovered: text(layer, "sans", "hovered") },
+            state: { hovered: text(layer, "sans", "hovered", { size: "xs" }) },
         }),
         diagnostic_summary: interactive({
             base: {
@@ -118,7 +115,7 @@ export default function status_bar(): any {
                         icon_color: foreground(layer, "variant"),
                         label: {
                             margin: { left: 6 },
-                            ...text(layer, "sans", { size: "sm" }),
+                            ...text(layer, "sans", { size: "xs" }),
                         },
                     },
                     state: {

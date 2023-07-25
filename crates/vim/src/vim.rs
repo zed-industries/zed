@@ -289,9 +289,8 @@ impl Vim {
                                     Some(cx.add_view(|_| ModeIndicator::new(vim.state.mode)));
                             };
                             let mode_indicator = vim.mode_indicator.as_ref().unwrap();
-                            // TODO: would it be better to depend on the diagnostics crate
-                            // so we can pass the type directly?
-                            let position = status_bar.position_of_named_item("DiagnosticIndicator");
+                            let position = status_bar
+                                .position_of_item::<language_selector::ActiveBufferLanguage>();
                             if let Some(position) = position {
                                 status_bar.insert_item_after(position, mode_indicator.clone(), cx)
                             } else {

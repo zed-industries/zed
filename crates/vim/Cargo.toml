@@ -33,6 +33,7 @@ search = { path = "../search" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 theme = { path = "../theme" }
+language_selector = { path = "../language_selector"}
 
 [dev-dependencies]
 indoc.workspace = true

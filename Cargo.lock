@@ -8514,6 +8514,7 @@ dependencies = [
  "indoc",
  "itertools",
  "language",
+ "language_selector",
  "log",
  "nvim-rs",
  "parking_lot 0.11.2",

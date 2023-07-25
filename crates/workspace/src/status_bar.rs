@@ -107,17 +107,13 @@ impl StatusBar {
     where
         T: StatusItemView,
     {
-        self.position_of_named_item(T::ui_name())
-    }
-
-    pub fn position_of_named_item(&self, name: &str) -> Option<usize> {
         for (index, item) in self.left_items.iter().enumerate() {
-            if item.as_ref().ui_name() == name {
+            if item.as_ref().ui_name() == T::ui_name() {
                 return Some(index);
             }
         }
         for (index, item) in self.right_items.iter().enumerate() {
-            if item.as_ref().ui_name() == name {
+            if item.as_ref().ui_name() == T::ui_name() {
                 return Some(index + self.left_items.len());
             }
         }

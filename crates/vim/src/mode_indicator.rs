@@ -40,7 +40,10 @@ impl View for ModeIndicator {
             Mode::Visual { line: false } => "-- VISUAL --",
             Mode::Visual { line: true } => "VISUAL LINE ",
         };
-        Label::new(text, theme.vim_mode_indicator.clone()).into_any()
+        Label::new(text, theme.vim_mode_indicator.text.clone())
+            .contained()
+            .with_style(theme.vim_mode_indicator.container)
+            .into_any()
     }
 }
 
