@@ -264,25 +264,19 @@ impl Vim {
         }
     }
 
-    fn sync_mode_indicator(cx: &mut AppContext) {
-        cx.spawn(|mut cx| async move {
-            let workspace = match cx.update(|cx| {
-                cx.update_active_window(|cx| {
-                    cx.root_view()
-                        .downcast_ref::<Workspace>()
-                        .map(|workspace| workspace.downgrade())
-                })
-            }) {
-                Some(Some(workspace)) => workspace,
-                _ => {
-                    return Ok(());
-                }
+    fn sync_mode_indicator(cx: &mut WindowContext) {
+        let Some(workspace) = cx.root_view()
+            .downcast_ref::<Workspace>()
+            .map(|workspace| workspace.downgrade()) else {
+                return;
             };
 
+        cx.spawn(|mut cx| async move {
             workspace.update(&mut cx, |workspace, cx| {
                 Vim::update(cx, |vim, cx| {
                     workspace.status_bar().update(cx, |status_bar, cx| {
                         let current_position = status_bar.position_of_item::<ModeIndicator>();
+
                         if vim.enabled && current_position.is_none() {
                             if vim.mode_indicator.is_none() {
                                 vim.mode_indicator =
