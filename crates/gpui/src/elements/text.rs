@@ -7,8 +7,8 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
-    AppContext, Element, FontCache, LayoutContext, SceneBuilder, SizeConstraint, TextLayoutCache,
-    View, ViewContext,
+    AppContext, Element, FontCache, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
+    TextLayoutCache, View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -171,7 +171,7 @@ impl<V: View> Element<V> for Text {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();

@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    LayoutContext, SceneBuilder, View, ViewContext,
+    LayoutContext, PaintContext, SceneBuilder, View, ViewContext,
 };
 use crate::{Element, SizeConstraint};
 
@@ -57,7 +57,7 @@ impl<V: View> Element<V> for Empty {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut ViewContext<V>,
+        _: &mut PaintContext<V>,
     ) -> Self::PaintState {
     }
 

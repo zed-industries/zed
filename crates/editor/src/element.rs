@@ -32,7 +32,7 @@ use gpui::{
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AnyElement, Axis, Border, CursorRegion, Element, EventContext, FontCache, LayoutContext,
-    MouseRegion, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
+    MouseRegion, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -2455,7 +2455,7 @@ impl Element<Editor> for EditorElement {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         scene.push_layer(Some(visible_bounds));
@@ -3051,7 +3051,14 @@ mod tests {
         let mut scene = SceneBuilder::new(1.0);
         let bounds = RectF::new(Default::default(), size);
         editor.update(cx, |editor, cx| {
-            element.paint(&mut scene, bounds, bounds, &mut state, editor, cx);
+            element.paint(
+                &mut scene,
+                bounds,
+                bounds,
+                &mut state,
+                editor,
+                &mut PaintContext::new(cx),
+            );
         });
     }
 

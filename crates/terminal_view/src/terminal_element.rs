@@ -10,8 +10,9 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion, Quad,
-    SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
+    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion,
+    PaintContext, Quad, SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext,
+    WeakModelHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -730,7 +731,7 @@ impl Element<TerminalView> for TerminalElement {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
+        cx: &mut PaintContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
