@@ -2,12 +2,6 @@
   {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
-      "g": [
-        "vim::PushOperator",
-        {
-          "Namespace": "G"
-        }
-      ],
       "i": [
         "vim::PushOperator",
         {
@@ -30,6 +24,8 @@
       "j": "vim::Down",
       "down": "vim::Down",
       "enter": "vim::NextLineStart",
+      "tab": "vim::Tab",
+      "shift-tab": "vim::Tab",
       "k": "vim::Up",
       "up": "vim::Up",
       "l": "vim::Right",
@@ -60,6 +56,8 @@
           "ignorePunctuation": true
         }
       ],
+      "n": "search::SelectNextMatch",
+      "shift-n": "search::SelectPrevMatch",
       "%": "vim::Matching",
       "f": [
         "vim::PushOperator",
@@ -99,7 +97,39 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "ctrl+[": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "*": "vim::MoveToNext",
+      "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      // "g" commands
+      "g g": "vim::StartOfDocument",
+      "g h": "editor::Hover",
+      "g t": "pane::ActivateNextItem",
+      "g shift-t": "pane::ActivatePrevItem",
+      "g d": "editor::GoToDefinition",
+      "g shift-d": "editor::GoToTypeDefinition",
+      "g .": "editor::ToggleCodeActions", // zed specific
+      "g shift-a": "editor::FindAllReferences", // zed specific
+      "g *": [
+        "vim::MoveToNext",
+        {
+          "partialWord": true
+        }
+      ],
+      "g #": [
+        "vim::MoveToPrev",
+        {
+          "partialWord": true
+        }
+      ],
+      // z commands
+      "z t": "editor::ScrollCursorTop",
+      "z z": "editor::ScrollCursorCenter",
+      "z b": "editor::ScrollCursorBottom",
+      // Count support
       "1": [
         "vim::Number",
         1
@@ -135,7 +165,75 @@
       "9": [
         "vim::Number",
         9
-      ]
+      ],
+      // window related commands (ctrl-w X)
+      "ctrl-w left": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w up": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w down": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w ctrl-h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w ctrl-l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w ctrl-k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w g t": "pane::ActivateNextItem",
+      "ctrl-w ctrl-g t": "pane::ActivateNextItem",
+      "ctrl-w g shift-t": "pane::ActivatePrevItem",
+      "ctrl-w ctrl-g shift-t": "pane::ActivatePrevItem",
+      "ctrl-w w": "workspace::ActivateNextPane",
+      "ctrl-w ctrl-w": "workspace::ActivateNextPane",
+      "ctrl-w p": "workspace::ActivatePreviousPane",
+      "ctrl-w ctrl-p": "workspace::ActivatePreviousPane",
+      "ctrl-w shift-w": "workspace::ActivatePreviousPane",
+      "ctrl-w ctrl-shift-w": "workspace::ActivatePreviousPane",
+      "ctrl-w v": "pane::SplitLeft",
+      "ctrl-w ctrl-v": "pane::SplitLeft",
+      "ctrl-w s": "pane::SplitUp",
+      "ctrl-w shift-s": "pane::SplitUp",
+      "ctrl-w ctrl-s": "pane::SplitUp",
+      "ctrl-w c": "pane::CloseAllItems",
+      "ctrl-w ctrl-c": "pane::CloseAllItems",
+      "ctrl-w q": "pane::CloseAllItems",
+      "ctrl-w ctrl-q": "pane::CloseAllItems"
     }
   },
   {
@@ -155,12 +253,6 @@
       "y": [
         "vim::PushOperator",
         "Yank"
-      ],
-      "z": [
-        "vim::PushOperator",
-        {
-          "Namespace": "Z"
-        }
       ],
       "i": [
         "vim::SwitchMode",
@@ -193,10 +285,18 @@
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "/": [
-        "buffer_search::Deploy",
+      "/": "vim::Search",
+      "?": [
+        "vim::Search",
         {
-          "focus": true
+          "backwards": true
+        }
+      ],
+      ";": "vim::RepeatFind",
+      ",": [
+        "vim::RepeatFind",
+        {
+          "backwards": true
         }
       ],
       "ctrl-f": "vim::PageDown",
@@ -228,23 +328,10 @@
     }
   },
   {
-    "context": "Editor && vim_operator == g",
-    "bindings": {
-      "g": "vim::StartOfDocument",
-      "h": "editor::Hover",
-      "t": "pane::ActivateNextItem",
-      "shift-t": "pane::ActivatePrevItem",
-      "escape": [
-        "vim::SwitchMode",
-        "Normal"
-      ],
-      "d": "editor::GoToDefinition"
-    }
-  },
-  {
     "context": "Editor && vim_operator == c",
     "bindings": {
-      "c": "vim::CurrentLine"
+      "c": "vim::CurrentLine",
+      "d": "editor::Rename" // zed specific
     }
   },
   {
@@ -257,18 +344,6 @@
     "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "Editor && vim_operator == z",
-    "bindings": {
-      "t": "editor::ScrollCursorTop",
-      "z": "editor::ScrollCursorCenter",
-      "b": "editor::ScrollCursorBottom",
-      "escape": [
-        "vim::SwitchMode",
-        "Normal"
-      ]
     }
   },
   {
@@ -314,15 +389,16 @@
         "vim::SwitchMode",
         "Normal"
       ],
-      "> >": "editor::Indent",
-      "< <": "editor::Outdent"
+      ">": "editor::Indent",
+      "<": "editor::Outdent"
     }
   },
   {
     "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
-      "ctrl-c": "vim::NormalBefore"
+      "ctrl-c": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
     }
   },
   {
@@ -333,7 +409,18 @@
       "escape": [
         "vim::SwitchMode",
         "Normal"
+      ],
+      "ctrl+[": [
+        "vim::SwitchMode",
+        "Normal"
       ]
+    }
+  },
+  {
+    "context": "BufferSearchBar > VimEnabled",
+    "bindings": {
+      "enter": "vim::SearchSubmit",
+      "escape": "buffer_search::Dismiss"
     }
   }
 ]

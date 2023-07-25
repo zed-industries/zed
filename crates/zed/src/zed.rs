@@ -338,9 +338,22 @@ pub fn initialize_workspace(
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
         let (project_panel, terminal_panel, assistant_panel) =
             futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
+
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
-            workspace.add_panel(project_panel, cx);
+            workspace.add_panel_with_extra_event_handler(
+                project_panel,
+                cx,
+                |workspace, _, event, cx| match event {
+                    project_panel::Event::NewSearchInDirectory { dir_entry } => {
+                        search::ProjectSearchView::new_search_in_directory(workspace, dir_entry, cx)
+                    }
+                    project_panel::Event::ActivatePanel => {
+                        workspace.focus_panel::<ProjectPanel>(cx);
+                    }
+                    _ => {}
+                },
+            );
             workspace.add_panel(terminal_panel, cx);
             workspace.add_panel(assistant_panel, cx);
 
@@ -517,11 +530,7 @@ pub fn handle_keymap_file_changes(
         let mut settings_subscription = None;
         while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
             if let Ok(keymap_content) = KeymapFile::parse(&user_keymap_content) {
-                cx.update(|cx| {
-                    cx.clear_bindings();
-                    load_default_keymap(cx);
-                    keymap_content.clone().add_to_cx(cx).log_err();
-                });
+                cx.update(|cx| reload_keymaps(cx, &keymap_content));
 
                 let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
                 drop(settings_subscription);
@@ -530,10 +539,7 @@ pub fn handle_keymap_file_changes(
                         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
                         if new_base_keymap != old_base_keymap {
                             old_base_keymap = new_base_keymap.clone();
-
-                            cx.clear_bindings();
-                            load_default_keymap(cx);
-                            keymap_content.clone().add_to_cx(cx).log_err();
+                            reload_keymaps(cx, &keymap_content);
                         }
                     })
                     .detach();
@@ -542,6 +548,13 @@ pub fn handle_keymap_file_changes(
         }
     })
     .detach();
+}
+
+fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
+    cx.clear_bindings();
+    load_default_keymap(cx);
+    keymap_content.clone().add_to_cx(cx).log_err();
+    cx.set_menus(menus::menus());
 }
 
 fn open_local_settings_file(
@@ -1021,7 +1034,7 @@ mod tests {
         // Split the pane with the first entry, then open the second entry again.
         workspace
             .update(cx, |w, cx| {
-                w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
                 w.open_path(file2.clone(), None, true, cx)
             })
             .await
@@ -1085,8 +1098,46 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.window_ids().len(), 1);
+        let workspace = cx
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
+            .unwrap()
+            .downcast::<Workspace>()
+            .unwrap();
+
+        #[track_caller]
+        fn assert_project_panel_selection(
+            workspace: &Workspace,
+            expected_worktree_path: &Path,
+            expected_entry_path: &Path,
+            cx: &AppContext,
+        ) {
+            let project_panel = [
+                workspace.left_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.right_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
+            ]
+            .into_iter()
+            .find_map(std::convert::identity)
+            .expect("found no project panels")
+            .read(cx);
+            let (selected_worktree, selected_entry) = project_panel
+                .selected_entry(cx)
+                .expect("project panel should have a selected entry");
+            assert_eq!(
+                selected_worktree.abs_path().as_ref(),
+                expected_worktree_path,
+                "Unexpected project panel selected worktree path"
+            );
+            assert_eq!(
+                selected_entry.path.as_ref(),
+                expected_entry_path,
+                "Unexpected project panel selected entry path"
+            );
+        }
 
         // Open a file within an existing worktree.
         workspace
@@ -1095,9 +1146,10 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1118,8 +1170,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1132,7 +1185,6 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1153,8 +1205,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1167,7 +1220,6 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1188,8 +1240,9 @@ mod tests {
             })
             .await;
         cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
             let worktree_roots = workspace
-                .read(cx)
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1202,7 +1255,6 @@ mod tests {
             );
 
             let visible_worktree_roots = workspace
-                .read(cx)
                 .visible_worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
@@ -1216,7 +1268,6 @@ mod tests {
 
             assert_eq!(
                 workspace
-                    .read(cx)
                     .active_pane()
                     .read(cx)
                     .active_item()
@@ -1344,7 +1395,11 @@ mod tests {
         cx.dispatch_action(window_id, NewFile);
         workspace
             .update(cx, |workspace, cx| {
-                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                workspace.split_and_clone(
+                    workspace.active_pane().clone(),
+                    SplitDirection::Right,
+                    cx,
+                );
                 workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
             })
             .await
@@ -2330,7 +2385,7 @@ mod tests {
             editor::init(cx);
             project_panel::init_settings(cx);
             pane::init(cx);
-            project_panel::init(cx);
+            project_panel::init((), cx);
             terminal_view::init(cx);
             ai::init(cx);
             app_state

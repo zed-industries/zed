@@ -831,6 +831,7 @@ impl LanguageRegistry {
                                     Ok(language) => {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
+
                                         state.add(language.clone());
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
@@ -1791,7 +1792,7 @@ mod tests {
                 first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
                 ..Default::default()
             },
-            tree_sitter_javascript::language(),
+            tree_sitter_typescript::language_tsx(),
             vec![],
             |_| Default::default(),
         );

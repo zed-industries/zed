@@ -2501,6 +2501,156 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test sort_lines_case_insensitive()
+    cx.set_state(indoc! {"
+        «z
+        y
+        x
+        Z
+        Y
+        Xˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_insensitive(&SortLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «x
+        X
+        y
+        Y
+        z
+        Zˇ»
+    "});
+
+    // Test reverse_lines()
+    cx.set_state(indoc! {"
+        «5
+        4
+        3
+        2
+        1ˇ»
+    "});
+    cx.update_editor(|e, cx| e.reverse_lines(&ReverseLines, cx));
+    cx.assert_editor_state(indoc! {"
+        «1
+        2
+        3
+        4
+        5ˇ»
+    "});
+
+    // Skip testing shuffle_line()
+
+    // From here on out, test more complex cases of manipulate_lines() with a single driver method: sort_lines_case_sensitive()
+    // Since all methods calling manipulate_lines() are doing the exact same general thing (reordering lines)
+
+    // Don't manipulate when cursor is on single line, but expand the selection
+    cx.set_state(indoc! {"
+        ddˇdd
+        ccc
+        bb
+        a
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «ddddˇ»
+        ccc
+        bb
+        a
+    "});
+
+    // Basic manipulate case
+    // Start selection moves to column 0
+    // End of selection shrinks to fit shorter line
+    cx.set_state(indoc! {"
+        dd«d
+        ccc
+        bb
+        aaaaaˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bb
+        ccc
+        dddˇ»
+    "});
+
+    // Manipulate case with newlines
+    cx.set_state(indoc! {"
+        dd«d
+        ccc
+
+        bb
+        aaaaa
+
+        ˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «
+
+        aaaaa
+        bb
+        ccc
+        dddˇ»
+
+    "});
+}
+
+#[gpui::test]
+async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Manipulate with multiple selections on a single line
+    cx.set_state(indoc! {"
+        dd«dd
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bb
+        ccc
+        ddddˇ»
+    "});
+
+    // Manipulate with multiple disjoin selections
+    cx.set_state(indoc! {"
+        5«
+        4
+        3
+        2
+        1ˇ»
+
+        dd«dd
+        ccc
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «1
+        2
+        3
+        4
+        5ˇ»
+
+        «aaaaa
+        bb
+        ccc
+        ddddˇ»
+    "});
+}
+
+#[gpui::test]
 fn test_duplicate_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3836,7 +3986,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     ));
 
     let registry = Arc::new(LanguageRegistry::test());
@@ -5383,7 +5533,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comment: Some("// ".into()),
             ..Default::default()
         },
-        Some(tree_sitter_javascript::language()),
+        Some(tree_sitter_typescript::language_tsx()),
     ));
 
     let registry = Arc::new(LanguageRegistry::test());

@@ -350,6 +350,7 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+    pub git: GitProjectStatus,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -379,6 +380,7 @@ pub struct Search {
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
     pub option_button: Toggleable<Interactive<ContainedText>>,
+    pub action_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
@@ -478,8 +480,10 @@ pub struct ProjectPanelEntry {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,
-    pub icon_color: Color,
     pub icon_size: f32,
+    pub icon_color: Color,
+    pub chevron_color: Color,
+    pub chevron_size: f32,
     pub icon_spacing: f32,
     pub status: EntryStatus,
 }
@@ -687,6 +691,8 @@ pub struct Editor {
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
     pub diff: DiffStyle,
+    pub wrap_guide: Color,
+    pub active_wrap_guide: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
@@ -721,12 +727,12 @@ pub struct Scrollbar {
     pub thumb: ContainerStyle,
     pub width: f32,
     pub min_height_factor: f32,
-    pub git: GitDiffColors,
+    pub git: BufferGitDiffColors,
     pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct GitDiffColors {
+pub struct BufferGitDiffColors {
     pub inserted: Color,
     pub modified: Color,
     pub deleted: Color,

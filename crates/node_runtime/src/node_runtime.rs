@@ -6,13 +6,13 @@ use futures::{future::Shared, FutureExt};
 use gpui::{executor::Background, Task};
 use serde::Deserialize;
 use smol::{fs, io::BufReader, process::Command};
-use std::process::Output;
+use std::process::{Output, Stdio};
 use std::{
     env::consts,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, ResultExt};
+use util::http::HttpClient;
 
 const VERSION: &str = "v18.15.0";
 
@@ -62,6 +62,14 @@ impl NodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = |installation_path: PathBuf| async move {
+            let mut env_path = installation_path.join("bin").into_os_string();
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                if !existing_path.is_empty() {
+                    env_path.push(":");
+                    env_path.push(&existing_path);
+                }
+            }
+
             let node_binary = installation_path.join("bin/node");
             let npm_file = installation_path.join("bin/npm");
 
@@ -74,6 +82,7 @@ impl NodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
+            command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand).args(args);
 
             if let Some(directory) = directory {
@@ -84,9 +93,8 @@ impl NodeRuntime {
         };
 
         let installation_path = self.install_if_needed().await?;
-        let mut output = attempt(installation_path).await;
+        let mut output = attempt(installation_path.clone()).await;
         if output.is_err() {
-            let installation_path = self.reinstall().await?;
             output = attempt(installation_path).await;
             if output.is_err() {
                 return Err(anyhow!(
@@ -158,29 +166,6 @@ impl NodeRuntime {
         Ok(())
     }
 
-    async fn reinstall(&self) -> Result<PathBuf> {
-        log::info!("beginnning to reinstall Node runtime");
-        let mut installation_path = self.installation_path.lock().await;
-
-        if let Some(task) = installation_path.as_ref().cloned() {
-            if let Ok(installation_path) = task.await {
-                smol::fs::remove_dir_all(&installation_path)
-                    .await
-                    .context("node dir removal")
-                    .log_err();
-            }
-        }
-
-        let http = self.http.clone();
-        let task = self
-            .background
-            .spawn(async move { Self::install(http).await.map_err(Arc::new) })
-            .shared();
-
-        *installation_path = Some(task.clone());
-        task.await.map_err(|e| anyhow!("{}", e))
-    }
-
     async fn install_if_needed(&self) -> Result<PathBuf> {
         let task = self
             .installation_path
@@ -209,8 +194,19 @@ impl NodeRuntime {
         let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join("bin/node");
+        let npm_file = node_dir.join("bin/npm");
 
-        if fs::metadata(&node_binary).await.is_err() {
+        let result = Command::new(&node_binary)
+            .arg(npm_file)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        let valid = matches!(result, Ok(status) if status.success());
+
+        if !valid {
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await

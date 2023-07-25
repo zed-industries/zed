@@ -34,8 +34,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle,
-    WindowContext,
+    json, Action, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -62,7 +62,7 @@ pub trait Element<V: View>: 'static {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState;
 
     fn rect_for_text_range(
@@ -299,7 +299,14 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                let paint = element.paint(
+                    scene,
+                    bounds,
+                    visible_bounds,
+                    &mut layout,
+                    view,
+                    &mut PaintContext::new(cx),
+                );
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -317,7 +324,14 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                let paint = element.paint(
+                    scene,
+                    bounds,
+                    visible_bounds,
+                    &mut layout,
+                    view,
+                    &mut PaintContext::new(cx),
+                );
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -514,7 +528,7 @@ impl<V: View> Element<V> for AnyElement<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         self.paint(scene, bounds.origin(), visible_bounds, view, cx);
     }

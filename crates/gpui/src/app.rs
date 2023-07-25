@@ -44,6 +44,7 @@ use window_input_handler::WindowInputHandler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
+    fonts::TextStyle,
     json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -1073,7 +1074,7 @@ impl AppContext {
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let mut available_in_window = false;
-        let action_type = action.as_any().type_id();
+        let action_id = action.id();
         if let Some(window_id) = self.platform.main_window_id() {
             available_in_window = self
                 .read_window(window_id, |cx| {
@@ -1083,7 +1084,7 @@ impl AppContext {
                                 cx.views_metadata.get(&(window_id, view_id))
                             {
                                 if let Some(actions) = cx.actions.get(&view_metadata.type_id) {
-                                    if actions.contains_key(&action_type) {
+                                    if actions.contains_key(&action_id) {
                                         return true;
                                     }
                                 }
@@ -1094,7 +1095,7 @@ impl AppContext {
                 })
                 .unwrap_or(false);
         }
-        available_in_window || self.global_actions.contains_key(&action_type)
+        available_in_window || self.global_actions.contains_key(&action_id)
     }
 
     fn actions_mut(
@@ -3363,6 +3364,7 @@ pub struct LayoutContext<'a, 'b, 'c, V: View> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
+    text_style_stack: Vec<Arc<TextStyle>>,
     pub refreshing: bool,
 }
 
@@ -3377,6 +3379,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             view_context,
             new_parents,
             views_to_notify_if_ancestors_change,
+            text_style_stack: Vec::new(),
             refreshing,
         }
     }
@@ -3399,7 +3402,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
         for (i, view_id) in self.ancestors(view_id).enumerate() {
             if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    if actions.contains_key(&action.as_any().type_id()) {
+                    if actions.contains_key(&action.id()) {
                         handler_depth = Some(i);
                     }
                 }
@@ -3407,22 +3410,18 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             }
         }
 
-        if self.global_actions.contains_key(&action.as_any().type_id()) {
+        if self.global_actions.contains_key(&action.id()) {
             handler_depth = Some(contexts.len())
         }
 
+        let action_contexts = if let Some(depth) = handler_depth {
+            &contexts[depth..]
+        } else {
+            &contexts
+        };
+
         self.keystroke_matcher
-            .bindings_for_action_type(action.as_any().type_id())
-            .find_map(|b| {
-                let highest_handler = handler_depth?;
-                if action.eq(b.action())
-                    && (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..]))
-                {
-                    Some(b.keystrokes().into())
-                } else {
-                    None
-                }
-            })
+            .keystrokes_for_action(action, action_contexts)
     }
 
     fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
@@ -3431,6 +3430,24 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             .entry(view_id)
             .or_default()
             .push(self_view_id);
+    }
+
+    pub fn text_style(&self) -> Arc<TextStyle> {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(Default::default())
+    }
+
+    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    where
+        S: Into<Arc<TextStyle>>,
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.text_style_stack.push(style.into());
+        let result = f(self);
+        self.text_style_stack.pop();
+        result
     }
 }
 
@@ -3459,6 +3476,72 @@ impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
 }
 
 impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.view_context, window_id, f)
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.view_context, window_id, f)
+    }
+}
+
+pub struct PaintContext<'a, 'b, 'c, V: View> {
+    view_context: &'c mut ViewContext<'a, 'b, V>,
+    text_style_stack: Vec<Arc<TextStyle>>,
+}
+
+impl<'a, 'b, 'c, V: View> PaintContext<'a, 'b, 'c, V> {
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
+        Self {
+            view_context,
+            text_style_stack: Vec::new(),
+        }
+    }
+
+    pub fn text_style(&self) -> Arc<TextStyle> {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(Default::default())
+    }
+
+    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    where
+        S: Into<Arc<TextStyle>>,
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.text_style_stack.push(style.into());
+        let result = f(self);
+        self.text_style_stack.pop();
+        result
+    }
+}
+
+impl<'a, 'b, 'c, V: View> Deref for PaintContext<'a, 'b, 'c, V> {
+    type Target = ViewContext<'a, 'b, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_context
+    }
+}
+
+impl<V: View> DerefMut for PaintContext<'_, '_, '_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view_context
+    }
+}
+
+impl<V: View> BorrowAppContext for PaintContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.view_context, f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.view_context, f)
+    }
+}
+
+impl<V: View> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }

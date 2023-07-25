@@ -2,8 +2,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint,
-    Vector2FExt, View, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder,
+    SizeConstraint, Vector2FExt, View, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -258,7 +258,7 @@ impl<V: View> Element<V> for Flex<V> {
         visible_bounds: RectF,
         remaining_space: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -449,7 +449,7 @@ impl<V: View> Element<V> for FlexItem<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx)

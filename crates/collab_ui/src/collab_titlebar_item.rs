@@ -15,8 +15,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, LayoutContext, ModelHandle, PaintContext, SceneBuilder,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
@@ -652,10 +652,10 @@ impl CollabTitlebarItem {
         let is_muted = room.read(cx).is_muted();
         if is_muted {
             icon = "icons/radix/mic-mute.svg";
-            tooltip = "Unmute microphone\nRight click for options";
+            tooltip = "Unmute microphone";
         } else {
             icon = "icons/radix/mic.svg";
-            tooltip = "Mute microphone\nRight click for options";
+            tooltip = "Mute microphone";
         }
 
         let titlebar = &theme.titlebar;
@@ -705,10 +705,10 @@ impl CollabTitlebarItem {
         let is_deafened = room.read(cx).is_deafened().unwrap_or(false);
         if is_deafened {
             icon = "icons/radix/speaker-off.svg";
-            tooltip = "Unmute speakers\nRight click for options";
+            tooltip = "Unmute speakers";
         } else {
             icon = "icons/radix/speaker-loud.svg";
-            tooltip = "Mute speakers\nRight click for options";
+            tooltip = "Mute speakers";
         }
 
         let titlebar = &theme.titlebar;
@@ -1312,7 +1312,7 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut CollabTitlebarItem,
-        _: &mut ViewContext<CollabTitlebarItem>,
+        _: &mut PaintContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let mut path = PathBuilder::new();
         path.reset(bounds.lower_left());

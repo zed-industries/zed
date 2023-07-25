@@ -74,6 +74,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rand::{seq::SliceRandom, thread_rng};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -226,6 +227,10 @@ actions!(
         MoveLineUp,
         MoveLineDown,
         JoinLines,
+        SortLinesCaseSensitive,
+        SortLinesCaseInsensitive,
+        ReverseLines,
+        ShuffleLines,
         Transpose,
         Cut,
         Copy,
@@ -271,7 +276,9 @@ actions!(
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
+        GoToDefinitionSplit,
         GoToTypeDefinition,
+        GoToTypeDefinitionSplit,
         MoveToEnclosingBracket,
         UndoSelection,
         RedoSelection,
@@ -342,6 +349,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::join_lines);
+    cx.add_action(Editor::sort_lines_case_sensitive);
+    cx.add_action(Editor::sort_lines_case_insensitive);
+    cx.add_action(Editor::reverse_lines);
+    cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -407,7 +418,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::go_to_hunk);
     cx.add_action(Editor::go_to_prev_hunk);
     cx.add_action(Editor::go_to_definition);
+    cx.add_action(Editor::go_to_definition_split);
     cx.add_action(Editor::go_to_type_definition);
+    cx.add_action(Editor::go_to_type_definition_split);
     cx.add_action(Editor::fold);
     cx.add_action(Editor::fold_at);
     cx.add_action(Editor::unfold_lines);
@@ -545,6 +558,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    collapse_matches: bool,
     workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
@@ -558,6 +572,7 @@ pub struct Editor {
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
+    pixel_position_of_newest_cursor: Option<Vector2F>,
 }
 
 pub struct EditorSnapshot {
@@ -1377,6 +1392,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            collapse_matches: false,
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
@@ -1388,6 +1404,7 @@ impl Editor {
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
+            pixel_position_of_newest_cursor: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1514,6 +1531,17 @@ impl Editor {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
+    }
+
+    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+        self.collapse_matches = collapse_matches;
+    }
+
+    fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+        if self.collapse_matches {
+            return range.start..range.start;
+        }
+        range.clone()
     }
 
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
@@ -2655,11 +2683,16 @@ impl Editor {
             InlayRefreshReason::RefreshRequested => (InvalidationStrategy::RefreshRequested, None),
         };
 
-        self.inlay_hint_cache.refresh_inlay_hints(
+        if let Some(InlaySplice {
+            to_remove,
+            to_insert,
+        }) = self.inlay_hint_cache.spawn_hint_refresh(
             self.excerpt_visible_offsets(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,
-        )
+        ) {
+            self.splice_inlay_hints(to_remove, to_insert, cx);
+        }
     }
 
     fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
@@ -4181,6 +4214,96 @@ impl Editor {
         });
     }
 
+    pub fn sort_lines_case_sensitive(
+        &mut self,
+        _: &SortLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort())
+    }
+
+    pub fn sort_lines_case_insensitive(
+        &mut self,
+        _: &SortLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+    }
+
+    pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.reverse())
+    }
+
+    pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
+    }
+
+    fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&mut [&str]),
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        let mut contiguous_row_selections = Vec::new();
+        let mut new_selections = Vec::new();
+
+        while let Some(selection) = selections.next() {
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
+
+            let start_point = Point::new(start_row, 0);
+            let end_point = Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            let text = buffer
+                .text_for_range(start_point..end_point)
+                .collect::<String>();
+            let mut text = text.split("\n").collect_vec();
+
+            let text_len = text.len();
+            callback(&mut text);
+
+            // This is a current limitation with selections.
+            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
+            debug_assert!(
+                text.len() == text_len,
+                "callback should not change the number of lines"
+            );
+
+            edits.push((start_point..end_point, text.join("\n")));
+            let start_anchor = buffer.anchor_after(start_point);
+            let end_anchor = buffer.anchor_before(end_point);
+
+            // Make selection and push
+            new_selections.push(Selection {
+                id: selection.id,
+                start: start_anchor.to_offset(&buffer),
+                end: end_anchor.to_offset(&buffer),
+                goal: SelectionGoal::None,
+                reversed: selection.reversed,
+            });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -5274,7 +5397,7 @@ impl Editor {
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let end = self.buffer.read(cx).read(cx).len();
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        self.change_selections(None, cx, |s| {
             s.select_ranges(vec![0..end]);
         });
     }
@@ -6185,14 +6308,31 @@ impl Editor {
     }
 
     pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, cx);
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
     }
 
     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, cx);
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
     }
 
-    fn go_to_definition_of_kind(&mut self, kind: GotoDefinitionKind, cx: &mut ViewContext<Self>) {
+    pub fn go_to_definition_split(&mut self, _: &GoToDefinitionSplit, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx);
+    }
+
+    pub fn go_to_type_definition_split(
+        &mut self,
+        _: &GoToTypeDefinitionSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx);
+    }
+
+    fn go_to_definition_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        split: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let Some(workspace) = self.workspace(cx) else { return };
         let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
@@ -6211,7 +6351,7 @@ impl Editor {
         cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(definitions, cx);
+                editor.navigate_to_definitions(definitions, split, cx);
             })?;
             Ok::<(), anyhow::Error>(())
         })
@@ -6221,6 +6361,7 @@ impl Editor {
     pub fn navigate_to_definitions(
         &mut self,
         mut definitions: Vec<LocationLink>,
+        split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
         let Some(workspace) = self.workspace(cx) else { return };
@@ -6234,18 +6375,24 @@ impl Editor {
                 .to_offset(definition.target.buffer.read(cx));
 
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
+                let range = self.range_for_match(&range);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
             } else {
                 cx.window_context().defer(move |cx| {
                     let target_editor: ViewHandle<Self> = workspace.update(cx, |workspace, cx| {
-                        workspace.open_project_item(definition.target.buffer.clone(), cx)
+                        if split {
+                            workspace.split_project_item(definition.target.buffer.clone(), cx)
+                        } else {
+                            workspace.open_project_item(definition.target.buffer.clone(), cx)
+                        }
                     });
                     target_editor.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
                         pane.update(cx, |pane, _| pane.disable_history());
+                        let range = target_editor.range_for_match(&range);
                         target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
@@ -6276,7 +6423,9 @@ impl Editor {
                     .map(|definition| definition.target)
                     .collect();
                 workspace.update(cx, |workspace, cx| {
-                    Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
+                    Self::open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, split, cx,
+                    )
                 });
             });
         }
@@ -6321,7 +6470,7 @@ impl Editor {
                         })
                         .unwrap();
                     Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, cx,
+                        workspace, locations, replica_id, title, false, cx,
                     );
                 })?;
 
@@ -6336,6 +6485,7 @@ impl Editor {
         mut locations: Vec<Location>,
         replica_id: ReplicaId,
         title: String,
+        split: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
         // If there are multiple definitions, open them in a multibuffer
@@ -6382,7 +6532,11 @@ impl Editor {
                 cx,
             );
         });
-        workspace.add_item(Box::new(editor), cx);
+        if split {
+            workspace.split_item(Box::new(editor), cx);
+        } else {
+            workspace.add_item(Box::new(editor), cx);
+        }
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -7029,6 +7183,20 @@ impl Editor {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .text()
+    }
+
+    pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
+        let mut wrap_guides = smallvec::smallvec![];
+
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        if settings.show_wrap_guides {
+            if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
+                wrap_guides.push((soft_wrap as usize, true));
+            }
+            wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
+        }
+
+        wrap_guides
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {

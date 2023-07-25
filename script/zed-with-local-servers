@@ -1,1 +1,3 @@
+#!/bin/bash
+
 ZED_ADMIN_API_TOKEN=secret ZED_SERVER_URL=http://localhost:3000 cargo run $@

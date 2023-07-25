@@ -7,8 +7,8 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    AnyElement, Axis, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
-    ViewContext,
+    AnyElement, Axis, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder,
+    SizeConstraint, View, ViewContext,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -125,7 +125,7 @@ impl<V: View> Element<V> for Resizable<V> {
         visible_bounds: pathfinder_geometry::rect::RectF,
         constraint: &mut SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         scene.push_stacking_context(None, None);
 

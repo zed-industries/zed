@@ -9,6 +9,7 @@ path = "src/search.rs"
 doctest = false
 
 [dependencies]
+bitflags = "1"
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }

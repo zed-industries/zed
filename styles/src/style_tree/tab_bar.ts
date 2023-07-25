@@ -6,6 +6,8 @@ import { useTheme } from "../common"
 export default function tab_bar(): any {
     const theme = useTheme()
 
+    const { is_light } = theme
+
     const height = 32
 
     const active_layer = theme.highest
@@ -37,6 +39,18 @@ export default function tab_bar(): any {
         // Indicators
         icon_conflict: foreground(layer, "warning"),
         icon_dirty: foreground(layer, "accent"),
+
+        git: {
+            modified: is_light
+                ? theme.ramps.yellow(0.6).hex()
+                : theme.ramps.yellow(0.5).hex(),
+            inserted: is_light
+                ? theme.ramps.green(0.45).hex()
+                : theme.ramps.green(0.5).hex(),
+            conflict: is_light
+                ? theme.ramps.red(0.6).hex()
+                : theme.ramps.red(0.5).hex(),
+        },
 
         // When two tabs of the same name are open, a label appears next to them
         description: {

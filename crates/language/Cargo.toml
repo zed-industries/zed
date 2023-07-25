@@ -46,7 +46,6 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-rand = { workspace = true, optional = true }
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -56,9 +55,11 @@ similar = "1.3"
 smallvec.workspace = true
 smol.workspace = true
 tree-sitter.workspace = true
-tree-sitter-rust = { version = "*", optional = true }
-tree-sitter-typescript = { version = "*", optional = true }
 unicase = "2.6"
+
+rand = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
@@ -74,12 +75,13 @@ indoc.workspace = true
 rand.workspace = true
 unindent.workspace = true
 
-tree-sitter-embedded-template = "*"
-tree-sitter-html = "*"
-tree-sitter-javascript = "*"
-tree-sitter-json = "*"
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-rust = "*"
-tree-sitter-python = "*"
-tree-sitter-typescript = "*"
-tree-sitter-ruby = "*"
+tree-sitter-embedded-template.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-markdown.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-ruby.workspace = true
+tree-sitter-elixir.workspace = true
+tree-sitter-heex.workspace = true

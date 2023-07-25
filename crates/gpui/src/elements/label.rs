@@ -8,7 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -163,7 +163,7 @@ impl<V: View> Element<V> for Label {
         visible_bounds: RectF,
         line: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         line.paint(
