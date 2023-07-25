@@ -1,11 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use std::mem;
 use syn::{
     parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, DeriveInput, FnArg,
-    GenericParam, Generics, ItemFn, Lit, Meta, NestedMeta, Type, TypeGenerics, TypeParam,
-    WhereClause,
+    GenericParam, Generics, ItemFn, Lit, Meta, NestedMeta, Type, WhereClause,
 };
 
 #[proc_macro_attribute]

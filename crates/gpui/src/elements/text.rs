@@ -338,7 +338,7 @@ impl<V: View> Element<V> for Text {
 }
 
 /// Perform text layout on a series of highlighted chunks of text.
-fn layout_highlighted_chunks<'a>(
+pub fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
     text_style: &TextStyle,
     text_layout_cache: &TextLayoutCache,

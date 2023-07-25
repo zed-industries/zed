@@ -1,5 +1,8 @@
+use log::warn;
+
 use crate::{
     color::Color,
+    fonts::HighlightStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -7,26 +10,20 @@ use crate::{
     json::{json, ToJson},
     scene,
     serde_json::Value,
-    AnyElement, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View, ViewContext,
+    text_layout::{Line, ShapedBoundary},
+    AnyElement, AppContext, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
+
 use std::{any::Any, borrow::Cow, f32, ops::Range};
 
 use self::length::Length;
 
+use super::layout_highlighted_chunks;
+
 pub struct Node<V: View> {
     style: NodeStyle,
-    content: Content<V>,
-}
-
-enum Content<V: View> {
-    Children(Vec<AnyElement<V>>),
-    Text(Cow<'static, str>),
-}
-
-impl<V: View> Default for Content<V> {
-    fn default() -> Self {
-        Self::Children(Vec::new())
-    }
+    content: Vec<AnyElement<V>>,
 }
 
 pub fn column<V: View>() -> Node<V> {
@@ -722,4 +719,288 @@ enum FontWeight {
     Bold,
     ExtraBold,
     Black,
+}
+
+pub struct Text {
+    text: Cow<'static, str>,
+    highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
+    custom_runs: Option<(
+        Box<[Range<usize>]>,
+        Box<dyn FnMut(usize, RectF, &mut SceneBuilder, &mut AppContext)>,
+    )>,
+}
+
+pub struct TextLayout {
+    shaped_lines: Vec<Line>,
+    wrap_boundaries: Vec<Vec<ShapedBoundary>>,
+    line_height: f32,
+}
+
+impl<V: View> Element<V> for Text {
+    type LayoutState = TextLayout;
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        _: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> (Vector2F, Self::LayoutState) {
+        // Convert the string and highlight ranges into an iterator of highlighted chunks.
+
+        let mut offset = 0;
+        let mut highlight_ranges = self
+            .highlights
+            .as_ref()
+            .map_or(Default::default(), AsRef::as_ref)
+            .iter()
+            .peekable();
+        let chunks = std::iter::from_fn(|| {
+            let result;
+            if let Some((range, highlight_style)) = highlight_ranges.peek() {
+                if offset < range.start {
+                    result = Some((&self.text[offset..range.start], None));
+                    offset = range.start;
+                } else if range.end <= self.text.len() {
+                    result = Some((&self.text[range.clone()], Some(*highlight_style)));
+                    highlight_ranges.next();
+                    offset = range.end;
+                } else {
+                    warn!(
+                        "Highlight out of text range. Text len: {}, Highlight range: {}..{}",
+                        self.text.len(),
+                        range.start,
+                        range.end
+                    );
+                    result = None;
+                }
+            } else if offset < self.text.len() {
+                result = Some((&self.text[offset..], None));
+                offset = self.text.len();
+            } else {
+                result = None;
+            }
+            result
+        });
+
+        let style = cx.text_style();
+
+        // Perform shaping on these highlighted chunks
+        let shaped_lines = layout_highlighted_chunks(
+            chunks,
+            &style,
+            cx.text_layout_cache(),
+            &cx.font_cache,
+            usize::MAX,
+            self.text.matches('\n').count() + 1,
+        );
+
+        // If line wrapping is enabled, wrap each of the shaped lines.
+        let font_id = style.font_id;
+        let mut line_count = 0;
+        let mut max_line_width = 0_f32;
+        let mut wrap_boundaries = Vec::new();
+        let mut wrapper = cx.font_cache.line_wrapper(font_id, style.font_size);
+        for (line, shaped_line) in self.text.split('\n').zip(&shaped_lines) {
+            if style.soft_wrap {
+                let boundaries = wrapper
+                    .wrap_shaped_line(line, shaped_line, constraint.max.x())
+                    .collect::<Vec<_>>();
+                line_count += boundaries.len() + 1;
+                wrap_boundaries.push(boundaries);
+            } else {
+                line_count += 1;
+            }
+            max_line_width = max_line_width.max(shaped_line.width());
+        }
+
+        let line_height = cx.font_cache.line_height(style.font_size);
+        let size = vec2f(
+            max_line_width
+                .ceil()
+                .max(constraint.min.x())
+                .min(constraint.max.x()),
+            (line_height * line_count as f32).ceil(),
+        );
+        (
+            size,
+            TextLayout {
+                shaped_lines,
+                wrap_boundaries,
+                line_height,
+            },
+        )
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &mut Self::LayoutState,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Self::PaintState {
+        let mut origin = bounds.origin();
+        let empty = Vec::new();
+        let mut callback = |_, _, _: &mut SceneBuilder, _: &mut AppContext| {};
+
+        let mouse_runs;
+        let custom_run_callback;
+        if let Some((runs, build_region)) = &mut self.custom_runs {
+            mouse_runs = runs.iter();
+            custom_run_callback = build_region.as_mut();
+        } else {
+            mouse_runs = [].iter();
+            custom_run_callback = &mut callback;
+        }
+        let mut custom_runs = mouse_runs.enumerate().peekable();
+
+        let mut offset = 0;
+        for (ix, line) in layout.shaped_lines.iter().enumerate() {
+            let wrap_boundaries = layout.wrap_boundaries.get(ix).unwrap_or(&empty);
+            let boundaries = RectF::new(
+                origin,
+                vec2f(
+                    bounds.width(),
+                    (wrap_boundaries.len() + 1) as f32 * layout.line_height,
+                ),
+            );
+
+            let style = cx.text_style();
+            if boundaries.intersects(visible_bounds) {
+                if style.soft_wrap {
+                    line.paint_wrapped(
+                        scene,
+                        origin,
+                        visible_bounds,
+                        layout.line_height,
+                        wrap_boundaries,
+                        cx,
+                    );
+                } else {
+                    line.paint(scene, origin, visible_bounds, layout.line_height, cx);
+                }
+            }
+
+            // Paint any custom runs that intersect this line.
+            let end_offset = offset + line.len();
+            if let Some((custom_run_ix, custom_run_range)) = custom_runs.peek().cloned() {
+                if custom_run_range.start < end_offset {
+                    let mut current_custom_run = None;
+                    if custom_run_range.start <= offset {
+                        current_custom_run = Some((custom_run_ix, custom_run_range.end, origin));
+                    }
+
+                    let mut glyph_origin = origin;
+                    let mut prev_position = 0.;
+                    let mut wrap_boundaries = wrap_boundaries.iter().copied().peekable();
+                    for (run_ix, glyph_ix, glyph) in
+                        line.runs().iter().enumerate().flat_map(|(run_ix, run)| {
+                            run.glyphs()
+                                .iter()
+                                .enumerate()
+                                .map(move |(ix, glyph)| (run_ix, ix, glyph))
+                        })
+                    {
+                        glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
+                        prev_position = glyph.position.x();
+
+                        // If we've reached a soft wrap position, move down one line. If there
+                        // is a custom run in-progress, paint it.
+                        if wrap_boundaries
+                            .peek()
+                            .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
+                        {
+                            if let Some((run_ix, _, run_origin)) = &mut current_custom_run {
+                                let bounds = RectF::from_points(
+                                    *run_origin,
+                                    glyph_origin + vec2f(0., layout.line_height),
+                                );
+                                custom_run_callback(*run_ix, bounds, scene, cx);
+                                *run_origin =
+                                    vec2f(origin.x(), glyph_origin.y() + layout.line_height);
+                            }
+                            wrap_boundaries.next();
+                            glyph_origin = vec2f(origin.x(), glyph_origin.y() + layout.line_height);
+                        }
+
+                        // If we've reached the end of the current custom run, paint it.
+                        if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
+                            if offset + glyph.index == run_end_offset {
+                                current_custom_run.take();
+                                let bounds = RectF::from_points(
+                                    run_origin,
+                                    glyph_origin + vec2f(0., layout.line_height),
+                                );
+                                custom_run_callback(run_ix, bounds, scene, cx);
+                                custom_runs.next();
+                            }
+
+                            if let Some((_, run_range)) = custom_runs.peek() {
+                                if run_range.start >= end_offset {
+                                    break;
+                                }
+                                if run_range.start == offset + glyph.index {
+                                    current_custom_run =
+                                        Some((run_ix, run_range.end, glyph_origin));
+                                }
+                            }
+                        }
+
+                        // If we've reached the start of a new custom run, start tracking it.
+                        if let Some((run_ix, run_range)) = custom_runs.peek() {
+                            if offset + glyph.index == run_range.start {
+                                current_custom_run = Some((*run_ix, run_range.end, glyph_origin));
+                            }
+                        }
+                    }
+
+                    // If a custom run extends beyond the end of the line, paint it.
+                    if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
+                        let line_end = glyph_origin + vec2f(line.width() - prev_position, 0.);
+                        let bounds = RectF::from_points(
+                            run_origin,
+                            line_end + vec2f(0., layout.line_height),
+                        );
+                        custom_run_callback(run_ix, bounds, scene, cx);
+                        if end_offset == run_end_offset {
+                            custom_runs.next();
+                        }
+                    }
+                }
+            }
+
+            offset = end_offset + 1;
+            origin.set_y(boundaries.max_y());
+        }
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &V,
+        _: &ViewContext<V>,
+    ) -> Option<RectF> {
+        None
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &V,
+        _: &ViewContext<V>,
+    ) -> Value {
+        json!({
+            "type": "Text",
+            "bounds": bounds.to_json(),
+            "text": &self.text,
+        })
+    }
 }
