@@ -217,7 +217,7 @@ impl ProjectSearch {
 
                     let matches = results
                         .into_iter()
-                        .map(|result| (result.buffer, vec![result.range]))
+                        .map(|result| (result.buffer, vec![result.range.start..result.range.start]))
                         .collect();
 
                     excerpts.stream_excerpts_with_context_lines(matches, 3, cx)
