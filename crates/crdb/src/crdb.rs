@@ -890,8 +890,8 @@ impl DocumentFragment {
     ) {
         let mut intersection = self.clone();
 
-        let prefix = if range.start_insertion_id == self.insertion_id
-            && range.start_offset_in_insertion > self.insertion_subrange.start
+        let prefix = if range.start_insertion_id == intersection.insertion_id
+            && range.start_offset_in_insertion > intersection.insertion_subrange.start
         {
             let mut prefix = intersection.clone();
             prefix.insertion_subrange.end = range.start_offset_in_insertion;
@@ -901,8 +901,9 @@ impl DocumentFragment {
             None
         };
 
-        let suffix = if range.end_insertion_id == self.insertion_id
-            && range.end_offset_in_insertion < self.insertion_subrange.end
+        let suffix = if range.end_insertion_id == intersection.insertion_id
+            && range.end_offset_in_insertion > intersection.insertion_subrange.start
+            && range.end_offset_in_insertion < intersection.insertion_subrange.end
         {
             let mut suffix = intersection.clone();
             suffix.insertion_subrange.start = range.end_offset_in_insertion;
@@ -1938,6 +1939,12 @@ impl Revision {
                     );
                 }
             }
+        }
+
+        for document_fragment in self.document_fragments.iter() {
+            assert!(
+                document_fragment.is_sentinel() || !document_fragment.insertion_subrange.is_empty()
+            );
         }
     }
 }
