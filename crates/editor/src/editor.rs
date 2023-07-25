@@ -74,8 +74,9 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{seq::SliceRandom, thread_rng};
+// use rand::seq::SliceRandom;
+// use rand::thread_rng;
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -353,7 +354,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::sort_lines_case_sensitive);
     cx.add_action(Editor::sort_lines_case_insensitive);
     cx.add_action(Editor::reverse_lines);
-    // cx.add_action(Editor::shuffle_lines);
+    cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -4220,12 +4221,7 @@ impl Editor {
         _: &SortLinesCaseSensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, {
-            |mut lines| {
-                lines.sort();
-                lines
-            }
-        })
+        self.manipulate_lines(cx, |lines| lines.sort())
     }
 
     pub fn sort_lines_case_insensitive(
@@ -4233,35 +4229,20 @@ impl Editor {
         _: &SortLinesCaseInsensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, {
-            |mut lines| {
-                lines.sort_by_key(|line| line.to_lowercase());
-                lines
-            }
-        })
+        self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
-        self.manipulate_lines(cx, {
-            |mut lines| {
-                lines.reverse();
-                lines
-            }
-        })
+        self.manipulate_lines(cx, |lines| lines.reverse())
     }
 
-    // pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
-    //     self.manipulate_lines(cx, {
-    //         |mut lines| {
-    //             lines.shuffle(&mut thread_rng());
-    //             lines
-    //         }
-    //     })
-    // }
+    pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
+    }
 
     fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
     where
-        Fn: FnMut(Vec<&str>) -> Vec<&str>,
+        Fn: FnMut(&mut Vec<&str>),
     {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4280,12 +4261,12 @@ impl Editor {
                 &display_map,
                 &mut selections,
             );
+
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row - 1, buffer.line_len(end_row - 1));
             let text = buffer.text_for_range(start..end).collect::<String>();
-            // TODO SORT LINES: Is there a smarter / more effificent way to obtain lines?
-            let lines = text.split("\n").collect::<Vec<_>>();
-            let lines = callback(lines);
+            let mut lines = text.split("\n").collect::<Vec<_>>();
+            callback(&mut lines);
             edits.push((start..end, lines.join("\n")));
         }
 
@@ -4300,12 +4281,6 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
-
-        // TODO:
-        // Write tests
-        // - Use cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six "); in tests
-        // Mikayla check for perf stuff
-        // Shuffle
     }
 
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
