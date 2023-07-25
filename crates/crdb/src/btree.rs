@@ -56,11 +56,11 @@ impl<'a, T: Summary> Dimension<'a, T> for T {
 }
 
 pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>>: fmt::Debug {
-    fn cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
+    fn seek_cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
 }
 
 impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
-    fn cmp(&self, cursor_location: &Self, _: &S::Context) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &Self, _: &S::Context) -> Ordering {
         Ord::cmp(self, cursor_location)
     }
 }
@@ -79,8 +79,8 @@ impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T
 impl<'a, S: Summary, D1: SeekTarget<'a, S, D1> + Dimension<'a, S>, D2: Dimension<'a, S>>
     SeekTarget<'a, S, (D1, D2)> for D1
 {
-    fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0, cx)
+    fn seek_cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
+        self.seek_cmp(&cursor_location.0, cx)
     }
 }
 
@@ -93,7 +93,7 @@ impl<D> End<D> {
 }
 
 impl<'a, S: Summary, D: Dimension<'a, S>> SeekTarget<'a, S, D> for End<D> {
-    fn cmp(&self, _: &D, _: &S::Context) -> Ordering {
+    fn seek_cmp(&self, _: &D, _: &S::Context) -> Ordering {
         Ordering::Greater
     }
 }
@@ -1136,7 +1136,7 @@ mod tests {
     }
 
     impl<'a> SeekTarget<'a, IntegersSummary, IntegersSummary> for Count {
-        fn cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
+        fn seek_cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
             std::cmp::Ord::cmp(&self.0, &cursor_location.count)
         }
     }

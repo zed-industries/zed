@@ -980,7 +980,7 @@ impl<'a> btree::Dimension<'a, DocumentFragmentSummary> for OperationId {
 }
 
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary> for OperationId {
-    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
         Ord::cmp(self, &cursor_location.max_document_id)
     }
 }
@@ -988,7 +988,7 @@ impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
     for (OperationId, &'a DenseId)
 {
-    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
         Ord::cmp(
             self,
             &(
@@ -1002,7 +1002,7 @@ impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
     for (OperationId, usize)
 {
-    fn cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &DocumentFragmentSummary, _: &()) -> Ordering {
         Ord::cmp(
             self,
             &(cursor_location.max_document_id, cursor_location.visible_len),
@@ -1076,7 +1076,7 @@ impl btree::Summary for InsertionFragmentSummary {
 impl<'a> btree::SeekTarget<'a, InsertionFragmentSummary, InsertionFragmentSummary>
     for (OperationId, usize)
 {
-    fn cmp(&self, cursor_location: &InsertionFragmentSummary, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &InsertionFragmentSummary, _: &()) -> Ordering {
         Ord::cmp(
             self,
             &(
@@ -1370,13 +1370,13 @@ impl<'a> btree::Dimension<'a, DocumentFragmentSummary> for LocalEditDimension {
 }
 
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for OperationId {
-    fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
         Ord::cmp(self, &cursor_location.max_document_id)
     }
 }
 
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for usize {
-    fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
         Ord::cmp(self, &cursor_location.visible_len)
     }
 }
@@ -1384,7 +1384,7 @@ impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension> for 
 impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, LocalEditDimension>
     for (OperationId, usize)
 {
-    fn cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &LocalEditDimension, _: &()) -> Ordering {
         Ord::cmp(
             self,
             &(cursor_location.max_document_id, cursor_location.visible_len),

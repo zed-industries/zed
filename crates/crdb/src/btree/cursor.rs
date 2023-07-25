@@ -377,7 +377,7 @@ where
         cx: &<T::Summary as Summary>::Context,
     ) -> bool {
         debug_assert!(
-            target.cmp(&self.position, cx) >= Ordering::Equal,
+            target.seek_cmp(&self.position, cx) >= Ordering::Equal,
             "cannot seek backward from {:?} to {:?}",
             self.position,
             target
@@ -411,7 +411,7 @@ where
                         let mut child_end = self.position.clone();
                         child_end.add_summary(child_summary, cx);
 
-                        let comparison = target.cmp(&child_end, cx);
+                        let comparison = target.seek_cmp(&child_end, cx);
                         if comparison == Ordering::Greater
                             || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
@@ -444,7 +444,7 @@ where
                         let mut child_end = self.position.clone();
                         child_end.add_summary(item_summary, cx);
 
-                        let comparison = target.cmp(&child_end, cx);
+                        let comparison = target.seek_cmp(&child_end, cx);
                         if comparison == Ordering::Greater
                             || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
@@ -475,7 +475,7 @@ where
             }
         }
 
-        target.cmp(&end, cx) == Ordering::Equal
+        target.seek_cmp(&end, cx) == Ordering::Equal
     }
 }
 

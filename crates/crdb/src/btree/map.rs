@@ -75,7 +75,7 @@ where
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        if key.seek_cmp(&cursor.end(&()), &()) == Ordering::Equal {
             removed = Some(cursor.item().unwrap().value.clone());
             cursor.next(&());
         }
@@ -149,7 +149,7 @@ where
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
         let mut result = None;
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        if key.seek_cmp(&cursor.end(&()), &()) == Ordering::Equal {
             let mut updated = cursor.item().unwrap().clone();
             result = Some(f(&mut updated.value));
             new_tree.push(updated, &());
@@ -228,7 +228,7 @@ struct MapSeekTargetAdaptor<'a, T>(&'a T);
 impl<'a, K: Debug + Clone + Default + Ord, T: MapSeekTarget<K>>
     SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapSeekTargetAdaptor<'_, T>
 {
-    fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         if let Some(key) = &cursor_location.0 {
             MapSeekTarget::cmp_cursor(self.0, key)
         } else {
@@ -305,7 +305,7 @@ impl<'a, K> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapKeyRef<'_, K>
 where
     K: Clone + Debug + Default + Ord,
 {
-    fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
+    fn seek_cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         Ord::cmp(&self.0, &cursor_location.0)
     }
 }
