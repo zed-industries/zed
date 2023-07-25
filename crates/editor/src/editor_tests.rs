@@ -2501,82 +2501,153 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
+async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    cx.add_window(|cx| {
-        let buffer = MultiBuffer::build_simple("dddd\nccc\nbb\na\n\n", cx);
-        let mut editor = build_editor(buffer.clone(), cx);
-        let buffer = buffer.read(cx).as_singleton().unwrap();
+    let mut cx = EditorTestContext::new(cx).await;
 
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
-        });
-        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
-        assert_eq!(
-            buffer.read(cx).text(),
-            "dddd\nccc\nbb\na\n\n",
-            "no sorting when single cursor parked on single line"
-        );
-        assert_eq!(
-            editor.selections.ranges::<Point>(cx),
-            &[Point::new(0, 1)..Point::new(0, 2)]
-        );
+    // Test sort_lines_case_insensitive()
+    cx.set_state(indoc! {"
+        «z
+        y
+        x
+        Z
+        Y
+        Xˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_insensitive(&SortLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «x
+        X
+        y
+        Y
+        z
+        Zˇ»
+    "});
 
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(0, 2)..Point::new(5, 0)])
-        });
-        //editor.sort_lines();
-        assert_eq!(
-            buffer.read(cx).text(),
-            "a\nbb\nccc\ndddd\n\n",
-            "single selection is sorted"
-        );
-        assert_eq!(
-            editor.selections.ranges::<Point>(cx),
-            &[Point::new(0, 0)..Point::new(5, 1)]
-        );
+    // Test reverse_lines()
+    cx.set_state(indoc! {"
+        «5
+        4
+        3
+        2
+        1ˇ»
+    "});
+    cx.update_editor(|e, cx| e.reverse_lines(&ReverseLines, cx));
+    cx.assert_editor_state(indoc! {"
+        «1
+        2
+        3
+        4
+        5ˇ»
+    "});
 
-        editor
-    });
+    // Skip testing shuffle_line()
+
+    // From here on out, test more complex cases of manipulate_lines() with a single driver method: sort_lines_case_sensitive()
+    // Since all methods calling manipulate_lines() are doing the exact same general thing (reordering lines)
+
+    // Don't manipulate when cursor is on single line, but expand the selection
+    cx.set_state(indoc! {"
+        ddˇdd
+        ccc
+        bb
+        a
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «ddddˇ»
+        ccc
+        bb
+        a
+    "});
+
+    // Basic manipulate case
+    // Start selection moves to column 0
+    // End of selection shrinks to fit shorter line
+    cx.set_state(indoc! {"
+        dd«d
+        ccc
+        bb
+        aaaaaˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bb
+        ccc
+        dddˇ»
+    "});
+
+    // Manipulate case with newlines
+    cx.set_state(indoc! {"
+        dd«d
+        ccc
+
+        bb
+        aaaaa
+
+        ˇ»
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «
+
+        aaaaa
+        bb
+        ccc
+        dddˇ»
+
+    "});
 }
 
 #[gpui::test]
-fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
+async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    cx.add_window(|cx| {
-        let buffer = MultiBuffer::build_simple("dddd\nccc\nbb\na\n\n3\n2\n1\n\n", cx);
-        let mut editor = build_editor(buffer.clone(), cx);
-        let buffer = buffer.read(cx).as_singleton().unwrap();
+    let mut cx = EditorTestContext::new(cx).await;
 
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([
-                Point::new(0, 2)..Point::new(3, 2),
-                Point::new(5, 0)..Point::new(7, 1),
-            ])
-        });
+    // Manipulate with multiple selections on a single line
+    cx.set_state(indoc! {"
+        dd«dd
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bb
+        ccc
+        ddddˇ»
+    "});
 
-        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
-        assert_eq!(buffer.read(cx).text(), "a\nbb\nccc\ndddd\n\n1\n2\n3\n\n");
-        assert_eq!(
-            editor.selections.ranges::<Point>(cx),
-            &[Point::new(0, 5)..Point::new(2, 2)]
-        );
-        assert_eq!(
-            editor.selections.ranges::<Point>(cx),
-            &[Point::new(0, 5)..Point::new(2, 2)]
-        );
+    // Manipulate with multiple disjoin selections
+    cx.set_state(indoc! {"
+        5«
+        4
+        3
+        2
+        1ˇ»
 
-        // assert_eq!(
-        //     editor.selections.ranges::<Point>(cx),
-        //     [
-        //         Point::new(0, 7)..Point::new(0, 7),
-        //         Point::new(1, 3)..Point::new(1, 3)
-        //     ]
-        // );
-        editor
-    });
+        dd«dd
+        ccc
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «1
+        2
+        3
+        4
+        5ˇ»
+
+        «aaaaa
+        bb
+        ccc
+        ddddˇ»
+    "});
 }
 
 #[gpui::test]
