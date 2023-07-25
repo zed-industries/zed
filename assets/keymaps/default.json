@@ -528,6 +528,8 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
+      "enter": "project_panel::Rename",
+      "space": "project_panel::Open",
       "backspace": "project_panel::Delete",
       "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
