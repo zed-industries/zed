@@ -1,9 +1,10 @@
 use crate::{ClientNetwork, ClientRoom, RoomCredentials, RoomName, RoomToken, ServerNetwork, User};
 use anyhow::{anyhow, Result};
+use collections::BTreeMap;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use gpui::executor::Background;
 use parking_lot::Mutex;
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 pub struct TestNetwork(Arc<Mutex<NetworkState>>);
 
