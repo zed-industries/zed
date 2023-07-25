@@ -7990,10 +7990,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-elm"
+version = "5.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec83a2e1cfc69d03c8e73636e95662d6c6728539538d341b21251a77039fb94e"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-embedded-template"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33817ade928c73a32d4f904a602321e09de9fc24b71d106f3b4b3f8ab30dcc38"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-glsl"
+version = "0.1.4"
+source = "git+https://github.com/theHamsta/tree-sitter-glsl?rev=2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3#2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9543,7 +9562,9 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
+ "tree-sitter-elm",
  "tree-sitter-embedded-template",
+ "tree-sitter-glsl",
  "tree-sitter-go",
  "tree-sitter-heex",
  "tree-sitter-html",
