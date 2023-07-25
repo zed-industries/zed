@@ -2501,6 +2501,85 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_sort_lines_with_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("dddd\nccc\nbb\na\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 2)..Point::new(0, 2)])
+        });
+        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
+        assert_eq!(
+            buffer.read(cx).text(),
+            "dddd\nccc\nbb\na\n\n",
+            "no sorting when single cursor parked on single line"
+        );
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 2)..Point::new(0, 2)]
+        );
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 2)..Point::new(5, 1)])
+        });
+        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
+        assert_eq!(
+            buffer.read(cx).text(),
+            "a\nbb\nccc\ndddd\n\n",
+            "single selection is sorted"
+        );
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 0)..Point::new(5, 1)]
+        );
+
+        editor
+    });
+}
+
+#[gpui::test]
+fn test_sort_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("dddd\nccc\nbb\na\n\n3\n2\n1\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
+
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 2)..Point::new(3, 2),
+                Point::new(5, 0)..Point::new(7, 1),
+            ])
+        });
+
+        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
+        assert_eq!(buffer.read(cx).text(), "a\nbb\nccc\ndddd\n\n1\n2\n3\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
+
+        // assert_eq!(
+        //     editor.selections.ranges::<Point>(cx),
+        //     [
+        //         Point::new(0, 7)..Point::new(0, 7),
+        //         Point::new(1, 3)..Point::new(1, 3)
+        //     ]
+        // );
+        editor
+    });
+}
+
+#[gpui::test]
 fn test_duplicate_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
