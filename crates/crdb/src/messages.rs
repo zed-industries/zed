@@ -90,7 +90,7 @@ impl Into<RequestEnvelope> for SyncRepo {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncRepoResponse {
     pub operations: Vec<Operation>,
     pub max_operation_ids: BTreeMap<ReplicaId, OperationCount>,

@@ -257,7 +257,7 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                         .expect("network is infallible");
                     for operation in operations {
                         this.network_room
-                            .broadcast(MessageEnvelope::Operation(operation.clone()).to_bytes());
+                            .broadcast(MessageEnvelope::Operation(operation).to_bytes());
                     }
                 }
             }
@@ -303,6 +303,10 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                     operations: chunk.to_vec(),
                 })
                 .await?;
+            for operation in chunk {
+                self.network_room
+                    .broadcast(MessageEnvelope::Operation(operation.clone()).to_bytes());
+            }
         }
 
         Ok(())
