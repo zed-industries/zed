@@ -74,6 +74,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rand::{seq::SliceRandom, thread_rng};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -226,6 +227,10 @@ actions!(
         MoveLineUp,
         MoveLineDown,
         JoinLines,
+        SortLinesCaseSensitive,
+        SortLinesCaseInsensitive,
+        ReverseLines,
+        ShuffleLines,
         Transpose,
         Cut,
         Copy,
@@ -344,6 +349,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::join_lines);
+    cx.add_action(Editor::sort_lines_case_sensitive);
+    cx.add_action(Editor::sort_lines_case_insensitive);
+    cx.add_action(Editor::reverse_lines);
+    cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -4202,6 +4211,96 @@ impl Editor {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_anchor_ranges(cursor_positions)
             });
+        });
+    }
+
+    pub fn sort_lines_case_sensitive(
+        &mut self,
+        _: &SortLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort())
+    }
+
+    pub fn sort_lines_case_insensitive(
+        &mut self,
+        _: &SortLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+    }
+
+    pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.reverse())
+    }
+
+    pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
+    }
+
+    fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&mut [&str]),
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        let mut contiguous_row_selections = Vec::new();
+        let mut new_selections = Vec::new();
+
+        while let Some(selection) = selections.next() {
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
+
+            let start_point = Point::new(start_row, 0);
+            let end_point = Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            let text = buffer
+                .text_for_range(start_point..end_point)
+                .collect::<String>();
+            let mut text = text.split("\n").collect_vec();
+
+            let text_len = text.len();
+            callback(&mut text);
+
+            // This is a current limitation with selections.
+            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
+            debug_assert!(
+                text.len() == text_len,
+                "callback should not change the number of lines"
+            );
+
+            edits.push((start_point..end_point, text.join("\n")));
+            let start_anchor = buffer.anchor_after(start_point);
+            let end_anchor = buffer.anchor_before(end_point);
+
+            // Make selection and push
+            new_selections.push(Selection {
+                id: selection.id,
+                start: start_anchor.to_offset(&buffer),
+                end: end_anchor.to_offset(&buffer),
+                goal: SelectionGoal::None,
+                reversed: selection.reversed,
+            });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
         });
     }
 
