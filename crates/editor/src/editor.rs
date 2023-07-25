@@ -4231,15 +4231,11 @@ impl Editor {
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
-        self.manipulate_lines(cx, |lines| {
-            lines.reverse();
-        })
+        self.manipulate_lines(cx, |lines| lines.reverse())
     }
 
     pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
-        self.manipulate_lines(cx, |lines| {
-            lines.shuffle(&mut thread_rng());
-        })
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
     }
 
     fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
