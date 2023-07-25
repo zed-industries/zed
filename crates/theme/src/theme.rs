@@ -44,13 +44,13 @@ pub struct Theme {
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
     pub contacts_popover: ContactsPopover,
-    pub contact_list: ContactList,
     pub toolbar_dropdown_menu: DropdownMenu,
     pub copilot: Copilot,
-    pub contact_finder: ContactFinder,
+    pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
     pub channels_panel: ChanelsPanelStyle,
     pub command_palette: CommandPalette,
+    pub contact_finder: ContactFinder,
     pub picker: Picker,
     pub editor: Editor,
     pub search: Search,
@@ -220,7 +220,7 @@ pub struct ContactsPopover {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ContactList {
+pub struct CollabPanel {
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,

@@ -1,4 +1,3 @@
-import contact_finder from "./contact_finder"
 import contacts_popover from "./contacts_popover"
 import command_palette from "./command_palette"
 import project_panel from "./project_panel"
@@ -14,7 +13,8 @@ import simple_message_notification from "./simple_message_notification"
 import project_shared_notification from "./project_shared_notification"
 import tooltip from "./tooltip"
 import terminal from "./terminal"
-import contact_list from "./contact_list"
+import contact_finder from "./contact_finder"
+import collab_panel from "./collab_panel"
 import toolbar_dropdown_menu from "./toolbar_dropdown_menu"
 import incoming_call_notification from "./incoming_call_notification"
 import welcome from "./welcome"
@@ -49,8 +49,8 @@ export default function app(): any {
         project_panel: project_panel(),
         channels_panel: channels_panel(),
         contacts_popover: contacts_popover(),
+        collab_panel: collab_panel(),
         contact_finder: contact_finder(),
-        contact_list: contact_list(),
         toolbar_dropdown_menu: toolbar_dropdown_menu(),
         search: search(),
         shared_screen: shared_screen(),

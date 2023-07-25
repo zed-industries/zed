@@ -7,6 +7,7 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
+
 export default function contacts_panel(): any {
     const theme = useTheme()
 
@@ -49,7 +50,7 @@ export default function contacts_panel(): any {
     }
 
     return {
-        background: background(layer),
+        // background: background(layer),
         padding: { top: 12 },
         user_query_editor: {
             background: background(layer, "on"),
@@ -88,7 +89,7 @@ export default function contacts_panel(): any {
                         left: side_padding,
                         right: side_padding,
                     },
-                    background: background(layer, "default"), // posiewic: breaking change
+                    // background: background(layer, "default"), // posiewic: breaking change
                 },
                 state: {
                     hovered: {
@@ -97,7 +98,7 @@ export default function contacts_panel(): any {
                     clicked: {
                         background: background(layer, "pressed"),
                     },
-                }, // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
+                },
             }),
             state: {
                 active: {
@@ -220,7 +221,7 @@ export default function contacts_panel(): any {
             base: interactive({
                 base: {
                     ...project_row,
-                    background: background(layer),
+                    // background: background(layer),
                     icon: {
                         margin: { left: name_margin },
                         color: foreground(layer, "variant"),

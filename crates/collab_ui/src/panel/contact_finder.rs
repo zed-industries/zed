@@ -97,7 +97,7 @@ impl PickerDelegate for ContactFinderDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let theme = &theme::current(cx);
+        let theme = &theme::current(cx).contact_finder;
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
 
@@ -109,27 +109,22 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestAccepted => None,
         };
         let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
-            &theme.contact_finder.disabled_contact_button
+            &theme.disabled_contact_button
         } else {
-            &theme.contact_finder.contact_button
+            &theme.contact_button
         };
-        let style = theme
-            .contact_finder
-            .picker
-            .item
-            .in_state(selected)
-            .style_for(mouse_state);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
-                    .with_style(theme.contact_finder.contact_avatar)
+                    .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
             }))
             .with_child(
                 Label::new(user.github_login.clone(), style.label.clone())
                     .contained()
-                    .with_style(theme.contact_finder.contact_username)
+                    .with_style(theme.contact_username)
                     .aligned()
                     .left(),
             )
@@ -150,7 +145,7 @@ impl PickerDelegate for ContactFinderDelegate {
             .contained()
             .with_style(style.container)
             .constrained()
-            .with_height(theme.contact_finder.row_height)
+            .with_height(theme.row_height)
             .into_any()
     }
 }

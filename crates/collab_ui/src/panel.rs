@@ -126,7 +126,7 @@ impl CollabPanel {
             let filter_editor = cx.add_view(|cx| {
                 let mut editor = Editor::single_line(
                     Some(Arc::new(|theme| {
-                        theme.contact_list.user_query_editor.clone()
+                        theme.collab_panel.user_query_editor.clone()
                     })),
                     cx,
                 );
@@ -162,7 +162,7 @@ impl CollabPanel {
                             let is_collapsed = this.collapsed_sections.contains(section);
                             Self::render_header(
                                 *section,
-                                &theme.contact_list,
+                                &theme.collab_panel,
                                 is_selected,
                                 is_collapsed,
                                 cx,
@@ -173,7 +173,7 @@ impl CollabPanel {
                                 user,
                                 *is_pending,
                                 is_selected,
-                                &theme.contact_list,
+                                &theme.collab_panel,
                             )
                         }
                         ContactEntry::ParticipantProject {
@@ -188,7 +188,7 @@ impl CollabPanel {
                             Some(*project_id) == current_project_id,
                             *is_last,
                             is_selected,
-                            &theme.contact_list,
+                            &theme.collab_panel,
                             cx,
                         ),
                         ContactEntry::ParticipantScreen { peer_id, is_last } => {
@@ -196,14 +196,14 @@ impl CollabPanel {
                                 *peer_id,
                                 *is_last,
                                 is_selected,
-                                &theme.contact_list,
+                                &theme.collab_panel,
                                 cx,
                             )
                         }
                         ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                             user.clone(),
                             this.user_store.clone(),
-                            &theme.contact_list,
+                            &theme.collab_panel,
                             true,
                             is_selected,
                             cx,
@@ -211,7 +211,7 @@ impl CollabPanel {
                         ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
                             user.clone(),
                             this.user_store.clone(),
-                            &theme.contact_list,
+                            &theme.collab_panel,
                             false,
                             is_selected,
                             cx,
@@ -220,7 +220,7 @@ impl CollabPanel {
                             contact,
                             *calling,
                             &this.project,
-                            &theme.contact_list,
+                            &theme.collab_panel,
                             is_selected,
                             cx,
                         ),
@@ -617,7 +617,7 @@ impl CollabPanel {
         user: &User,
         is_pending: bool,
         is_selected: bool,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
     ) -> AnyElement<Self> {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
@@ -666,7 +666,7 @@ impl CollabPanel {
         is_current: bool,
         is_last: bool,
         is_selected: bool,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         enum JoinProject {}
@@ -765,7 +765,7 @@ impl CollabPanel {
         peer_id: PeerId,
         is_last: bool,
         is_selected: bool,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         enum OpenSharedScreen {}
@@ -865,7 +865,7 @@ impl CollabPanel {
 
     fn render_header(
         section: Section,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut ViewContext<Self>,
@@ -944,7 +944,7 @@ impl CollabPanel {
         contact: &Contact,
         calling: bool,
         project: &ModelHandle<Project>,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
@@ -1046,7 +1046,7 @@ impl CollabPanel {
     fn render_contact_request(
         user: Arc<User>,
         user_store: ModelHandle<UserStore>,
-        theme: &theme::ContactList,
+        theme: &theme::CollabPanel,
         is_incoming: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
@@ -1351,13 +1351,13 @@ impl View for CollabPanel {
                             .with_child(
                                 ChildView::new(&self.filter_editor, cx)
                                     .contained()
-                                    .with_style(theme.contact_list.user_query_editor.container)
+                                    .with_style(theme.collab_panel.user_query_editor.container)
                                     .flex(1.0, true),
                             )
                             .with_child(
                                 MouseEventHandler::<AddContact, Self>::new(0, cx, |_, _| {
                                     render_icon_button(
-                                        &theme.contact_list.add_contact_button,
+                                        &theme.collab_panel.add_contact_button,
                                         "icons/user_plus_16.svg",
                                     )
                                 })
@@ -1373,8 +1373,8 @@ impl View for CollabPanel {
                                     cx,
                                 )
                                 .constrained()
-                                .with_height(theme.contact_list.user_query_editor_height)
-                                .with_width(theme.contact_list.user_query_editor_height),
+                                .with_height(theme.collab_panel.user_query_editor_height)
+                                .with_width(theme.collab_panel.user_query_editor_height),
                             )
                             .constrained()
                             .with_width(self.size(cx)),
