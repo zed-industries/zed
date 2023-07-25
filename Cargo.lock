@@ -3041,6 +3041,7 @@ dependencies = [
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -5043,7 +5044,15 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "log",
+ "playground_ui",
  "simplelog",
+]
+
+[[package]]
+name = "playground_ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use gpui::{
+use crate::{
     color::Color,
     geometry::{
         rect::RectF,
@@ -9,47 +9,62 @@ use gpui::{
     serde_json::Value,
     AnyElement, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View, ViewContext,
 };
-use std::{any::Any, f32, ops::Range};
+use std::{any::Any, borrow::Cow, f32, ops::Range};
 
-// Core idea is that everything is a channel, and channels are heirarchical.
-//
-// Tree 🌲 of channels
-//   - (Potentially v0.2) All channels associated with a conversation (Slack model)
-//   - Audio
-//   - You can share projects into the channel
-//   - 1.
-//
-//
-// - 2 thoughts:
-//  - Difference from where we are to the above:
-//      - Channels = rooms + chat + persistence
-//      - Chat = multiplayer assistant panel + server integrated persistence
-//  - The tree structure, is good for navigating chats, AND it's good for distributing permissions.
-// #zed-public// /zed- <- Share a pointer (URL) for this
-//
-//
+use self::length::Length;
 
 pub struct Node<V: View> {
     style: NodeStyle,
-    children: Vec<AnyElement<V>>,
+    content: Content<V>,
+}
+
+enum Content<V: View> {
+    Children(Vec<AnyElement<V>>),
+    Text(Cow<'static, str>),
+}
+
+impl<V: View> Default for Content<V> {
+    fn default() -> Self {
+        Self::Children(Vec::new())
+    }
+}
+
+pub fn column<V: View>() -> Node<V> {
+    Node::default()
+}
+
+pub fn row<V: View>() -> Node<V> {
+    Node {
+        style: NodeStyle {
+            axis: Axis3d::X,
+            ..Default::default()
+        },
+        content: Default::default(),
+    }
+}
+
+pub fn stack<V: View>() -> Node<V> {
+    Node {
+        style: NodeStyle {
+            axis: Axis3d::Z,
+            ..Default::default()
+        },
+        content: Default::default(),
+    }
 }
 
 impl<V: View> Default for Node<V> {
     fn default() -> Self {
         Self {
             style: Default::default(),
-            children: Default::default(),
+            content: Default::default(),
         }
     }
 }
 
 impl<V: View> Node<V> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn child(mut self, child: impl Element<V>) -> Self {
-        self.children.push(child.into_any());
+        self.content.push(child.into_any());
         self
     }
 
@@ -58,7 +73,7 @@ impl<V: View> Node<V> {
         I: IntoIterator<Item = E>,
         E: Element<V>,
     {
-        self.children
+        self.content
             .extend(children.into_iter().map(|child| child.into_any()));
         self
     }
@@ -100,7 +115,7 @@ impl<V: View> Node<V> {
         let mut cross_axis_max: f32 = 0.0;
 
         // First pass: Layout non-flex children only
-        for child in &mut self.children {
+        for child in &mut self.content {
             let child_flex = child.metadata::<NodeStyle>().and_then(|style| match axis {
                 Axis2d::X => style.width.flex(),
                 Axis2d::Y => style.height.flex(),
@@ -138,7 +153,7 @@ impl<V: View> Node<V> {
             if total_flex > 0. {
                 let space_per_flex = remaining_space.max(0.) / total_flex;
 
-                for child in &mut self.children {
+                for child in &mut self.content {
                     let child_flex = child.metadata::<NodeStyle>().and_then(|style| match axis {
                         Axis2d::X => style.width.flex(),
                         Axis2d::Y => style.height.flex(),
@@ -209,7 +224,7 @@ impl<V: View> Node<V> {
             align_vertically,
         );
 
-        for child in &mut self.children {
+        for child in &mut self.content {
             // Align each child along the cross axis
             align_horizontally = !align_horizontally;
             align_vertically = !align_vertically;
@@ -400,7 +415,7 @@ impl<V: View> Element<V> for Node<V> {
             });
         }
 
-        if !self.children.is_empty() {
+        if !self.content.is_empty() {
             // Account for padding first.
             let padding = &self.style.padding;
             let padded_bounds = RectF::from_points(
@@ -442,7 +457,7 @@ impl<V: View> Element<V> for Node<V> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.children
+        self.content
             .iter()
             .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
     }
@@ -456,9 +471,10 @@ impl<V: View> Element<V> for Node<V> {
         cx: &ViewContext<V>,
     ) -> Value {
         json!({
-            "type": "Cell",
+            "type": "Node",
             "bounds": bounds.to_json(),
-            "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<Value>>()
+            // TODO!
+            // "children": self.content.iter().map(|child| child.debug(view, cx)).collect::<Vec<Value>>()
         })
     }
 
@@ -574,26 +590,30 @@ impl Border {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub enum Length {
-    #[default]
-    Hug,
-    Fixed(f32),
-    Auto {
-        flex: f32,
-        min: f32,
-        max: f32,
-    },
-}
-
-impl From<f32> for Length {
-    fn from(value: f32) -> Self {
-        Length::Fixed(value)
+pub mod length {
+    #[derive(Clone, Copy, Default)]
+    pub enum Length {
+        #[default]
+        Hug,
+        Fixed(f32),
+        Auto {
+            flex: f32,
+            min: f32,
+            max: f32,
+        },
     }
-}
 
-impl Length {
-    pub fn auto(flex: f32) -> Self {
+    impl From<f32> for Length {
+        fn from(value: f32) -> Self {
+            Length::Fixed(value)
+        }
+    }
+
+    pub fn auto() -> Length {
+        flex(1.)
+    }
+
+    pub fn flex(flex: f32) -> Length {
         Length::Auto {
             flex,
             min: 0.,
@@ -601,7 +621,7 @@ impl Length {
         }
     }
 
-    pub fn auto_constrained(flex: f32, min: Option<f32>, max: Option<f32>) -> Self {
+    pub fn constrained(flex: f32, min: Option<f32>, max: Option<f32>) -> Length {
         Length::Auto {
             flex,
             min: min.unwrap_or(0.),
@@ -609,10 +629,12 @@ impl Length {
         }
     }
 
-    pub fn flex(&self) -> Option<f32> {
-        match self {
-            Length::Auto { flex, .. } => Some(*flex),
-            _ => None,
+    impl Length {
+        pub fn flex(&self) -> Option<f32> {
+            match self {
+                Length::Auto { flex, .. } => Some(*flex),
+                _ => None,
+            }
         }
     }
 }

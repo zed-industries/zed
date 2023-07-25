@@ -12,6 +12,7 @@ mod keystroke_label;
 mod label;
 mod list;
 mod mouse_event_handler;
+pub mod node;
 mod overlay;
 mod resizable;
 mod stack;

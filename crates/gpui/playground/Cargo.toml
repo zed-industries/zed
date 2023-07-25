@@ -8,6 +8,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+playground_ui = { path = "ui" }
+
 gpui = { path = ".." }
 log.workspace = true
 simplelog = "0.9"

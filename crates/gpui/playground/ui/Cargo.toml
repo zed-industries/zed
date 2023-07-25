@@ -1,0 +1,12 @@
+[package]
+name = "playground_ui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "playground_ui"
+path = "src/playground_ui.rs"
+crate-type = ["dylib"]
+
+[dependencies]
+gpui = { path = "../.." }

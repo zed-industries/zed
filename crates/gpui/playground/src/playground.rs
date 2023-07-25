@@ -1,52 +1,45 @@
-use elements::{Length, Node, NodeStyle};
-use gpui::{color::Color, AnyElement, Element, Entity, View, ViewContext};
+use std::ops::{Deref, DerefMut};
+
+use gpui::{AnyElement, Element, Entity, View};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
-
-mod elements;
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(Default::default(), |_| PlaygroundView);
+        cx.add_window(Default::default(), |_| Playground::default());
     });
 }
 
-struct PlaygroundView;
+#[derive(Clone, Default)]
+struct Playground(playground_ui::Playground);
 
-impl Entity for PlaygroundView {
+impl Deref for Playground {
+    type Target = playground_ui::Playground;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Playground {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Entity for Playground {
     type Event = ();
 }
 
-impl View for PlaygroundView {
+impl View for Playground {
     fn ui_name() -> &'static str {
         "PlaygroundView"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<PlaygroundView> {
-        // Node::with_style(NodeStyle)
-        // Node::new().width(100.0).fill(Color::red())
-        //
-        Node::new()
-            .width(Length::auto(1.))
-            .fill(Color::red())
-            .row()
-            .children([
-                Node::new().width(20.).height(20.).fill(Color::green()),
-                Node::new().width(20.).height(20.).fill(Color::blue()),
-                Node::new().width(30.).height(30.).fill(Color::yellow()),
-                Node::new().width(50.).height(50.).fill(Color::yellow()),
-            ])
-            .into_any()
-
-        // Node::with_style(
-        //     NodeStyle::default()
-        //         .width(100.)
-        //         .height(100.)
-        //         .fill(Color::red()),
-        // )
-        // .into_any()
+    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> AnyElement<Playground> {
+        self.0.clone().into_any()
     }
 }

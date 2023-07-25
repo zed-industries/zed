@@ -1,10 +1,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use std::mem;
 use syn::{
     parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, DeriveInput, FnArg,
-    ItemFn, Lit, Meta, NestedMeta, Type,
+    GenericParam, Generics, ItemFn, Lit, Meta, NestedMeta, Type, TypeGenerics, TypeParam,
+    WhereClause,
 };
 
 #[proc_macro_attribute]
@@ -278,14 +279,44 @@ fn parse_bool(literal: &Lit) -> Result<bool, TokenStream> {
 
 #[proc_macro_derive(Element)]
 pub fn element_derive(input: TokenStream) -> TokenStream {
-    // Parse the input tokens into a syntax tree
-    let input = parse_macro_input!(input as DeriveInput);
+    let ast = parse_macro_input!(input as DeriveInput);
+    let type_name = ast.ident;
 
-    // The name of the struct/enum
-    let name = input.ident;
+    let placeholder_view_generics: Generics = parse_quote! { <V: View> };
+    let placeholder_view_type_name: Ident = parse_quote! { V };
+    let view_type_name: Ident;
+    let impl_generics: syn::ImplGenerics<'_>;
+    let type_generics: Option<syn::TypeGenerics<'_>>;
+    let where_clause: Option<&'_ WhereClause>;
 
-    let expanded = quote! {
-        impl<V: gpui::View> gpui::elements::Element<V> for #name {
+    match ast.generics.params.iter().find_map(|param| {
+        if let GenericParam::Type(type_param) = param {
+            Some(type_param.ident.clone())
+        } else {
+            None
+        }
+    }) {
+        Some(type_name) => {
+            view_type_name = type_name;
+            let generics = ast.generics.split_for_impl();
+            impl_generics = generics.0;
+            type_generics = Some(generics.1);
+            where_clause = generics.2;
+        }
+        _ => {
+            view_type_name = placeholder_view_type_name;
+            let generics = placeholder_view_generics.split_for_impl();
+            impl_generics = generics.0;
+            type_generics = None;
+            where_clause = generics.2;
+        }
+    }
+
+    let gen = quote! {
+        impl #impl_generics Element<#view_type_name> for #type_name #type_generics
+        #where_clause
+        {
+
             type LayoutState = gpui::elements::AnyElement<V>;
             type PaintState = ();
 
@@ -337,6 +368,6 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
             }
         }
     };
-    // Return generated code
-    TokenStream::from(expanded)
+
+    gen.into()
 }
