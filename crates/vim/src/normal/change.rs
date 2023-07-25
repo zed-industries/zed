@@ -1,7 +1,10 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
 use editor::{
-    char_kind, display_map::DisplaySnapshot, movement, scroll::autoscroll::Autoscroll, CharKind,
-    DisplayPoint,
+    char_kind,
+    display_map::{Clip, DisplaySnapshot},
+    movement,
+    scroll::autoscroll::Autoscroll,
+    CharKind, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::Selection;
@@ -15,7 +18,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
-            editor.set_clip_at_line_ends(false, cx);
+            editor.set_default_clip(Clip::None, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
@@ -42,7 +45,7 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
     let mut objects_found = false;
     vim.update_active_editor(cx, |editor, cx| {
         // We are swapping to insert mode anyway. Just set the line end clipping behavior now
-        editor.set_clip_at_line_ends(false, cx);
+        editor.set_default_clip(Clip::None, cx);
         editor.transact(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {

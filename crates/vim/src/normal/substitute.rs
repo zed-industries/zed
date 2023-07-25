@@ -4,8 +4,8 @@ use language::Point;
 use crate::{motion::Motion, Mode, Vim};
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
+    vim.switch_mode(Mode::Insert, true, cx);
     vim.update_active_editor(cx, |editor, cx| {
-        editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
@@ -21,9 +21,7 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
                 })
             }
         });
-        editor.set_clip_at_line_ends(true, cx);
     });
-    vim.switch_mode(Mode::Insert, true, cx)
 }
 
 #[cfg(test)]

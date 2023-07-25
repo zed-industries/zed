@@ -16,8 +16,9 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, Bias, ClipboardSelection,
-    DisplayPoint,
+    display_map::{Clip, ToDisplayPoint},
+    scroll::autoscroll::Autoscroll,
+    Anchor, Bias, ClipboardSelection, DisplayPoint,
 };
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, Point, SelectionGoal};
@@ -254,7 +255,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+                editor.set_default_clip(Clip::None, cx);
                 if let Some(item) = cx.read_from_clipboard() {
                     let mut clipboard_text = Cow::Borrowed(item.text());
                     if let Some(mut clipboard_selections) =
@@ -382,7 +383,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                         editor.insert(&clipboard_text, cx);
                     }
                 }
-                editor.set_clip_at_line_ends(true, cx);
+                editor.set_default_clip(Clip::EndOfLine, cx);
             });
         });
     });
@@ -392,7 +393,7 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+                editor.set_default_clip(Clip::None, cx);
                 let (map, display_selections) = editor.selections.all_display(cx);
                 // Selections are biased right at the start. So we need to store
                 // anchors that are biased left so that we can restore the selections
@@ -425,7 +426,7 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
-                editor.set_clip_at_line_ends(true, cx);
+                editor.set_default_clip(Clip::EndOfLine, cx);
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(stable_anchors);
                 });

@@ -2,7 +2,10 @@ use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use editor::{
-    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
+    display_map::{Clip, ToDisplayPoint},
+    movement,
+    scroll::autoscroll::Autoscroll,
+    Bias, ClipboardSelection,
 };
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, SelectionGoal};
@@ -16,9 +19,21 @@ use crate::{
     Vim,
 };
 
-actions!(vim, [VisualDelete, VisualChange, VisualYank, VisualPaste]);
+actions!(
+    vim,
+    [
+        ToggleVisual,
+        ToggleVisualLine,
+        VisualDelete,
+        VisualChange,
+        VisualYank,
+        VisualPaste
+    ]
+);
 
 pub fn init(cx: &mut AppContext) {
+    cx.add_action(toggle_visual);
+    cx.add_action(toggle_visual_line);
     cx.add_action(change);
     cx.add_action(delete);
     cx.add_action(yank);
@@ -32,23 +47,32 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                 s.move_with(|map, selection| {
                     let was_reversed = selection.reversed;
 
-                    if let Some((new_head, goal)) =
-                        motion.move_point(map, selection.head(), selection.goal, times)
-                    {
-                        selection.set_head(new_head, goal);
+                    let mut current_head = selection.head();
 
-                        if was_reversed && !selection.reversed {
-                            // Head was at the start of the selection, and now is at the end. We need to move the start
-                            // back by one if possible in order to compensate for this change.
-                            *selection.start.column_mut() =
-                                selection.start.column().saturating_sub(1);
-                            selection.start = map.clip_point(selection.start, Bias::Left);
-                        } else if !was_reversed && selection.reversed {
-                            // Head was at the end of the selection, and now is at the start. We need to move the end
-                            // forward by one if possible in order to compensate for this change.
-                            *selection.end.column_mut() = selection.end.column() + 1;
-                            selection.end = map.clip_point(selection.end, Bias::Right);
-                        }
+                    // our motions assume the current character is after the cursor,
+                    // but in (forward) visual mode the current character is just
+                    // before the end of the selection.
+                    if !selection.reversed {
+                        current_head = map.move_left(current_head, Clip::None);
+                    }
+
+                    let Some((new_head, goal)) =
+                        motion.move_point(map, current_head, selection.goal, times) else { return };
+
+                    selection.set_head(new_head, goal);
+
+                    // ensure the current character is included in the selection.
+                    if !selection.reversed {
+                        selection.end = map.move_right(selection.end, Clip::None);
+                    }
+
+                    // vim always ensures the anchor character stays selected.
+                    // if our selection has reversed, we need to move the opposite end
+                    // to ensure the anchor is still selected.
+                    if was_reversed && !selection.reversed {
+                        selection.start = map.move_left(selection.start, Clip::None);
+                    } else if !was_reversed && selection.reversed {
+                        selection.end = map.move_right(selection.end, Clip::None);
                     }
                 });
             });
@@ -64,14 +88,30 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
             vim.update_active_editor(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
-                        let head = selection.head();
-                        if let Some(mut range) = object.range(map, head, around) {
-                            if !range.is_empty() {
-                                if let Some((_, end)) = map.reverse_chars_at(range.end).next() {
-                                    range.end = end;
-                                }
+                        let mut head = selection.head();
 
-                                if selection.is_empty() {
+                        // all our motions assume that the current character is
+                        // after the cursor; however in the case of a visual selection
+                        // the current character is before the cursor.
+                        if !selection.reversed {
+                            head = map.move_left(head, Clip::None);
+                        }
+
+                        if let Some(range) = object.range(map, head, around) {
+                            if !range.is_empty() {
+                                let expand_both_ways = if selection.is_empty() {
+                                    true
+                                // contains only one character
+                                } else if let Some((_, start)) =
+                                    map.reverse_chars_at(selection.end).next()
+                                {
+                                    selection.start == start
+                                } else {
+                                    false
+                                };
+                                dbg!(expand_both_ways);
+
+                                if expand_both_ways {
                                     selection.start = range.start;
                                     selection.end = range.end;
                                 } else if selection.reversed {
@@ -88,10 +128,35 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
     });
 }
 
+pub fn toggle_visual(_: &mut Workspace, _: &ToggleVisual, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| match vim.state.mode {
+        Mode::Normal | Mode::Insert | Mode::Visual { line: true } => {
+            vim.switch_mode(Mode::Visual { line: false }, false, cx);
+        }
+        Mode::Visual { line: false } => {
+            vim.switch_mode(Mode::Normal, false, cx);
+        }
+    })
+}
+
+pub fn toggle_visual_line(
+    _: &mut Workspace,
+    _: &ToggleVisualLine,
+    cx: &mut ViewContext<Workspace>,
+) {
+    Vim::update(cx, |vim, cx| match vim.state.mode {
+        Mode::Normal | Mode::Insert | Mode::Visual { line: false } => {
+            vim.switch_mode(Mode::Visual { line: true }, false, cx);
+        }
+        Mode::Visual { line: true } => {
+            vim.switch_mode(Mode::Normal, false, cx);
+        }
+    })
+}
+
 pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
             // Compute edits and resulting anchor selections. If in line mode, adjust
             // the anchor location and additional newline
             let mut edits = Vec::new();
@@ -99,13 +164,6 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
             let line_mode = editor.selections.line_mode;
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    if !selection.reversed {
-                        // Head is at the end of the selection. Adjust the end position to
-                        // to include the character under the cursor.
-                        *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
-                    }
-
                     if line_mode {
                         let range = selection.map(|p| p.to_point(map)).range();
                         let expanded_range = map.expand_to_line(range);
@@ -134,26 +192,23 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                 s.select_anchors(new_selections);
             });
         });
-        vim.switch_mode(Mode::Insert, false, cx);
+        vim.switch_mode(Mode::Insert, true, cx);
     });
 }
 
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
-                        original_columns
-                            .insert(selection.id, selection.head().to_point(map).column);
-                    } else if !selection.reversed {
-                        // Head is at the end of the selection. Adjust the end position to
-                        // to include the character under the cursor.
-                        *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
+                        let mut position = selection.head();
+                        if !selection.reversed {
+                            position = map.move_left(position, Clip::None);
+                        }
+                        original_columns.insert(selection.id, position.to_point(map).column);
                     }
                     selection.goal = SelectionGoal::None;
                 });
@@ -162,7 +217,6 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head().to_point(map);
@@ -170,32 +224,23 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     if let Some(column) = original_columns.get(&selection.id) {
                         cursor.column = *column
                     }
-                    let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
+                    let cursor = map.clip_point_with(
+                        cursor.to_display_point(map),
+                        Bias::Left,
+                        Clip::EndOfLine,
+                    );
                     selection.collapse_to(cursor, selection.goal)
                 });
             });
         });
-        vim.switch_mode(Mode::Normal, false, cx);
+        vim.switch_mode(Mode::Normal, true, cx);
     });
 }
 
 pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
             let line_mode = editor.selections.line_mode;
-            if !line_mode {
-                editor.change_selections(None, cx, |s| {
-                    s.move_with(|map, selection| {
-                        if !selection.reversed {
-                            // Head is at the end of the selection. Adjust the end position to
-                            // to include the character under the cursor.
-                            *selection.end.column_mut() = selection.end.column() + 1;
-                            selection.end = map.clip_point(selection.end, Bias::Right);
-                        }
-                    });
-                });
-            }
             copy_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
@@ -203,7 +248,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                 });
             });
         });
-        vim.switch_mode(Mode::Normal, false, cx);
+        vim.switch_mode(Mode::Normal, true, cx);
     });
 }
 
@@ -256,11 +301,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
 
                                 let mut selection = selection.clone();
                                 if !selection.reversed {
-                                    let mut adjusted = selection.end;
-                                    // Head is at the end of the selection. Adjust the end position to
-                                    // to include the character under the cursor.
-                                    *adjusted.column_mut() = adjusted.column() + 1;
-                                    adjusted = display_map.clip_point(adjusted, Bias::Right);
+                                    let adjusted = selection.end;
                                     // If the selection is empty, move both the start and end forward one
                                     // character
                                     if selection.is_empty() {
@@ -311,11 +352,11 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                 }
             });
         });
-        vim.switch_mode(Mode::Normal, false, cx);
+        vim.switch_mode(Mode::Normal, true, cx);
     });
 }
 
-pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut WindowContext) {
+pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -336,14 +377,7 @@ pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut WindowContext)
 
                 let mut edits = Vec::new();
                 for selection in selections.iter() {
-                    let mut selection = selection.clone();
-                    if !line && !selection.reversed {
-                        // Head is at the end of the selection. Adjust the end position to
-                        // to include the character under the cursor.
-                        *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = display_map.clip_point(selection.end, Bias::Right);
-                    }
-
+                    let selection = selection.clone();
                     for row_range in
                         movement::split_display_range_by_lines(&display_map, selection.range())
                     {
@@ -375,19 +409,42 @@ mod test {
 
     #[gpui::test]
     async fn test_enter_visual_mode(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["v", "w", "j"]);
-        cx.assert_all(indoc! {"
-                The ˇquick brown
-                fox jumps ˇover
-                the ˇlazy dog"})
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+
+        // entering visual mode should select the character
+        // under cursor
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state(indoc! { "The «qˇ»uick brown
+            fox jumps over
+            the lazy dog"})
             .await;
-        let mut cx = cx.binding(["v", "b", "k"]);
-        cx.assert_all(indoc! {"
-                The ˇquick brown
-                fox jumps ˇover
-                the ˇlazy dog"})
+
+        // forwards motions should extend the selection
+        cx.simulate_shared_keystrokes(["w", "j"]).await;
+        cx.assert_shared_state(indoc! { "The «quick brown
+            fox jumps oˇ»ver
+            the lazy dog"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["escape"]).await;
+        assert_eq!(Mode::Normal, cx.neovim_mode().await);
+        cx.assert_shared_state(indoc! { "The quick brown
+            fox jumps ˇover
+            the lazy dog"})
+            .await;
+
+        // motions work backwards
+        cx.simulate_shared_keystrokes(["v", "k", "b"]).await;
+        cx.assert_shared_state(indoc! { "The «ˇquick brown
+            fox jumps o»ver
+            the lazy dog"})
             .await;
     }
 
@@ -461,22 +518,33 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_change(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["v", "w", "c"]);
-        cx.assert("The quick ˇbrown").await;
-        let mut cx = cx.binding(["v", "w", "j", "c"]);
-        cx.assert_all(indoc! {"
-                The ˇquick brown
-                fox jumps ˇover
-                the ˇlazy dog"})
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("The quick ˇbrown").await;
+        cx.simulate_shared_keystrokes(["v", "w", "c"]).await;
+        cx.assert_shared_state("The quick ˇ").await;
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"})
             .await;
-        let mut cx = cx.binding(["v", "b", "k", "c"]);
-        cx.assert_all(indoc! {"
-                The ˇquick brown
-                fox jumps ˇover
-                the ˇlazy dog"})
+        cx.simulate_shared_keystrokes(["v", "w", "j", "c"]).await;
+        cx.assert_shared_state(indoc! {"
+            The ˇver
+            the lazy dog"})
             .await;
+
+        let cases = cx.each_marked_position(indoc! {"
+                         The ˇquick brown
+                         fox jumps ˇover
+                         the ˇlazy dog"});
+        for initial_state in cases {
+            cx.assert_neovim_compatible(&initial_state, ["v", "w", "j", "c"])
+                .await;
+            cx.assert_neovim_compatible(&initial_state, ["v", "w", "k", "c"])
+                .await;
+        }
     }
 
     #[gpui::test]
@@ -605,7 +673,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox «jumpˇ»s over
+                fox «jumpsˇ» over
                 the lazy dog"},
             Mode::Visual { line: false },
         );
@@ -629,7 +697,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox juˇmps over
+                fox ju«mˇ»ps over
                 the lazy dog"},
             Mode::Visual { line: true },
         );
@@ -643,7 +711,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                the «lazˇ»y dog"},
+                the «lazyˇ» dog"},
             Mode::Visual { line: false },
         );
         cx.simulate_keystroke("p");

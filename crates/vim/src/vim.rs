@@ -13,7 +13,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::CommandPaletteFilter;
-use editor::{Bias, Editor, EditorMode, Event};
+use editor::{display_map::Clip, Editor, EditorMode, Event};
 use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
     Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -181,6 +181,7 @@ impl Vim {
     }
 
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
+        let last_mode = self.state.mode;
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
@@ -197,12 +198,16 @@ impl Vim {
         self.update_active_editor(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    if self.state.empty_selections_only() {
-                        let new_head = map.clip_point(selection.head(), Bias::Left);
-                        selection.collapse_to(new_head, selection.goal)
-                    } else {
-                        selection
-                            .set_head(map.clip_point(selection.head(), Bias::Left), selection.goal);
+                    if last_mode.is_visual() && !mode.is_visual() {
+                        let mut point = selection.head();
+                        if !selection.reversed {
+                            point = map.move_left(selection.head(), Clip::None);
+                        }
+                        selection.collapse_to(point, selection.goal)
+                    } else if !last_mode.is_visual() && mode.is_visual() {
+                        if selection.is_empty() {
+                            selection.end = map.move_right(selection.start, Clip::None);
+                        }
                     }
                 });
             })
@@ -265,7 +270,7 @@ impl Vim {
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
                 Mode::Normal => normal_replace(text, cx),
-                Mode::Visual { line } => visual_replace(text, line, cx),
+                Mode::Visual { .. } => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
             _ => {}
@@ -309,7 +314,7 @@ impl Vim {
         self.update_active_editor(cx, |editor, cx| {
             if self.enabled && editor.mode() == EditorMode::Full {
                 editor.set_cursor_shape(cursor_shape, cx);
-                editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
+                editor.set_default_clip(state.default_clip(), cx);
                 editor.set_collapse_matches(true);
                 editor.set_input_enabled(!state.vim_controlled());
                 editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
@@ -326,7 +331,7 @@ impl Vim {
 
     fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
-        editor.set_clip_at_line_ends(false, cx);
+        editor.set_default_clip(Clip::None, cx);
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
 

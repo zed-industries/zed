@@ -1,12 +1,16 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::{HashMap, HashSet};
-use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
+use editor::{
+    display_map::{Clip, ToDisplayPoint},
+    scroll::autoscroll::Autoscroll,
+    Bias,
+};
 use gpui::WindowContext;
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
+            editor.set_default_clip(Clip::None, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
@@ -19,7 +23,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
+            editor.set_default_clip(Clip::EndOfLine, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
@@ -39,7 +43,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
 pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
+            editor.set_default_clip(Clip::None, cx);
             // Emulates behavior in vim where if we expanded backwards to include a newline
             // the cursor gets set back to the start of the line
             let mut should_move_to_start: HashSet<_> = Default::default();
@@ -77,7 +81,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
+            editor.set_default_clip(Clip::EndOfLine, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();

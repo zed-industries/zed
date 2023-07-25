@@ -60,6 +60,7 @@ enum FoldMarkers {}
 
 struct SelectionLayout {
     head: DisplayPoint,
+    reversed: bool,
     cursor_shape: CursorShape,
     is_newest: bool,
     range: Range<DisplayPoint>,
@@ -78,6 +79,7 @@ impl SelectionLayout {
             let point_range = map.expand_to_line(selection.range());
             Self {
                 head: selection.head().to_display_point(map),
+                reversed: selection.reversed,
                 cursor_shape,
                 is_newest,
                 range: point_range.start.to_display_point(map)
@@ -87,6 +89,7 @@ impl SelectionLayout {
             let selection = selection.map(|p| p.to_display_point(map));
             Self {
                 head: selection.head(),
+                reversed: selection.reversed,
                 cursor_shape,
                 is_newest,
                 range: selection.range(),
@@ -844,6 +847,7 @@ impl EditorElement {
 
                 if editor.show_local_cursors(cx) || replica_id != local_replica_id {
                     let cursor_position = selection.head;
+
                     if layout
                         .visible_display_row_range
                         .contains(&cursor_position.row())
@@ -851,7 +855,15 @@ impl EditorElement {
                         let cursor_row_layout = &layout.position_map.line_layouts
                             [(cursor_position.row() - start_row) as usize]
                             .line;
-                        let cursor_column = cursor_position.column() as usize;
+                        let mut cursor_column = cursor_position.column() as usize;
+
+                        if CursorShape::Block == selection.cursor_shape
+                            && !selection.range.is_empty()
+                            && !selection.reversed
+                            && cursor_column > 0
+                        {
+                            cursor_column -= 1;
+                        }
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
                         let mut block_width =
@@ -863,7 +875,10 @@ impl EditorElement {
                             layout
                                 .position_map
                                 .snapshot
-                                .chars_at(cursor_position)
+                                .chars_at(DisplayPoint::new(
+                                    cursor_position.row(),
+                                    cursor_column as u32,
+                                ))
                                 .next()
                                 .and_then(|(character, _)| {
                                     let font_id =

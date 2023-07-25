@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use editor::{
     char_kind,
-    display_map::{DisplaySnapshot, ToDisplayPoint},
+    display_map::{Clip, DisplaySnapshot, ToDisplayPoint},
     movement, Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
@@ -295,7 +295,11 @@ impl Motion {
                 SelectionGoal::None,
             ),
             EndOfParagraph => (
-                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                map.clip_point_with(
+                    movement::end_of_paragraph(map, point, times),
+                    Bias::Left,
+                    Clip::EndOfLine,
+                ),
                 SelectionGoal::None,
             ),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
@@ -383,8 +387,7 @@ impl Motion {
 
 fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        *point.column_mut() = point.column().saturating_sub(1);
-        point = map.clip_point(point, Bias::Left);
+        point = map.move_left(point, Clip::None);
         if point.column() == 0 {
             break;
         }
@@ -425,9 +428,7 @@ fn up(
 
 pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        let mut new_point = point;
-        *new_point.column_mut() += 1;
-        let new_point = map.clip_point(new_point, Bias::Right);
+        let new_point = map.clip_point(map.move_right(point, Clip::None), Bias::Right);
         if point == new_point {
             break;
         }

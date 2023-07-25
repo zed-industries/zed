@@ -1,3 +1,4 @@
+use editor::display_map::Clip;
 use gpui::keymap_matcher::KeymapContext;
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,15 @@ pub enum Mode {
     Normal,
     Insert,
     Visual { line: bool },
+}
+
+impl Mode {
+    pub fn is_visual(&self) -> bool {
+        match self {
+            Mode::Normal | Mode::Insert => false,
+            Mode::Visual { .. } => true,
+        }
+    }
 }
 
 impl Default for Mode {
@@ -78,12 +88,11 @@ impl VimState {
             )
     }
 
-    pub fn clip_at_line_end(&self) -> bool {
-        !matches!(self.mode, Mode::Insert | Mode::Visual { .. })
-    }
-
-    pub fn empty_selections_only(&self) -> bool {
-        !matches!(self.mode, Mode::Visual { .. })
+    pub fn default_clip(&self) -> Clip {
+        match self.mode {
+            Mode::Insert | Mode::Visual { .. } => Clip::None,
+            Mode::Normal => Clip::EndOfLine,
+        }
     }
 
     pub fn keymap_context_layer(&self) -> KeymapContext {

@@ -481,6 +481,12 @@ mod test {
     async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
+        cx.set_shared_state("The quick ˇbrown\nfox").await;
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+        cx.simulate_shared_keystrokes(["i", "w"]).await;
+        cx.assert_shared_state("The quick «brownˇ»\nfox").await;
+
         cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
             .await;
         cx.assert_binding_matches_all_exempted(

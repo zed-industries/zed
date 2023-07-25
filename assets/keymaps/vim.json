@@ -266,22 +266,8 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
-      "v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": false
-          }
-        }
-      ],
-      "shift-v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": true
-          }
-        }
-      ],
+      "v": "vim::ToggleVisual",
+      "shift-v": "vim::ToggleVisualLine",
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",

@@ -1544,10 +1544,10 @@ impl Editor {
         range.clone()
     }
 
-    pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
-        if self.display_map.read(cx).clip_at_line_ends != clip {
+    pub fn set_default_clip(&mut self, clip: Clip, cx: &mut ViewContext<Self>) {
+        if self.display_map.read(cx).default_clip != clip {
             self.display_map
-                .update(cx, |map, _| map.clip_at_line_ends = clip);
+                .update(cx, |map, _| map.default_clip = clip);
         }
     }
 
