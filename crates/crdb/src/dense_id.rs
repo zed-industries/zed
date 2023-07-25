@@ -1,3 +1,4 @@
+use crate::btree;
 use lazy_static::lazy_static;
 use smallvec::{smallvec, SmallVec};
 use std::iter;
@@ -61,7 +62,7 @@ impl Default for DenseId {
     }
 }
 
-impl sum_tree::Item for DenseId {
+impl btree::Item for DenseId {
     type Summary = DenseId;
 
     fn summary(&self) -> Self::Summary {
@@ -69,7 +70,7 @@ impl sum_tree::Item for DenseId {
     }
 }
 
-impl sum_tree::KeyedItem for DenseId {
+impl btree::KeyedItem for DenseId {
     type Key = DenseId;
 
     fn key(&self) -> Self::Key {
@@ -77,7 +78,7 @@ impl sum_tree::KeyedItem for DenseId {
     }
 }
 
-impl sum_tree::Summary for DenseId {
+impl btree::Summary for DenseId {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {

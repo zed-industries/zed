@@ -1,12 +1,13 @@
 use crate::{
-    btree, dense_id::DenseId, AnchorRange, DocumentFragment, DocumentFragmentSummary,
-    DocumentMetadata, InsertionFragment, OperationId, Revision, RevisionId, RopeBuilder, Tombstone,
+    btree::{self, Bias},
+    dense_id::DenseId,
+    AnchorRange, DocumentFragment, DocumentFragmentSummary, DocumentMetadata, InsertionFragment,
+    OperationId, Revision, RevisionId, RopeBuilder, Tombstone,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{cmp, sync::Arc};
-use sum_tree::Bias;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateBranch {

@@ -1738,7 +1738,9 @@ name = "crdb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec 0.7.2",
  "async-broadcast",
+ "bromberg_sl2",
  "collections",
  "ctor",
  "env_logger 0.9.3",
@@ -1748,12 +1750,10 @@ dependencies = [
  "log",
  "parking_lot 0.11.2",
  "rand 0.8.5",
- "rope",
  "serde",
  "serde_bare",
  "smallvec",
  "smol",
- "sum_tree",
  "util",
  "uuid 1.3.2",
 ]

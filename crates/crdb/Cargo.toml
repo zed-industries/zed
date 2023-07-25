@@ -11,12 +11,12 @@ doctest = false
 test-support = ["collections/test-support", "util/test-support"]
 
 [dependencies]
-rope = { path = "../rope" }
-sum_tree = { path = "../sum_tree" }
 collections = { path = "../collections" }
 util = { path = "../util" }
 
 anyhow.workspace = true
+arrayvec = "0.7.1"
+bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "950bc5482c216c395049ae33ae4501e08975f17f" }
 futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true

@@ -1,6 +1,8 @@
+mod btree;
 mod dense_id;
 mod messages;
 mod operations;
+mod rope;
 mod sync;
 #[cfg(test)]
 mod test;
@@ -28,10 +30,6 @@ use util::ResultExt;
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 64;
-
-mod btree {
-    pub use sum_tree::{SumTree as Sequence, TreeMap as Map, TreeSet as Set, *};
-}
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RepoId(Uuid);
