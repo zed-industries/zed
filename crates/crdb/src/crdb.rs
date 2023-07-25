@@ -40,7 +40,15 @@ pub struct RepoId(Uuid);
 
 impl RepoId {
     fn new() -> Self {
-        RepoId(Uuid::new_v4())
+        #[cfg(not(any(test, feature = "test-support")))]
+        return RepoId(Uuid::new_v4());
+
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+            static NEXT_REPO_ID: AtomicUsize = AtomicUsize::new(0);
+            RepoId(Uuid::from_u128(NEXT_REPO_ID.fetch_add(1, SeqCst) as u128))
+        }
     }
 }
 
