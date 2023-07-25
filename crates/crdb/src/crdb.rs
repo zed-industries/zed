@@ -108,6 +108,10 @@ impl OperationId {
         *self
     }
 
+    pub fn observe(&mut self, other: Self) {
+        self.operation_count.0 = cmp::max(self.operation_count.0, other.operation_count.0) + 1;
+    }
+
     pub fn is_causally_after(&self, id: Self) -> bool {
         self.operation_count > id.operation_count
             || (self.operation_count == id.operation_count && self.replica_id > id.replica_id)
@@ -1664,6 +1668,7 @@ impl RepoSnapshot {
         if self.max_operation_ids.get(&replica_id).copied() < Some(count) {
             self.max_operation_ids.insert(replica_id, count);
         }
+        self.last_operation_id.observe(operation.id());
         self.operations.insert(operation.id(), operation);
     }
 
