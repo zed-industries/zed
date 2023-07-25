@@ -486,105 +486,6 @@ async fn test_code_context_retrieval_javascript() {
     )
 }
 
-//     let test_documents = &[
-//         Document {
-//             name: "function _authorize".into(),
-//             range: text.find("function _authorize").unwrap()..(text.find("}").unwrap() + 1),
-//             content: "
-//                     The below code snippet is from file 'foo.js'
-
-//                     ```javascript
-//                     /* globals importScripts, backend */
-//                     function _authorize() {}
-//                     ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "async function authorizeBank".into(),
-//             range: text.find("export async").unwrap()..223,
-//             content: "
-//                     The below code snippet is from file 'foo.js'
-
-//                     ```javascript
-//                     /**
-//                      * Sometimes the frontend build is way faster than backend.
-//                      */
-//                     export async function authorizeBank() {
-//                         _authorize(pushModal, upgradingAccountId, {});
-//                     }
-//                     ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "class SettingsPage".into(),
-//             range: 225..343,
-//             content: "
-//                     The below code snippet is from file 'foo.js'
-
-//                     ```javascript
-//                     export class SettingsPage {
-//                         /* This is a test setting */
-//                         constructor(page) {
-//                             this.page = page;
-//                         }
-//                     }
-//                     ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "constructor".into(),
-//             range: 290..341,
-//             content: "
-//                 The below code snippet is from file 'foo.js'
-
-//                 ```javascript
-//                 /* This is a test setting */
-//                 constructor(page) {
-//                         this.page = page;
-//                     }
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "class TestClass".into(),
-//             range: 374..392,
-//             content: "
-//                     The below code snippet is from file 'foo.js'
-
-//                     ```javascript
-//                     /* This is a test comment */
-//                     class TestClass {}
-//                     ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "interface ClickhouseEditorEvent".into(),
-//             range: 440..532,
-//             content: "
-//                     The below code snippet is from file 'foo.js'
-
-//                     ```javascript
-//                     /* Schema for editor_events in Clickhouse. */
-//                     export interface ClickhouseEditorEvent {
-//                         installation_id: string
-//                         operation: string
-//                     }
-//                     ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//     ];
-
-//     for idx in 0..test_documents.len() {
-//         assert_eq!(test_documents[idx], parsed_files[idx]);
-//     }
-// }
-
 // #[gpui::test]
 // async fn test_code_context_retrieval_elixir() {
 //     let language = elixir_lang();
@@ -722,180 +623,157 @@ async fn test_code_context_retrieval_javascript() {
 //     }
 // }
 
-// #[gpui::test]
-// async fn test_code_context_retrieval_cpp() {
-//     let language = cpp_lang();
-//     let mut retriever = CodeContextRetriever::new();
+#[gpui::test]
+async fn test_code_context_retrieval_cpp() {
+    let language = cpp_lang();
+    let mut retriever = CodeContextRetriever::new();
 
-//     let text = "
-//     /**
-//      * @brief Main function
-//      * @returns 0 on exit
-//      */
-//     int main() { return 0; }
+    let text = "
+    /**
+     * @brief Main function
+     * @returns 0 on exit
+     */
+    int main() { return 0; }
 
-//     /**
-//     * This is a test comment
-//     */
-//     class MyClass {       // The class
-//         public:             // Access specifier
-//         int myNum;        // Attribute (int variable)
-//         string myString;  // Attribute (string variable)
-//     };
+    /**
+    * This is a test comment
+    */
+    class MyClass {       // The class
+        public:           // Access specifier
+        int myNum;        // Attribute (int variable)
+        string myString;  // Attribute (string variable)
+    };
 
-//     // This is a test comment
-//     enum Color { red, green, blue };
+    // This is a test comment
+    enum Color { red, green, blue };
 
-//     /** This is a preceding block comment
-//      * This is the second line
-//      */
-//     struct {           // Structure declaration
-//         int myNum;       // Member (int variable)
-//         string myString; // Member (string variable)
-//     } myStructure;
+    /** This is a preceding block comment
+     * This is the second line
+     */
+    struct {           // Structure declaration
+        int myNum;       // Member (int variable)
+        string myString; // Member (string variable)
+    } myStructure;
 
-//     /**
-//     * @brief Matrix class.
-//     */
-//     template <typename T,
-//               typename = typename std::enable_if<
-//                 std::is_integral<T>::value || std::is_floating_point<T>::value,
-//                 bool>::type>
-//     class Matrix2 {
-//         std::vector<std::vector<T>> _mat;
+    /**
+     * @brief Matrix class.
+     */
+    template <typename T,
+              typename = typename std::enable_if<
+                std::is_integral<T>::value || std::is_floating_point<T>::value,
+                bool>::type>
+    class Matrix2 {
+        std::vector<std::vector<T>> _mat;
 
-//     public:
-//         /**
-//         * @brief Constructor
-//         * @tparam Integer ensuring integers are being evaluated and not other
-//         * data types.
-//         * @param size denoting the size of Matrix as size x size
-//         */
-//         template <typename Integer,
-//                   typename = typename std::enable_if<std::is_integral<Integer>::value,
-//                   Integer>::type>
-//         explicit Matrix(const Integer size) {
-//             for (size_t i = 0; i < size; ++i) {
-//                 _mat.emplace_back(std::vector<T>(size, 0));
-//             }
-//         }
-//     }"
-//     .unindent();
+        public:
+            /**
+            * @brief Constructor
+            * @tparam Integer ensuring integers are being evaluated and not other
+            * data types.
+            * @param size denoting the size of Matrix as size x size
+            */
+            template <typename Integer,
+                    typename = typename std::enable_if<std::is_integral<Integer>::value,
+                    Integer>::type>
+            explicit Matrix(const Integer size) {
+                for (size_t i = 0; i < size; ++i) {
+                    _mat.emplace_back(std::vector<T>(size, 0));
+                }
+            }
+    }"
+    .unindent();
 
-//     let parsed_files = retriever
-//         .parse_file(Path::new("foo.cpp"), &text, language)
-//         .unwrap();
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
 
-//     let test_documents = &[
-//         Document {
-//             name: "int main".into(),
-//             range: 54..78,
-//             content: "
-//                 The below code snippet is from file 'foo.cpp'
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                "
+        /**
+         * @brief Main function
+         * @returns 0 on exit
+         */
+        int main() { return 0; }"
+                    .unindent(),
+                54,
+            ),
+            (
+                "
+                /**
+                * This is a test comment
+                */
+                class MyClass {       // The class
+                    public:           // Access specifier
+                    int myNum;        // Attribute (int variable)
+                    string myString;  // Attribute (string variable)
+                }"
+                .unindent(),
+                112,
+            ),
+            (
+                "
+                // This is a test comment
+                enum Color { red, green, blue }"
+                    .unindent(),
+                322,
+            ),
+            (
+                "
+                /** This is a preceding block comment
+                 * This is the second line
+                 */
+                struct {           // Structure declaration
+                    int myNum;       // Member (int variable)
+                    string myString; // Member (string variable)
+                } myStructure;"
+                    .unindent(),
+                425,
+            ),
+            (
+                "
+                /**
+                 * @brief Matrix class.
+                 */
+                template <typename T,
+                          typename = typename std::enable_if<
+                            std::is_integral<T>::value || std::is_floating_point<T>::value,
+                            bool>::type>
+                class Matrix2 {
+                    std::vector<std::vector<T>> _mat;
 
-//                 ```cpp
-//                 /**
-//                  * @brief Main function
-//                  * @returns 0 on exit
-//                  */
-//                 int main() { return 0; }
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "class MyClass".into(),
-//             range: 112..295,
-//             content: "
-//                 The below code snippet is from file 'foo.cpp'
-
-//                 ```cpp
-//                 /**
-//                 * This is a test comment
-//                 */
-//                 class MyClass {       // The class
-//                     public:             // Access specifier
-//                     int myNum;        // Attribute (int variable)
-//                     string myString;  // Attribute (string variable)
-//                 }
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "enum Color".into(),
-//             range: 324..355,
-//             content: "
-//                 The below code snippet is from file 'foo.cpp'
-
-//                 ```cpp
-//                 // This is a test comment
-//                 enum Color { red, green, blue }
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "struct myStructure".into(),
-//             range: 428..581,
-//             content: "
-//                 The below code snippet is from file 'foo.cpp'
-
-//                 ```cpp
-//                 /** This is a preceding block comment
-//                  * This is the second line
-//                  */
-//                 struct {           // Structure declaration
-//                     int myNum;       // Member (int variable)
-//                     string myString; // Member (string variable)
-//                 } myStructure;
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//             name: "class Matrix2".into(),
-//             range: 613..1342,
-//             content: "
-//                 The below code snippet is from file 'foo.cpp'
-
-//                 ```cpp
-//                 /**
-//                 * @brief Matrix class.
-//                 */
-//                 template <typename T,
-//                           typename = typename std::enable_if<
-//                             std::is_integral<T>::value || std::is_floating_point<T>::value,
-//                             bool>::type>
-//                 class Matrix2 {
-//                     std::vector<std::vector<T>> _mat;
-
-//                 public:
-//                     /**
-//                     * @brief Constructor
-//                     * @tparam Integer ensuring integers are being evaluated and not other
-//                     * data types.
-//                     * @param size denoting the size of Matrix as size x size
-//                     */
-//                     template <typename Integer,
-//                               typename = typename std::enable_if<std::is_integral<Integer>::value,
-//                               Integer>::type>
-//                     explicit Matrix(const Integer size) {
-//                         for (size_t i = 0; i < size; ++i) {
-//                             _mat.emplace_back(std::vector<T>(size, 0));
-//                         }
-//                     }
-//                 }
-//                 ```"
-//             .unindent(),
-//             embedding: vec![],
-//         },
-//     ];
-
-//     for idx in 0..test_documents.len() {
-//         assert_eq!(test_documents[idx], parsed_files[idx]);
-//     }
-// }
+                    public:
+                        /**
+                        * @brief Constructor
+                        * @tparam Integer ensuring integers are being evaluated and not other
+                        * data types.
+                        * @param size denoting the size of Matrix as size x size
+                        */
+                        template <typename Integer,
+                                typename = typename std::enable_if<std::is_integral<Integer>::value,
+                                Integer>::type>
+                        explicit Matrix(const Integer size) {
+                            for (size_t i = 0; i < size; ++i) {
+                                _mat.emplace_back(std::vector<T>(size, 0));
+                            }
+                        }
+                }"
+                .unindent(),
+                612,
+            ),
+            (
+                "
+                explicit Matrix(const Integer size) {
+                    for (size_t i = 0; i < size; ++i) {
+                        _mat.emplace_back(std::vector<T>(size, 0));
+                    }
+                }"
+                .unindent(),
+                1226,
+            ),
+        ],
+    );
+}
 
 #[gpui::test]
 fn test_dot_product(mut rng: StdRng) {
