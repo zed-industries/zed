@@ -2369,7 +2369,7 @@ mod tests {
                         .ok_or_else(|| anyhow!("client not found"))?;
                     let clone = client.clone_repo(name.clone());
                     let clone = async move {
-                        clone.await.unwrap();
+                        clone.await.log_err();
                     };
                     deterministic.build_background().spawn(clone);
                 }
