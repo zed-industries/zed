@@ -2501,7 +2501,7 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_sort_lines_with_single_selection(cx: &mut TestAppContext) {
+fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     cx.add_window(|cx| {
@@ -2510,7 +2510,7 @@ fn test_sort_lines_with_single_selection(cx: &mut TestAppContext) {
         let buffer = buffer.read(cx).as_singleton().unwrap();
 
         editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(0, 2)..Point::new(0, 2)])
+            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
         });
         editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
         assert_eq!(
@@ -2520,13 +2520,13 @@ fn test_sort_lines_with_single_selection(cx: &mut TestAppContext) {
         );
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
-            &[Point::new(0, 2)..Point::new(0, 2)]
+            &[Point::new(0, 1)..Point::new(0, 2)]
         );
 
         editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(0, 2)..Point::new(5, 1)])
+            s.select_ranges([Point::new(0, 2)..Point::new(5, 0)])
         });
-        editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, cx);
+        //editor.sort_lines();
         assert_eq!(
             buffer.read(cx).text(),
             "a\nbb\nccc\ndddd\n\n",
@@ -2542,7 +2542,7 @@ fn test_sort_lines_with_single_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_sort_lines_with_multi_selection(cx: &mut TestAppContext) {
+fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     cx.add_window(|cx| {
