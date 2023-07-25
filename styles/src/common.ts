@@ -1,5 +1,6 @@
 import chroma from "chroma-js"
 export * from "./theme"
+export * from "./theme/theme_config"
 export { chroma }
 
 export const font_families = {
