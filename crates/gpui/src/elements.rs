@@ -271,8 +271,16 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
             | ElementState::PostLayout { mut element, .. }
             | ElementState::PostPaint { mut element, .. } => {
                 let (size, layout) = element.layout(constraint, view, cx);
-                debug_assert!(size.x().is_finite(), "Element for {:?} had infinite x size after layout", element.view_name());
-                debug_assert!(size.y().is_finite(), "Element for {:?} had infinite x size after layout", element.view_name());
+                debug_assert!(
+                    size.x().is_finite(),
+                    "Element for {:?} had infinite x size after layout",
+                    element.view_name()
+                );
+                debug_assert!(
+                    size.y().is_finite(),
+                    "Element for {:?} had infinite y size after layout",
+                    element.view_name()
+                );
 
                 result = size;
                 ElementState::PostLayout {
