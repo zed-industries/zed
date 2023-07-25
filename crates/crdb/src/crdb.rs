@@ -1972,7 +1972,7 @@ fn init_logger() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{TestClientNetwork, TestNetwork};
+    use crate::test::{TestClientNetwork, TestNetwork, TestServerNetwork};
     use gpui::executor::{Background, Deterministic};
     use rand::prelude::*;
     use std::env;
@@ -2036,160 +2036,19 @@ mod tests {
         let mut next_branch_name = 0;
 
         for _ in 0..max_operations {
-            let operation = if rng.gen_bool(0.2) {
-                if rng.gen() {
-                    let count = rng.gen_range(1..=5);
-                    TestOperation::Yield { count }
-                } else {
-                    TestOperation::Quiesce
-                }
-            } else if clients.is_empty() || (clients.len() < max_peers && rng.gen_bool(0.1)) {
-                let client_id = post_inc(&mut next_client_id);
-                TestOperation::AddClient {
-                    id: client_id,
-                    name: format!("client-{}", client_id),
-                }
-            } else {
-                let client = clients.choose(&mut rng).unwrap();
-                let client_id = client.id;
-                let repos = client.repos();
-                if repos.is_empty() || rng.gen_bool(0.1) {
-                    let mut server_repo_ids_by_name = server.repo_ids_by_name.lock().clone();
-
-                    // Avoid cloning repos that were already published/cloned by this client.
-                    let client_repo_ids = repos.iter().map(|repo| repo.id).collect::<HashSet<_>>();
-                    server_repo_ids_by_name.retain(|_, id| !client_repo_ids.contains(id));
-
-                    if server_repo_ids_by_name.is_empty() || rng.gen_bool(0.1) {
-                        TestOperation::CreateRepo { client_id }
-                    } else {
-                        let repo_name = server_repo_ids_by_name
-                            .into_keys()
-                            .choose(&mut rng)
-                            .unwrap();
-                        TestOperation::CloneRepo {
-                            client_id,
-                            name: repo_name,
-                        }
-                    }
-                } else {
-                    let repo = repos.choose(&mut rng).unwrap().clone();
-                    let branches = repo.branches();
-                    if client.is_local_repo(&repo) && rng.gen_bool(0.05) {
-                        TestOperation::PublishRepo {
-                            client_id,
-                            id: repo.id,
-                            name: repo.id.to_string().into(),
-                        }
-                    } else if branches.is_empty() || rng.gen_bool(0.1) {
-                        TestOperation::CreateEmptyBranch {
-                            client_id,
-                            repo_id: repo.id,
-                            name: format!("branch-{}", post_inc(&mut next_branch_name)),
-                        }
-                    } else {
-                        let branch = branches.choose(&mut rng).unwrap().clone();
-                        let documents = branch.documents();
-                        if documents.is_empty() || rng.gen_bool(0.1) {
-                            TestOperation::CreateDocument {
-                                client_id,
-                                repo_id: repo.id,
-                                branch_name: branch.name(),
-                            }
-                        } else {
-                            let document = documents.choose(&mut rng).unwrap().clone();
-                            let end = document
-                                .clip_offset(rng.gen_range(0..=document.len()), Bias::Right);
-                            let start = document.clip_offset(rng.gen_range(0..=end), Bias::Left);
-                            let new_text_len = rng.gen_range(0..=3);
-                            let text = util::RandomCharIter::new(&mut rng)
-                                .take(new_text_len)
-                                .collect::<String>();
-                            TestOperation::EditDocument {
-                                client_id,
-                                repo_id: repo.id,
-                                branch_name: branch.name(),
-                                document_id: document.id,
-                                edits: vec![(start..end, text)],
-                            }
-                        }
-                    }
-                }
-            };
+            let operation = TestOperation::generate(
+                max_peers,
+                &mut rng,
+                &server,
+                &clients,
+                &mut next_client_id,
+                &mut next_branch_name,
+            );
 
             log::info!("{:?}", operation);
-            match operation {
-                TestOperation::Yield { count } => {
-                    for _ in 0..count {
-                        smol::future::yield_now().await;
-                    }
-                }
-                TestOperation::Quiesce => {
-                    deterministic.run_until_parked();
-                }
-                TestOperation::AddClient { id, name } => {
-                    let client =
-                        Client::new(deterministic.build_background(), network.client(name));
-                    clients.push(TestClient { id, client });
-                }
-                TestOperation::CreateRepo { client_id } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    client.create_repo();
-                }
-                TestOperation::PublishRepo {
-                    client_id,
-                    id,
-                    name,
-                } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(id).unwrap();
-                    let publish = client.publish_repo(&repo, name);
-                    let publish = async move {
-                        publish.await.log_err();
-                    };
-                    deterministic.build_background().spawn(publish);
-                }
-                TestOperation::CloneRepo { client_id, name } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let clone = client.clone_repo(name);
-                    let clone = async move {
-                        clone.await.unwrap();
-                    };
-                    deterministic.build_background().spawn(clone);
-                }
-                TestOperation::CreateEmptyBranch {
-                    client_id,
-                    repo_id,
-                    name,
-                } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    repo.create_empty_branch(name);
-                }
-                TestOperation::CreateDocument {
-                    client_id,
-                    repo_id,
-                    branch_name,
-                } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    let branch = repo.branch(&branch_name).unwrap();
-                    branch.create_document();
-                }
-                TestOperation::EditDocument {
-                    client_id,
-                    repo_id,
-                    branch_name,
-                    document_id,
-                    edits,
-                } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    let branch = repo.branch(&branch_name).unwrap();
-                    let document = branch.document(document_id).unwrap();
-                    document.edit(edits);
-                }
-            }
+            operation
+                .apply(&deterministic, &mut clients, &network)
+                .await;
         }
 
         log::info!("Quiescing");
@@ -2269,6 +2128,175 @@ mod tests {
             document_id: OperationId,
             edits: Vec<(Range<usize>, String)>,
         },
+    }
+
+    impl TestOperation {
+        fn generate(
+            max_peers: usize,
+            rng: &mut StdRng,
+            server: &Server<TestServerNetwork>,
+            clients: &[TestClient],
+            next_client_id: &mut usize,
+            next_branch_name: &mut usize,
+        ) -> Self {
+            if rng.gen_bool(0.2) {
+                if rng.gen() {
+                    let count = rng.gen_range(1..=5);
+                    Self::Yield { count }
+                } else {
+                    Self::Quiesce
+                }
+            } else if clients.is_empty() || (clients.len() < max_peers && rng.gen_bool(0.1)) {
+                let client_id = post_inc(next_client_id);
+                Self::AddClient {
+                    id: client_id,
+                    name: format!("client-{}", client_id),
+                }
+            } else {
+                let client = clients.choose(rng).unwrap();
+                let client_id = client.id;
+                let repos = client.repos();
+                if repos.is_empty() || rng.gen_bool(0.1) {
+                    let mut server_repo_ids_by_name = server.repo_ids_by_name.lock().clone();
+
+                    // Avoid cloning repos that were already published/cloned by this client.
+                    let client_repo_ids = repos.iter().map(|repo| repo.id).collect::<HashSet<_>>();
+                    server_repo_ids_by_name.retain(|_, id| !client_repo_ids.contains(id));
+
+                    if server_repo_ids_by_name.is_empty() || rng.gen_bool(0.1) {
+                        Self::CreateRepo { client_id }
+                    } else {
+                        let repo_name = server_repo_ids_by_name.into_keys().choose(rng).unwrap();
+                        Self::CloneRepo {
+                            client_id,
+                            name: repo_name,
+                        }
+                    }
+                } else {
+                    let repo = repos.choose(rng).unwrap().clone();
+                    let branches = repo.branches();
+                    if client.is_local_repo(&repo) && rng.gen_bool(0.05) {
+                        Self::PublishRepo {
+                            client_id,
+                            id: repo.id,
+                            name: repo.id.to_string().into(),
+                        }
+                    } else if branches.is_empty() || rng.gen_bool(0.1) {
+                        Self::CreateEmptyBranch {
+                            client_id,
+                            repo_id: repo.id,
+                            name: format!("branch-{}", post_inc(next_branch_name)),
+                        }
+                    } else {
+                        let branch = branches.choose(rng).unwrap().clone();
+                        let documents = branch.documents();
+                        if documents.is_empty() || rng.gen_bool(0.1) {
+                            Self::CreateDocument {
+                                client_id,
+                                repo_id: repo.id,
+                                branch_name: branch.name(),
+                            }
+                        } else {
+                            let document = documents.choose(rng).unwrap().clone();
+                            let end = document
+                                .clip_offset(rng.gen_range(0..=document.len()), Bias::Right);
+                            let start = document.clip_offset(rng.gen_range(0..=end), Bias::Left);
+                            let new_text_len = rng.gen_range(0..=3);
+                            let text = util::RandomCharIter::new(rng)
+                                .take(new_text_len)
+                                .collect::<String>();
+                            Self::EditDocument {
+                                client_id,
+                                repo_id: repo.id,
+                                branch_name: branch.name(),
+                                document_id: document.id,
+                                edits: vec![(start..end, text)],
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        async fn apply(
+            self,
+            deterministic: &Arc<Deterministic>,
+            clients: &mut Vec<TestClient>,
+            network: &TestNetwork,
+        ) {
+            match self {
+                TestOperation::Yield { count } => {
+                    for _ in 0..count {
+                        smol::future::yield_now().await;
+                    }
+                }
+                TestOperation::Quiesce => {
+                    deterministic.run_until_parked();
+                }
+                TestOperation::AddClient { id, name } => {
+                    let client =
+                        Client::new(deterministic.build_background(), network.client(name));
+                    clients.push(TestClient { id, client });
+                }
+                TestOperation::CreateRepo { client_id } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    client.create_repo();
+                }
+                TestOperation::PublishRepo {
+                    client_id,
+                    id,
+                    name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(id).unwrap();
+                    let publish = client.publish_repo(&repo, name);
+                    let publish = async move {
+                        publish.await.log_err();
+                    };
+                    deterministic.build_background().spawn(publish);
+                }
+                TestOperation::CloneRepo { client_id, name } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let clone = client.clone_repo(name);
+                    let clone = async move {
+                        clone.await.unwrap();
+                    };
+                    deterministic.build_background().spawn(clone);
+                }
+                TestOperation::CreateEmptyBranch {
+                    client_id,
+                    repo_id,
+                    name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    repo.create_empty_branch(name);
+                }
+                TestOperation::CreateDocument {
+                    client_id,
+                    repo_id,
+                    branch_name,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    let branch = repo.branch(&branch_name).unwrap();
+                    branch.create_document();
+                }
+                TestOperation::EditDocument {
+                    client_id,
+                    repo_id,
+                    branch_name,
+                    document_id,
+                    edits,
+                } => {
+                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let repo = client.repo(repo_id).unwrap();
+                    let branch = repo.branch(&branch_name).unwrap();
+                    let document = branch.document(document_id).unwrap();
+                    document.edit(edits);
+                }
+            }
+        }
     }
 
     impl Executor for Arc<Background> {
