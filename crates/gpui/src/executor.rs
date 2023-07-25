@@ -586,7 +586,7 @@ impl DeterministicState {
                     )
                     .unwrap();
                 } else {
-                    writeln!(&mut message, "previous runnable backtrace:\nnone");
+                    writeln!(&mut message, "previous runnable backtrace:\nnone").unwrap();
                 }
 
                 panic!("detected non-determinism after {ix}. {message}");
