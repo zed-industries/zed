@@ -486,142 +486,121 @@ async fn test_code_context_retrieval_javascript() {
     )
 }
 
-// #[gpui::test]
-// async fn test_code_context_retrieval_elixir() {
-//     let language = elixir_lang();
-//     let mut retriever = CodeContextRetriever::new();
+#[gpui::test]
+async fn test_code_context_retrieval_elixir() {
+    let language = elixir_lang();
+    let mut retriever = CodeContextRetriever::new();
 
-//     let text = r#"
-// defmodule File.Stream do
-//     @moduledoc """
-//     Defines a `File.Stream` struct returned by `File.stream!/3`.
+    let text = r#"
+        defmodule File.Stream do
+            @moduledoc """
+            Defines a `File.Stream` struct returned by `File.stream!/3`.
 
-//     The following fields are public:
+            The following fields are public:
 
-//     * `path`          - the file path
-//     * `modes`         - the file modes
-//     * `raw`           - a boolean indicating if bin functions should be used
-//     * `line_or_bytes` - if reading should read lines or a given number of bytes
-//     * `node`          - the node the file belongs to
+            * `path`          - the file path
+            * `modes`         - the file modes
+            * `raw`           - a boolean indicating if bin functions should be used
+            * `line_or_bytes` - if reading should read lines or a given number of bytes
+            * `node`          - the node the file belongs to
 
-//     """
+            """
 
-//     defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
+            defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
 
-//     @type t :: %__MODULE__{}
+            @type t :: %__MODULE__{}
 
-//     @doc false
-//     def __build__(path, modes, line_or_bytes) do
-//     raw = :lists.keyfind(:encoding, 1, modes) == false
+            @doc false
+            def __build__(path, modes, line_or_bytes) do
+            raw = :lists.keyfind(:encoding, 1, modes) == false
 
-//     modes =
-//         case raw do
-//         true ->
-//             case :lists.keyfind(:read_ahead, 1, modes) do
-//             {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
-//             {:read_ahead, _} -> [:raw | modes]
-//             false -> [:raw, :read_ahead | modes]
-//             end
+            modes =
+                case raw do
+                true ->
+                    case :lists.keyfind(:read_ahead, 1, modes) do
+                    {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+                    {:read_ahead, _} -> [:raw | modes]
+                    false -> [:raw, :read_ahead | modes]
+                    end
 
-//         false ->
-//             modes
-//         end
+                false ->
+                    modes
+                end
 
-//     %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
+            %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
 
-//     end
-// "#
-//     .unindent();
+            end"#
+    .unindent();
 
-//     let parsed_files = retriever
-//         .parse_file(Path::new("foo.ex"), &text, language)
-//         .unwrap();
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
 
-//     let test_documents = &[
-//         Document{
-//             name: "defmodule File.Stream".into(),
-//             range: 0..1132,
-//             content: r#"
-//                 The below code snippet is from file 'foo.ex'
+    assert_documents_eq(
+        &documents,
+        &[(
+            r#"
+        defmodule File.Stream do
+            @moduledoc """
+            Defines a `File.Stream` struct returned by `File.stream!/3`.
 
-//                 ```elixir
-//                 defmodule File.Stream do
-//                     @moduledoc """
-//                     Defines a `File.Stream` struct returned by `File.stream!/3`.
+            The following fields are public:
 
-//                     The following fields are public:
+            * `path`          - the file path
+            * `modes`         - the file modes
+            * `raw`           - a boolean indicating if bin functions should be used
+            * `line_or_bytes` - if reading should read lines or a given number of bytes
+            * `node`          - the node the file belongs to
 
-//                     * `path`          - the file path
-//                     * `modes`         - the file modes
-//                     * `raw`           - a boolean indicating if bin functions should be used
-//                     * `line_or_bytes` - if reading should read lines or a given number of bytes
-//                     * `node`          - the node the file belongs to
+            """
 
-//                     """
+            defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
 
-//                     defstruct path: nil, modes: [], line_or_bytes: :line, raw: true, node: nil
+            @type t :: %__MODULE__{}
 
-//                     @type t :: %__MODULE__{}
+            @doc false
+            def __build__(path, modes, line_or_bytes) do
+            raw = :lists.keyfind(:encoding, 1, modes) == false
 
-//                     @doc false
-//                     def __build__(path, modes, line_or_bytes) do
-//                     raw = :lists.keyfind(:encoding, 1, modes) == false
+            modes =
+                case raw do
+                true ->
+                    case :lists.keyfind(:read_ahead, 1, modes) do
+                    {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+                    {:read_ahead, _} -> [:raw | modes]
+                    false -> [:raw, :read_ahead | modes]
+                    end
 
-//                     modes =
-//                         case raw do
-//                         true ->
-//                             case :lists.keyfind(:read_ahead, 1, modes) do
-//                             {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
-//                             {:read_ahead, _} -> [:raw | modes]
-//                             false -> [:raw, :read_ahead | modes]
-//                             end
+                false ->
+                    modes
+                end
 
-//                         false ->
-//                             modes
-//                         end
+            %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
 
-//                     %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
+            end"#
+                .unindent(),
+            0,
+        ),(r#"
+            @doc false
+            def __build__(path, modes, line_or_bytes) do
+            raw = :lists.keyfind(:encoding, 1, modes) == false
 
-//                     end
-//                 ```"#.unindent(),
-//             embedding: vec![],
-//         },
-//         Document {
-//         name: "def __build__".into(),
-//         range: 574..1132,
-//         content: r#"
-// The below code snippet is from file 'foo.ex'
+            modes =
+                case raw do
+                true ->
+                    case :lists.keyfind(:read_ahead, 1, modes) do
+                    {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+                    {:read_ahead, _} -> [:raw | modes]
+                    false -> [:raw, :read_ahead | modes]
+                    end
 
-// ```elixir
-// @doc false
-// def __build__(path, modes, line_or_bytes) do
-//     raw = :lists.keyfind(:encoding, 1, modes) == false
+                false ->
+                    modes
+                end
 
-//     modes =
-//         case raw do
-//         true ->
-//             case :lists.keyfind(:read_ahead, 1, modes) do
-//             {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
-//             {:read_ahead, _} -> [:raw | modes]
-//             false -> [:raw, :read_ahead | modes]
-//             end
+            %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
 
-//         false ->
-//             modes
-//         end
-
-//     %File.Stream{path: path, modes: modes, raw: raw, line_or_bytes: line_or_bytes, node: node()}
-
-//     end
-// ```"#
-//             .unindent(),
-//         embedding: vec![],
-//     }];
-
-//     for idx in 0..test_documents.len() {
-//         assert_eq!(test_documents[idx], parsed_files[idx]);
-//     }
-// }
+            end"#.unindent(), 574)],
+    );
+}
 
 #[gpui::test]
 async fn test_code_context_retrieval_cpp() {
