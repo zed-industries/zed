@@ -121,6 +121,8 @@ impl Edit {
                             // Flush the remainder of current fragment.
                             if !fragment.insertion_subrange.is_empty() || fragment.is_sentinel() {
                                 new_ropes.push_fragment(fragment, fragment.visible());
+                                new_insertions
+                                    .push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
                                 new_fragments.push(fragment.clone(), &());
                             }
                             old_fragments.next(&());
@@ -148,6 +150,8 @@ impl Edit {
                         {
                             let fragment = current_fragment.take().unwrap();
                             new_ropes.push_fragment(&fragment, fragment.visible());
+                            new_insertions
+                                .push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
                             new_fragments.push(fragment, &());
                             old_fragments.next(&());
                             current_fragment = old_fragments.item().and_then(|fragment| {
@@ -202,6 +206,8 @@ impl Edit {
                             undo_count: 0,
                         });
                         new_ropes.push_fragment(&intersection, was_visible);
+                        new_insertions
+                            .push(btree::Edit::Insert(InsertionFragment::new(&intersection)));
                         new_fragments.push(intersection, &());
                     }
                 }
@@ -211,6 +217,7 @@ impl Edit {
             while let Some(fragment) = current_fragment.as_ref() {
                 if fragment.insertion_id.is_causally_after(self.id) {
                     new_ropes.push_fragment(fragment, fragment.visible());
+                    new_insertions.push(btree::Edit::Insert(InsertionFragment::new(fragment)));
                     new_fragments.push(fragment.clone(), &());
                     old_fragments.next(&());
                     current_fragment = old_fragments.item().and_then(|fragment| {
@@ -250,21 +257,28 @@ impl Edit {
         if let Some(fragment) = current_fragment {
             if !fragment.insertion_subrange.is_empty() {
                 new_ropes.push_fragment(&fragment, fragment.visible());
+                new_insertions.push(btree::Edit::Insert(InsertionFragment::new(&fragment)));
                 new_fragments.push(fragment, &());
             }
             old_fragments.next(&());
         }
 
         let suffix = old_fragments.suffix(&());
-        new_ropes.append(suffix.summary().visible_len, suffix.summary().hidden_len);
-        new_fragments.append(suffix, &());
-        let (visible_text, hidden_text) = new_ropes.finish();
         drop(old_fragments);
 
-        revision.document_fragments = new_fragments;
-        revision.insertion_fragments.edit(new_insertions, &());
+        new_ropes.append(suffix.summary().visible_len, suffix.summary().hidden_len);
+        let (visible_text, hidden_text) = new_ropes.finish();
         revision.visible_text = visible_text;
         revision.hidden_text = hidden_text;
+
+        new_fragments.append(suffix, &());
+        revision.document_fragments = new_fragments;
+
+        new_insertions.sort_unstable_by_key(|edit| edit.key());
+        new_insertions.dedup_by_key(|edit| edit.key());
+        revision.insertion_fragments.edit(new_insertions, &());
+
+        revision.check_invariants();
 
         Ok(())
     }

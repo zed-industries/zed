@@ -1872,7 +1872,7 @@ impl Revision {
         cursor
             .take_while(move |item| {
                 item.insertion_id == insertion_id
-                    && item.offset_in_insertion <= insertion_subrange.end
+                    && item.offset_in_insertion < insertion_subrange.end
             })
             .map(|item| &item.fragment_location)
     }
@@ -1925,6 +1925,20 @@ impl Revision {
         let end = fragments.start().visible_len;
 
         start..end
+    }
+
+    fn check_invariants(&self) {
+        let mut insertion_fragments = self.insertion_fragments.iter().peekable();
+        while let Some(insertion_fragment) = insertion_fragments.next() {
+            if let Some(next_insertion_fragment) = insertion_fragments.peek() {
+                if next_insertion_fragment.insertion_id == insertion_fragment.insertion_id {
+                    assert!(
+                        insertion_fragment.fragment_location
+                            < next_insertion_fragment.fragment_location
+                    );
+                }
+            }
+        }
     }
 }
 

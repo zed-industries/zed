@@ -678,7 +678,7 @@ pub enum Edit<T: KeyedItem> {
 }
 
 impl<T: KeyedItem> Edit<T> {
-    fn key(&self) -> T::Key {
+    pub fn key(&self) -> T::Key {
         match self {
             Edit::Insert(item) => item.key(),
             Edit::Remove(key) => key.clone(),
