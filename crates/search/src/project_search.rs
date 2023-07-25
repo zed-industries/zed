@@ -996,6 +996,10 @@ impl ProjectSearchBar {
                     SearchOption::Regex => &mut search_view.regex,
                 };
                 *value = !*value;
+
+                if value.clone() {
+                    search_view.semantic = None;
+                }
                 search_view.search(cx);
             });
             cx.notify();
@@ -1012,6 +1016,9 @@ impl ProjectSearchBar {
                     search_view.semantic = None;
                 } else if let Some(semantic_index) = SemanticIndex::global(cx) {
                     // TODO: confirm that it's ok to send this project
+                    search_view.regex = false;
+                    search_view.case_sensitive = false;
+                    search_view.whole_word = false;
 
                     let project = search_view.model.read(cx).project.clone();
                     let index_task = semantic_index.update(cx, |semantic_index, cx| {
@@ -1266,9 +1273,14 @@ impl View for ProjectSearchBar {
                                 .with_child(self.render_nav_button(">", Direction::Next, cx))
                                 .aligned(),
                         )
-                        .with_child(
-                            Flex::row()
-                                .with_child(self.render_semantic_search_button(cx))
+                        .with_child({
+                            let row = if SemanticIndex::enabled(cx) {
+                                Flex::row().with_child(self.render_semantic_search_button(cx))
+                            } else {
+                                Flex::row()
+                            };
+
+                            let row = row
                                 .with_child(self.render_option_button(
                                     "Case",
                                     SearchOption::CaseSensitive,
@@ -1286,8 +1298,10 @@ impl View for ProjectSearchBar {
                                 ))
                                 .contained()
                                 .with_style(theme.search.option_button_group)
-                                .aligned(),
-                        )
+                                .aligned();
+
+                            row
+                        })
                         .contained()
                         .with_margin_bottom(row_spacing),
                 )

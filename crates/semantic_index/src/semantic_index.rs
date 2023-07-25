@@ -1,7 +1,7 @@
 mod db;
 mod embedding;
 mod parsing;
-mod semantic_index_settings;
+pub mod semantic_index_settings;
 
 #[cfg(test)]
 mod semantic_index_tests;
@@ -181,6 +181,10 @@ impl SemanticIndex {
         } else {
             None
         }
+    }
+
+    pub fn enabled(cx: &AppContext) -> bool {
+        settings::get::<SemanticIndexSettings>(cx).enabled
     }
 
     async fn new(
