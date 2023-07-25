@@ -9,8 +9,10 @@ pub mod test;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
+    env,
     ops::{AddAssign, Range, RangeInclusive},
     panic::Location,
+    path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -362,6 +364,19 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
     fn contains_inclusive(&self, other: &Range<T>) -> bool {
         self.start() <= &other.start && &other.end <= self.end()
     }
+}
+
+pub fn path_env_var(name: &str) -> Option<PathBuf> {
+    let value = env::var(name).ok()?;
+    let mut path = PathBuf::from(value);
+    if path.is_relative() {
+        let mut abs_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        abs_path.pop();
+        abs_path.pop();
+        abs_path.push(path);
+        path = abs_path
+    }
+    Some(path)
 }
 
 #[cfg(test)]

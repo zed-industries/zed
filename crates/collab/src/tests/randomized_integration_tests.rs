@@ -32,7 +32,7 @@ use std::{
         Arc,
     },
 };
-use util::ResultExt;
+use util::{path_env_var, ResultExt};
 
 lazy_static::lazy_static! {
     static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
@@ -2170,17 +2170,4 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
-}
-
-fn path_env_var(name: &str) -> Option<PathBuf> {
-    let value = env::var(name).ok()?;
-    let mut path = PathBuf::from(value);
-    if path.is_relative() {
-        let mut abs_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        abs_path.pop();
-        abs_path.pop();
-        abs_path.push(path);
-        path = abs_path
-    }
-    Some(path)
 }

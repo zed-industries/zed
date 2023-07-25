@@ -1987,9 +1987,13 @@ mod tests {
     use crate::test::{TestClientNetwork, TestNetwork, TestServerNetwork};
     use gpui::executor::{Background, Deterministic};
     use rand::prelude::*;
-    use std::env;
-    use std::ops::Deref;
-    use util::post_inc;
+    use std::{
+        env, fs,
+        ops::Deref,
+        path::PathBuf,
+        sync::atomic::{AtomicBool, Ordering::SeqCst},
+    };
+    use util::{path_env_var, post_inc};
 
     #[gpui::test]
     async fn test_repo(deterministic: Arc<Deterministic>) {
@@ -2030,7 +2034,64 @@ mod tests {
         assert_eq!(doc1_b.text().to_string(), "aghic");
     }
 
-    #[gpui::test(iterations = 100)]
+    #[derive(Clone)]
+    struct StoredOperation {
+        operation: TestOperation,
+        applied: Arc<AtomicBool>,
+    }
+
+    #[derive(Default)]
+    struct TestPlan {
+        operations: Vec<StoredOperation>,
+    }
+
+    impl TestPlan {
+        fn load(&mut self, path: &Path) {
+            let plan = fs::read_to_string(path).unwrap();
+            self.operations = gpui::serde_json::from_str::<Vec<TestOperation>>(&plan)
+                .unwrap()
+                .into_iter()
+                .map(|operation| StoredOperation {
+                    operation,
+                    applied: Default::default(),
+                })
+                .collect();
+        }
+
+        fn save(&self, path: &Path) {
+            // Format each operation as one line
+            let mut json = Vec::new();
+            json.push(b'[');
+            for stored_operation in &self.operations {
+                if !stored_operation.applied.load(SeqCst) {
+                    continue;
+                }
+                if json.len() > 1 {
+                    json.push(b',');
+                }
+                json.extend_from_slice(b"\n  ");
+                gpui::serde_json::to_writer(&mut json, &stored_operation.operation).unwrap();
+            }
+            json.extend_from_slice(b"\n]\n");
+
+            fs::write(path, json).unwrap();
+        }
+    }
+
+    lazy_static::lazy_static! {
+        static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
+        static ref PLAN_SAVE_PATH: Option<PathBuf> = path_env_var("SAVE_PLAN");
+        static ref PLAN: Mutex<TestPlan> = Default::default();
+    }
+
+    fn on_failure() {
+        if let Some(path) = &*PLAN_SAVE_PATH {
+            eprintln!("saved test plan to path {:?}", path);
+            PLAN.lock().save(path);
+        }
+    }
+
+    #[gpui::test(iterations = 100, on_failure = "on_failure")]
     async fn test_random_collaboration(deterministic: Arc<Deterministic>, mut rng: StdRng) {
         deterministic.forbid_parking();
 
@@ -2047,20 +2108,41 @@ mod tests {
         let mut next_client_id = 0;
         let mut next_branch_name = 0;
 
-        for _ in 0..max_operations {
-            let operation = TestOperation::generate(
-                max_peers,
-                &mut rng,
-                &server,
-                &clients,
-                &mut next_client_id,
-                &mut next_branch_name,
-            );
+        if let Some(path) = &*PLAN_LOAD_PATH {
+            PLAN.lock().load(path);
+            for stored_operation in PLAN.lock().operations.clone() {
+                log::info!("{:?}", stored_operation.operation);
+                if stored_operation
+                    .operation
+                    .apply(&deterministic, &mut clients, &network)
+                    .await
+                    .is_ok()
+                {
+                    stored_operation.applied.store(true, SeqCst);
+                }
+            }
+        } else {
+            for _ in 0..max_operations {
+                let operation = TestOperation::generate(
+                    max_peers,
+                    &mut rng,
+                    &server,
+                    &clients,
+                    &mut next_client_id,
+                    &mut next_branch_name,
+                );
 
-            log::info!("{:?}", operation);
-            operation
-                .apply(&deterministic, &mut clients, &network)
-                .await;
+                PLAN.lock().operations.push(StoredOperation {
+                    operation: operation.clone(),
+                    applied: Arc::new(AtomicBool::new(true)),
+                });
+                log::info!("{:?}", operation);
+
+                operation
+                    .apply(&deterministic, &mut clients, &network)
+                    .await
+                    .unwrap();
+            }
         }
 
         log::info!("Quiescing");
@@ -2101,7 +2183,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     enum TestOperation {
         Yield {
             count: usize,
@@ -2231,69 +2313,94 @@ mod tests {
         }
 
         async fn apply(
-            self,
+            &self,
             deterministic: &Arc<Deterministic>,
             clients: &mut Vec<TestClient>,
             network: &TestNetwork,
-        ) {
+        ) -> Result<()> {
             match self {
                 TestOperation::Yield { count } => {
-                    for _ in 0..count {
+                    for _ in 0..*count {
                         smol::future::yield_now().await;
                     }
                 }
+
                 TestOperation::Quiesce => {
                     deterministic.run_until_parked();
                 }
+
                 TestOperation::AddClient { id, name } => {
-                    let client =
-                        Client::new(deterministic.build_background(), network.client(name));
-                    clients.push(TestClient { id, client });
+                    let client = Client::new(
+                        deterministic.build_background(),
+                        network.client(name.as_str()),
+                    );
+                    clients.push(TestClient { id: *id, client });
                 }
+
                 TestOperation::CreateRepo { client_id } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
                     client.create_repo();
                 }
+
                 TestOperation::PublishRepo {
                     client_id,
                     id,
                     name,
                 } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(id).unwrap();
-                    let publish = client.publish_repo(&repo, name);
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
+                    let repo = client.repo(*id)?;
+                    let publish = client.publish_repo(&repo, name.clone());
                     let publish = async move {
                         publish.await.log_err();
                     };
                     deterministic.build_background().spawn(publish);
                 }
+
                 TestOperation::CloneRepo { client_id, name } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let clone = client.clone_repo(name);
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
+                    let clone = client.clone_repo(name.clone());
                     let clone = async move {
                         clone.await.unwrap();
                     };
                     deterministic.build_background().spawn(clone);
                 }
+
                 TestOperation::CreateEmptyBranch {
                     client_id,
                     repo_id,
                     name,
                 } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    repo.create_empty_branch(name);
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
+                    let repo = client.repo(*repo_id)?;
+                    repo.create_empty_branch(name.as_str());
                 }
+
                 TestOperation::CreateDocument {
                     client_id,
                     repo_id,
                     branch_name,
                 } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    let branch = repo.branch(&branch_name).unwrap();
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
+                    let repo = client.repo(*repo_id)?;
+                    let branch = repo.branch(branch_name)?;
                     branch.create_document();
                 }
+
                 TestOperation::EditDocument {
                     client_id,
                     repo_id,
@@ -2301,13 +2408,18 @@ mod tests {
                     document_id,
                     edits,
                 } => {
-                    let client = clients.iter_mut().find(|c| c.id == client_id).unwrap();
-                    let repo = client.repo(repo_id).unwrap();
-                    let branch = repo.branch(&branch_name).unwrap();
-                    let document = branch.document(document_id).unwrap();
-                    document.edit(edits);
+                    let client = clients
+                        .iter_mut()
+                        .find(|c| c.id == *client_id)
+                        .ok_or_else(|| anyhow!("client not found"))?;
+                    let repo = client.repo(*repo_id)?;
+                    let branch = repo.branch(branch_name)?;
+                    let document = branch.document(*document_id)?;
+                    document.edit(edits.iter().cloned());
                 }
             }
+
+            Ok(())
         }
     }
 
