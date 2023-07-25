@@ -561,8 +561,8 @@ impl DeterministicState {
         self.poll_history.push(event);
         if let Some(prev_history) = &self.previous_poll_history {
             let ix = self.poll_history.len() - 1;
-            let prev_event = prev_history[ix];
-            if event != prev_event {
+            let prev_event = prev_history.get(ix);
+            if Some(&event) != prev_event {
                 let mut message = String::new();
                 writeln!(
                     &mut message,
@@ -573,17 +573,22 @@ impl DeterministicState {
                     })
                 )
                 .unwrap();
-                writeln!(
-                    &mut message,
-                    "previous runnable backtrace:\n{:?}",
-                    self.runnable_backtraces
-                        .get_mut(&prev_event.id())
-                        .map(|trace| {
-                            trace.resolve();
-                            util::CwdBacktrace(trace)
-                        })
-                )
-                .unwrap();
+                if let Some(prev_event) = prev_event {
+                    writeln!(
+                        &mut message,
+                        "previous runnable backtrace:\n{:?}",
+                        self.runnable_backtraces
+                            .get_mut(&prev_event.id())
+                            .map(|trace| {
+                                trace.resolve();
+                                util::CwdBacktrace(trace)
+                            })
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(&mut message, "previous runnable backtrace:\nnone");
+                }
+
                 panic!("detected non-determinism after {ix}. {message}");
             }
         }
