@@ -70,6 +70,10 @@ pub struct Edit {
 
 impl Edit {
     pub fn apply(self, parent_revision: &Revision, revision: &mut Revision) -> Result<()> {
+        if self.edits.is_empty() {
+            return Ok(());
+        }
+
         let mut old_fragments = revision
             .document_fragments
             .cursor::<DocumentFragmentSummary>();
@@ -87,11 +91,6 @@ impl Edit {
         );
 
         let mut insertion_offset = 0;
-
-        // Every document begins with a sentinel fragment, which we can skip.
-        new_fragments.push(old_fragments.item().unwrap().clone(), &());
-        old_fragments.next(&());
-
         let mut current_fragment = old_fragments.item().cloned();
         for (range, new_text) in self.edits {
             // We need to tombstone the intersection of the edit's range with fragments that
@@ -120,7 +119,7 @@ impl Edit {
                         // Advance to fragment_location if it is greater than the location of the current fragment,
                         if *fragment_location > fragment.location {
                             // Flush the remainder of current fragment.
-                            if !fragment.insertion_subrange.is_empty() {
+                            if !fragment.insertion_subrange.is_empty() || fragment.is_sentinel() {
                                 new_ropes.push_fragment(fragment, fragment.visible());
                                 new_fragments.push(fragment.clone(), &());
                             }
@@ -151,11 +150,13 @@ impl Edit {
                             new_ropes.push_fragment(&fragment, fragment.visible());
                             new_fragments.push(fragment, &());
                             old_fragments.next(&());
-                            if let Some(next_fragment) = old_fragments.item() {
-                                if next_fragment.document_id == self.document_id {
-                                    current_fragment = Some(next_fragment.clone());
+                            current_fragment = old_fragments.item().and_then(|fragment| {
+                                if fragment.document_id == self.document_id {
+                                    Some(fragment.clone())
+                                } else {
+                                    None
                                 }
-                            }
+                            });
                         }
                     }
 
@@ -212,7 +213,13 @@ impl Edit {
                     new_ropes.push_fragment(fragment, fragment.visible());
                     new_fragments.push(fragment.clone(), &());
                     old_fragments.next(&());
-                    current_fragment = old_fragments.item().cloned();
+                    current_fragment = old_fragments.item().and_then(|fragment| {
+                        if fragment.document_id == self.document_id {
+                            Some(fragment.clone())
+                        } else {
+                            None
+                        }
+                    });
                 } else {
                     break;
                 }
