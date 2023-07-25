@@ -33,9 +33,7 @@ mod btree {
     pub use sum_tree::{SumTree as Sequence, TreeMap as Map, TreeSet as Set, *};
 }
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RepoId(Uuid);
 
 impl RepoId {
@@ -54,7 +52,21 @@ impl RepoId {
 
 impl Display for RepoId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.as_hyphenated())
+        #[cfg(not(any(test, feature = "test-support")))]
+        return write!(f, "{}", self.0.as_hyphenated());
+
+        #[cfg(any(test, feature = "test-support"))]
+        return write!(f, "{}", self.0.as_u128());
+    }
+}
+
+impl Debug for RepoId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(not(any(test, feature = "test-support")))]
+        return write!(f, "RepoId({})", self.0.as_hyphenated());
+
+        #[cfg(any(test, feature = "test-support"))]
+        return write!(f, "RepoId({})", self.0.as_u128());
     }
 }
 
@@ -2179,7 +2191,7 @@ mod tests {
                         Self::PublishRepo {
                             client_id,
                             id: repo.id,
-                            name: repo.id.to_string().into(),
+                            name: format!("repo-{}", repo.id).into(),
                         }
                     } else if branches.is_empty() || rng.gen_bool(0.1) {
                         Self::CreateEmptyBranch {
