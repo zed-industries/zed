@@ -388,43 +388,103 @@ fn assert_documents_eq(
     );
 }
 
-// #[gpui::test]
-// async fn test_code_context_retrieval_javascript() {
-//     let language = js_lang();
-//     let mut retriever = CodeContextRetriever::new();
+#[gpui::test]
+async fn test_code_context_retrieval_javascript() {
+    let language = js_lang();
+    let mut retriever = CodeContextRetriever::new();
 
-//     let text = "
-//         /* globals importScripts, backend */
-//         function _authorize() {}
+    let text = "
+        /* globals importScripts, backend */
+        function _authorize() {}
 
-//         /**
-//          * Sometimes the frontend build is way faster than backend.
-//          */
-//         export async function authorizeBank() {
-//             _authorize(pushModal, upgradingAccountId, {});
-//         }
+        /**
+         * Sometimes the frontend build is way faster than backend.
+         */
+        export async function authorizeBank() {
+            _authorize(pushModal, upgradingAccountId, {});
+        }
 
-//         export class SettingsPage {
-//             /* This is a test setting */
-//             constructor(page) {
-//                 this.page = page;
-//             }
-//         }
+        export class SettingsPage {
+            /* This is a test setting */
+            constructor(page) {
+                this.page = page;
+            }
+        }
 
-//         /* This is a test comment */
-//         class TestClass {}
+        /* This is a test comment */
+        class TestClass {}
 
-//         /* Schema for editor_events in Clickhouse. */
-//         export interface ClickhouseEditorEvent {
-//             installation_id: string
-//             operation: string
-//         }
-//         "
-//     .unindent();
+        /* Schema for editor_events in Clickhouse. */
+        export interface ClickhouseEditorEvent {
+            installation_id: string
+            operation: string
+        }
+        "
+    .unindent();
 
-//     let parsed_files = retriever
-//         .parse_file(Path::new("foo.js"), &text, language)
-//         .unwrap();
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                "
+            /* globals importScripts, backend */
+            function _authorize() {}"
+                    .unindent(),
+                37,
+            ),
+            (
+                "
+            /**
+             * Sometimes the frontend build is way faster than backend.
+             */
+            export async function authorizeBank() {
+                _authorize(pushModal, upgradingAccountId, {});
+            }"
+                .unindent(),
+                131,
+            ),
+            (
+                "
+                export class SettingsPage {
+                    /* This is a test setting */
+                    constructor(page) {
+                        this.page = page;
+                    }
+                }"
+                .unindent(),
+                225,
+            ),
+            (
+                "
+                /* This is a test setting */
+                constructor(page) {
+                    this.page = page;
+                }"
+                .unindent(),
+                290,
+            ),
+            (
+                "
+                /* This is a test comment */
+                class TestClass {}"
+                    .unindent(),
+                374,
+            ),
+            (
+                "
+                /* Schema for editor_events in Clickhouse. */
+                export interface ClickhouseEditorEvent {
+                    installation_id: string
+                    operation: string
+                }"
+                .unindent(),
+                440,
+            ),
+        ],
+    )
+}
 
 //     let test_documents = &[
 //         Document {
@@ -924,38 +984,60 @@ fn js_lang() -> Arc<Language> {
             (
                 (comment)* @context
                 .
+                [
                 (export_statement
                     (function_declaration
                         "async"? @name
                         "function" @name
-                        name: (_) @name)) @item
-                    )
-
-            (
-                (comment)* @context
-                .
+                        name: (_) @name))
                 (function_declaration
                     "async"? @name
                     "function" @name
-                    name: (_) @name) @item
-                    )
+                    name: (_) @name)
+                ] @item
+            )
 
             (
                 (comment)* @context
                 .
+                [
                 (export_statement
                     (class_declaration
                         "class" @name
-                        name: (_) @name)) @item
-                    )
+                        name: (_) @name))
+                (class_declaration
+                    "class" @name
+                    name: (_) @name)
+                ] @item
+            )
 
             (
                 (comment)* @context
                 .
-                (class_declaration
-                    "class" @name
-                    name: (_) @name) @item
-                    )
+                [
+                (export_statement
+                    (interface_declaration
+                        "interface" @name
+                        name: (_) @name))
+                (interface_declaration
+                    "interface" @name
+                    name: (_) @name)
+                ] @item
+            )
+
+            (
+                (comment)* @context
+                .
+                [
+                (export_statement
+                    (enum_declaration
+                        "enum" @name
+                        name: (_) @name))
+                (enum_declaration
+                    "enum" @name
+                    name: (_) @name)
+                ] @item
+            )
 
             (
                 (comment)* @context
@@ -969,41 +1051,7 @@ fn js_lang() -> Arc<Language> {
                         "static"
                     ]* @name
                     name: (_) @name) @item
-                )
-
-            (
-                (comment)* @context
-                .
-                (export_statement
-                    (interface_declaration
-                        "interface" @name
-                        name: (_) @name)) @item
-                )
-
-            (
-                (comment)* @context
-                .
-                (interface_declaration
-                    "interface" @name
-                    name: (_) @name) @item
-                )
-
-            (
-                (comment)* @context
-                .
-                (export_statement
-                    (enum_declaration
-                        "enum" @name
-                        name: (_) @name)) @item
-                )
-
-            (
-                (comment)* @context
-                .
-                (enum_declaration
-                    "enum" @name
-                    name: (_) @name) @item
-                )
+            )
 
                     "#
             .unindent(),
