@@ -625,6 +625,11 @@ impl<T: Item> Sequence<T> {
     }
 }
 
+pub struct Probe<'a, T> {
+    start: &'a T,
+    summary: &'a T,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Prune {
     Descend,
@@ -671,33 +676,59 @@ where
         Ok(Self(Arc::new(node)))
     }
 
-    pub async fn load<F, K>(&mut self, kv: &K, mut f: F) -> Result<()>
+    pub async fn load<F, K>(
+        &mut self,
+        kv: &K,
+        cx: &<T::Summary as Summary>::Context,
+        mut f: F,
+    ) -> Result<()>
     where
-        F: FnMut(&T::Summary) -> bool,
+        F: FnMut(Probe<T::Summary>) -> bool,
         K: KvStore,
     {
+        struct Frame<'a, T: Item> {
+            tree: &'a mut Sequence<T>,
+            start_summary: T::Summary,
+        }
+
         let mut stack = Vec::new();
-        stack.push(self);
-        while let Some(node) = stack.pop() {
-            match Arc::make_mut(&mut node.0) {
+        stack.push(Frame {
+            tree: self,
+            start_summary: Default::default(),
+        });
+        while let Some(frame) = stack.pop() {
+            let mut summary = frame.start_summary;
+            match Arc::make_mut(&mut frame.tree.0) {
                 Node::Internal {
                     child_summaries,
                     child_trees,
                     ..
                 } => {
                     for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
-                        if f(child_summary) {
+                        let probe = Probe {
+                            start: &summary,
+                            summary: child_summary,
+                        };
+                        if f(probe) {
                             match child_tree {
-                                ChildTree::Loaded { tree } => stack.push(tree),
+                                ChildTree::Loaded { tree } => stack.push(Frame {
+                                    tree,
+                                    start_summary: summary.clone(),
+                                }),
                                 ChildTree::Unloaded { saved_id } => {
                                     let tree = Sequence::from_root(saved_id.clone(), kv).await?;
                                     *child_tree = ChildTree::Loaded { tree };
                                     if let ChildTree::Loaded { tree } = child_tree {
-                                        stack.push(tree);
+                                        stack.push(Frame {
+                                            tree,
+                                            start_summary: summary.clone(),
+                                        });
                                     }
                                 }
                             }
                         }
+
+                        Summary::add_summary(&mut summary, child_summary, cx);
                     }
                 }
                 Node::Leaf { .. } => {}
@@ -798,24 +829,40 @@ where
         Ok(())
     }
 
-    pub fn prune<F>(&mut self, mut f: F)
+    pub fn prune<F>(&mut self, cx: &<T::Summary as Summary>::Context, mut f: F)
     where
-        F: FnMut(&T::Summary) -> Prune,
+        F: FnMut(Probe<T::Summary>) -> Prune,
     {
+        struct Frame<'a, T: Item> {
+            tree: &'a mut Sequence<T>,
+            start_summary: T::Summary,
+        }
+
         let mut stack = Vec::new();
-        stack.push(self);
-        while let Some(node) = stack.pop() {
-            match Arc::make_mut(&mut node.0) {
+        stack.push(Frame {
+            tree: self,
+            start_summary: Default::default(),
+        });
+        while let Some(frame) = stack.pop() {
+            let mut summary = frame.start_summary;
+            match Arc::make_mut(&mut frame.tree.0) {
                 Node::Internal {
                     child_summaries,
                     child_trees,
                     ..
                 } => {
                     for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
-                        match f(child_summary) {
+                        let probe = Probe {
+                            start: &summary,
+                            summary: child_summary,
+                        };
+                        match f(probe) {
                             Prune::Descend => {
                                 if let ChildTree::Loaded { tree } = child_tree {
-                                    stack.push(tree);
+                                    stack.push(Frame {
+                                        tree,
+                                        start_summary: summary.clone(),
+                                    });
                                 }
                             }
                             Prune::Unload => {
@@ -827,6 +874,7 @@ where
                             }
                             Prune::Keep => {}
                         }
+                        Summary::add_summary(&mut summary, child_summary, cx);
                     }
                 }
                 Node::Leaf { .. } => {}
@@ -1271,6 +1319,7 @@ mod tests {
                 .sample_iter(distributions::Standard)
                 .take(count)
                 .collect::<Vec<_>>();
+            log::info!("tree initial items: {:?}", initial_items);
             tree.extend(initial_items.iter().copied(), &());
             reference_items.extend(initial_items);
             assert_eq!(tree.items(&()), reference_items);
@@ -1284,10 +1333,10 @@ mod tests {
                 if rng.gen_bool(0.2) {
                     let max = rng.gen::<u8>();
                     log::info!("pruning items > {}", max);
-                    tree.prune(|item| {
-                        if item.min > max {
+                    tree.prune(&(), |probe| {
+                        if probe.summary.min > max {
                             Prune::Unload
-                        } else if item.max < max {
+                        } else if probe.summary.max < max {
                             Prune::Keep
                         } else {
                             Prune::Descend
@@ -1297,6 +1346,12 @@ mod tests {
 
                 let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let splice_start = rng.gen_range(0..splice_end + 1);
+                smol::block_on(tree.load(&kv, &(), |probe| {
+                    let probe_start = probe.start.count;
+                    let probe_end = probe.start.count + probe.summary.count;
+                    probe_end >= splice_start && probe_start <= splice_end
+                }))
+                .unwrap();
                 let count = rng.gen_range(0..3);
                 let tree_end = tree.extent::<Count>(&());
                 assert_eq!(tree_end.0, reference_items.len());
