@@ -721,7 +721,12 @@ impl SemanticIndex {
             )?;
 
             let batch_n = cx.background().num_cpus();
-            let batch_size = file_ids.clone().len() / batch_n;
+            let ids_len = file_ids.clone().len();
+            let batch_size = if ids_len <= batch_n {
+                ids_len
+            } else {
+                ids_len / batch_n
+            };
 
             let mut result_tasks = Vec::new();
             for batch in file_ids.chunks(batch_size) {
