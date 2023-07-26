@@ -24,6 +24,10 @@ pub struct Node<V: View> {
     content: Vec<AnyElement<V>>,
 }
 
+pub fn node<V: View>(child: impl Element<V>) -> Node<V> {
+    Node::default().child(child)
+}
+
 pub fn column<V: View>() -> Node<V> {
     Node::default()
 }
@@ -119,13 +123,13 @@ impl<V: View> Node<V> {
         self
     }
 
-    pub fn margin_left(mut self, left: Length) -> Self {
-        self.style.margin.left = left;
+    pub fn margin_left(mut self, left: impl Into<Length>) -> Self {
+        self.style.margin.left = left.into();
         self
     }
 
-    pub fn margin_right(mut self, right: Length) -> Self {
-        self.style.margin.right = right;
+    pub fn margin_right(mut self, right: impl Into<Length>) -> Self {
+        self.style.margin.right = right.into();
         self
     }
 

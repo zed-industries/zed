@@ -562,6 +562,7 @@ impl Element<TerminalView> for TerminalElement {
             font_size,
             font_properties: Default::default(),
             underline: Default::default(),
+            soft_wrap: false,
         };
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;

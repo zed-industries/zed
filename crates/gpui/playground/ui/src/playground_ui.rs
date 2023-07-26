@@ -1,6 +1,6 @@
 use gpui::{
     elements::node::{column, length::auto, row, text},
-    AnyElement, Element, View, ViewContext,
+    AnyElement, Element, LayoutContext, View, ViewContext,
 };
 use std::{borrow::Cow, marker::PhantomData};
 use tokens::{margin::m4, text::lg};
@@ -58,19 +58,75 @@ impl<V: View, D: DialogDelegate<V>> Dialog<V, D> {
     }
 }
 
-struct Button<V: View, F: FnOnce(&mut V, &mut ViewContext<V>)> {
+#[derive(Element)]
+struct Button<V: View, D: 'static, H: ClickHandler<V, D>> {
     label: Cow<'static, str>,
-    on_click: Option<F>,
+    click_handler: Option<H>,
+    data: Option<D>,
     view_type: PhantomData<V>,
 }
 
-fn button<V: View, F: FnOnce(&mut V, &mut ViewContext<V>)>(
-    label: impl Into<Cow<'static, str>>,
-) -> Button<V, F> {
+pub trait ClickHandler<V, D>: 'static {
+    fn handle(&self, view: &mut V, data: &D, cx: &mut ViewContext<V>);
+}
+
+impl<V: View, M, F: 'static + Fn(&mut V, &M, &mut ViewContext<V>)> ClickHandler<V, M> for F {
+    fn handle(&self, view: &mut V, data: &M, cx: &mut ViewContext<V>) {
+        self(view, data, cx)
+    }
+}
+
+impl<V, D> ClickHandler<V, D> for () {
+    fn handle(&self, view: &mut V, data: &D, cx: &mut ViewContext<V>) {}
+}
+
+fn button<V>(label: impl Into<Cow<'static, str>>) -> Button<V, (), ()>
+where
+    V: View,
+{
     Button {
         label: label.into(),
-        on_click: None,
+        click_handler: None,
+        data: None,
         view_type: PhantomData,
+    }
+}
+
+impl<V, D, F> Button<V, D, F>
+where
+    V: View,
+    F: ClickHandler<V, D>,
+{
+    fn render(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> AnyElement<V> {
+        todo!()
+    }
+}
+
+impl<V: View> Button<V, (), ()> {
+    fn data<D>(self, data: D) -> Button<V, D, ()>
+    where
+        D: 'static + FnOnce(&mut V, &D, &mut ViewContext<V>),
+    {
+        Button {
+            label: self.label,
+            click_handler: self.click_handler,
+            data: Some(data),
+            view_type: self.view_type,
+        }
+    }
+}
+
+impl<V: View, D> Button<V, D, ()> {
+    fn click<H>(self, handler: H) -> Button<V, D, H>
+    where
+        H: 'static + Fn(&mut V, &D, &mut ViewContext<V>),
+    {
+        Button {
+            label: self.label,
+            click_handler: Some(handler),
+            data: self.data,
+            view_type: self.view_type,
+        }
     }
 }
 

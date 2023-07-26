@@ -373,6 +373,7 @@ impl View for SyntaxTreeView {
             font_size,
             font_properties: Default::default(),
             underline: Default::default(),
+            soft_wrap: false,
         };
 
         let line_height = cx.font_cache().line_height(font_size);
