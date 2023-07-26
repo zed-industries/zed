@@ -430,7 +430,7 @@ impl ProjectPanel {
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
             if entry.is_dir() {
                 menu_entries.push(ContextMenuItem::action(
-                    "Search inside",
+                    "Search Inside",
                     NewSearchInDirectory,
                 ));
             }
