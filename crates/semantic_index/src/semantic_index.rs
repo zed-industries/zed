@@ -517,7 +517,7 @@ impl SemanticIndex {
             .map(|worktree| self.worktree_previously_indexed(worktree.read(cx).abs_path()))
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, _cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
             let worktree_indexed_previously =
