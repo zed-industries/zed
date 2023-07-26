@@ -664,6 +664,42 @@ where
         Ok(Self(Arc::new(node)))
     }
 
+    pub async fn load<F, K>(&mut self, kv: &K, mut f: F) -> Result<()>
+    where
+        F: FnMut(&T::Summary) -> bool,
+        K: KvStore,
+    {
+        let mut stack = Vec::new();
+        stack.push(self);
+        while let Some(node) = stack.pop() {
+            match Arc::make_mut(&mut node.0) {
+                Node::Internal {
+                    child_summaries,
+                    child_trees,
+                    ..
+                } => {
+                    for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
+                        if f(child_summary) {
+                            match child_tree {
+                                ChildTree::Loaded { tree } => stack.push(tree),
+                                ChildTree::Unloaded { saved_id } => {
+                                    let tree = Sequence::from_root(saved_id.clone(), kv).await?;
+                                    *child_tree = ChildTree::Loaded { tree };
+                                    if let ChildTree::Loaded { tree } = child_tree {
+                                        stack.push(tree);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Node::Leaf { .. } => {}
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn save<K>(&self, kv: &K) -> Result<()>
     where
         K: KvStore,
