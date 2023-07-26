@@ -422,7 +422,7 @@ impl<V: View> Element<V> for Cow<'static, str> {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         todo!()
     }

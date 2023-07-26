@@ -69,6 +69,19 @@ pub struct TextStyle {
     #[schemars(with = "PropertiesDef")]
     pub font_properties: Properties,
     pub underline: Underline,
+    pub soft_wrap: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextStyleRefinement {
+    pub color: Option<Color>,
+    pub font_family_name: Option<Arc<str>>,
+    pub font_family_id: Option<FamilyId>,
+    pub font_id: Option<FontId>,
+    pub font_size: Option<f32>,
+    pub font_properties: Option<Properties>,
+    pub underline: Option<Underline>,
+    pub soft_wrap: Option<bool>,
 }
 
 impl TextStyle {
@@ -83,18 +96,9 @@ impl TextStyle {
             font_size: refinement.font_size.unwrap_or(self.font_size),
             font_properties: refinement.font_properties.unwrap_or(self.font_properties),
             underline: refinement.underline.unwrap_or(self.underline),
+            soft_wrap: refinement.soft_wrap.unwrap_or(self.soft_wrap),
         }
     }
-}
-
-pub struct TextStyleRefinement {
-    pub color: Option<Color>,
-    pub font_family_name: Option<Arc<str>>,
-    pub font_family_id: Option<FamilyId>,
-    pub font_id: Option<FontId>,
-    pub font_size: Option<f32>,
-    pub font_properties: Option<Properties>,
-    pub underline: Option<Underline>,
 }
 
 #[derive(JsonSchema)]
@@ -215,6 +219,7 @@ impl TextStyle {
             font_size,
             font_properties,
             underline,
+            soft_wrap: false,
         })
     }
 
@@ -355,13 +360,14 @@ impl Default for TextStyle {
                 .expect("we loaded this family from the font cache, so this should work");
 
             Self {
-                color: Default::default(),
+                color: Color::default(),
                 font_family_name,
                 font_family_id,
                 font_id,
                 font_size: 14.,
                 font_properties: Default::default(),
                 underline: Default::default(),
+                soft_wrap: true,
             }
         })
     }

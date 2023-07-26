@@ -337,7 +337,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 visible_bounds: gpui::geometry::rect::RectF,
                 element: &mut gpui::elements::AnyElement<V>,
                 view: &mut V,
-                cx: &mut gpui::ViewContext<V>,
+                cx: &mut gpui::PaintContext<V>,
             ) {
                 element.paint(scene, bounds.origin(), visible_bounds, view, cx);
             }

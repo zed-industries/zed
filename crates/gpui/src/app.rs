@@ -3338,6 +3338,10 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     ) -> ElementStateHandle<T> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
+
+    pub fn pixels_per_rem(&self) -> f32 {
+        16.
+    }
 }
 
 impl<V> BorrowAppContext for ViewContext<'_, '_, V> {

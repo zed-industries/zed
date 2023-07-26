@@ -1,8 +1,5 @@
 use gpui::{
-    elements::{
-        node::{column, length::auto, row},
-        Text,
-    },
+    elements::node::{column, length::auto, row, text},
     AnyElement, Element, View, ViewContext,
 };
 use std::{borrow::Cow, marker::PhantomData};

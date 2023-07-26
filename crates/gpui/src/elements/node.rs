@@ -1,5 +1,4 @@
-use log::warn;
-
+use super::layout_highlighted_chunks;
 use crate::{
     color::Color,
     fonts::HighlightStyle,
@@ -11,15 +10,14 @@ use crate::{
     scene,
     serde_json::Value,
     text_layout::{Line, ShapedBoundary},
-    AnyElement, AppContext, Element, LayoutContext, Quad, SceneBuilder, SizeConstraint, View,
-    ViewContext,
+    AnyElement, AppContext, Element, LayoutContext, PaintContext, Quad, SceneBuilder,
+    SizeConstraint, View, ViewContext,
 };
-
-use std::{any::Any, borrow::Cow, f32, ops::Range};
-
-use self::length::Length;
-
-use super::layout_highlighted_chunks;
+use derive_more::Add;
+use length::{Length, Rems};
+use log::warn;
+use optional_struct::*;
+use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
 
 pub struct Node<V: View> {
     style: NodeStyle,
@@ -90,13 +88,44 @@ impl<V: View> Node<V> {
         self
     }
 
-    pub fn row(mut self) -> Self {
-        self.style.axis = Axis3d::X;
+    pub fn text_size(mut self, text_size: Rems) -> Self {
+        self.style.text.size = Some(text_size);
         self
     }
 
-    pub fn stack(mut self) -> Self {
-        self.style.axis = Axis3d::Z;
+    pub fn margins(
+        mut self,
+        top_bottom: impl Into<TopBottom>,
+        left_right: impl Into<LeftRight>,
+    ) -> Self {
+        let top_bottom = top_bottom.into();
+        let left_right = left_right.into();
+        self.style.margin = Edges {
+            top: top_bottom.top,
+            bottom: top_bottom.bottom,
+            left: left_right.left,
+            right: left_right.right,
+        };
+        self
+    }
+
+    pub fn margin_top(mut self, top: Length) -> Self {
+        self.style.margin.top = top;
+        self
+    }
+
+    pub fn margin_bottom(mut self, bottom: Length) -> Self {
+        self.style.margin.bottom = bottom;
+        self
+    }
+
+    pub fn margin_left(mut self, left: Length) -> Self {
+        self.style.margin.left = left;
+        self
+    }
+
+    pub fn margin_right(mut self, right: Length) -> Self {
+        self.style.margin.right = right;
         self
     }
 
@@ -261,22 +290,26 @@ impl<V: View> Node<V> {
     //     size
     // }
 
-    fn inset_size(&self) -> Vector2F {
-        self.padding_size() + self.border_size() + self.margin_size()
+    fn inset_size(&self, rem_size: f32) -> Vector2F {
+        self.padding_size(rem_size) + self.border_size() + self.margin_size(rem_size)
     }
 
-    fn margin_size(&self) -> Vector2F {
-        vec2f(
-            self.style.margin.left + self.style.margin.right,
-            self.style.margin.top + self.style.margin.bottom,
-        )
+    fn margin_size(&self, rem_size: f32) -> Vector2F {
+        // We need to account for auto margins
+        todo!()
+        // vec2f(
+        //     (self.style.margin.left + self.style.margin.right).to_pixels(rem_size),
+        //     (self.style.margin.top + self.style.margin.bottom).to_pixels(rem_size),
+        // )
     }
 
-    fn padding_size(&self) -> Vector2F {
-        vec2f(
-            self.style.padding.left + self.style.padding.right,
-            self.style.padding.top + self.style.padding.bottom,
-        )
+    fn padding_size(&self, rem_size: f32) -> Vector2F {
+        // We need to account for auto padding
+        todo!()
+        // vec2f(
+        //     (self.style.padding.left + self.style.padding.right).to_pixels(rem_size),
+        //     (self.style.padding.top + self.style.padding.bottom).to_pixels(rem_size),
+        // )
     }
 
     fn border_size(&self) -> Vector2F {
@@ -310,18 +343,17 @@ impl<V: View> Element<V> for Node<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        dbg!(constraint.max);
-
         let mut size = Vector2F::zero();
-        let margin_size = self.margin_size();
+        let rem_size = cx.pixels_per_rem();
+        let margin_size = self.margin_size(rem_size);
         match self.style.width {
             Length::Hug => size.set_x(f32::INFINITY),
-            Length::Fixed(width) => size.set_x(width + margin_size.x()),
+            Length::Fixed(width) => size.set_x(width.to_pixels(rem_size) + margin_size.x()),
             Length::Auto { min, max, .. } => size.set_x(constraint.max.x().max(min).min(max)),
         }
         match self.style.height {
             Length::Hug => size.set_y(f32::INFINITY),
-            Length::Fixed(height) => size.set_y(height + margin_size.y()),
+            Length::Fixed(height) => size.set_y(height.to_pixels(rem_size) + margin_size.y()),
             Length::Auto { min, max, .. } => size.set_y(constraint.max.y().max(min).min(max)),
         }
 
@@ -337,7 +369,7 @@ impl<V: View> Element<V> for Node<V> {
         }
         size.set_y(size.y().min(constraint.max.y()));
 
-        let inset_size = self.inset_size();
+        let inset_size = self.inset_size(rem_size);
         let inner_size = size - inset_size;
         let size_of_children = match self.style.axis {
             Axis3d::X => self.layout_2d_children(Axis2d::X, inner_size, view, cx),
@@ -362,9 +394,10 @@ impl<V: View> Element<V> for Node<V> {
         visible_bounds: RectF,
         size_of_children: &mut Vector2F,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        let margin = &self.style.margin;
+        let rem_size = cx.pixels_per_rem();
+        let margin: Edges<f32> = todo!(); // &self.style.margin.to_pixels(rem_size);
 
         // Account for margins
         let content_bounds = RectF::from_points(
@@ -414,7 +447,7 @@ impl<V: View> Element<V> for Node<V> {
 
         if !self.content.is_empty() {
             // Account for padding first.
-            let padding = &self.style.padding;
+            let padding: Edges<f32> = todo!(); // &self.style.padding.to_pixels(rem_size);
             let padded_bounds = RectF::from_points(
                 content_bounds.origin() + vec2f(padding.left, padding.top),
                 content_bounds.lower_right() - vec2f(padding.right, padding.top),
@@ -480,6 +513,49 @@ impl<V: View> Element<V> for Node<V> {
     }
 }
 
+pub struct TopBottom {
+    top: Length,
+    bottom: Length,
+}
+
+impl<T: Into<Length>> From<(T, T)> for TopBottom {
+    fn from((top, bottom): (T, T)) -> Self {
+        Self {
+            top: top.into(),
+            bottom: bottom.into(),
+        }
+    }
+}
+
+impl<T: Copy + Into<Length>> From<T> for TopBottom {
+    fn from(both: T) -> Self {
+        Self {
+            top: both.into(),
+            bottom: both.into(),
+        }
+    }
+}
+
+pub struct LeftRight {
+    left: Length,
+    right: Length,
+}
+
+impl From<(Length, Length)> for LeftRight {
+    fn from((left, right): (Length, Length)) -> Self {
+        Self { left, right }
+    }
+}
+
+impl From<Length> for LeftRight {
+    fn from(both: Length) -> Self {
+        Self {
+            left: both,
+            right: both,
+        }
+    }
+}
+
 fn align_child(
     child_origin: &mut Vector2F,
     parent_size: Vector2F,
@@ -520,19 +596,28 @@ pub struct NodeStyle {
 
     width: Length,
     height: Length,
-    margin: Edges<f32>,
-    padding: Edges<f32>,
-
-    text_color: Option<Color>,
-    font_size: Option<f32>,
-    font_style: Option<FontStyle>,
-    font_weight: Option<FontWeight>,
-
+    margin: Edges<Length>,
+    padding: Edges<Length>,
+    text: OptionalTextStyle,
     opacity: f32,
     fill: Fill,
     border: Border,
     corner_radius: f32, // corner radius matches swift!
     shadows: Vec<Shadow>,
+}
+
+#[optional_struct]
+struct TextStyle {
+    size: Rems,
+    font_family: Arc<str>,
+    weight: FontWeight,
+    style: FontStyle,
+}
+
+#[derive(Add)]
+struct Size<T> {
+    width: T,
+    height: T,
 }
 
 // Sides?
@@ -542,6 +627,17 @@ struct Edges<T> {
     bottom: T,
     left: T,
     right: T,
+}
+
+impl Edges<Rems> {
+    pub fn to_pixels(&self, rem_size: f32) -> Edges<f32> {
+        Edges {
+            top: self.top.to_pixels(rem_size),
+            bottom: self.bottom.to_pixels(rem_size),
+            left: self.left.to_pixels(rem_size),
+            right: self.right.to_pixels(rem_size),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -588,11 +684,26 @@ impl Border {
 }
 
 pub mod length {
-    #[derive(Clone, Copy, Default)]
+    use derive_more::{Add, Into};
+
+    #[derive(Add, Into, Clone, Copy, Default, Debug, PartialEq)]
+    pub struct Rems(f32);
+
+    pub fn rems(rems: f32) -> Rems {
+        Rems(rems)
+    }
+
+    impl Rems {
+        pub fn to_pixels(&self, root_font_size: f32) -> f32 {
+            self.0 * root_font_size
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Debug)]
     pub enum Length {
         #[default]
         Hug,
-        Fixed(f32),
+        Fixed(Rems),
         Auto {
             flex: f32,
             min: f32,
@@ -600,8 +711,8 @@ pub mod length {
         },
     }
 
-    impl From<f32> for Length {
-        fn from(value: f32) -> Self {
+    impl From<Rems> for Length {
+        fn from(value: Rems) -> Self {
             Length::Fixed(value)
         }
     }
@@ -699,7 +810,7 @@ struct Shadow {
     color: Color,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 enum FontStyle {
     #[default]
     Normal,
@@ -707,7 +818,7 @@ enum FontStyle {
     Oblique,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 enum FontWeight {
     Thin,
     ExtraLight,
@@ -721,6 +832,7 @@ enum FontWeight {
     Black,
 }
 
+#[derive(Default)]
 pub struct Text {
     text: Cow<'static, str>,
     highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
@@ -730,10 +842,11 @@ pub struct Text {
     )>,
 }
 
-pub struct TextLayout {
-    shaped_lines: Vec<Line>,
-    wrap_boundaries: Vec<Vec<ShapedBoundary>>,
-    line_height: f32,
+pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
+    row().child(Text {
+        text: text.into(),
+        ..Default::default()
+    })
 }
 
 impl<V: View> Element<V> for Text {
@@ -839,7 +952,7 @@ impl<V: View> Element<V> for Text {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
@@ -1003,4 +1116,10 @@ impl<V: View> Element<V> for Text {
             "text": &self.text,
         })
     }
+}
+
+pub struct TextLayout {
+    shaped_lines: Vec<Line>,
+    wrap_boundaries: Vec<Vec<ShapedBoundary>>,
+    line_height: f32,
 }
