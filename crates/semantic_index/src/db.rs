@@ -197,6 +197,23 @@ impl VectorDatabase {
         Ok(())
     }
 
+    pub fn worktree_previously_indexed(&self, worktree_root_path: &Path) -> Result<bool> {
+        let mut worktree_query = self
+            .db
+            .prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
+        let worktree_id = worktree_query
+            .query_row(params![worktree_root_path.to_string_lossy()], |row| {
+                Ok(row.get::<_, i64>(0)?)
+            })
+            .map_err(|err| anyhow!(err));
+
+        if worktree_id.is_ok() {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+    }
+
     pub fn find_or_create_worktree(&self, worktree_root_path: &Path) -> Result<i64> {
         // Check that the absolute path doesnt exist
         let mut worktree_query = self

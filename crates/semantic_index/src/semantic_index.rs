@@ -34,7 +34,7 @@ use util::{
     ResultExt,
 };
 
-const SEMANTIC_INDEX_VERSION: usize = 5;
+const SEMANTIC_INDEX_VERSION: usize = 6;
 const EMBEDDINGS_BATCH_SIZE: usize = 80;
 
 pub fn init(
@@ -160,6 +160,10 @@ enum DbOperation {
     FileMTimes {
         worktree_id: i64,
         sender: oneshot::Sender<Result<HashMap<PathBuf, SystemTime>>>,
+    },
+    WorktreePreviouslyIndexed {
+        path: Arc<Path>,
+        sender: oneshot::Sender<Result<bool>>,
     },
 }
 
@@ -327,6 +331,10 @@ impl SemanticIndex {
                 let file_mtimes = db.get_file_mtimes(worktree_db_id);
                 sender.send(file_mtimes).ok();
             }
+            DbOperation::WorktreePreviouslyIndexed { path, sender } => {
+                let worktree_indexed = db.worktree_previously_indexed(path.as_ref());
+                sender.send(worktree_indexed).ok();
+            }
         }
     }
 
@@ -477,6 +485,49 @@ impl SemanticIndex {
             })
             .unwrap();
         async move { rx.await? }
+    }
+
+    fn worktree_previously_indexed(&self, path: Arc<Path>) -> impl Future<Output = Result<bool>> {
+        let (tx, rx) = oneshot::channel();
+        self.db_update_tx
+            .try_send(DbOperation::WorktreePreviouslyIndexed { path, sender: tx })
+            .unwrap();
+        async move { rx.await? }
+    }
+
+    pub fn project_previously_indexed(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<bool>> {
+        let worktree_scans_complete = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| {
+                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
+                async move {
+                    scan_complete.await;
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let worktrees_indexed_previously = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| self.worktree_previously_indexed(worktree.read(cx).abs_path()))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|this, mut cx| async move {
+            futures::future::join_all(worktree_scans_complete).await;
+
+            let worktree_indexed_previously =
+                futures::future::join_all(worktrees_indexed_previously).await;
+
+            Ok(worktree_indexed_previously
+                .iter()
+                .filter(|worktree| worktree.is_ok())
+                .all(|v| v.as_ref().log_err().is_some_and(|v| v.to_owned())))
+        })
     }
 
     pub fn index_project(
