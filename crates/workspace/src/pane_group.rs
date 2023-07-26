@@ -697,7 +697,7 @@ mod element {
 
             move |drag, workspace: &mut Workspace, cx| {
                 if drag.end {
-                    // Clear cascading resize state
+                    // TODO: Clear cascading resize state
                     return;
                 }
                 let min_size = match axis {
@@ -929,9 +929,6 @@ mod element {
                                 visible_bounds.clone(),
                             ),
                         )
-                        .on_down(MouseButton::Left, |_, _: &mut Workspace, _| {
-                            // Save cascading resize state
-                        })
                         .on_click(MouseButton::Left, {
                             let flexes = self.flexes.clone();
                             move |e, v: &mut Workspace, cx| {
