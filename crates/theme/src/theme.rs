@@ -225,7 +225,7 @@ pub struct CollabPanel {
     pub user_query_editor_height: f32,
     pub leave_call_button: IconButton,
     pub add_contact_button: IconButton,
-    pub header_row: Toggleable<Interactive<ContainedText>>,
+    pub header_row: ContainedText,
     pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,

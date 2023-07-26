@@ -87,45 +87,18 @@ export default function contacts_panel(): any {
         },
         row_height: 28,
         section_icon_size: 8,
-        header_row: toggleable({
-            base: interactive({
-                base: {
-                    ...text(layer, "mono", { size: "sm", weight: "bold" }),
-                    margin: { top: 14 },
-                    padding: {
-                        left: side_padding,
-                        right: side_padding,
-                    },
-                },
-                state: {
-                    hovered: {
-                        background: background(layer, "hovered"),
-                    },
-                    clicked: {
-                        background: background(layer, "pressed"),
-                    },
-                },
-            }),
-            state: {
-                active: {
-                    default: {
-                        ...text(layer, "mono", "active", { size: "sm" }),
-                        background: background(layer, "active"),
-                    },
-                    hovered: {
-                        background: background(layer, "hovered"),
-                    },
-                    clicked: {
-                        background: background(layer, "pressed"),
-                    },
-                },
+        header_row: {
+            ...text(layer, "mono", { size: "sm", weight: "bold" }),
+            margin: { top: 14 },
+            padding: {
+                left: side_padding,
+                right: side_padding,
             },
-        }),
+        },
         subheader_row: toggleable({
             base: interactive({
                 base: {
                     ...text(layer, "mono", { size: "sm" }),
-                    // margin: { top: 14 },
                     padding: {
                         left: side_padding,
                         right: side_padding,

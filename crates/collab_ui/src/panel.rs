@@ -444,123 +444,122 @@ impl CollabPanel {
         self.entries
             .push(ContactEntry::Header(Section::Contacts, 0));
 
-        if !self.collapsed_sections.contains(&Section::Contacts) {
-            let mut request_entries = Vec::new();
-            let incoming = user_store.incoming_contact_requests();
-            if !incoming.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(
-                        incoming
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, user)| StringMatchCandidate {
-                                id: ix,
-                                string: user.github_login.clone(),
-                                char_bag: user.github_login.chars().collect(),
-                            }),
-                    );
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                request_entries.extend(
-                    matches.iter().map(|mat| {
-                        ContactEntry::IncomingRequest(incoming[mat.candidate_id].clone())
-                    }),
+        let mut request_entries = Vec::new();
+        let incoming = user_store.incoming_contact_requests();
+        if !incoming.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    incoming
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
                 );
-            }
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ContactEntry::IncomingRequest(incoming[mat.candidate_id].clone())),
+            );
+        }
 
-            let outgoing = user_store.outgoing_contact_requests();
-            if !outgoing.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(
-                        outgoing
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, user)| StringMatchCandidate {
-                                id: ix,
-                                string: user.github_login.clone(),
-                                char_bag: user.github_login.chars().collect(),
-                            }),
-                    );
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                request_entries.extend(
-                    matches.iter().map(|mat| {
-                        ContactEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())
-                    }),
+        let outgoing = user_store.outgoing_contact_requests();
+        if !outgoing.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    outgoing
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
                 );
-            }
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ContactEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())),
+            );
+        }
 
-            if !request_entries.is_empty() {
-                self.entries
-                    .push(ContactEntry::Header(Section::Requests, 1));
-                if !self.collapsed_sections.contains(&Section::Requests) {
-                    self.entries.append(&mut request_entries);
-                }
+        if !request_entries.is_empty() {
+            self.entries
+                .push(ContactEntry::Header(Section::Requests, 1));
+            if !self.collapsed_sections.contains(&Section::Requests) {
+                self.entries.append(&mut request_entries);
             }
+        }
 
-            let contacts = user_store.contacts();
-            if !contacts.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(contacts.iter().enumerate().map(|(ix, contact)| {
-                        StringMatchCandidate {
+        let contacts = user_store.contacts();
+        if !contacts.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    contacts
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, contact)| StringMatchCandidate {
                             id: ix,
                             string: contact.user.github_login.clone(),
                             char_bag: contact.user.github_login.chars().collect(),
-                        }
-                    }));
+                        }),
+                );
 
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
 
-                let (mut online_contacts, offline_contacts) = matches
-                    .iter()
-                    .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
-                if let Some(room) = ActiveCall::global(cx).read(cx).room() {
-                    let room = room.read(cx);
-                    online_contacts.retain(|contact| {
-                        let contact = &contacts[contact.candidate_id];
-                        !room.contains_participant(contact.user.id)
-                    });
-                }
+            let (mut online_contacts, offline_contacts) = matches
+                .iter()
+                .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
+            if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+                let room = room.read(cx);
+                online_contacts.retain(|contact| {
+                    let contact = &contacts[contact.candidate_id];
+                    !room.contains_participant(contact.user.id)
+                });
+            }
 
-                for (matches, section) in [
-                    (online_contacts, Section::Online),
-                    (offline_contacts, Section::Offline),
-                ] {
-                    if !matches.is_empty() {
-                        self.entries.push(ContactEntry::Header(section, 1));
-                        if !self.collapsed_sections.contains(&section) {
-                            let active_call = &ActiveCall::global(cx).read(cx);
-                            for mat in matches {
-                                let contact = &contacts[mat.candidate_id];
-                                self.entries.push(ContactEntry::Contact {
-                                    contact: contact.clone(),
-                                    calling: active_call
-                                        .pending_invites()
-                                        .contains(&contact.user.id),
-                                });
-                            }
+            for (matches, section) in [
+                (online_contacts, Section::Online),
+                (offline_contacts, Section::Offline),
+            ] {
+                if !matches.is_empty() {
+                    self.entries.push(ContactEntry::Header(section, 1));
+                    if !self.collapsed_sections.contains(&section) {
+                        let active_call = &ActiveCall::global(cx).read(cx);
+                        for mat in matches {
+                            let contact = &contacts[mat.candidate_id];
+                            self.entries.push(ContactEntry::Contact {
+                                contact: contact.clone(),
+                                calling: active_call.pending_invites().contains(&contact.user.id),
+                            });
                         }
                     }
                 }
@@ -940,13 +939,15 @@ impl CollabPanel {
         let can_collapse = depth > 0;
         let icon_size = (&theme.collab_panel).section_icon_size;
         MouseEventHandler::<Header, Self>::new(section as usize, cx, |state, _| {
-            let header_style = if depth > 0 {
-                &theme.collab_panel.subheader_row
+            let header_style = if can_collapse {
+                theme
+                    .collab_panel
+                    .subheader_row
+                    .in_state(is_selected)
+                    .style_for(state)
             } else {
                 &theme.collab_panel.header_row
-            }
-            .in_state(is_selected)
-            .style_for(state);
+            };
 
             Flex::row()
                 .with_children(if can_collapse {
@@ -1209,13 +1210,15 @@ impl CollabPanel {
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        if let Some(ix) = self.selection {
-            if self.entries.len() > ix + 1 {
-                self.selection = Some(ix + 1);
+        let mut ix = self.selection.map_or(0, |ix| ix + 1);
+        while let Some(entry) = self.entries.get(ix) {
+            if entry.is_selectable() {
+                self.selection = Some(ix);
+                break;
             }
-        } else if !self.entries.is_empty() {
-            self.selection = Some(0);
+            ix += 1;
         }
+
         self.list_state.reset(self.entries.len());
         if let Some(ix) = self.selection {
             self.list_state.scroll_to(ListOffset {
@@ -1227,13 +1230,18 @@ impl CollabPanel {
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        if let Some(ix) = self.selection {
-            if ix > 0 {
-                self.selection = Some(ix - 1);
-            } else {
-                self.selection = None;
+        if let Some(mut ix) = self.selection.take() {
+            while ix > 0 {
+                ix -= 1;
+                if let Some(entry) = self.entries.get(ix) {
+                    if entry.is_selectable() {
+                        self.selection = Some(ix);
+                        break;
+                    }
+                }
             }
         }
+
         self.list_state.reset(self.entries.len());
         if let Some(ix) = self.selection {
             self.list_state.scroll_to(ListOffset {
@@ -1468,6 +1476,16 @@ impl Panel for CollabPanel {
 
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
+    }
+}
+
+impl ContactEntry {
+    fn is_selectable(&self) -> bool {
+        if let ContactEntry::Header(_, 0) = self {
+            false
+        } else {
+            true
+        }
     }
 }
 
