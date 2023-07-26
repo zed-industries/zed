@@ -80,6 +80,11 @@ export default function contacts_panel(): any {
             button_width: 28,
             icon_width: 16,
         },
+        add_channel_button: {
+            color: foreground(layer, "on"),
+            button_width: 28,
+            icon_width: 16,
+        },
         leave_call_button: {
             color: foreground(layer, "on"),
             button_width: 28,

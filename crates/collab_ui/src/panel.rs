@@ -1,3 +1,4 @@
+mod channel_modal;
 mod contact_finder;
 mod panel_settings;
 
@@ -16,7 +17,10 @@ use gpui::{
         Canvas, ChildView, Empty, Flex, Image, Label, List, ListOffset, ListState,
         MouseEventHandler, Orientation, Padding, ParentElement, Stack, Svg,
     },
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{
+        rect::RectF,
+        vector::vec2f,
+    },
     platform::{CursorStyle, MouseButton, PromptLevel},
     serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -34,6 +38,8 @@ use workspace::{
     Workspace,
 };
 
+use self::channel_modal::ChannelModal;
+
 actions!(collab_panel, [ToggleFocus]);
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
@@ -41,6 +47,7 @@ const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     settings::register::<panel_settings::ChannelsPanelSettings>(cx);
     contact_finder::init(cx);
+    channel_modal::init(cx);
 
     cx.add_action(CollabPanel::cancel);
     cx.add_action(CollabPanel::select_next);
@@ -880,6 +887,7 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         enum Header {}
         enum LeaveCallContactList {}
+        enum AddChannel {}
 
         let tooltip_style = &theme.tooltip;
         let text = match section {
@@ -928,6 +936,22 @@ impl CollabPanel {
                 .with_tooltip::<LeaveCallContactList>(
                     0,
                     "Search for new contact".into(),
+                    None,
+                    tooltip_style.clone(),
+                    cx,
+                ),
+            ),
+            Section::Channels => Some(
+                MouseEventHandler::<AddChannel, Self>::new(0, cx, |_, _| {
+                    render_icon_button(&theme.collab_panel.add_contact_button, "icons/plus_16.svg")
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    this.toggle_channel_finder(cx);
+                })
+                .with_tooltip::<AddChannel>(
+                    0,
+                    "Add or join a channel".into(),
                     None,
                     tooltip_style.clone(),
                     cx,
@@ -1316,6 +1340,14 @@ impl CollabPanel {
         }
     }
 
+    fn toggle_channel_finder(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| ChannelModal::new(cx)));
+            });
+        }
+    }
+
     fn remove_contact(&mut self, user_id: u64, github_login: &str, cx: &mut ViewContext<Self>) {
         let user_store = self.user_store.clone();
         let prompt_message = format!(
@@ -1388,36 +1420,43 @@ impl View for CollabPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
         let theme = &theme::current(cx).collab_panel;
 
-        Stack::new()
-            .with_child(
-                Flex::column()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                ChildView::new(&self.filter_editor, cx)
-                                    .contained()
-                                    .with_style(theme.user_query_editor.container)
-                                    .flex(1.0, true),
-                            )
-                            .constrained()
-                            .with_width(self.size(cx)),
-                    )
-                    .with_child(
-                        List::new(self.list_state.clone())
-                            .constrained()
-                            .with_width(self.size(cx))
-                            .flex(1., true)
-                            .into_any(),
-                    )
-                    .contained()
-                    .with_style(theme.container)
-                    .constrained()
-                    .with_width(self.size(cx))
-                    .into_any(),
-            )
-            .with_child(ChildView::new(&self.context_menu, cx))
-            .into_any_named("channels panel")
-            .into_any()
+        enum PanelFocus {}
+        MouseEventHandler::<PanelFocus, _>::new(0, cx, |_, cx| {
+            Stack::new()
+                .with_child(
+                    Flex::column()
+                        .with_child(
+                            Flex::row()
+                                .with_child(
+                                    ChildView::new(&self.filter_editor, cx)
+                                        .contained()
+                                        .with_style(theme.user_query_editor.container)
+                                        .flex(1.0, true),
+                                )
+                                .constrained()
+                                .with_width(self.size(cx)),
+                        )
+                        .with_child(
+                            List::new(self.list_state.clone())
+                                .constrained()
+                                .with_width(self.size(cx))
+                                .flex(1., true)
+                                .into_any(),
+                        )
+                        .contained()
+                        .with_style(theme.container)
+                        .constrained()
+                        .with_width(self.size(cx))
+                        .into_any(),
+                )
+                .with_child(ChildView::new(&self.context_menu, cx))
+                .into_any()
+        })
+        .on_click(MouseButton::Left, |_, v, cx| {
+            cx.focus_self()
+        })
+        .into_any_named("channels panel")
+
     }
 }
 

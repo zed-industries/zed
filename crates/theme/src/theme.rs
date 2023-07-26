@@ -47,7 +47,6 @@ pub struct Theme {
     pub copilot: Copilot,
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
-    pub channels_panel: ChanelsPanelStyle,
     pub command_palette: CommandPalette,
     pub contact_finder: ContactFinder,
     pub picker: Picker,
@@ -225,6 +224,7 @@ pub struct CollabPanel {
     pub user_query_editor_height: f32,
     pub leave_call_button: IconButton,
     pub add_contact_button: IconButton,
+    pub add_channel_button: IconButton,
     pub header_row: ContainedText,
     pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
@@ -1062,17 +1062,6 @@ pub struct AssistantStyle {
 pub struct Contained<T> {
     container: ContainerStyle,
     contained: T,
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct FlexStyle {
-    // Between item spacing
-    item_spacing: f32,
-}
-
-#[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ChanelsPanelStyle {
-    pub contacts_header: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
