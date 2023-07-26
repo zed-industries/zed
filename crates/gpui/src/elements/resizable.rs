@@ -147,6 +147,9 @@ impl<V: View> Element<V> for Resizable<V> {
                 let max_size = side.relevant_component(constraint.max);
                 let on_resize = self.on_resize.clone();
                 move |event, view: &mut V, cx| {
+                    if event.end {
+                        return;
+                    }
                     let new_size = min_size
                         .max(prev_size + side.compute_delta(event))
                         .min(max_size)
