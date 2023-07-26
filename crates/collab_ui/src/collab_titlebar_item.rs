@@ -1,7 +1,6 @@
 use crate::{
-    contact_notification::ContactNotification, face_pile::FacePile,
-    toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute,
-    ToggleScreenSharing,
+    contact_notification::ContactNotification, face_pile::FacePile, toggle_deafen, toggle_mute,
+    toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
@@ -355,6 +354,7 @@ impl CollabTitlebarItem {
             user_menu.toggle(Default::default(), AnchorCorner::TopRight, items, cx);
         });
     }
+
     fn render_branches_popover_host<'a>(
         &'a self,
         _theme: &'a theme::Titlebar,
@@ -368,8 +368,8 @@ impl CollabTitlebarItem {
                     .flex(1., true)
                     .contained()
                     .constrained()
-                    .with_width(theme.contacts_popover.width)
-                    .with_height(theme.contacts_popover.height)
+                    .with_width(theme.titlebar.menu.width)
+                    .with_height(theme.titlebar.menu.height)
             })
             .on_click(MouseButton::Left, |_, _, _| {})
             .on_down_out(MouseButton::Left, move |_, this, cx| {
@@ -390,6 +390,7 @@ impl CollabTitlebarItem {
                 .into_any()
         })
     }
+
     fn render_project_popover_host<'a>(
         &'a self,
         _theme: &'a theme::Titlebar,
@@ -403,8 +404,8 @@ impl CollabTitlebarItem {
                     .flex(1., true)
                     .contained()
                     .constrained()
-                    .with_width(theme.contacts_popover.width)
-                    .with_height(theme.contacts_popover.height)
+                    .with_width(theme.titlebar.menu.width)
+                    .with_height(theme.titlebar.menu.height)
             })
             .on_click(MouseButton::Left, |_, _, _| {})
             .on_down_out(MouseButton::Left, move |_, this, cx| {
@@ -424,6 +425,7 @@ impl CollabTitlebarItem {
                 .into_any()
         })
     }
+
     pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade(cx) {

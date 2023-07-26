@@ -50,8 +50,10 @@ export default function contacts_panel(): any {
     }
 
     return {
-        // background: background(layer),
-        padding: { top: 12 },
+        background: background(layer),
+        padding: {
+            top: 12,
+        },
         user_query_editor: {
             background: background(layer, "on"),
             corner_radius: 6,
@@ -68,12 +70,17 @@ export default function contacts_panel(): any {
                 top: 4,
             },
             margin: {
-                left: 6,
+                left: side_padding,
+                right: side_padding,
             },
         },
         user_query_editor_height: 33,
         add_contact_button: {
-            margin: { left: 6, right: 12 },
+            color: foreground(layer, "on"),
+            button_width: 28,
+            icon_width: 16,
+        },
+        leave_call_button: {
             color: foreground(layer, "on"),
             button_width: 28,
             icon_width: 16,
@@ -83,13 +90,46 @@ export default function contacts_panel(): any {
         header_row: toggleable({
             base: interactive({
                 base: {
-                    ...text(layer, "mono", { size: "sm" }),
+                    ...text(layer, "mono", { size: "sm", weight: "bold" }),
                     margin: { top: 14 },
                     padding: {
                         left: side_padding,
                         right: side_padding,
                     },
-                    // background: background(layer, "default"), // posiewic: breaking change
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(layer, "mono", "active", { size: "sm" }),
+                        background: background(layer, "active"),
+                    },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            },
+        }),
+        subheader_row: toggleable({
+            base: interactive({
+                base: {
+                    ...text(layer, "mono", { size: "sm" }),
+                    // margin: { top: 14 },
+                    padding: {
+                        left: side_padding,
+                        right: side_padding,
+                    },
                 },
                 state: {
                     hovered: {
@@ -139,25 +179,38 @@ export default function contacts_panel(): any {
                 },
             },
         }),
-        contact_row: {
-            inactive: {
-                default: {
+        contact_row: toggleable({
+            base: interactive({
+                base: {
                     padding: {
                         left: side_padding,
                         right: side_padding,
                     },
                 },
-            },
-            active: {
-                default: {
-                    background: background(layer, "active"),
-                    padding: {
-                        left: side_padding,
-                        right: side_padding,
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(layer, "mono", "active", { size: "sm" }),
+                        background: background(layer, "active"),
+                    },
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
                     },
                 },
             },
-        },
+        }),
         contact_avatar: {
             corner_radius: 10,
             width: 18,

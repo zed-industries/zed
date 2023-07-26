@@ -43,7 +43,6 @@ pub struct Theme {
     pub meta: ThemeMeta,
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
-    pub contacts_popover: ContactsPopover,
     pub toolbar_dropdown_menu: DropdownMenu,
     pub copilot: Copilot,
     pub collab_panel: CollabPanel,
@@ -118,6 +117,7 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
+    pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
     pub project_name_divider: ContainedText,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
@@ -142,6 +142,12 @@ pub struct Titlebar {
     pub leave_call_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
     pub user_menu: UserMenu,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct TitlebarMenu {
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -212,19 +218,15 @@ pub struct CopilotAuthAuthorized {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ContactsPopover {
+pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub height: f32,
-    pub width: f32,
-}
-
-#[derive(Deserialize, Default, JsonSchema)]
-pub struct CollabPanel {
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
+    pub leave_call_button: IconButton,
     pub add_contact_button: IconButton,
     pub header_row: Toggleable<Interactive<ContainedText>>,
+    pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub row_height: f32,

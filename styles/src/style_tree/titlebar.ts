@@ -178,6 +178,10 @@ export function titlebar(): any {
             left: 80,
             right: 0,
         },
+        menu: {
+            width: 300,
+            height: 400,
+        },
 
         // Project
         project_name_divider: text(theme.lowest, "sans", "variant"),

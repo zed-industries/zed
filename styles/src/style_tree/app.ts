@@ -1,4 +1,3 @@
-import contacts_popover from "./contacts_popover"
 import command_palette from "./command_palette"
 import project_panel from "./project_panel"
 import search from "./search"
@@ -48,7 +47,6 @@ export default function app(): any {
         project_diagnostics: project_diagnostics(),
         project_panel: project_panel(),
         channels_panel: channels_panel(),
-        contacts_popover: contacts_popover(),
         collab_panel: collab_panel(),
         contact_finder: contact_finder(),
         toolbar_dropdown_menu: toolbar_dropdown_menu(),
