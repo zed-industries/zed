@@ -53,6 +53,10 @@ impl SearchOptions {
         }
     }
 
+    pub fn none() -> SearchOptions {
+        SearchOptions::NONE
+    }
+
     pub fn from_query(query: &SearchQuery) -> SearchOptions {
         let mut options = SearchOptions::NONE;
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());

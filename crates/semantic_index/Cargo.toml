@@ -1,11 +1,11 @@
 [package]
-name = "vector_store"
+name = "semantic_index"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/vector_store.rs"
+path = "src/semantic_index.rs"
 doctest = false
 
 [dependencies]
@@ -20,6 +20,7 @@ editor = { path = "../editor" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 anyhow.workspace = true
+postage.workspace = true
 futures.workspace = true
 smol.workspace = true
 rusqlite = { version = "0.27.0", features = ["blob", "array", "modern_sqlite"] }
@@ -33,8 +34,10 @@ async-trait.workspace = true
 bincode = "1.3.3"
 matrixmultiply = "0.3.7"
 tiktoken-rs = "0.5.0"
+parking_lot.workspace = true
 rand.workspace = true
 schemars.workspace = true
+globset.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
@@ -43,7 +46,17 @@ project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
-tree-sitter-rust = "*"
+
+pretty_assertions.workspace = true
 rand.workspace = true
 unindent.workspace = true
 tempdir.workspace = true
+ctor.workspace = true
+env_logger.workspace = true
+
+tree-sitter-typescript = "*"
+tree-sitter-json = "*"
+tree-sitter-rust = "*"
+tree-sitter-toml = "*"
+tree-sitter-cpp = "*"
+tree-sitter-elixir = "*"

@@ -339,6 +339,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub line_comment: Option<Arc<str>>,
     #[serde(default)]
+    pub collapsed_placeholder: String,
+    #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
@@ -408,6 +410,7 @@ impl Default for LanguageConfig {
             line_comment: Default::default(),
             block_comment: Default::default(),
             overrides: Default::default(),
+            collapsed_placeholder: Default::default(),
         }
     }
 }
@@ -523,9 +526,10 @@ pub struct OutlineConfig {
 pub struct EmbeddingConfig {
     pub query: Query,
     pub item_capture_ix: u32,
-    pub name_capture_ix: u32,
+    pub name_capture_ix: Option<u32>,
     pub context_capture_ix: Option<u32>,
-    pub extra_context_capture_ix: Option<u32>,
+    pub collapse_capture_ix: Option<u32>,
+    pub keep_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1247,23 +1251,26 @@ impl Language {
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
-        let mut extra_context_capture_ix = None;
+        let mut collapse_capture_ix = None;
+        let mut keep_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("item", &mut item_capture_ix),
                 ("name", &mut name_capture_ix),
                 ("context", &mut context_capture_ix),
-                ("context.extra", &mut extra_context_capture_ix),
+                ("keep", &mut keep_capture_ix),
+                ("collapse", &mut collapse_capture_ix),
             ],
         );
-        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
+        if let Some(item_capture_ix) = item_capture_ix {
             grammar.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
                 context_capture_ix,
-                extra_context_capture_ix,
+                collapse_capture_ix,
+                keep_capture_ix,
             });
         }
         Ok(self)
@@ -1548,9 +1555,20 @@ impl Language {
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
     }
+
+    pub fn default_scope(self: &Arc<Self>) -> LanguageScope {
+        LanguageScope {
+            language: self.clone(),
+            override_id: None,
+        }
+    }
 }
 
 impl LanguageScope {
+    pub fn collapsed_placeholder(&self) -> &str {
+        self.language.config.collapsed_placeholder.as_ref()
+    }
+
     pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
         Override::as_option(
             self.config_override().map(|o| &o.line_comment),
