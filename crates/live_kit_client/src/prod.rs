@@ -26,6 +26,7 @@ extern "C" {
             publisher_id: CFStringRef,
             track_id: CFStringRef,
             remote_track: *const c_void,
+            remote_publication: *const c_void,
         ),
         on_did_unsubscribe_from_remote_audio_track: extern "C" fn(
             callback_data: *mut c_void,
@@ -125,6 +126,9 @@ extern "C" {
         on_complete: extern "C" fn(callback_data: *mut c_void, error: CFStringRef),
         callback_data: *mut c_void,
     );
+
+    fn LKRemoteTrackPublicationIsMuted(publication: *const c_void) -> bool;
+    fn LKRemoteTrackPublicationGetSid(publication: *const c_void) -> CFStringRef;
 }
 
 pub type Sid = String;
@@ -372,11 +376,19 @@ impl Room {
         rx
     }
 
-    fn did_subscribe_to_remote_audio_track(&self, track: RemoteAudioTrack) {
+    fn did_subscribe_to_remote_audio_track(
+        &self,
+        track: RemoteAudioTrack,
+        publication: RemoteTrackPublication,
+    ) {
         let track = Arc::new(track);
+        let publication = Arc::new(publication);
         self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(track.clone()))
-                .is_ok()
+            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(
+                track.clone(),
+                publication.clone(),
+            ))
+            .is_ok()
         });
     }
 
@@ -501,13 +513,15 @@ impl RoomDelegate {
         publisher_id: CFStringRef,
         track_id: CFStringRef,
         track: *const c_void,
+        publication: *const c_void,
     ) {
         let room = unsafe { Weak::from_raw(room as *mut Room) };
         let publisher_id = unsafe { CFString::wrap_under_get_rule(publisher_id).to_string() };
         let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
         let track = RemoteAudioTrack::new(track, track_id, publisher_id);
+        let publication = RemoteTrackPublication::new(publication);
         if let Some(room) = room.upgrade() {
-            room.did_subscribe_to_remote_audio_track(track);
+            room.did_subscribe_to_remote_audio_track(track, publication);
         }
         let _ = Weak::into_raw(room);
     }
@@ -682,6 +696,14 @@ impl RemoteTrackPublication {
         Self(native_track_publication)
     }
 
+    pub fn sid(&self) -> String {
+        unsafe { CFString::wrap_under_get_rule(LKRemoteTrackPublicationGetSid(self.0)).to_string() }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        unsafe { LKRemoteTrackPublicationIsMuted(self.0) }
+    }
+
     pub fn set_enabled(&self, enabled: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -832,7 +854,7 @@ pub enum RemoteVideoTrackUpdate {
 pub enum RemoteAudioTrackUpdate {
     ActiveSpeakersChanged { speakers: Vec<Sid> },
     MuteChanged { track_id: Sid, muted: bool },
-    Subscribed(Arc<RemoteAudioTrack>),
+    Subscribed(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 

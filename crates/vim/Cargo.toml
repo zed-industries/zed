@@ -32,6 +32,8 @@ language = { path = "../language" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
+theme = { path = "../theme" }
+language_selector = { path = "../language_selector"}
 
 [dev-dependencies]
 indoc.workspace = true
@@ -44,3 +46,4 @@ project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }

@@ -61,6 +61,7 @@ enum FoldMarkers {}
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
+    is_newest: bool,
     range: Range<DisplayPoint>,
 }
 
@@ -70,6 +71,7 @@ impl SelectionLayout {
         line_mode: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
+        is_newest: bool,
     ) -> Self {
         if line_mode {
             let selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
@@ -77,6 +79,7 @@ impl SelectionLayout {
             Self {
                 head: selection.head().to_display_point(map),
                 cursor_shape,
+                is_newest,
                 range: point_range.start.to_display_point(map)
                     ..point_range.end.to_display_point(map),
             }
@@ -85,6 +88,7 @@ impl SelectionLayout {
             Self {
                 head: selection.head(),
                 cursor_shape,
+                is_newest,
                 range: selection.range(),
             }
         }
@@ -537,6 +541,24 @@ impl EditorElement {
                     corner_radius: 0.,
                 });
             }
+
+            for (wrap_position, active) in layout.wrap_guides.iter() {
+                let x = text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.;
+                let color = if *active {
+                    self.style.active_wrap_guide
+                } else {
+                    self.style.wrap_guide
+                };
+                scene.push_quad(Quad {
+                    bounds: RectF::new(
+                        vec2f(x, text_bounds.origin_y()),
+                        vec2f(1., text_bounds.height()),
+                    ),
+                    background: Some(color),
+                    border: Border::new(0., Color::transparent_black()),
+                    corner_radius: 0.,
+                });
+            }
         }
     }
 
@@ -864,6 +886,12 @@ impl EditorElement {
                         let x = cursor_character_x - scroll_left;
                         let y = cursor_position.row() as f32 * layout.position_map.line_height
                             - scroll_top;
+                        if selection.is_newest {
+                            editor.pixel_position_of_newest_cursor = Some(vec2f(
+                                bounds.origin_x() + x + block_width / 2.,
+                                bounds.origin_y() + y + layout.position_map.line_height / 2.,
+                            ));
+                        }
                         cursors.push(Cursor {
                             color: selection_style.cursor,
                             block_width,
@@ -1310,16 +1338,15 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
-        let digit_count = (snapshot.max_buffer_row() as f32).log10().floor() as usize + 1;
+    fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> f32 {
         let style = &self.style;
 
         cx.text_layout_cache()
             .layout_str(
-                "1".repeat(digit_count).as_str(),
+                " ".repeat(column).as_str(),
                 style.text.font_size,
                 &[(
-                    digit_count,
+                    column,
                     RunStyle {
                         font_id: style.text.font_id,
                         color: Color::black(),
@@ -1328,6 +1355,11 @@ impl EditorElement {
                 )],
             )
             .width()
+    }
+
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
+        let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
+        self.column_pixels(digit_count, cx)
     }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1977,6 +2009,7 @@ impl Element<Editor> for EditorElement {
 
         let snapshot = editor.snapshot(cx);
         let style = self.style.clone();
+
         let line_height = (style.text.font_size * style.line_height_scalar).round();
 
         let gutter_padding;
@@ -2013,6 +2046,12 @@ impl Element<Editor> for EditorElement {
                 snapshot
             }
         };
+
+        let wrap_guides = editor
+            .wrap_guides(cx)
+            .iter()
+            .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
+            .collect();
 
         let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
         if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
@@ -2108,6 +2147,7 @@ impl Element<Editor> for EditorElement {
                     line_mode,
                     cursor_shape,
                     &snapshot.display_snapshot,
+                    false,
                 ));
         }
         selections.extend(remote_selections);
@@ -2117,6 +2157,7 @@ impl Element<Editor> for EditorElement {
                 .selections
                 .disjoint_in_range(start_anchor..end_anchor, cx);
             local_selections.extend(editor.selections.pending(cx));
+            let newest = editor.selections.newest(cx);
             for selection in &local_selections {
                 let is_empty = selection.start == selection.end;
                 let selection_start = snapshot.prev_line_boundary(selection.start).1;
@@ -2139,11 +2180,13 @@ impl Element<Editor> for EditorElement {
                 local_selections
                     .into_iter()
                     .map(|selection| {
+                        let is_newest = selection == newest;
                         SelectionLayout::new(
                             selection,
                             editor.selections.line_mode,
                             editor.cursor_shape,
                             &snapshot.display_snapshot,
+                            is_newest,
                         )
                     })
                     .collect(),
@@ -2370,6 +2413,7 @@ impl Element<Editor> for EditorElement {
                     snapshot,
                 }),
                 visible_display_row_range: start_row..end_row,
+                wrap_guides,
                 gutter_size,
                 gutter_padding,
                 text_size,
@@ -2520,6 +2564,7 @@ pub struct LayoutState {
     gutter_margin: f32,
     text_size: Vector2F,
     mode: EditorMode,
+    wrap_guides: SmallVec<[(f32, bool); 2]>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,

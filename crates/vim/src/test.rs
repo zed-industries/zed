@@ -4,7 +4,10 @@ mod neovim_connection;
 mod vim_binding_test_context;
 mod vim_test_context;
 
+use std::sync::Arc;
+
 use command_palette::CommandPalette;
+use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_binding_test_context::*;
@@ -13,7 +16,7 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::state::Mode;
+use crate::{state::Mode, ModeIndicator};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -96,7 +99,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     });
 
     search_bar.read_with(cx.cx, |bar, cx| {
-        assert_eq!(bar.query_editor.read(cx).text(cx), "jumps");
+        assert_eq!(bar.query_editor.read(cx).text(cx), "");
     })
 }
 
@@ -137,7 +140,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbˇb\ncc");
 
     // works in visuial mode
-    cx.simulate_keystrokes(["shift-v", "down", ">", ">"]);
+    cx.simulate_keystrokes(["shift-v", "down", ">"]);
     cx.assert_editor_state("aa\n    b«b\n    cˇ»c");
 }
 
@@ -152,4 +155,99 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystroke("escape");
     assert!(!cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
     cx.assert_state("aˇbc\n", Mode::Insert);
+}
+
+#[gpui::test]
+async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(indoc! {"aa\nbˇb\ncc\ncc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["/", "c", "c"]);
+
+    let search_bar = cx.workspace(|workspace, cx| {
+        workspace
+            .active_pane()
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+            .expect("Buffer search bar should be deployed")
+    });
+
+    search_bar.read_with(cx.cx, |bar, cx| {
+        assert_eq!(bar.query_editor.read(cx).text(cx), "cc");
+    });
+
+    // wait for the query editor change event to fire.
+    search_bar.next_notification(&cx).await;
+
+    cx.update_editor(|editor, cx| {
+        let highlights = editor.all_background_highlights(cx);
+        assert_eq!(3, highlights.len());
+        assert_eq!(
+            DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
+            highlights[0].0
+        )
+    });
+    cx.simulate_keystrokes(["enter"]);
+
+    cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["n"]);
+    cx.assert_state(indoc! {"aa\nbb\ncc\nˇcc\ncc\n"}, Mode::Normal);
+    cx.simulate_keystrokes(["shift-n"]);
+    cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_status_indicator(
+    cx: &mut gpui::TestAppContext,
+    deterministic: Arc<gpui::executor::Deterministic>,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    deterministic.run_until_parked();
+
+    let mode_indicator = cx.workspace(|workspace, cx| {
+        let status_bar = workspace.status_bar().read(cx);
+        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
+        assert!(mode_indicator.is_some());
+        mode_indicator.unwrap()
+    });
+
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Mode::Normal
+    );
+
+    // shows the correct mode
+    cx.simulate_keystrokes(["i"]);
+    deterministic.run_until_parked();
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Mode::Insert
+    );
+
+    // shows even in search
+    cx.simulate_keystrokes(["escape", "v", "/"]);
+    deterministic.run_until_parked();
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Mode::Visual { line: false }
+    );
+
+    // hides if vim mode is disabled
+    cx.disable_vim();
+    deterministic.run_until_parked();
+    cx.workspace(|workspace, cx| {
+        let status_bar = workspace.status_bar().read(cx);
+        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
+        assert!(mode_indicator.is_none());
+    });
+
+    cx.enable_vim();
+    deterministic.run_until_parked();
+    cx.workspace(|workspace, cx| {
+        let status_bar = workspace.status_bar().read(cx);
+        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
+        assert!(mode_indicator.is_some());
+    });
 }

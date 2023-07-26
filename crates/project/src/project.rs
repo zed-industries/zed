@@ -259,6 +259,7 @@ pub enum Event {
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
+    ActivateProjectPanel,
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
@@ -423,6 +424,12 @@ pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
     pub language: Option<Arc<Language>>,
+}
+
+impl Hover {
+    pub fn is_empty(&self) -> bool {
+        self.contents.iter().all(|block| block.text.is_empty())
+    }
 }
 
 #[derive(Default)]
@@ -1909,7 +1916,9 @@ impl Project {
                 return;
             }
 
-            let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+            let abs_path = file.abs_path(cx);
+            let uri = lsp::Url::from_file_path(&abs_path)
+                .unwrap_or_else(|()| panic!("Failed to register file {abs_path:?}"));
             let initial_snapshot = buffer.text_snapshot();
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);

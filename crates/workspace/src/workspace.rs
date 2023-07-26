@@ -141,6 +141,7 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        CloseAllDocks,
     ]
 );
 
@@ -151,6 +152,9 @@ pub struct OpenPaths {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct ActivatePaneInDirection(pub SplitDirection);
 
 #[derive(Deserialize)]
 pub struct Toast {
@@ -197,7 +201,7 @@ impl Clone for Toast {
     }
 }
 
-impl_actions!(workspace, [ActivatePane, Toast]);
+impl_actions!(workspace, [ActivatePane, ActivatePaneInDirection, Toast]);
 
 pub type WorkspaceId = i64;
 
@@ -262,6 +266,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
+
+    cx.add_action(
+        |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
+            workspace.activate_pane_in_direction(action.0, cx)
+        },
+    );
+
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
     });
@@ -270,6 +281,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
         workspace.toggle_dock(DockPosition::Bottom, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+        workspace.close_all_docks(cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
@@ -498,7 +512,7 @@ pub struct Workspace {
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
-    active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
+    active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
@@ -885,6 +899,18 @@ impl Workspace {
     where
         T::Event: std::fmt::Debug,
     {
+        self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
+    }
+
+    pub fn add_panel_with_extra_event_handler<T: Panel, F>(
+        &mut self,
+        panel: ViewHandle<T>,
+        cx: &mut ViewContext<Self>,
+        handler: F,
+    ) where
+        T::Event: std::fmt::Debug,
+        F: Fn(&mut Self, &ViewHandle<T>, &T::Event, &mut ViewContext<Self>) + 'static,
+    {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -951,6 +977,8 @@ impl Workspace {
                     }
                     this.update_active_view_for_followers(cx);
                     cx.notify();
+                } else {
+                    handler(this, &panel, event, cx)
                 }
             }
         }));
@@ -1403,45 +1431,65 @@ impl Workspace {
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
         cx.spawn(|this, mut cx| async move {
-            let mut project_paths = Vec::new();
-            for path in &abs_paths {
-                if let Some(project_path) = this
+            let mut tasks = Vec::with_capacity(abs_paths.len());
+            for abs_path in &abs_paths {
+                let project_path = match this
                     .update(&mut cx, |this, cx| {
-                        Workspace::project_path_for_path(this.project.clone(), path, visible, cx)
+                        Workspace::project_path_for_path(
+                            this.project.clone(),
+                            abs_path,
+                            visible,
+                            cx,
+                        )
                     })
                     .log_err()
                 {
-                    project_paths.push(project_path.await.log_err());
-                } else {
-                    project_paths.push(None);
-                }
-            }
+                    Some(project_path) => project_path.await.log_err(),
+                    None => None,
+                };
 
-            let tasks = abs_paths
-                .iter()
-                .cloned()
-                .zip(project_paths.into_iter())
-                .map(|(abs_path, project_path)| {
-                    let this = this.clone();
-                    cx.spawn(|mut cx| {
-                        let fs = fs.clone();
-                        async move {
-                            let (_worktree, project_path) = project_path?;
-                            if fs.is_file(&abs_path).await {
-                                Some(
-                                    this.update(&mut cx, |this, cx| {
-                                        this.open_path(project_path, None, true, cx)
+                let this = this.clone();
+                let task = cx.spawn(|mut cx| {
+                    let fs = fs.clone();
+                    let abs_path = abs_path.clone();
+                    async move {
+                        let (worktree, project_path) = project_path?;
+                        if fs.is_file(&abs_path).await {
+                            Some(
+                                this.update(&mut cx, |this, cx| {
+                                    this.open_path(project_path, None, true, cx)
+                                })
+                                .log_err()?
+                                .await,
+                            )
+                        } else {
+                            this.update(&mut cx, |workspace, cx| {
+                                let worktree = worktree.read(cx);
+                                let worktree_abs_path = worktree.abs_path();
+                                let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                                    worktree.root_entry()
+                                } else {
+                                    abs_path
+                                        .strip_prefix(worktree_abs_path.as_ref())
+                                        .ok()
+                                        .and_then(|relative_path| {
+                                            worktree.entry_for_path(relative_path)
+                                        })
+                                }
+                                .map(|entry| entry.id);
+                                if let Some(entry_id) = entry_id {
+                                    workspace.project().update(cx, |_, cx| {
+                                        cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
                                     })
-                                    .log_err()?
-                                    .await,
-                                )
-                            } else {
-                                None
-                            }
+                                }
+                            })
+                            .log_err()?;
+                            None
                         }
-                    })
-                })
-                .collect::<Vec<_>>();
+                    }
+                });
+                tasks.push(task);
+            }
 
             futures::future::join_all(tasks).await
         })
@@ -1656,6 +1704,20 @@ impl Workspace {
             cx.focus_self();
         }
 
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
+
+    pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+
+        for dock in docks {
+            dock.update(cx, |dock, cx| {
+                dock.set_open(false, cx);
+            });
+        }
+
+        cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -2051,6 +2113,37 @@ impl Workspace {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
             let prev_pane = panes[prev_ix].clone();
             cx.focus(&prev_pane);
+        }
+    }
+
+    pub fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let bounding_box = match self.center.bounding_box_for_pane(&self.active_pane) {
+            Some(coordinates) => coordinates,
+            None => {
+                return;
+            }
+        };
+        let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
+        let center = match cursor {
+            Some(cursor) if bounding_box.contains_point(cursor) => cursor,
+            _ => bounding_box.center(),
+        };
+
+        let distance_to_next = theme::current(cx).workspace.pane_divider.width + 1.;
+
+        let target = match direction {
+            SplitDirection::Left => vec2f(bounding_box.origin_x() - distance_to_next, center.y()),
+            SplitDirection::Right => vec2f(bounding_box.max_x() + distance_to_next, center.y()),
+            SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
+            SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
+        };
+
+        if let Some(pane) = self.center.pane_at_pixel_position(target) {
+            cx.focus(pane);
         }
     }
 
@@ -3030,6 +3123,7 @@ impl Workspace {
                     axis,
                     members,
                     flexes,
+                    bounding_boxes: _,
                 }) => SerializedPaneGroup::Group {
                     axis: *axis,
                     children: members

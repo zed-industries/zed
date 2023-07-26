@@ -44,6 +44,8 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
+    pub show_wrap_guides: bool,
+    pub wrap_guides: Vec<usize>,
     pub format_on_save: FormatOnSave,
     pub remove_trailing_whitespace_on_save: bool,
     pub ensure_final_newline_on_save: bool,
@@ -83,6 +85,10 @@ pub struct LanguageSettingsContent {
     pub soft_wrap: Option<SoftWrap>,
     #[serde(default)]
     pub preferred_line_length: Option<u32>,
+    #[serde(default)]
+    pub show_wrap_guides: Option<bool>,
+    #[serde(default)]
+    pub wrap_guides: Option<Vec<usize>>,
     #[serde(default)]
     pub format_on_save: Option<FormatOnSave>,
     #[serde(default)]
@@ -378,6 +384,9 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
+    merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
+    merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+
     merge(
         &mut settings.preferred_line_length,
         src.preferred_line_length,

@@ -3411,18 +3411,14 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             handler_depth = Some(contexts.len())
         }
 
+        let action_contexts = if let Some(depth) = handler_depth {
+            &contexts[depth..]
+        } else {
+            &contexts
+        };
+
         self.keystroke_matcher
-            .bindings_for_action(action.id())
-            .find_map(|b| {
-                let highest_handler = handler_depth?;
-                if action.eq(b.action())
-                    && (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..]))
-                {
-                    Some(b.keystrokes().into())
-                } else {
-                    None
-                }
-            })
+            .keystrokes_for_action(action, action_contexts)
     }
 
     fn notify_if_view_ancestors_change(&mut self, view_id: usize) {

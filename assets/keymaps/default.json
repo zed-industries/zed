@@ -195,8 +195,8 @@
   {
     "context": "Editor && mode == auto_height",
     "bindings": {
-      "shift-enter": "editor::Newline",
-      "cmd-shift-enter": "editor::NewlineBelow"
+      "ctrl-enter": "editor::Newline",
+      "ctrl-shift-enter": "editor::NewlineBelow"
     }
   },
   {
@@ -406,6 +406,7 @@
       "cmd-b": "workspace::ToggleLeftDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
+      "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "workspace::NewSearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
@@ -446,8 +447,22 @@
   },
   {
     "bindings": {
-      "cmd-k cmd-left": "workspace::ActivatePreviousPane",
-      "cmd-k cmd-right": "workspace::ActivateNextPane"
+      "cmd-k cmd-left": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "cmd-k cmd-right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "cmd-k cmd-up": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "cmd-k cmd-down": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ]
     }
   },
   // Bindings from Atom
@@ -513,8 +528,11 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
+      "enter": "project_panel::Rename",
+      "space": "project_panel::Open",
       "backspace": "project_panel::Delete",
-      "alt-cmd-r": "project_panel::RevealInFinder"
+      "alt-cmd-r": "project_panel::RevealInFinder",
+      "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
   {

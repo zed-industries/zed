@@ -3,6 +3,7 @@ mod test;
 
 mod editor_events;
 mod insert;
+mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
@@ -14,10 +15,11 @@ use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
+    Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
+pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
@@ -90,7 +92,10 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub fn observe_keystrokes(cx: &mut WindowContext) {
-    cx.observe_keystrokes(|_keystroke, _result, handled_by, cx| {
+    cx.observe_keystrokes(|_keystroke, result, handled_by, cx| {
+        if result == &MatchResult::Pending {
+            return true;
+        }
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
             if handled_by.namespace() == "vim" {
@@ -116,6 +121,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
 pub struct Vim {
     active_editor: Option<WeakViewHandle<Editor>>,
     editor_subscription: Option<Subscription>,
+    mode_indicator: Option<ViewHandle<ModeIndicator>>,
 
     enabled: bool,
     state: VimState,
@@ -174,6 +180,10 @@ impl Vim {
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
+
+        if let Some(mode_indicator) = &self.mode_indicator {
+            mode_indicator.update(cx, |mode_indicator, cx| mode_indicator.set_mode(mode, cx))
+        }
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
@@ -243,10 +253,14 @@ impl Vim {
 
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
-                motion::motion(Motion::FindForward { before, text }, cx)
+                let find = Motion::FindForward { before, text };
+                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                motion::motion(find, cx)
             }
             Some(Operator::FindBackward { after }) => {
-                motion::motion(Motion::FindBackward { after, text }, cx)
+                let find = Motion::FindBackward { after, text };
+                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                motion::motion(find, cx)
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
                 Mode::Normal => normal_replace(text, cx),
@@ -255,6 +269,44 @@ impl Vim {
             },
             _ => {}
         }
+    }
+
+    fn sync_mode_indicator(cx: &mut WindowContext) {
+        let Some(workspace) = cx.root_view()
+            .downcast_ref::<Workspace>()
+            .map(|workspace| workspace.downgrade()) else {
+                return;
+            };
+
+        cx.spawn(|mut cx| async move {
+            workspace.update(&mut cx, |workspace, cx| {
+                Vim::update(cx, |vim, cx| {
+                    workspace.status_bar().update(cx, |status_bar, cx| {
+                        let current_position = status_bar.position_of_item::<ModeIndicator>();
+
+                        if vim.enabled && current_position.is_none() {
+                            if vim.mode_indicator.is_none() {
+                                vim.mode_indicator =
+                                    Some(cx.add_view(|_| ModeIndicator::new(vim.state.mode)));
+                            };
+                            let mode_indicator = vim.mode_indicator.as_ref().unwrap();
+                            let position = status_bar
+                                .position_of_item::<language_selector::ActiveBufferLanguage>();
+                            if let Some(position) = position {
+                                status_bar.insert_item_after(position, mode_indicator.clone(), cx)
+                            } else {
+                                status_bar.add_left_item(mode_indicator.clone(), cx)
+                            }
+                        } else if !vim.enabled {
+                            if let Some(position) = current_position {
+                                status_bar.remove_item_at(position, cx)
+                            }
+                        }
+                    })
+                })
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
@@ -295,22 +347,39 @@ impl Vim {
             if self.enabled && editor.mode() == EditorMode::Full {
                 editor.set_cursor_shape(cursor_shape, cx);
                 editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
+                editor.set_collapse_matches(true);
                 editor.set_input_enabled(!state.vim_controlled());
                 editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
                 let context_layer = state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(context_layer, cx);
             } else {
-                Self::unhook_vim_settings(editor, cx);
+                // Note: set_collapse_matches is not in unhook_vim_settings, as that method is called on blur,
+                // but we need collapse_matches to persist when the search bar is focused.
+                editor.set_collapse_matches(false);
+                self.unhook_vim_settings(editor, cx);
             }
         });
+
+        Vim::sync_mode_indicator(cx);
     }
 
-    fn unhook_vim_settings(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
-        editor.remove_keymap_context_layer::<Self>(cx);
+
+        // we set the VimEnabled context on all editors so that we
+        // can distinguish between vim mode and non-vim mode in the BufferSearchBar.
+        // This is a bit of a hack, but currently the search crate does not depend on vim,
+        // and it seems nice to keep it that way.
+        if self.enabled {
+            let mut context = KeymapContext::default();
+            context.add_identifier("VimEnabled");
+            editor.set_keymap_context_layer::<Self>(context, cx)
+        } else {
+            editor.remove_keymap_context_layer::<Self>(cx);
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use anyhow::Result;
@@ -19,7 +19,7 @@ use gpui::{
 };
 use menu::Confirm;
 use postage::stream::Stream;
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, Entry, Project};
 use semantic_index::SemanticIndex;
 use smallvec::SmallVec;
 use std::{
@@ -56,12 +56,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
-    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
-    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext) {
+fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| {
@@ -94,10 +94,8 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: bool,
     semantic: Option<SemanticSearchState>,
+    search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
@@ -488,9 +486,7 @@ impl ProjectSearchView {
         let project;
         let excerpts;
         let mut query_text = String::new();
-        let mut regex = false;
-        let mut case_sensitive = false;
-        let mut whole_word = false;
+        let mut options = SearchOptions::NONE;
 
         {
             let model = model.read(cx);
@@ -498,9 +494,7 @@ impl ProjectSearchView {
             excerpts = model.excerpts.clone();
             if let Some(active_query) = model.active_query.as_ref() {
                 query_text = active_query.as_str().to_string();
-                regex = active_query.is_regex();
-                case_sensitive = active_query.case_sensitive();
-                whole_word = active_query.whole_word();
+                options = SearchOptions::from_query(active_query);
             }
         }
         cx.observe(&model, |this, _, cx| this.model_changed(cx))
@@ -576,10 +570,8 @@ impl ProjectSearchView {
             model,
             query_editor,
             results_editor,
-            case_sensitive,
-            whole_word,
-            regex,
             semantic: None,
+            search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
@@ -588,6 +580,28 @@ impl ProjectSearchView {
         };
         this.model_changed(cx);
         this
+    }
+
+    pub fn new_search_in_directory(
+        workspace: &mut Workspace,
+        dir_entry: &Entry,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if !dir_entry.is_dir() {
+            return;
+        }
+        let filter_path = dir_entry.path.join("**");
+        let Some(filter_str) = filter_path.to_str() else { return; };
+
+        let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
+        workspace.add_item(Box::new(search.clone()), cx);
+        search.update(cx, |search, cx| {
+            search
+                .included_files_editor
+                .update(cx, |editor, cx| editor.set_text(filter_str, cx));
+            search.focus_query_editor(cx)
+        });
     }
 
     // Re-activate the most recently activated search or the most recent if it has been closed.
@@ -723,11 +737,11 @@ impl ProjectSearchView {
                     return None;
                 }
             };
-        if self.regex {
+        if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
-                self.whole_word,
-                self.case_sensitive,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
             ) {
@@ -744,8 +758,8 @@ impl ProjectSearchView {
         } else {
             Some(SearchQuery::text(
                 text,
-                self.whole_word,
-                self.case_sensitive,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
             ))
@@ -764,7 +778,7 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, cx)
+                editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });
 
             let range_to_select = match_ranges[new_index].clone();
@@ -805,7 +819,6 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             self.active_match_index = Some(0);
-            self.select_match(Direction::Next, cx);
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
@@ -897,9 +910,7 @@ impl ProjectSearchBar {
                         search_view.query_editor.update(cx, |editor, cx| {
                             editor.set_text(old_query.as_str(), cx);
                         });
-                        search_view.regex = old_query.is_regex();
-                        search_view.whole_word = old_query.whole_word();
-                        search_view.case_sensitive = old_query.case_sensitive();
+                        search_view.search_options = SearchOptions::from_query(&old_query);
                     }
                 }
                 new_query
@@ -987,19 +998,11 @@ impl ProjectSearchBar {
         });
     }
 
-    fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let value = match option {
-                    SearchOption::WholeWord => &mut search_view.whole_word,
-                    SearchOption::CaseSensitive => &mut search_view.case_sensitive,
-                    SearchOption::Regex => &mut search_view.regex,
-                };
-                *value = !*value;
-
-                if value.clone() {
-                    search_view.semantic = None;
-                }
+                search_view.search_options.toggle(option);
+                search_view.semantic = None;
                 search_view.search(cx);
             });
             cx.notify();
@@ -1016,9 +1019,7 @@ impl ProjectSearchBar {
                     search_view.semantic = None;
                 } else if let Some(semantic_index) = SemanticIndex::global(cx) {
                     // TODO: confirm that it's ok to send this project
-                    search_view.regex = false;
-                    search_view.case_sensitive = false;
-                    search_view.whole_word = false;
+                    search_view.search_options = SearchOptions::none();
 
                     let project = search_view.model.read(cx).project.clone();
                     let index_task = semantic_index.update(cx, |semantic_index, cx| {
@@ -1113,12 +1114,12 @@ impl ProjectSearchBar {
     fn render_option_button(
         &self,
         icon: &'static str,
-        option: SearchOption,
+        option: SearchOptions,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
+        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
                 .search
@@ -1134,7 +1135,7 @@ impl ProjectSearchBar {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self>(
-            option as usize,
+            option.bits as usize,
             format!("Toggle {}", option.label()),
             Some(option.to_toggle_action()),
             tooltip_style,
@@ -1179,14 +1180,9 @@ impl ProjectSearchBar {
         .into_any()
     }
 
-    fn is_option_enabled(&self, option: SearchOption, cx: &AppContext) -> bool {
+    fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
-            match option {
-                SearchOption::WholeWord => search.whole_word,
-                SearchOption::CaseSensitive => search.case_sensitive,
-                SearchOption::Regex => search.regex,
-            }
+            search.read(cx).search_options.contains(option)
         } else {
             false
         }
@@ -1283,17 +1279,17 @@ impl View for ProjectSearchBar {
                             let row = row
                                 .with_child(self.render_option_button(
                                     "Case",
-                                    SearchOption::CaseSensitive,
+                                    SearchOptions::CASE_SENSITIVE,
                                     cx,
                                 ))
                                 .with_child(self.render_option_button(
                                     "Word",
-                                    SearchOption::WholeWord,
+                                    SearchOptions::WHOLE_WORD,
                                     cx,
                                 ))
                                 .with_child(self.render_option_button(
                                     "Regex",
-                                    SearchOption::Regex,
+                                    SearchOptions::REGEX,
                                     cx,
                                 ))
                                 .contained()
@@ -1665,6 +1661,134 @@ pub mod tests {
             assert!(
                 search_view.results_editor.is_focused(cx),
                 "Search view with matching query should switch focus to the results editor after the toggle focus event",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_project_search_in_directory(
+        deterministic: Arc<Deterministic>,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a": {
+                    "one.rs": "const ONE: usize = 1;",
+                    "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                },
+                "b": {
+                    "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                    "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let active_item = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_item.is_none(),
+            "Expected no search panel to be active, but got: {active_item:?}"
+        );
+
+        let one_file_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
+                .expect("no entry for /a/one.rs file")
+        });
+        assert!(one_file_entry.is_file());
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
+        });
+        let active_search_entry = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_search_entry.is_none(),
+            "Expected no search panel to be active for file entry"
+        );
+
+        let a_dir_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a").into(), cx)
+                .expect("no entry for /a/ directory")
+        });
+        assert!(a_dir_entry.is_dir());
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+        });
+
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search in directory event trigger")
+        };
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert!(
+                search_view.query_editor.is_focused(cx),
+                "On new search in directory, focus should be moved into query editor"
+            );
+            search_view.excluded_files_editor.update(cx, |editor, cx| {
+                assert!(
+                    editor.display_text(cx).is_empty(),
+                    "New search in directory should not have any excluded files"
+                );
+            });
+            search_view.included_files_editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    a_dir_entry.path.join("**").display().to_string(),
+                    "New search in directory should have included dir entry path"
+                );
+            });
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
+            search_view.search(cx);
+        });
+        deterministic.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                "New search in directory should have a filter that matches a certain directory"
             );
         });
     }

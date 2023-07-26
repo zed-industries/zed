@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod scroll;
+mod search;
 mod substitute;
 mod yank;
 
@@ -57,6 +58,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
     cx.add_action(change_case);
+    search::init(cx);
     cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
@@ -105,7 +107,7 @@ pub fn normal_motion(
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
             Some(operator) => {
-                // Can't do anything for text objects or namespace operators. Ignoring
+                // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
             }
         }
@@ -439,11 +441,8 @@ mod test {
     use indoc::indoc;
 
     use crate::{
-        state::{
-            Mode::{self, *},
-            Namespace, Operator,
-        },
-        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
+        state::Mode::{self},
+        test::{ExemptionFeatures, NeovimBackedTestContext},
     };
 
     #[gpui::test]
@@ -606,22 +605,6 @@ mod test {
             ˇfox_jumps ˇover
             ˇthe"})
             .await;
-    }
-
-    #[gpui::test]
-    async fn test_g_prefix_and_abort(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        // Can abort with escape to get back to normal mode
-        cx.simulate_keystroke("g");
-        assert_eq!(cx.mode(), Normal);
-        assert_eq!(
-            cx.active_operator(),
-            Some(Operator::Namespace(Namespace::G))
-        );
-        cx.simulate_keystroke("escape");
-        assert_eq!(cx.mode(), Normal);
-        assert_eq!(cx.active_operator(), None);
     }
 
     #[gpui::test]

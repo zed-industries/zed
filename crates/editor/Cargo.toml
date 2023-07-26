@@ -10,7 +10,6 @@ doctest = false
 
 [features]
 test-support = [
-    "rand",
     "copilot/test-support",
     "text/test-support",
     "language/test-support",
@@ -62,8 +61,8 @@ serde.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+rand.workspace = true
 
-rand = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }

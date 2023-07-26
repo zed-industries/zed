@@ -40,6 +40,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
 
+    language("bash", tree_sitter_bash::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
@@ -151,6 +152,8 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_php::language(),
         vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
     );
+    language("elm", tree_sitter_elm::language(), vec![]);
+    language("glsl", tree_sitter_glsl::language(), vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

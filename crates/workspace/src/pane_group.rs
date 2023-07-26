@@ -54,6 +54,20 @@ impl PaneGroup {
         }
     }
 
+    pub fn bounding_box_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<RectF> {
+        match &self.root {
+            Member::Pane(_) => None,
+            Member::Axis(axis) => axis.bounding_box_for_pane(pane),
+        }
+    }
+
+    pub fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&ViewHandle<Pane>> {
+        match &self.root {
+            Member::Pane(pane) => Some(pane),
+            Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
+        }
+    }
+
     /// Returns:
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
@@ -309,15 +323,18 @@ pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
     pub flexes: Rc<RefCell<Vec<f32>>>,
+    pub bounding_boxes: Rc<RefCell<Vec<Option<RectF>>>>,
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
         let flexes = Rc::new(RefCell::new(vec![1.; members.len()]));
+        let bounding_boxes = Rc::new(RefCell::new(vec![None; members.len()]));
         Self {
             axis,
             members,
             flexes,
+            bounding_boxes,
         }
     }
 
@@ -326,10 +343,12 @@ impl PaneAxis {
         debug_assert!(members.len() == flexes.len());
 
         let flexes = Rc::new(RefCell::new(flexes));
+        let bounding_boxes = Rc::new(RefCell::new(vec![None; members.len()]));
         Self {
             axis,
             members,
             flexes,
+            bounding_boxes,
         }
     }
 
@@ -409,6 +428,44 @@ impl PaneAxis {
         }
     }
 
+    fn bounding_box_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<RectF> {
+        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+
+        for (idx, member) in self.members.iter().enumerate() {
+            match member {
+                Member::Pane(found) => {
+                    if pane == found {
+                        return self.bounding_boxes.borrow()[idx];
+                    }
+                }
+                Member::Axis(axis) => {
+                    if let Some(rect) = axis.bounding_box_for_pane(pane) {
+                        return Some(rect);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&ViewHandle<Pane>> {
+        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+
+        let bounding_boxes = self.bounding_boxes.borrow();
+
+        for (idx, member) in self.members.iter().enumerate() {
+            if let Some(coordinates) = bounding_boxes[idx] {
+                if coordinates.contains_point(coordinate) {
+                    return match member {
+                        Member::Pane(found) => Some(found),
+                        Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
+                    };
+                }
+            }
+        }
+        None
+    }
+
     fn render(
         &self,
         project: &ModelHandle<Project>,
@@ -423,7 +480,12 @@ impl PaneAxis {
     ) -> AnyElement<Workspace> {
         debug_assert!(self.members.len() == self.flexes.borrow().len());
 
-        let mut pane_axis = PaneAxisElement::new(self.axis, basis, self.flexes.clone());
+        let mut pane_axis = PaneAxisElement::new(
+            self.axis,
+            basis,
+            self.flexes.clone(),
+            self.bounding_boxes.clone(),
+        );
         let mut active_pane_ix = None;
 
         let mut members = self.members.iter().enumerate().peekable();
@@ -546,14 +608,21 @@ mod element {
         active_pane_ix: Option<usize>,
         flexes: Rc<RefCell<Vec<f32>>>,
         children: Vec<AnyElement<Workspace>>,
+        bounding_boxes: Rc<RefCell<Vec<Option<RectF>>>>,
     }
 
     impl PaneAxisElement {
-        pub fn new(axis: Axis, basis: usize, flexes: Rc<RefCell<Vec<f32>>>) -> Self {
+        pub fn new(
+            axis: Axis,
+            basis: usize,
+            flexes: Rc<RefCell<Vec<f32>>>,
+            bounding_boxes: Rc<RefCell<Vec<Option<RectF>>>>,
+        ) -> Self {
             Self {
                 axis,
                 basis,
                 flexes,
+                bounding_boxes,
                 active_pane_ix: None,
                 children: Default::default(),
             }
@@ -708,10 +777,15 @@ mod element {
 
             let mut child_origin = bounds.origin();
 
+            let mut bounding_boxes = self.bounding_boxes.borrow_mut();
+            bounding_boxes.clear();
+
             let mut children_iter = self.children.iter_mut().enumerate().peekable();
             while let Some((ix, child)) = children_iter.next() {
                 let child_start = child_origin.clone();
                 child.paint(scene, child_origin, visible_bounds, view, cx);
+
+                bounding_boxes.push(Some(RectF::new(child_origin, child.size())));
 
                 match self.axis {
                     Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
@@ -752,63 +826,79 @@ mod element {
                     let child_size = child.size();
                     let next_child_size = next_child.size();
                     let drag_bounds = visible_bounds.clone();
-                    let flexes = self.flexes.clone();
-                    let current_flex = flexes.borrow()[ix];
+                    let flexes = self.flexes.borrow();
+                    let current_flex = flexes[ix];
                     let next_ix = *next_ix;
-                    let next_flex = flexes.borrow()[next_ix];
+                    let next_flex = flexes[next_ix];
+                    drop(flexes);
                     enum ResizeHandle {}
                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
                         cx.view_id(),
                         self.basis + ix,
                         handle_bounds,
                     );
-                    mouse_region = mouse_region.on_drag(
-                        MouseButton::Left,
-                        move |drag, workspace: &mut Workspace, cx| {
-                            let min_size = match axis {
-                                Axis::Horizontal => HORIZONTAL_MIN_SIZE,
-                                Axis::Vertical => VERTICAL_MIN_SIZE,
-                            };
-                            // Don't allow resizing to less than the minimum size, if elements are already too small
-                            if min_size - 1. > child_size.along(axis)
-                                || min_size - 1. > next_child_size.along(axis)
-                            {
-                                return;
+                    mouse_region = mouse_region
+                        .on_drag(MouseButton::Left, {
+                            let flexes = self.flexes.clone();
+                            move |drag, workspace: &mut Workspace, cx| {
+                                let min_size = match axis {
+                                    Axis::Horizontal => HORIZONTAL_MIN_SIZE,
+                                    Axis::Vertical => VERTICAL_MIN_SIZE,
+                                };
+                                // Don't allow resizing to less than the minimum size, if elements are already too small
+                                if min_size - 1. > child_size.along(axis)
+                                    || min_size - 1. > next_child_size.along(axis)
+                                {
+                                    return;
+                                }
+
+                                let mut current_target_size =
+                                    (drag.position - child_start).along(axis);
+
+                                let proposed_current_pixel_change =
+                                    current_target_size - child_size.along(axis);
+
+                                if proposed_current_pixel_change < 0. {
+                                    current_target_size = f32::max(current_target_size, min_size);
+                                } else if proposed_current_pixel_change > 0. {
+                                    // TODO: cascade this change to other children if current item is at min size
+                                    let next_target_size = f32::max(
+                                        next_child_size.along(axis) - proposed_current_pixel_change,
+                                        min_size,
+                                    );
+                                    current_target_size = f32::min(
+                                        current_target_size,
+                                        child_size.along(axis) + next_child_size.along(axis)
+                                            - next_target_size,
+                                    );
+                                }
+
+                                let current_pixel_change =
+                                    current_target_size - child_size.along(axis);
+                                let flex_change =
+                                    current_pixel_change / drag_bounds.length_along(axis);
+                                let current_target_flex = current_flex + flex_change;
+                                let next_target_flex = next_flex - flex_change;
+
+                                let mut borrow = flexes.borrow_mut();
+                                *borrow.get_mut(ix).unwrap() = current_target_flex;
+                                *borrow.get_mut(next_ix).unwrap() = next_target_flex;
+
+                                workspace.schedule_serialize(cx);
+                                cx.notify();
                             }
-
-                            let mut current_target_size = (drag.position - child_start).along(axis);
-
-                            let proposed_current_pixel_change =
-                                current_target_size - child_size.along(axis);
-
-                            if proposed_current_pixel_change < 0. {
-                                current_target_size = f32::max(current_target_size, min_size);
-                            } else if proposed_current_pixel_change > 0. {
-                                // TODO: cascade this change to other children if current item is at min size
-                                let next_target_size = f32::max(
-                                    next_child_size.along(axis) - proposed_current_pixel_change,
-                                    min_size,
-                                );
-                                current_target_size = f32::min(
-                                    current_target_size,
-                                    child_size.along(axis) + next_child_size.along(axis)
-                                        - next_target_size,
-                                );
+                        })
+                        .on_click(MouseButton::Left, {
+                            let flexes = self.flexes.clone();
+                            move |e, v: &mut Workspace, cx| {
+                                if e.click_count >= 2 {
+                                    let mut borrow = flexes.borrow_mut();
+                                    *borrow = vec![1.; borrow.len()];
+                                    v.schedule_serialize(cx);
+                                    cx.notify();
+                                }
                             }
-
-                            let current_pixel_change = current_target_size - child_size.along(axis);
-                            let flex_change = current_pixel_change / drag_bounds.length_along(axis);
-                            let current_target_flex = current_flex + flex_change;
-                            let next_target_flex = next_flex - flex_change;
-
-                            let mut borrow = flexes.borrow_mut();
-                            *borrow.get_mut(ix).unwrap() = current_target_flex;
-                            *borrow.get_mut(next_ix).unwrap() = next_target_flex;
-
-                            workspace.schedule_serialize(cx);
-                            cx.notify();
-                        },
-                    );
+                        });
                     scene.push_mouse_region(mouse_region);
 
                     scene.pop_stacking_context();
