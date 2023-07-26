@@ -1246,6 +1246,186 @@ mod tests {
     }
 
     #[test]
+    fn test_random_saved_sequence() {
+        let mut starting_seed = 0;
+        if let Ok(value) = std::env::var("SEED") {
+            starting_seed = value.parse().expect("invalid SEED variable");
+        }
+        let mut num_iterations = 100;
+        if let Ok(value) = std::env::var("ITERATIONS") {
+            num_iterations = value.parse().expect("invalid ITERATIONS variable");
+        }
+        let num_operations = std::env::var("OPERATIONS")
+            .map_or(5, |o| o.parse().expect("invalid OPERATIONS variable"));
+
+        for seed in starting_seed..(starting_seed + num_iterations) {
+            eprintln!("seed = {}", seed);
+            let mut rng = StdRng::seed_from_u64(seed);
+
+            let rng = &mut rng;
+            let kv = InMemoryKv::default();
+            let mut tree = Sequence::<u8>::new();
+            let mut reference_items = Vec::new();
+            let count = rng.gen_range(0..10);
+            let initial_items = rng
+                .sample_iter(distributions::Standard)
+                .take(count)
+                .collect::<Vec<_>>();
+            tree.extend(initial_items.iter().copied(), &());
+            reference_items.extend(initial_items);
+            assert_eq!(tree.items(&()), reference_items);
+
+            for _ in 0..num_operations {
+                if rng.gen_bool(0.2) {
+                    log::info!("saving");
+                    smol::block_on(tree.save(&kv)).unwrap();
+                }
+
+                if rng.gen_bool(0.2) {
+                    let max = rng.gen::<u8>();
+                    log::info!("pruning items > {}", max);
+                    tree.prune(|item| {
+                        if item.min > max {
+                            Prune::Unload
+                        } else if item.max < max {
+                            Prune::Keep
+                        } else {
+                            Prune::Descend
+                        }
+                    });
+                }
+
+                let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+                let splice_start = rng.gen_range(0..splice_end + 1);
+                let count = rng.gen_range(0..3);
+                let tree_end = tree.extent::<Count>(&());
+                assert_eq!(tree_end.0, reference_items.len());
+                let new_items = rng
+                    .sample_iter(distributions::Standard)
+                    .take(count)
+                    .collect::<Vec<u8>>();
+
+                log::info!(
+                    "splicing {:?}..{:?} with {:?}",
+                    splice_start,
+                    splice_end,
+                    new_items
+                );
+                reference_items.splice(splice_start..splice_end, new_items.clone());
+
+                tree = {
+                    let mut cursor = tree.cursor::<Count>();
+                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
+                    new_tree.extend(new_items, &());
+                    cursor.seek(&Count(splice_end), Bias::Right, &());
+                    new_tree.append(cursor.slice(&tree_end, Bias::Right, &()), &());
+                    new_tree
+                };
+
+                assert_eq!(tree.items(&()), reference_items);
+                assert_eq!(
+                    tree.iter().collect::<Vec<_>>(),
+                    tree.cursor::<()>().collect::<Vec<_>>()
+                );
+
+                log::info!("tree items: {:?}", tree.items(&()));
+                dbg!(tree.summary());
+
+                let mut filter_cursor = tree.filter::<_, Count>(|summary| summary.contains_even);
+                let expected_filtered_items = tree
+                    .items(&())
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, item)| (item & 1) == 0)
+                    .collect::<Vec<_>>();
+
+                let mut item_ix = if rng.gen() {
+                    filter_cursor.next(&());
+                    0
+                } else {
+                    filter_cursor.prev(&());
+                    expected_filtered_items.len().saturating_sub(1)
+                };
+                while item_ix < expected_filtered_items.len() {
+                    log::info!("filter_cursor, item_ix: {}", item_ix);
+                    let actual_item = filter_cursor.item().unwrap();
+                    let (reference_index, reference_item) = expected_filtered_items[item_ix];
+                    assert_eq!(actual_item, &reference_item);
+                    assert_eq!(filter_cursor.start().0, reference_index);
+                    log::info!("next");
+                    filter_cursor.next(&());
+                    item_ix += 1;
+
+                    while item_ix > 0 && rng.gen_bool(0.2) {
+                        log::info!("prev");
+                        filter_cursor.prev(&());
+                        item_ix -= 1;
+
+                        if item_ix == 0 && rng.gen_bool(0.2) {
+                            filter_cursor.prev(&());
+                            assert_eq!(filter_cursor.item(), None);
+                            assert_eq!(filter_cursor.start().0, 0);
+                            filter_cursor.next(&());
+                        }
+                    }
+                }
+                assert_eq!(filter_cursor.item(), None);
+
+                let mut pos = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+                let mut before_start = false;
+                let mut cursor = tree.cursor::<Count>();
+                cursor.seek(&Count(pos), Bias::Right, &());
+
+                for i in 0..10 {
+                    assert_eq!(cursor.start().0, pos);
+
+                    if pos > 0 {
+                        assert_eq!(cursor.prev_item().unwrap(), &reference_items[pos - 1]);
+                    } else {
+                        assert_eq!(cursor.prev_item(), None);
+                    }
+
+                    if pos < reference_items.len() && !before_start {
+                        assert_eq!(cursor.item().unwrap(), &reference_items[pos]);
+                    } else {
+                        assert_eq!(cursor.item(), None);
+                    }
+
+                    if i < 5 {
+                        cursor.next(&());
+                        if pos < reference_items.len() {
+                            pos += 1;
+                            before_start = false;
+                        }
+                    } else {
+                        cursor.prev(&());
+                        if pos == 0 {
+                            before_start = true;
+                        }
+                        pos = pos.saturating_sub(1);
+                    }
+                }
+            }
+
+            for _ in 0..10 {
+                let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
+                let start = rng.gen_range(0..end + 1);
+                let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+
+                let mut cursor = tree.cursor::<Count>();
+                cursor.seek(&Count(start), start_bias, &());
+                let slice = cursor.slice(&Count(end), end_bias, &());
+
+                cursor.seek(&Count(start), start_bias, &());
+                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias, &());
+
+                assert_eq!(summary.0, slice.summary().sum);
+            }
+        }
+    }
+
+    #[test]
     fn test_cursor() {
         // Empty tree
         let tree = Sequence::<u8>::new();
@@ -1441,11 +1621,12 @@ mod tests {
         assert_eq!(tree.get(&4, &()), Some(&4));
     }
 
-    #[derive(Clone, Default, Debug)]
+    #[derive(Clone, Default, Debug, Serialize, Deserialize)]
     pub struct IntegersSummary {
         count: usize,
         sum: usize,
         contains_even: bool,
+        min: u8,
         max: u8,
     }
 
@@ -1464,6 +1645,7 @@ mod tests {
                 sum: *self as usize,
                 contains_even: (*self & 1) == 0,
                 max: *self,
+                min: *self,
             }
         }
     }
@@ -1480,6 +1662,11 @@ mod tests {
         type Context = ();
 
         fn add_summary(&mut self, other: &Self, _: &()) {
+            if self.count == 0 {
+                self.min = other.min;
+            } else if other.count > 0 {
+                self.min = cmp::min(self.min, other.min);
+            }
             self.count += other.count;
             self.sum += other.sum;
             self.contains_even |= other.contains_even;
@@ -1511,8 +1698,10 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
     struct InMemoryKv(Arc<Mutex<InMemoryKvState>>);
 
+    #[derive(Default)]
     struct InMemoryKvState {
         namespaces: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Vec<u8>>>,
     }
