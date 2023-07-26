@@ -1076,6 +1076,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collections::BTreeMap;
+    use futures::FutureExt;
+    use parking_lot::Mutex;
     use rand::{distributions, prelude::*};
     use std::cmp;
 
@@ -1512,6 +1515,55 @@ mod tests {
     impl<'a> Dimension<'a, IntegersSummary> for Sum {
         fn add_summary(&mut self, summary: &IntegersSummary, _: &()) {
             self.0 += summary.sum;
+        }
+    }
+
+    struct InMemoryKv(Arc<Mutex<InMemoryKvState>>);
+
+    struct InMemoryKvState {
+        namespaces: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Vec<u8>>>,
+    }
+
+    impl KvStore for InMemoryKv {
+        fn load<V: for<'de> Deserialize<'de>>(
+            &self,
+            namespace: &[u8],
+            key: &[u8],
+        ) -> BoxFuture<Result<V>> {
+            let state = self.0.clone();
+            let namespace = namespace.to_vec();
+            let key = key.to_vec();
+            async move {
+                let state = state.lock();
+                let namespace = state
+                    .namespaces
+                    .get(&namespace)
+                    .ok_or_else(|| anyhow!("namespace not found"))?;
+                let value = namespace
+                    .get(&key)
+                    .ok_or_else(|| anyhow!("key not found"))?;
+                Ok(serde_bare::from_slice(value)?)
+            }
+            .boxed()
+        }
+
+        fn store<V: Serialize>(
+            &self,
+            namespace: &[u8],
+            key: &[u8],
+            value: &V,
+        ) -> BoxFuture<Result<()>> {
+            let state = self.0.clone();
+            let namespace = namespace.to_vec();
+            let key = key.to_vec();
+            let value = serde_bare::to_vec(value);
+            async move {
+                let mut state = state.lock();
+                let namespace = state.namespaces.entry(namespace).or_default();
+                namespace.insert(key, value?);
+                Ok(())
+            }
+            .boxed()
         }
     }
 }
