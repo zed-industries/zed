@@ -32,7 +32,7 @@ pub struct MouseDrag {
     pub region: RectF,
     pub prev_mouse_position: Vector2F,
     pub platform_event: MouseMovedEvent,
-    pub end: bool
+    pub end: bool,
 }
 
 impl Deref for MouseDrag {
