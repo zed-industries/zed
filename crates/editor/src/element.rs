@@ -168,6 +168,10 @@ impl EditorElement {
             .on_drag(MouseButton::Left, {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
+                    if event.end {
+                        return;
+                    }
+
                     if !Self::mouse_dragged(
                         editor,
                         event.platform_event,
@@ -1207,6 +1211,10 @@ impl EditorElement {
                 })
                 .on_drag(MouseButton::Left, {
                     move |event, editor: &mut Editor, cx| {
+                        if event.end {
+                            return;
+                        }
+
                         let y = event.prev_mouse_position.y();
                         let new_y = event.position.y();
                         if thumb_top < y && y < thumb_bottom {
