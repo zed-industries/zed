@@ -189,6 +189,7 @@ impl SemanticIndex {
 
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
+            && *RELEASE_CHANNEL != ReleaseChannel::Stable
     }
 
     async fn new(
