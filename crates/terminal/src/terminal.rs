@@ -78,7 +78,7 @@ lazy_static! {
     // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
     static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
-    static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-~]+").unwrap();
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.:/@\-~]+"#).unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
