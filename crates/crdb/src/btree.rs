@@ -245,7 +245,7 @@ impl<T: Item> Sequence<T> {
                                 child_summaries: child_summaries.clone(),
                                 child_trees: child_trees
                                     .iter()
-                                    .map(|tree| tree.0.as_ref().saved_id().clone())
+                                    .map(|tree| tree.saved_id().clone())
                                     .collect(),
                             },
                         )
@@ -256,10 +256,18 @@ impl<T: Item> Sequence<T> {
                         // because we pushed them to the stack.
                         frame.children_saved = true;
                         for child_tree in child_trees {
-                            stack.push(Frame {
-                                node: child_tree.0.as_ref(),
-                                children_saved: false,
-                            });
+                            match child_tree {
+                                ChildTree::Loaded { tree: child_tree } => {
+                                    stack.push(Frame {
+                                        node: child_tree.0.as_ref(),
+                                        children_saved: false,
+                                    });
+                                }
+                                ChildTree::Unloaded { .. } => {
+                                    // If this child tree was not loaded, then there's
+                                    // no need to save it.
+                                }
+                            }
                         }
                     }
                 }
@@ -337,11 +345,11 @@ impl<T: Item> Sequence<T> {
 
     #[allow(dead_code)]
     pub fn first(&self) -> Option<&T> {
-        self.leftmost_leaf().0.items().first()
+        Some(self.leftmost_leaf()?.0.items().first()?)
     }
 
     pub fn last(&self) -> Option<&T> {
-        self.rightmost_leaf().0.items().last()
+        Some(self.rightmost_leaf()?.0.items().last()?)
     }
 
     pub fn update_last(&mut self, f: impl FnOnce(&mut T), cx: &<T::Summary as Summary>::Context) {
@@ -363,7 +371,13 @@ impl<T: Item> Sequence<T> {
                 ..
             } => {
                 let last_summary = child_summaries.last_mut().unwrap();
-                let last_child = child_trees.last_mut().unwrap();
+                let last_child = child_trees.iter_mut().rev().find_map(|child_tree| {
+                    if let ChildTree::Loaded { tree } = child_tree {
+                        Some(tree)
+                    } else {
+                        None
+                    }
+                })?;
                 *last_summary = last_child.update_last_recursive(f, cx).unwrap();
                 *summary = sum(child_summaries.iter(), cx);
                 Some(summary.clone())
@@ -374,15 +388,12 @@ impl<T: Item> Sequence<T> {
                 item_summaries,
                 ..
             } => {
-                if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
-                {
-                    (f)(item);
-                    *item_summary = item.summary();
-                    *summary = sum(item_summaries.iter(), cx);
-                    Some(summary.clone())
-                } else {
-                    None
-                }
+                let item = items.last_mut()?;
+                let item_summary = item_summaries.last_mut()?;
+                (f)(item);
+                *item_summary = item.summary();
+                *summary = sum(item_summaries.iter(), cx);
+                Some(summary.clone())
             }
         }
     }
@@ -469,20 +480,44 @@ impl<T: Item> Sequence<T> {
     }
 
     pub fn append(&mut self, other: Self, cx: &<T::Summary as Summary>::Context) {
-        if !other.0.is_leaf() || !other.0.items().is_empty() {
-            if self.0.height() < other.0.height() {
-                for tree in other.0.child_trees() {
-                    self.append(tree.clone(), cx);
+        let summary = other.summary().clone();
+        self.append_internal(
+            ChildTree::Loaded {
+                tree: other.clone(),
+            },
+            summary,
+            cx,
+        );
+    }
+
+    fn append_internal(
+        &mut self,
+        other: ChildTree<T>,
+        other_summary: T::Summary,
+        cx: &<T::Summary as Summary>::Context,
+    ) {
+        if let ChildTree::Loaded { tree: other } = &other {
+            if !other.0.is_leaf() || !other.0.items().is_empty() {
+                if self.0.height() < other.0.height() {
+                    for (tree, summary) in
+                        other.0.child_trees().iter().zip(other.0.child_summaries())
+                    {
+                        self.append_internal(tree.clone(), summary.clone(), cx);
+                    }
+                    return;
                 }
-            } else if let Some(split_tree) = self.push_tree_recursive(other, cx) {
-                *self = Self::from_child_trees(self.clone(), split_tree, cx);
             }
+        }
+
+        if let Some(split_tree) = self.push_tree_recursive(other, other_summary, cx) {
+            *self = Self::from_child_trees(self.clone(), split_tree, cx);
         }
     }
 
     fn push_tree_recursive(
         &mut self,
-        other: Sequence<T>,
+        other: ChildTree<T>,
+        other_summary: T::Summary,
         cx: &<T::Summary as Summary>::Context,
     ) -> Option<Sequence<T>> {
         let node = Arc::make_mut(&mut self.0);
@@ -495,29 +530,43 @@ impl<T: Item> Sequence<T> {
                 child_trees,
                 ..
             } => {
-                let other_node = other.0.clone();
-                <T::Summary as Summary>::add_summary(summary, other_node.summary(), cx);
+                <T::Summary as Summary>::add_summary(summary, &other_summary, cx);
 
-                let height_delta = *height - other_node.height();
                 let mut summaries_to_append = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
-                let mut trees_to_append = ArrayVec::<Sequence<T>, { 2 * TREE_BASE }>::new();
-                if height_delta == 0 {
-                    summaries_to_append.extend(other_node.child_summaries().iter().cloned());
-                    trees_to_append.extend(other_node.child_trees().iter().cloned());
-                } else if height_delta == 1 && !other_node.is_underflowing() {
-                    summaries_to_append.push(other_node.summary().clone());
-                    trees_to_append.push(other)
-                } else {
-                    let tree_to_append = child_trees
-                        .last_mut()
-                        .unwrap()
-                        .push_tree_recursive(other, cx);
-                    *child_summaries.last_mut().unwrap() =
-                        child_trees.last().unwrap().0.summary().clone();
+                let mut trees_to_append = ArrayVec::<ChildTree<T>, { 2 * TREE_BASE }>::new();
+                match other {
+                    ChildTree::Loaded { tree: other } => {
+                        let other_node = other.0.clone();
+                        let height_delta = *height - other_node.height();
+                        if height_delta == 0 {
+                            summaries_to_append
+                                .extend(other_node.child_summaries().iter().cloned());
+                            trees_to_append.extend(other_node.child_trees().iter().cloned());
+                        } else if height_delta == 1 && !other_node.is_underflowing() {
+                            summaries_to_append.push(other_summary);
+                            trees_to_append.push(ChildTree::Loaded { tree: other });
+                        } else if let ChildTree::Loaded { tree: last_child } =
+                            child_trees.last_mut().unwrap()
+                        {
+                            let tree_to_append = last_child.push_tree_recursive(
+                                ChildTree::Loaded { tree: other },
+                                other_summary,
+                                cx,
+                            );
+                            *child_summaries.last_mut().unwrap() = last_child.summary().clone();
 
-                    if let Some(split_tree) = tree_to_append {
-                        summaries_to_append.push(split_tree.0.summary().clone());
-                        trees_to_append.push(split_tree);
+                            if let Some(split_tree) = tree_to_append {
+                                summaries_to_append.push(split_tree.0.summary().clone());
+                                trees_to_append.push(ChildTree::Loaded { tree: split_tree });
+                            }
+                        } else {
+                            summaries_to_append.push(other_summary);
+                            trees_to_append.push(ChildTree::Loaded { tree: other });
+                        }
+                    }
+                    ChildTree::Unloaded { saved_id } => {
+                        summaries_to_append.push(other_summary);
+                        trees_to_append.push(ChildTree::Unloaded { saved_id });
                     }
                 }
 
@@ -564,7 +613,12 @@ impl<T: Item> Sequence<T> {
                 item_summaries,
                 ..
             } => {
-                let other_node = other.0;
+                let other_node = match other {
+                    ChildTree::Loaded { tree } => tree.0,
+                    ChildTree::Unloaded { .. } => {
+                        unreachable!("cannot merge an unloaded leaf node")
+                    }
+                };
 
                 let child_count = items.len() + other_node.items().len();
                 if child_count > 2 * TREE_BASE {
@@ -615,8 +669,8 @@ impl<T: Item> Sequence<T> {
         child_summaries.push(left.0.summary().clone());
         child_summaries.push(right.0.summary().clone());
         let mut child_trees = ArrayVec::new();
-        child_trees.push(left);
-        child_trees.push(right);
+        child_trees.push(ChildTree::Loaded { tree: left });
+        child_trees.push(ChildTree::Loaded { tree: right });
         Sequence(Arc::new(Node::Internal {
             saved_id: Default::default(),
             height,
@@ -626,21 +680,25 @@ impl<T: Item> Sequence<T> {
         }))
     }
 
-    fn leftmost_leaf(&self) -> &Self {
-        match *self.0 {
-            Node::Leaf { .. } => self,
-            Node::Internal {
-                ref child_trees, ..
-            } => child_trees.first().unwrap().leftmost_leaf(),
+    fn leftmost_leaf(&self) -> Option<&Self> {
+        match self.0.as_ref() {
+            Node::Leaf { .. } => Some(self),
+            Node::Internal { child_trees, .. } => child_trees.iter().find_map(|tree| match tree {
+                ChildTree::Loaded { tree } => tree.leftmost_leaf(),
+                ChildTree::Unloaded { .. } => None,
+            }),
         }
     }
 
-    fn rightmost_leaf(&self) -> &Self {
-        match *self.0 {
-            Node::Leaf { .. } => self,
-            Node::Internal {
-                ref child_trees, ..
-            } => child_trees.last().unwrap().rightmost_leaf(),
+    fn rightmost_leaf(&self) -> Option<&Self> {
+        match self.0.as_ref() {
+            Node::Leaf { .. } => Some(self),
+            Node::Internal { child_trees, .. } => {
+                child_trees.iter().rev().find_map(|tree| match tree {
+                    ChildTree::Loaded { tree } => tree.rightmost_leaf(),
+                    ChildTree::Unloaded { .. } => None,
+                })
+            }
         }
     }
 
@@ -770,13 +828,32 @@ impl<T: Item> Default for Sequence<T> {
 }
 
 #[derive(Clone, Debug)]
+pub enum ChildTree<T: Item> {
+    Loaded { tree: Sequence<T> },
+    Unloaded { saved_id: SavedId },
+}
+
+impl<T: Item> ChildTree<T> {
+    fn saved_id(&self) -> &SavedId {
+        match self {
+            ChildTree::Loaded { tree } => tree.0.saved_id(),
+            ChildTree::Unloaded { saved_id } => saved_id,
+        }
+    }
+
+    fn is_loaded(&self) -> bool {
+        matches!(self, ChildTree::Loaded { .. })
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Node<T: Item> {
     Internal {
         saved_id: SavedId,
         height: u8,
         summary: T::Summary,
         child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
-        child_trees: ArrayVec<Sequence<T>, { 2 * TREE_BASE }>,
+        child_trees: ArrayVec<ChildTree<T>, { 2 * TREE_BASE }>,
     },
     Leaf {
         saved_id: SavedId,
@@ -820,7 +897,7 @@ impl<T: Item> Node<T> {
         }
     }
 
-    fn child_trees(&self) -> &ArrayVec<Sequence<T>, { 2 * TREE_BASE }> {
+    fn child_trees(&self) -> &ArrayVec<ChildTree<T>, { 2 * TREE_BASE }> {
         match self {
             Node::Internal { child_trees, .. } => child_trees,
             Node::Leaf { .. } => panic!("Leaf nodes have no child trees"),
@@ -886,9 +963,11 @@ mod tests {
     fn test_extend_and_push_tree() {
         let mut tree1 = Sequence::new();
         tree1.extend(0..20, &());
+        assert_eq!(tree1.items(&()), (0..20).collect::<Vec<u8>>());
 
         let mut tree2 = Sequence::new();
         tree2.extend(50..100, &());
+        assert_eq!(tree2.items(&()), (50..100).collect::<Vec<u8>>());
 
         tree1.append(tree2, &());
         assert_eq!(

@@ -125,7 +125,15 @@ where
                 match *entry.tree.0 {
                     Node::Internal {
                         ref child_trees, ..
-                    } => return Some(child_trees[entry.index - 1].rightmost_leaf()),
+                    } => {
+                        for tree in child_trees[..entry.index].iter().rev() {
+                            if let ChildTree::Loaded { tree } = tree {
+                                if let Some(leaf) = tree.rightmost_leaf() {
+                                    return Some(leaf);
+                                }
+                            }
+                        }
+                    }
                     Node::Leaf { .. } => unreachable!(),
                 };
             }
@@ -185,12 +193,15 @@ where
             match entry.tree.0.as_ref() {
                 Node::Internal { child_trees, .. } => {
                     if descending {
-                        let tree = &child_trees[entry.index];
-                        self.stack.push(StackEntry {
-                            position: D::default(),
-                            tree,
-                            index: tree.0.child_summaries().len() - 1,
-                        })
+                        if let ChildTree::Loaded { tree } = &child_trees[entry.index] {
+                            self.stack.push(StackEntry {
+                                position: D::default(),
+                                tree,
+                                index: tree.0.child_summaries().len() - 1,
+                            });
+                        } else {
+                            descending = false;
+                        }
                     }
                 }
                 Node::Leaf { .. } => {
@@ -240,7 +251,7 @@ where
 
                         while entry.index < child_summaries.len() {
                             let next_summary = &child_summaries[entry.index];
-                            if filter_node(next_summary) {
+                            if filter_node(next_summary) && child_trees[entry.index].is_loaded() {
                                 break;
                             } else {
                                 entry.index += 1;
@@ -277,6 +288,11 @@ where
             };
 
             if let Some(subtree) = new_subtree {
+                let subtree = if let ChildTree::Loaded { tree } = subtree {
+                    tree
+                } else {
+                    unreachable!()
+                };
                 descend = true;
                 self.stack.push(StackEntry {
                     tree: subtree,
@@ -414,12 +430,18 @@ where
                         let comparison = target.seek_cmp(&child_end, cx);
                         if comparison == Ordering::Greater
                             || (comparison == Ordering::Equal && bias == Bias::Right)
+                            || !child_tree.is_loaded()
                         {
                             self.position = child_end;
                             aggregate.push_tree(child_tree, child_summary, cx);
                             entry.index += 1;
                             entry.position = self.position.clone();
                         } else {
+                            let child_tree = if let ChildTree::Loaded { tree } = child_tree {
+                                tree
+                            } else {
+                                unreachable!()
+                            };
                             self.stack.push(StackEntry {
                                 tree: child_tree,
                                 index: 0,
@@ -510,6 +532,12 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
                     Node::Internal { child_trees, .. } => {
                         if !descend {
                             entry.index += 1;
+                            while entry.index < child_trees.len() {
+                                if child_trees[entry.index].is_loaded() {
+                                    break;
+                                }
+                                entry.index += 1;
+                            }
                         }
                         child_trees.get(entry.index)
                     }
@@ -528,6 +556,11 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
             };
 
             if let Some(subtree) = new_subtree {
+                let subtree = if let ChildTree::Loaded { tree } = subtree {
+                    tree
+                } else {
+                    unreachable!()
+                };
                 descend = true;
                 self.stack.push(StackEntry {
                     tree: subtree,
@@ -644,7 +677,7 @@ trait SeekAggregate<'a, T: Item> {
     );
     fn push_tree(
         &mut self,
-        tree: &'a Sequence<T>,
+        tree: &'a ChildTree<T>,
         summary: &'a T::Summary,
         cx: &<T::Summary as Summary>::Context,
     );
@@ -663,7 +696,12 @@ impl<'a, T: Item> SeekAggregate<'a, T> for () {
     fn begin_leaf(&mut self) {}
     fn end_leaf(&mut self, _: &<T::Summary as Summary>::Context) {}
     fn push_item(&mut self, _: &T, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
-    fn push_tree(&mut self, _: &Sequence<T>, _: &T::Summary, _: &<T::Summary as Summary>::Context) {
+    fn push_tree(
+        &mut self,
+        _: &ChildTree<T>,
+        _: &T::Summary,
+        _: &<T::Summary as Summary>::Context,
+    ) {
     }
 }
 
@@ -687,11 +725,11 @@ impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
     }
     fn push_tree(
         &mut self,
-        tree: &Sequence<T>,
-        _: &T::Summary,
+        tree: &ChildTree<T>,
+        summary: &T::Summary,
         cx: &<T::Summary as Summary>::Context,
     ) {
-        self.tree.append(tree.clone(), cx);
+        self.tree.append_internal(tree.clone(), summary.clone(), cx);
     }
 }
 
@@ -706,7 +744,7 @@ where
     }
     fn push_tree(
         &mut self,
-        _: &Sequence<T>,
+        _: &ChildTree<T>,
         summary: &'a T::Summary,
         cx: &<T::Summary as Summary>::Context,
     ) {
