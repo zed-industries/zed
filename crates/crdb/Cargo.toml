@@ -15,12 +15,13 @@ collections = { path = "../collections" }
 util = { path = "../util" }
 
 anyhow.workspace = true
-arrayvec = "0.7.1"
+arrayvec = { version = "0.7.1", features = ["serde"] }
 bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "950bc5482c216c395049ae33ae4501e08975f17f" }
 futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+portable-atomic = { version = "1", features = ["serde"] }
 serde.workspace = true
 serde_bare = "0.5"
 smallvec.workspace = true
@@ -30,6 +31,7 @@ uuid = { version = "1.3", features = ["v4", "fast-rng", "serde"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
+
 async-broadcast = "0.4"
 ctor.workspace = true
 env_logger.workspace = true

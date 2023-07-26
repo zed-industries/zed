@@ -267,6 +267,9 @@ name = "arrayvec"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ascii"
@@ -1749,6 +1752,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
+ "portable-atomic",
  "rand 0.8.5",
  "serde",
  "serde_bare",
@@ -4891,6 +4895,15 @@ name = "pollster"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
+
+[[package]]
+name = "portable-atomic"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc55135a600d700580e406b4de0d59cb9ad25e344a3a091a97ded2622ec4ec6"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "postage"

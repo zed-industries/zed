@@ -672,6 +672,7 @@ impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
     fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.tree.append(
             Sequence(Arc::new(Node::Leaf {
+                saved_id: SavedId::default(),
                 summary: mem::take(&mut self.leaf_summary),
                 items: mem::take(&mut self.leaf_items),
                 item_summaries: mem::take(&mut self.leaf_item_summaries),

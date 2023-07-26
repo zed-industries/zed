@@ -1,14 +1,11 @@
+use anyhow::Result;
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
-// use futures::future::BoxFuture;
-// use serde::{Deserialize, Serialize};
+use futures::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::sync::atomic::Ordering::SeqCst;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
-
-// pub trait KvStore {
-//     fn load<V: for<'de> Deserialize<'de>>(&self, key: &[u8]) -> BoxFuture<Result<V>>;
-//     fn store<V: Serialize>(&self, key: &[u8], value: &V) -> BoxFuture<Result<()>>;
-// }
 
 mod cursor;
 mod map;
@@ -20,6 +17,12 @@ pub use map::*;
 const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 const TREE_BASE: usize = 6;
+
+pub trait KvStore {
+    fn load<V: for<'de> Deserialize<'de>>(&self, key: &[u8]) -> BoxFuture<Result<V>>;
+    fn store<V: Serialize>(&self, namespace: &[u8], key: &[u8], value: &V)
+        -> BoxFuture<Result<()>>;
+}
 
 pub trait Item: Clone {
     type Summary: Summary;
@@ -84,6 +87,59 @@ impl<'a, S: Summary, D1: SeekTarget<'a, S, D1> + Dimension<'a, S>, D2: Dimension
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SavedId(portable_atomic::AtomicU128);
+
+impl Clone for SavedId {
+    fn clone(&self) -> Self {
+        Self(portable_atomic::AtomicU128::new(self.0.load(SeqCst)))
+    }
+}
+
+impl SavedId {
+    fn as_bytes(&self) -> [u8; 16] {
+        self.0.load(SeqCst).to_be_bytes()
+    }
+
+    fn is_saved(&self) -> bool {
+        self.0.load(SeqCst) > 0
+    }
+
+    fn clear(&self) {
+        self.0.store(0, SeqCst)
+    }
+
+    fn save(&self) {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            static NEXT_ID: portable_atomic::AtomicU128 = portable_atomic::AtomicU128::new(1);
+            self.0.store(NEXT_ID.fetch_add(1, SeqCst), SeqCst)
+        }
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            let id = uuid::Uuid::new_v4();
+            assert!(id.as_u128() > 0);
+            self.0.store(id.as_u128(), SeqCst);
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum SavedNode<T: Item> {
+    Internal {
+        height: u8,
+        summary: T::Summary,
+        child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
+        child_trees: ArrayVec<SavedId, { 2 * TREE_BASE }>,
+    },
+    Leaf {
+        summary: T::Summary,
+        items: ArrayVec<T, { 2 * TREE_BASE }>,
+        item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
+    },
+}
+
 struct End<D>(PhantomData<D>);
 
 impl<D> End<D> {
@@ -139,10 +195,96 @@ pub struct Sequence<T: Item>(Arc<Node<T>>);
 impl<T: Item> Sequence<T> {
     pub fn new() -> Self {
         Sequence(Arc::new(Node::Leaf {
+            saved_id: Default::default(),
             summary: T::Summary::default(),
             items: ArrayVec::new(),
             item_summaries: ArrayVec::new(),
         }))
+    }
+
+    pub async fn save<K>(&self, kv: &K) -> Result<()>
+    where
+        K: KvStore,
+        T: Serialize,
+        T::Summary: Serialize,
+    {
+        struct Frame<'a, T: Item> {
+            node: &'a Node<T>,
+            children_saved: bool,
+        }
+
+        let mut stack = Vec::new();
+        stack.push(Frame {
+            node: self.0.as_ref(),
+            children_saved: false,
+        });
+
+        while let Some(frame) = stack.last_mut() {
+            if frame.node.saved_id().is_saved() {
+                stack.pop();
+                continue;
+            }
+
+            match frame.node {
+                Node::Internal {
+                    saved_id,
+                    height,
+                    summary,
+                    child_trees,
+                    child_summaries,
+                    ..
+                } => {
+                    if frame.children_saved {
+                        saved_id.save();
+                        kv.store(
+                            b"node",
+                            &saved_id.as_bytes(),
+                            &SavedNode::<T>::Internal {
+                                height: *height,
+                                summary: summary.clone(),
+                                child_summaries: child_summaries.clone(),
+                                child_trees: child_trees
+                                    .iter()
+                                    .map(|tree| tree.0.as_ref().saved_id().clone())
+                                    .collect(),
+                            },
+                        )
+                        .await?;
+                        stack.pop();
+                    } else {
+                        // When we return to this frame, the children will be saved
+                        // because we pushed them to the stack.
+                        frame.children_saved = true;
+                        for child_tree in child_trees {
+                            stack.push(Frame {
+                                node: child_tree.0.as_ref(),
+                                children_saved: false,
+                            });
+                        }
+                    }
+                }
+                Node::Leaf {
+                    saved_id,
+                    summary,
+                    items,
+                    item_summaries,
+                } => {
+                    saved_id.save();
+                    kv.store(
+                        b"node",
+                        &saved_id.as_bytes(),
+                        &SavedNode::Leaf {
+                            summary: summary.clone(),
+                            items: items.clone(),
+                            item_summaries: item_summaries.clone(),
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
@@ -211,7 +353,9 @@ impl<T: Item> Sequence<T> {
         f: impl FnOnce(&mut T),
         cx: &<T::Summary as Summary>::Context,
     ) -> Option<T::Summary> {
-        match Arc::make_mut(&mut self.0) {
+        let node = Arc::make_mut(&mut self.0);
+        node.saved_id().clear();
+        match node {
             Node::Internal {
                 summary,
                 child_summaries,
@@ -228,6 +372,7 @@ impl<T: Item> Sequence<T> {
                 summary,
                 items,
                 item_summaries,
+                ..
             } => {
                 if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
                 {
@@ -282,6 +427,7 @@ impl<T: Item> Sequence<T> {
 
             if leaf.is_none() {
                 leaf = Some(Node::Leaf::<T> {
+                    saved_id: Default::default(),
                     summary: T::Summary::default(),
                     items: ArrayVec::new(),
                     item_summaries: ArrayVec::new(),
@@ -292,6 +438,7 @@ impl<T: Item> Sequence<T> {
                 summary,
                 items,
                 item_summaries,
+                ..
             }) = leaf.as_mut()
             {
                 let item_summary = item.summary();
@@ -312,6 +459,7 @@ impl<T: Item> Sequence<T> {
         let summary = item.summary();
         self.append(
             Sequence(Arc::new(Node::Leaf {
+                saved_id: Default::default(),
                 summary: summary.clone(),
                 items: ArrayVec::from_iter(Some(item)),
                 item_summaries: ArrayVec::from_iter(Some(summary)),
@@ -337,7 +485,9 @@ impl<T: Item> Sequence<T> {
         other: Sequence<T>,
         cx: &<T::Summary as Summary>::Context,
     ) -> Option<Sequence<T>> {
-        match Arc::make_mut(&mut self.0) {
+        let node = Arc::make_mut(&mut self.0);
+        node.saved_id().clear();
+        match node {
             Node::Internal {
                 height,
                 summary,
@@ -396,6 +546,7 @@ impl<T: Item> Sequence<T> {
                     *child_trees = left_trees;
 
                     Some(Sequence(Arc::new(Node::Internal {
+                        saved_id: Default::default(),
                         height: *height,
                         summary: sum(right_summaries.iter(), cx),
                         child_summaries: right_summaries,
@@ -411,6 +562,7 @@ impl<T: Item> Sequence<T> {
                 summary,
                 items,
                 item_summaries,
+                ..
             } => {
                 let other_node = other.0;
 
@@ -438,6 +590,7 @@ impl<T: Item> Sequence<T> {
                     *item_summaries = left_summaries;
                     *summary = sum(item_summaries.iter(), cx);
                     Some(Sequence(Arc::new(Node::Leaf {
+                        saved_id: Default::default(),
                         items: right_items,
                         summary: sum(right_summaries.iter(), cx),
                         item_summaries: right_summaries,
@@ -465,6 +618,7 @@ impl<T: Item> Sequence<T> {
         child_trees.push(left);
         child_trees.push(right);
         Sequence(Arc::new(Node::Internal {
+            saved_id: Default::default(),
             height,
             summary: sum(child_summaries.iter(), cx),
             child_summaries,
@@ -618,12 +772,14 @@ impl<T: Item> Default for Sequence<T> {
 #[derive(Clone, Debug)]
 pub enum Node<T: Item> {
     Internal {
+        saved_id: SavedId,
         height: u8,
         summary: T::Summary,
         child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
         child_trees: ArrayVec<Sequence<T>, { 2 * TREE_BASE }>,
     },
     Leaf {
+        saved_id: SavedId,
         summary: T::Summary,
         items: ArrayVec<T, { 2 * TREE_BASE }>,
         item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
@@ -631,6 +787,12 @@ pub enum Node<T: Item> {
 }
 
 impl<T: Item> Node<T> {
+    fn saved_id(&self) -> &SavedId {
+        match self {
+            Node::Internal { saved_id, .. } | Node::Leaf { saved_id, .. } => saved_id,
+        }
+    }
+
     fn is_leaf(&self) -> bool {
         matches!(self, Node::Leaf { .. })
     }
