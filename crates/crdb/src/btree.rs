@@ -625,6 +625,12 @@ impl<T: Item> Sequence<T> {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Prune {
+    Descend,
+    Unload,
+}
+
 impl<T> Sequence<T>
 where
     T: Item + Serialize + for<'a> Deserialize<'a>,
@@ -785,6 +791,43 @@ where
                     )
                     .await?;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn prune<F>(&mut self, mut f: F) -> Result<()>
+    where
+        F: FnMut(&T::Summary) -> Prune,
+    {
+        let mut stack = Vec::new();
+        stack.push(self);
+        while let Some(node) = stack.pop() {
+            match Arc::make_mut(&mut node.0) {
+                Node::Internal {
+                    child_summaries,
+                    child_trees,
+                    ..
+                } => {
+                    for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
+                        match f(child_summary) {
+                            Prune::Descend => {
+                                if let ChildTree::Loaded { tree } = child_tree {
+                                    stack.push(tree);
+                                }
+                            }
+                            Prune::Unload => {
+                                if child_tree.saved_id().is_saved() {
+                                    *child_tree = ChildTree::Unloaded {
+                                        saved_id: child_tree.saved_id().clone(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+                Node::Leaf { .. } => {}
             }
         }
 
@@ -1061,7 +1104,7 @@ mod tests {
     }
 
     #[test]
-    fn test_random() {
+    fn test_random_in_memory_sequence() {
         let mut starting_seed = 0;
         if let Ok(value) = std::env::var("SEED") {
             starting_seed = value.parse().expect("invalid SEED variable");
