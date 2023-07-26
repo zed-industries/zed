@@ -629,6 +629,7 @@ impl<T: Item> Sequence<T> {
 pub enum Prune {
     Descend,
     Unload,
+    Keep,
 }
 
 impl<T> Sequence<T>
@@ -797,7 +798,7 @@ where
         Ok(())
     }
 
-    pub fn prune<F>(&mut self, mut f: F) -> Result<()>
+    pub fn prune<F>(&mut self, mut f: F)
     where
         F: FnMut(&T::Summary) -> Prune,
     {
@@ -824,14 +825,13 @@ where
                                     };
                                 }
                             }
+                            Prune::Keep => {}
                         }
                     }
                 }
                 Node::Leaf { .. } => {}
             }
         }
-
-        Ok(())
     }
 }
 
@@ -1081,13 +1081,6 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{distributions, prelude::*};
     use std::cmp;
-
-    #[ctor::ctor]
-    fn init_logger() {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
-        }
-    }
 
     #[test]
     fn test_extend_and_push_tree() {
