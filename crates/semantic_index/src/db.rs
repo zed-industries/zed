@@ -287,30 +287,6 @@ impl VectorDatabase {
         Ok(results)
     }
 
-    // pub fn top_k_search(
-    //     &self,
-    //     worktree_ids: &[i64],
-    //     query_embedding: &Vec<f32>,
-    //     limit: usize,
-    //     file_ids: Vec<i64>,
-    // ) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
-    //     let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-    //     self.for_each_document(&worktree_ids, file_ids, |id, embedding| {
-    //         let similarity = dot(&embedding, &query_embedding);
-    //         let ix = match results
-    //             .binary_search_by(|(_, s)| similarity.partial_cmp(&s).unwrap_or(Ordering::Equal))
-    //         {
-    //             Ok(ix) => ix,
-    //             Err(ix) => ix,
-    //         };
-    //         results.insert(ix, (id, similarity));
-    //         results.truncate(limit);
-    //     })?;
-
-    //     let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
-    //     self.get_documents_by_ids(&ids)
-    // }
-
     pub fn retrieve_included_file_ids(
         &self,
         worktree_ids: &[i64],
