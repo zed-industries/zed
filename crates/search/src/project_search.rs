@@ -30,7 +30,6 @@ use std::{
     ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
-    time::Instant,
 };
 use util::ResultExt as _;
 use workspace::{
