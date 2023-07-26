@@ -30,6 +30,7 @@ use std::{
     ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -192,6 +193,7 @@ impl ProjectSearch {
         exclude_files: Vec<GlobMatcher>,
         cx: &mut ModelContext<Self>,
     ) {
+        let t0 = Instant::now();
         let search = SemanticIndex::global(cx).map(|index| {
             index.update(cx, |semantic_index, cx| {
                 semantic_index.search_project(
@@ -208,6 +210,7 @@ impl ProjectSearch {
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
+            log::trace!("semantic search elapsed: {:?}", t0.elapsed().as_millis());
 
             let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
                 this.excerpts.update(cx, |excerpts, cx| {

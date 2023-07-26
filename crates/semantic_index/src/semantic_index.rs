@@ -20,6 +20,7 @@ use postage::watch;
 use project::{Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     mem,
     ops::Range,
@@ -704,27 +705,64 @@ impl SemanticIndex {
         let database_url = self.database_url.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
-            let documents = cx
-                .background()
-                .spawn(async move {
-                    let database = VectorDatabase::new(fs, database_url).await?;
+            let database = VectorDatabase::new(fs.clone(), database_url.clone()).await?;
 
-                    let phrase_embedding = embedding_provider
-                        .embed_batch(vec![&phrase])
-                        .await?
-                        .into_iter()
-                        .next()
-                        .unwrap();
+            let phrase_embedding = embedding_provider
+                .embed_batch(vec![&phrase])
+                .await?
+                .into_iter()
+                .next()
+                .unwrap();
 
-                    database.top_k_search(
-                        &worktree_db_ids,
-                        &phrase_embedding,
-                        limit,
-                        include_globs,
-                        exclude_globs,
-                    )
-                })
-                .await?;
+            let file_ids = database.retrieve_included_file_ids(
+                &worktree_db_ids,
+                include_globs,
+                exclude_globs,
+            )?;
+
+            let batch_n = cx.background().num_cpus();
+            let batch_size = file_ids.clone().len() / batch_n;
+
+            let mut result_tasks = Vec::new();
+            for batch in file_ids.chunks(batch_size) {
+                let batch = batch.into_iter().map(|v| *v).collect::<Vec<i64>>();
+                let limit = limit.clone();
+                let fs = fs.clone();
+                let database_url = database_url.clone();
+                let phrase_embedding = phrase_embedding.clone();
+                let task = cx.background().spawn(async move {
+                    let database = VectorDatabase::new(fs, database_url).await.log_err();
+                    if database.is_none() {
+                        return Err(anyhow!("failed to acquire database connection"));
+                    } else {
+                        database
+                            .unwrap()
+                            .top_k_search(&phrase_embedding, limit, batch.as_slice())
+                    }
+                });
+                result_tasks.push(task);
+            }
+
+            let batch_results = futures::future::join_all(result_tasks).await;
+
+            let mut results = Vec::new();
+            for batch_result in batch_results {
+                if batch_result.is_ok() {
+                    for (id, similarity) in batch_result.unwrap() {
+                        let ix = match results.binary_search_by(|(_, s)| {
+                            similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
+                        }) {
+                            Ok(ix) => ix,
+                            Err(ix) => ix,
+                        };
+                        results.insert(ix, (id, similarity));
+                        results.truncate(limit);
+                    }
+                }
+            }
+
+            let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<i64>>();
+            let documents = database.get_documents_by_ids(ids.as_slice())?;
 
             let mut tasks = Vec::new();
             let mut ranges = Vec::new();
