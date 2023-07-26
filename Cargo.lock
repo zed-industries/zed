@@ -8070,9 +8070,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-elm"
-version = "5.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95236155fa1cd5fcf92123e7e6aa7b6e8c6756b54b5d39afd792a23bd6c9eb7b"
+version = "5.6.4"
+source = "git+https://github.com/elm-tooling/tree-sitter-elm?rev=692c50c0b961364c40299e73c1306aecb5d20f40#692c50c0b961364c40299e73c1306aecb5d20f40"
 dependencies = [
  "cc",
  "tree-sitter",
