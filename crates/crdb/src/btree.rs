@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use futures::future::BoxFuture;
@@ -19,7 +19,11 @@ const TREE_BASE: usize = 2;
 const TREE_BASE: usize = 6;
 
 pub trait KvStore {
-    fn load<V: for<'de> Deserialize<'de>>(&self, key: &[u8]) -> BoxFuture<Result<V>>;
+    fn load<V: for<'de> Deserialize<'de>>(
+        &self,
+        namespace: &[u8],
+        key: &[u8],
+    ) -> BoxFuture<Result<V>>;
     fn store<V: Serialize>(&self, namespace: &[u8], key: &[u8], value: &V)
         -> BoxFuture<Result<()>>;
 }
@@ -200,99 +204,6 @@ impl<T: Item> Sequence<T> {
             items: ArrayVec::new(),
             item_summaries: ArrayVec::new(),
         }))
-    }
-
-    pub async fn save<K>(&self, kv: &K) -> Result<()>
-    where
-        K: KvStore,
-        T: Serialize,
-        T::Summary: Serialize,
-    {
-        struct Frame<'a, T: Item> {
-            node: &'a Node<T>,
-            children_saved: bool,
-        }
-
-        let mut stack = Vec::new();
-        stack.push(Frame {
-            node: self.0.as_ref(),
-            children_saved: false,
-        });
-
-        while let Some(frame) = stack.last_mut() {
-            if frame.node.saved_id().is_saved() {
-                stack.pop();
-                continue;
-            }
-
-            match frame.node {
-                Node::Internal {
-                    saved_id,
-                    height,
-                    summary,
-                    child_trees,
-                    child_summaries,
-                    ..
-                } => {
-                    if frame.children_saved {
-                        saved_id.save();
-                        kv.store(
-                            b"node",
-                            &saved_id.as_bytes(),
-                            &SavedNode::<T>::Internal {
-                                height: *height,
-                                summary: summary.clone(),
-                                child_summaries: child_summaries.clone(),
-                                child_trees: child_trees
-                                    .iter()
-                                    .map(|tree| tree.saved_id().clone())
-                                    .collect(),
-                            },
-                        )
-                        .await?;
-                        stack.pop();
-                    } else {
-                        // When we return to this frame, the children will be saved
-                        // because we pushed them to the stack.
-                        frame.children_saved = true;
-                        for child_tree in child_trees {
-                            match child_tree {
-                                ChildTree::Loaded { tree: child_tree } => {
-                                    stack.push(Frame {
-                                        node: child_tree.0.as_ref(),
-                                        children_saved: false,
-                                    });
-                                }
-                                ChildTree::Unloaded { .. } => {
-                                    // If this child tree was not loaded, then there's
-                                    // no need to save it.
-                                }
-                            }
-                        }
-                    }
-                }
-                Node::Leaf {
-                    saved_id,
-                    summary,
-                    items,
-                    item_summaries,
-                } => {
-                    saved_id.save();
-                    kv.store(
-                        b"node",
-                        &saved_id.as_bytes(),
-                        &SavedNode::Leaf {
-                            summary: summary.clone(),
-                            items: items.clone(),
-                            item_summaries: item_summaries.clone(),
-                        },
-                    )
-                    .await?;
-                }
-            }
-        }
-
-        Ok(())
     }
 
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
@@ -492,25 +403,31 @@ impl<T: Item> Sequence<T> {
 
     fn append_internal(
         &mut self,
-        other: ChildTree<T>,
+        other_child: ChildTree<T>,
         other_summary: T::Summary,
         cx: &<T::Summary as Summary>::Context,
     ) {
-        if let ChildTree::Loaded { tree: other } = &other {
-            if !other.0.is_leaf() || !other.0.items().is_empty() {
-                if self.0.height() < other.0.height() {
-                    for (tree, summary) in
-                        other.0.child_trees().iter().zip(other.0.child_summaries())
+        match &other_child {
+            ChildTree::Loaded { tree: other } => {
+                if !other.0.is_leaf() || !other.0.items().is_empty() {
+                    if self.0.height() < other.0.height() {
+                        for (tree, summary) in
+                            other.0.child_trees().iter().zip(other.0.child_summaries())
+                        {
+                            self.append_internal(tree.clone(), summary.clone(), cx);
+                        }
+                    } else if let Some(split_tree) =
+                        self.push_tree_recursive(other_child, other_summary, cx)
                     {
-                        self.append_internal(tree.clone(), summary.clone(), cx);
+                        *self = Self::from_child_trees(self.clone(), split_tree, cx);
                     }
-                    return;
                 }
             }
-        }
-
-        if let Some(split_tree) = self.push_tree_recursive(other, other_summary, cx) {
-            *self = Self::from_child_trees(self.clone(), split_tree, cx);
+            ChildTree::Unloaded { .. } => {
+                if let Some(split_tree) = self.push_tree_recursive(other_child, other_summary, cx) {
+                    *self = Self::from_child_trees(self.clone(), split_tree, cx);
+                }
+            }
         }
     }
 
@@ -705,6 +622,137 @@ impl<T: Item> Sequence<T> {
     #[cfg(debug_assertions)]
     pub fn _debug_entries(&self) -> Vec<&T> {
         self.iter().collect::<Vec<_>>()
+    }
+}
+
+impl<T> Sequence<T>
+where
+    T: Item + Serialize + for<'a> Deserialize<'a>,
+    T::Summary: Serialize + for<'a> Deserialize<'a>,
+{
+    pub async fn from_root<K: KvStore>(root_id: SavedId, kv: &K) -> Result<Self> {
+        let root = kv
+            .load::<SavedNode<T>>(b"node", &root_id.as_bytes())
+            .await?;
+        let node = match root {
+            SavedNode::Internal {
+                height,
+                summary,
+                child_summaries,
+                child_trees,
+            } => Node::Internal {
+                saved_id: root_id,
+                height,
+                summary,
+                child_summaries,
+                child_trees: child_trees
+                    .into_iter()
+                    .map(|saved_id| ChildTree::Unloaded { saved_id })
+                    .collect(),
+            },
+            SavedNode::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => Node::Leaf {
+                saved_id: root_id,
+                summary,
+                item_summaries,
+                items,
+            },
+        };
+        Ok(Self(Arc::new(node)))
+    }
+
+    pub async fn save<K>(&self, kv: &K) -> Result<()>
+    where
+        K: KvStore,
+    {
+        struct Frame<'a, T: Item> {
+            node: &'a Node<T>,
+            children_saved: bool,
+        }
+
+        let mut stack = Vec::new();
+        stack.push(Frame {
+            node: self.0.as_ref(),
+            children_saved: false,
+        });
+
+        while let Some(frame) = stack.last_mut() {
+            if frame.node.saved_id().is_saved() {
+                stack.pop();
+                continue;
+            }
+
+            match frame.node {
+                Node::Internal {
+                    saved_id,
+                    height,
+                    summary,
+                    child_trees,
+                    child_summaries,
+                    ..
+                } => {
+                    if frame.children_saved {
+                        saved_id.save();
+                        kv.store(
+                            b"node",
+                            &saved_id.as_bytes(),
+                            &SavedNode::<T>::Internal {
+                                height: *height,
+                                summary: summary.clone(),
+                                child_summaries: child_summaries.clone(),
+                                child_trees: child_trees
+                                    .iter()
+                                    .map(|tree| tree.saved_id().clone())
+                                    .collect(),
+                            },
+                        )
+                        .await?;
+                        stack.pop();
+                    } else {
+                        // When we return to this frame, the children will be saved
+                        // because we pushed them to the stack.
+                        frame.children_saved = true;
+                        for child_tree in child_trees {
+                            match child_tree {
+                                ChildTree::Loaded { tree: child_tree } => {
+                                    stack.push(Frame {
+                                        node: child_tree.0.as_ref(),
+                                        children_saved: false,
+                                    });
+                                }
+                                ChildTree::Unloaded { .. } => {
+                                    // If this child tree was not loaded, then there's
+                                    // no need to save it.
+                                }
+                            }
+                        }
+                    }
+                }
+                Node::Leaf {
+                    saved_id,
+                    summary,
+                    items,
+                    item_summaries,
+                } => {
+                    saved_id.save();
+                    kv.store(
+                        b"node",
+                        &saved_id.as_bytes(),
+                        &SavedNode::Leaf {
+                            summary: summary.clone(),
+                            items: items.clone(),
+                            item_summaries: item_summaries.clone(),
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
