@@ -2033,14 +2033,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_repo(deterministic: Arc<Deterministic>) {
-        let kv = Arc::new(TestKv::new(deterministic.build_background()));
         let network = TestNetwork::new(deterministic.build_background());
-        let server = Server::new(network.server(), kv.clone());
+        let server = Server::new(
+            network.server(),
+            Arc::new(TestKv::new(deterministic.build_background())),
+        );
 
         let client_a = Client::new(
             deterministic.build_background(),
             network.client("client-a"),
-            kv.clone(),
+            Arc::new(TestKv::new(deterministic.build_background())),
         );
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
@@ -2054,11 +2056,12 @@ mod tests {
         assert_eq!(doc1_a.text().to_string(), "abc");
         assert_eq!(doc2_a.text().to_string(), "def");
 
+        let kv_b = Arc::new(TestKv::new(deterministic.build_background()));
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
         let client_b = Client::new(
             deterministic.build_background(),
             network.client("client-b"),
-            kv.clone(),
+            kv_b,
         );
         let repo_b = client_b.clone_repo("repo-1").await.unwrap();
         deterministic.run_until_parked();
