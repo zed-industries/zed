@@ -55,7 +55,9 @@ export type ThemeConfigInputColorsKeys = keyof ThemeConfigInputColors
  * }
  * ```
  */
-export type ThemeConfigInputSyntax = Partial<Record<SyntaxProperty, Partial<SyntaxHighlightStyle>>>
+export type ThemeConfigInputSyntax = Partial<
+    Record<SyntaxProperty, Partial<SyntaxHighlightStyle>>
+>
 
 interface ThemeConfigOverrides {
     syntax: ThemeConfigInputSyntax

@@ -4,9 +4,7 @@ import {
     SingleOtherToken,
     TokenTypes,
 } from "@tokens-studio/types"
-import {
-    Shadow,
-} from "../create_theme"
+import { Shadow } from "../create_theme"
 import { LayerToken, layer_token } from "./layer"
 import { PlayersToken, players_token } from "./players"
 import { color_token } from "./token"

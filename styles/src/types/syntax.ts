@@ -6,198 +6,197 @@
 //     'npm run extract-syntax-types' from ./styles
 
 export type SyntaxHighlightStyle = {
-    color: string,
-    fade_out?: number,
-    italic?: boolean,
-    underline?: boolean,
-    weight?: string,
+    color: string
+    fade_out?: number
+    italic?: boolean
+    underline?: boolean
+    weight?: string
 }
 
 export type Syntax = Record<SyntaxProperty, SyntaxHighlightStyle>
 export type SyntaxOverride = Partial<Syntax>
 
-export type SyntaxProperty = 
+export type SyntaxProperty =
     /** Default text color */
-    | 'primary'
+    | "primary"
 
     /** elixir */
-    | '__attribute__' 
+    | "__attribute__"
     /** elixir */
-    | '__name__' 
+    | "__name__"
     /** elixir */
-    | '_sigil_name' 
+    | "_sigil_name"
     /** css, heex, lua */
-    | 'attribute' 
+    | "attribute"
     /** javascript, lua, tsx, typescript, yaml */
-    | 'boolean' 
+    | "boolean"
     /** elixir */
-    | 'comment.doc' 
+    | "comment.doc"
     /** elixir */
-    | 'comment.unused' 
+    | "comment.unused"
     /** bash, c, cpp, css, elixir, elm, erb, ... */
-    | 'comment' 
+    | "comment"
     /** elixir, go, javascript, lua, php, python, racket, ... */
-    | 'constant.builtin' 
+    | "constant.builtin"
     /** bash, c, cpp, elixir, elm, glsl, heex, ... */
-    | 'constant' 
+    | "constant"
     /** glsl */
-    | 'delimiter' 
+    | "delimiter"
     /** bash, elixir, javascript, python, ruby, tsx, typescript */
-    | 'embedded' 
+    | "embedded"
     /** markdown */
-    | 'emphasis.strong' 
+    | "emphasis.strong"
     /** markdown */
-    | 'emphasis' 
+    | "emphasis"
     /** go, python, racket, ruby, scheme */
-    | 'escape' 
+    | "escape"
     /** lua */
-    | 'field' 
+    | "field"
     /** lua, php, python */
-    | 'function.builtin' 
+    | "function.builtin"
     /** elm, lua, rust */
-    | 'function.definition' 
+    | "function.definition"
     /** ruby */
-    | 'function.method.builtin' 
+    | "function.method.builtin"
     /** go, javascript, php, python, ruby, rust, tsx, ... */
-    | 'function.method' 
+    | "function.method"
     /** rust */
-    | 'function.special.definition' 
+    | "function.special.definition"
     /** c, cpp, glsl, rust */
-    | 'function.special' 
+    | "function.special"
     /** bash, c, cpp, css, elixir, elm, glsl, ... */
-    | 'function' 
+    | "function"
     /** elm */
-    | 'identifier' 
+    | "identifier"
     /** glsl */
-    | 'keyword.function' 
+    | "keyword.function"
     /** bash, c, cpp, css, elixir, elm, erb, ... */
-    | 'keyword' 
+    | "keyword"
     /** c, cpp, glsl */
-    | 'label' 
+    | "label"
     /** markdown */
-    | 'link_text' 
+    | "link_text"
     /** markdown */
-    | 'link_uri' 
+    | "link_uri"
     /** lua, php, tsx, typescript */
-    | 'method.constructor' 
+    | "method.constructor"
     /** lua */
-    | 'method' 
+    | "method"
     /** heex */
-    | 'module' 
+    | "module"
     /** svelte */
-    | 'none' 
+    | "none"
     /** bash, c, cpp, css, elixir, glsl, go, ... */
-    | 'number' 
+    | "number"
     /** bash, c, cpp, css, elixir, elm, glsl, ... */
-    | 'operator' 
+    | "operator"
     /** lua */
-    | 'parameter' 
+    | "parameter"
     /** lua */
-    | 'preproc' 
+    | "preproc"
     /** bash, c, cpp, css, glsl, go, html, ... */
-    | 'property' 
+    | "property"
     /** c, cpp, elixir, elm, heex, html, javascript, ... */
-    | 'punctuation.bracket' 
+    | "punctuation.bracket"
     /** c, cpp, css, elixir, elm, heex, javascript, ... */
-    | 'punctuation.delimiter' 
+    | "punctuation.delimiter"
     /** markdown */
-    | 'punctuation.list_marker' 
+    | "punctuation.list_marker"
     /** elixir, javascript, python, ruby, tsx, typescript, yaml */
-    | 'punctuation.special' 
+    | "punctuation.special"
     /** elixir */
-    | 'punctuation' 
+    | "punctuation"
     /** glsl */
-    | 'storageclass' 
+    | "storageclass"
     /** elixir, elm, yaml */
-    | 'string.escape' 
+    | "string.escape"
     /** elixir, javascript, racket, ruby, tsx, typescript */
-    | 'string.regex' 
+    | "string.regex"
     /** elixir, ruby */
-    | 'string.special.symbol' 
+    | "string.special.symbol"
     /** css, elixir, toml */
-    | 'string.special' 
+    | "string.special"
     /** bash, c, cpp, css, elixir, elm, glsl, ... */
-    | 'string' 
+    | "string"
     /** svelte */
-    | 'tag.delimiter' 
+    | "tag.delimiter"
     /** css, heex, php, svelte */
-    | 'tag' 
+    | "tag"
     /** markdown */
-    | 'text.literal' 
+    | "text.literal"
     /** markdown */
-    | 'title' 
+    | "title"
     /** javascript, php, rust, tsx, typescript */
-    | 'type.builtin' 
+    | "type.builtin"
     /** glsl */
-    | 'type.qualifier' 
+    | "type.qualifier"
     /** c, cpp, css, elixir, elm, glsl, go, ... */
-    | 'type' 
+    | "type"
     /** glsl, php */
-    | 'variable.builtin' 
+    | "variable.builtin"
     /** cpp, css, javascript, lua, racket, ruby, rust, ... */
-    | 'variable.special' 
+    | "variable.special"
     /** c, cpp, elm, glsl, go, javascript, lua, ... */
-    | 'variable' 
-
+    | "variable"
 
 export const allSyntaxKeys: SyntaxProperty[] = [
-    '__attribute__',
-    '__name__',
-    '_sigil_name',
-    'attribute',
-    'boolean',
-    'comment.doc',
-    'comment.unused',
-    'comment',
-    'constant.builtin',
-    'constant',
-    'delimiter',
-    'embedded',
-    'emphasis.strong',
-    'emphasis',
-    'escape',
-    'field',
-    'function.builtin',
-    'function.definition',
-    'function.method.builtin',
-    'function.method',
-    'function.special.definition',
-    'function.special',
-    'function',
-    'identifier',
-    'keyword.function',
-    'keyword',
-    'label',
-    'link_text',
-    'link_uri',
-    'method.constructor',
-    'method',
-    'module',
-    'none',
-    'number',
-    'operator',
-    'parameter',
-    'preproc',
-    'property',
-    'punctuation.bracket',
-    'punctuation.delimiter',
-    'punctuation.list_marker',
-    'punctuation.special',
-    'punctuation',
-    'storageclass',
-    'string.escape',
-    'string.regex',
-    'string.special.symbol',
-    'string.special',
-    'string',
-    'tag.delimiter',
-    'tag',
-    'text.literal',
-    'title',
-    'type.builtin',
-    'type.qualifier',
-    'type',
-    'variable.builtin',
-    'variable.special',
-    'variable'
+    "__attribute__",
+    "__name__",
+    "_sigil_name",
+    "attribute",
+    "boolean",
+    "comment.doc",
+    "comment.unused",
+    "comment",
+    "constant.builtin",
+    "constant",
+    "delimiter",
+    "embedded",
+    "emphasis.strong",
+    "emphasis",
+    "escape",
+    "field",
+    "function.builtin",
+    "function.definition",
+    "function.method.builtin",
+    "function.method",
+    "function.special.definition",
+    "function.special",
+    "function",
+    "identifier",
+    "keyword.function",
+    "keyword",
+    "label",
+    "link_text",
+    "link_uri",
+    "method.constructor",
+    "method",
+    "module",
+    "none",
+    "number",
+    "operator",
+    "parameter",
+    "preproc",
+    "property",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "punctuation.list_marker",
+    "punctuation.special",
+    "punctuation",
+    "storageclass",
+    "string.escape",
+    "string.regex",
+    "string.special.symbol",
+    "string.special",
+    "string",
+    "tag.delimiter",
+    "tag",
+    "text.literal",
+    "title",
+    "type.builtin",
+    "type.qualifier",
+    "type",
+    "variable.builtin",
+    "variable.special",
+    "variable",
 ]

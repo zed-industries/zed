@@ -1,4 +1,8 @@
-import { ThemeLicenseType, ThemeFamilyMeta, ThemeConfigInputSyntax } from "../../common"
+import {
+    ThemeLicenseType,
+    ThemeFamilyMeta,
+    ThemeConfigInputSyntax,
+} from "../../common"
 
 export interface Variant {
     colors: {

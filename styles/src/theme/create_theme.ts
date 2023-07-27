@@ -2,7 +2,7 @@ import { Scale, Color } from "chroma-js"
 import {
     ThemeConfig,
     ThemeAppearance,
-    ThemeConfigInputColors
+    ThemeConfigInputColors,
 } from "./theme_config"
 import { get_ramps } from "./ramps"
 import { syntaxStyle } from "./syntax"
@@ -13,16 +13,16 @@ export interface Theme {
     is_light: boolean
 
     /**
-    * App background, other elements that should sit directly on top of the background.
-    */
+     * App background, other elements that should sit directly on top of the background.
+     */
     lowest: Layer
     /**
-    * Panels, tabs, other UI surfaces that sit on top of the background.
-    */
+     * Panels, tabs, other UI surfaces that sit on top of the background.
+     */
     middle: Layer
     /**
-    * Editors like code buffers, conversation editors, etc.
-    */
+     * Editors like code buffers, conversation editors, etc.
+     */
     highest: Layer
 
     ramps: RampSet
@@ -115,11 +115,7 @@ export interface Style {
 }
 
 export function create_theme(theme: ThemeConfig): Theme {
-    const {
-        name,
-        appearance,
-        input_color,
-    } = theme
+    const { name, appearance, input_color } = theme
 
     const is_light = appearance === ThemeAppearance.Light
     const color_ramps: ThemeConfigInputColors = input_color
@@ -161,7 +157,10 @@ export function create_theme(theme: ThemeConfig): Theme {
         "7": player(ramps.yellow),
     }
 
-    const syntax = syntaxStyle(ramps, theme.override.syntax ? theme.override.syntax : {})
+    const syntax = syntaxStyle(
+        ramps,
+        theme.override.syntax ? theme.override.syntax : {}
+    )
 
     return {
         name,
