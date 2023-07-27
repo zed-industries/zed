@@ -374,7 +374,9 @@ impl Item for ProjectSearchView {
                         query_text.into()
                     });
                 Label::new(
-                    tab_name.unwrap_or("Project search".into()),
+                    tab_name
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("Project search".into()),
                     tab_theme.label.clone(),
                 )
                 .aligned()
@@ -425,6 +427,7 @@ impl Item for ProjectSearchView {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
+
         self.results_editor
             .update(cx, |editor, cx| editor.reload(project, cx))
     }
@@ -825,6 +828,7 @@ impl ProjectSearchView {
     }
 
     fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
+
         let match_ranges = self.model.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
@@ -1026,8 +1030,11 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.filters_enabled = !search_view.filters_enabled;
+                search_view.included_files_editor.update(cx, |_, cx| {cx.notify()});
+                search_view.excluded_files_editor.update(cx, |_, cx| {cx.notify()});
                 search_view.semantic = None;
                 search_view.search(cx);
+                cx.notify();
             });
             cx.notify();
             true
@@ -1325,12 +1332,12 @@ impl View for ProjectSearchBar {
             let semantic_index =
                 SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
             Flex::row()
-                .with_child(Flex::row().flex(1., true))
+                .with_child(Flex::column().with_child(Flex::row().with_children(matches).aligned()
+                .left()).flex(1., true))
                 .with_child(
                     Flex::column()
                         .with_child(
                             Flex::row()
-                                .with_children(matches)
                                 .with_child(
                                     Flex::row()
                                         .with_child(query)
@@ -1413,8 +1420,14 @@ impl ToolbarItemView for ProjectSearchBar {
         }
     }
 
-    fn row_count(&self) -> usize {
-        2
+    fn row_count(&self, cx: &ViewContext<Self>) -> usize {
+        self.active_project_search
+            .as_ref()
+            .map(|search| {
+                let offset = search.read(cx).filters_enabled as usize;
+                1 + offset
+            })
+            .unwrap_or_else(|| 1)
     }
 }
 

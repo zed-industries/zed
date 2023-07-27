@@ -25,7 +25,7 @@ pub trait ToolbarItemView: View {
     /// Number of times toolbar's height will be repeated to get the effective height.
     /// Useful when multiple rows one under each other are needed.
     /// The rows have the same width and act as a whole when reacting to resizes and similar events.
-    fn row_count(&self) -> usize {
+    fn row_count(&self, _cx: &ViewContext<Self>) -> usize {
         1
     }
 }
@@ -362,7 +362,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     }
 
     fn row_count(&self, cx: &WindowContext) -> usize {
-        self.read(cx).row_count()
+        self.read_with(cx, |this, cx| this.row_count(cx))
     }
 }
 
