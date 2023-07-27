@@ -1393,7 +1393,7 @@ mod tests {
                     probe_end >= splice_start && probe_start <= splice_end
                 }))
                 .unwrap();
-                let count = rng.gen_range(0..3);
+                let count = rng.gen_range(0..5);
                 let tree_end = tree.extent::<Count>(&());
                 assert_eq!(tree_end.0, reference_items.len());
                 let new_items = rng
@@ -1427,14 +1427,21 @@ mod tests {
                     tree.cursor::<()>().collect::<Vec<_>>()
                 );
 
-                log::info!("tree items: {:?}", tree.items(&()));
-                continue;
+                log::info!("full tree items: {:?}", full_tree.items(&()));
+                log::info!("partial tree items: {:?}", tree.items(&()));
+
+                let mut partial_reference_items = Vec::new();
+                let mut cursor = tree.cursor::<Count>();
+                cursor.next(&());
+                while let Some(item) = cursor.item() {
+                    partial_reference_items.push((cursor.start().0, *item));
+                    cursor.next(&());
+                }
 
                 let mut filter_cursor = tree.filter::<_, Count>(|summary| summary.contains_even);
-                let expected_filtered_items = tree
-                    .items(&())
-                    .into_iter()
-                    .enumerate()
+                let expected_filtered_items = partial_reference_items
+                    .iter()
+                    .copied()
                     .filter(|(_, item)| (item & 1) == 0)
                     .collect::<Vec<_>>();
 
@@ -1470,38 +1477,57 @@ mod tests {
                 }
                 assert_eq!(filter_cursor.item(), None);
 
-                let mut pos = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>();
-                cursor.seek(&Count(pos), Bias::Right, &());
+                let start_ix = rng.gen_range(0..=reference_items.len());
+                cursor.seek(&Count(start_ix), Bias::Right, &());
+                let start_ix = rng.gen_range(cursor.start().0..=reference_items.len());
+                cursor.seek_forward(&Count(start_ix), Bias::Right, &());
+                let mut partial_ix = partial_reference_items
+                    .iter()
+                    .position(|(ix, _)| *ix >= start_ix)
+                    .unwrap_or(partial_reference_items.len());
 
                 for i in 0..10 {
-                    assert_eq!(cursor.start().0, pos);
+                    let full_ix = if before_start {
+                        0
+                    } else {
+                        partial_reference_items
+                            .get(partial_ix)
+                            .map_or(reference_items.len(), |(ix, _)| *ix)
+                    };
+                    assert_eq!(cursor.start().0, full_ix);
 
-                    if pos > 0 {
-                        assert_eq!(cursor.prev_item().unwrap(), &reference_items[pos - 1]);
+                    if partial_ix > 0 {
+                        assert_eq!(
+                            cursor.prev_item().unwrap(),
+                            &partial_reference_items[partial_ix - 1].1
+                        );
                     } else {
                         assert_eq!(cursor.prev_item(), None);
                     }
 
-                    if pos < reference_items.len() && !before_start {
-                        assert_eq!(cursor.item().unwrap(), &reference_items[pos]);
+                    if partial_ix < partial_reference_items.len() && !before_start {
+                        assert_eq!(
+                            cursor.item().unwrap(),
+                            &partial_reference_items[partial_ix].1
+                        );
                     } else {
                         assert_eq!(cursor.item(), None);
                     }
 
                     if i < 5 {
                         cursor.next(&());
-                        if pos < reference_items.len() {
-                            pos += 1;
+                        if partial_ix < partial_reference_items.len() {
+                            partial_ix += 1;
                             before_start = false;
                         }
                     } else {
                         cursor.prev(&());
-                        if pos == 0 {
+                        if partial_ix == 0 {
                             before_start = true;
                         }
-                        pos = pos.saturating_sub(1);
+                        partial_ix = partial_ix.saturating_sub(1);
                     }
                 }
             }
