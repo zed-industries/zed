@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use futures::future::BoxFuture;
@@ -18,7 +18,7 @@ const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 const TREE_BASE: usize = 6;
 
-pub trait KvStore {
+pub trait KvStore: 'static + Send + Sync {
     fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>>;
     fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>>;
 }
@@ -1165,8 +1165,9 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use anyhow::anyhow;
     use collections::BTreeMap;
     use futures::FutureExt;
     use parking_lot::Mutex;
@@ -1855,7 +1856,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryKv {
+    pub struct InMemoryKv {
         namespaces: Mutex<BTreeMap<[u8; 16], BTreeMap<u128, Vec<u8>>>>,
     }
 

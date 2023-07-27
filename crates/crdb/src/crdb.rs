@@ -8,7 +8,7 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
-use btree::Bias;
+use btree::{Bias, KvStore};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
@@ -349,9 +349,9 @@ impl<E, N: ClientNetwork> Clone for Client<E, N> {
 }
 
 impl<E: Executor, N: ClientNetwork> Client<E, N> {
-    pub fn new(executor: E, network: N) -> Self {
+    pub fn new(executor: E, network: N, kv: Arc<dyn KvStore>) -> Self {
         let mut this = Self {
-            db: Db::new(),
+            db: Db::new(kv),
             network: Arc::new(network),
             checkouts: Default::default(),
             executor: Arc::new(executor),
@@ -500,10 +500,10 @@ impl<N: ServerNetwork> Clone for Server<N> {
 }
 
 impl<N: ServerNetwork> Server<N> {
-    fn new(network: N) -> Self {
+    fn new(network: N, kv: Arc<dyn KvStore>) -> Self {
         let network = Arc::new(network);
         let this = Self {
-            db: Db::new(),
+            db: Db::new(kv),
             network: network.clone(),
             request_handlers: Default::default(),
             repo_ids_by_name: Default::default(),
@@ -652,13 +652,15 @@ impl<N: ServerNetwork> Server<N> {
 
 #[derive(Clone)]
 pub struct Db {
+    kv: Arc<dyn KvStore>,
     snapshot: Arc<Mutex<DbSnapshot>>,
     local_operation_created: Option<Arc<dyn Send + Sync + Fn(RepoId, Operation)>>,
 }
 
 impl Db {
-    fn new() -> Self {
+    fn new(kv: Arc<dyn KvStore>) -> Self {
         Self {
+            kv,
             snapshot: Default::default(),
             local_operation_created: None,
         }
@@ -1993,12 +1995,53 @@ mod tests {
     };
     use util::{path_env_var, post_inc};
 
+    struct TestKv {
+        executor: Arc<Background>,
+        kv: Arc<btree::tests::InMemoryKv>,
+    }
+
+    impl TestKv {
+        fn new(executor: Arc<Background>) -> Self {
+            Self {
+                executor,
+                kv: Default::default(),
+            }
+        }
+    }
+
+    impl KvStore for TestKv {
+        fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>> {
+            let kv = self.kv.clone();
+            let executor = self.executor.clone();
+            async move {
+                executor.simulate_random_delay().await;
+                kv.load(namespace, key).await
+            }
+            .boxed()
+        }
+
+        fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>> {
+            let kv = self.kv.clone();
+            let executor = self.executor.clone();
+            async move {
+                executor.simulate_random_delay().await;
+                kv.store(namespace, key, value).await
+            }
+            .boxed()
+        }
+    }
+
     #[gpui::test]
     async fn test_repo(deterministic: Arc<Deterministic>) {
+        let kv = Arc::new(TestKv::new(deterministic.build_background()));
         let network = TestNetwork::new(deterministic.build_background());
-        let server = Server::new(network.server());
+        let server = Server::new(network.server(), kv.clone());
 
-        let client_a = Client::new(deterministic.build_background(), network.client("client-a"));
+        let client_a = Client::new(
+            deterministic.build_background(),
+            network.client("client-a"),
+            kv.clone(),
+        );
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
 
@@ -2012,7 +2055,11 @@ mod tests {
         assert_eq!(doc2_a.text().to_string(), "def");
 
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
-        let client_b = Client::new(deterministic.build_background(), network.client("client-b"));
+        let client_b = Client::new(
+            deterministic.build_background(),
+            network.client("client-b"),
+            kv.clone(),
+        );
         let repo_b = client_b.clone_repo("repo-1").await.unwrap();
         deterministic.run_until_parked();
         let branch_b = repo_b.branch("main").unwrap();
@@ -2100,8 +2147,9 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
+        let kv = Arc::new(TestKv::new(deterministic.build_background()));
         let network = TestNetwork::new(deterministic.build_background());
-        let server = Server::new(network.server());
+        let server = Server::new(network.server(), kv.clone());
         let mut clients: Vec<TestClient> = Vec::new();
         let mut next_client_id = 0;
         let mut next_branch_name = 0;
@@ -2112,7 +2160,7 @@ mod tests {
                 log::info!("{:?}", stored_operation.operation);
                 if stored_operation
                     .operation
-                    .apply(&deterministic, &mut clients, &network)
+                    .apply(&deterministic, &kv, &mut clients, &network)
                     .await
                     .is_ok()
                 {
@@ -2137,7 +2185,7 @@ mod tests {
                 log::info!("{:?}", operation);
 
                 operation
-                    .apply(&deterministic, &mut clients, &network)
+                    .apply(&deterministic, &kv, &mut clients, &network)
                     .await
                     .unwrap();
             }
@@ -2313,6 +2361,7 @@ mod tests {
         async fn apply(
             &self,
             deterministic: &Arc<Deterministic>,
+            kv: &Arc<TestKv>,
             clients: &mut Vec<TestClient>,
             network: &TestNetwork,
         ) -> Result<()> {
@@ -2331,6 +2380,7 @@ mod tests {
                     let client = Client::new(
                         deterministic.build_background(),
                         network.client(name.as_str()),
+                        kv.clone(),
                     );
                     clients.push(TestClient { id: *id, client });
                 }
