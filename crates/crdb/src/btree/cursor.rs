@@ -532,13 +532,14 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
                     Node::Internal { child_trees, .. } => {
                         if !descend {
                             entry.index += 1;
-                            while entry.index < child_trees.len() {
-                                if child_trees[entry.index].is_loaded() {
-                                    break;
-                                }
-                                entry.index += 1;
-                            }
                         }
+                        while entry.index < child_trees.len() {
+                            if child_trees[entry.index].is_loaded() {
+                                break;
+                            }
+                            entry.index += 1;
+                        }
+
                         child_trees.get(entry.index)
                     }
                     Node::Leaf { items, .. } => {
