@@ -1364,6 +1364,11 @@ mod tests {
             tree.extend(initial_items.iter().copied(), &());
             reference_items.extend(initial_items);
             assert_eq!(tree.items(&()), reference_items);
+            let mut partial_reference_items = reference_items
+                .iter()
+                .copied()
+                .enumerate()
+                .collect::<Vec<_>>();
 
             for _ in 0..num_operations {
                 if rng.gen_bool(0.2) {
@@ -1430,9 +1435,9 @@ mod tests {
                 log::info!("full tree items: {:?}", full_tree.items(&()));
                 log::info!("partial tree items: {:?}", tree.items(&()));
 
-                let mut partial_reference_items = Vec::new();
                 let mut cursor = tree.cursor::<Count>();
                 cursor.next(&());
+                partial_reference_items.clear();
                 while let Some(item) = cursor.item() {
                     partial_reference_items.push((cursor.start().0, *item));
                     cursor.next(&());
@@ -1538,14 +1543,38 @@ mod tests {
                 let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
 
+                let reference_start = partial_reference_items
+                    .iter()
+                    .find(|(ix, _)| match start_bias {
+                        Bias::Left => *ix + 1 >= start,
+                        Bias::Right => *ix >= start,
+                    })
+                    .map_or(reference_items.len(), |(ix, _)| *ix);
+                let reference_end = if start == end && end_bias == Bias::Left {
+                    reference_start
+                } else {
+                    partial_reference_items
+                        .iter()
+                        .find(|(ix, _)| match end_bias {
+                            Bias::Left => *ix + 1 >= end,
+                            Bias::Right => *ix >= end,
+                        })
+                        .map_or(reference_items.len(), |(ix, _)| *ix)
+                };
+                let reference_sum = reference_items[reference_start..reference_end]
+                    .iter()
+                    .map(|item| *item as usize)
+                    .sum::<usize>();
+
                 let mut cursor = tree.cursor::<Count>();
                 cursor.seek(&Count(start), start_bias, &());
-                let slice = cursor.slice(&Count(end), end_bias, &());
+                let seek_end = cmp::max(*cursor.start(), Count(end));
+                let slice = cursor.slice(&seek_end, end_bias, &());
+                assert_eq!(slice.summary().sum, reference_sum);
 
                 cursor.seek(&Count(start), start_bias, &());
-                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias, &());
-
-                assert_eq!(summary.0, slice.summary().sum);
+                let summary = cursor.summary::<_, Sum>(&seek_end, end_bias, &());
+                assert_eq!(summary.0, reference_sum);
             }
         }
     }
@@ -1755,7 +1784,7 @@ mod tests {
         max: u8,
     }
 
-    #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
+    #[derive(Copy, Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
     struct Count(usize);
 
     #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
