@@ -43,6 +43,11 @@ struct Number(u8);
 actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
+#[derive(Copy, Clone, Debug)]
+enum VimEvent {
+    ModeChanged { mode: Mode },
+}
+
 pub fn init(cx: &mut AppContext) {
     settings::register::<VimModeSetting>(cx);
 
@@ -121,8 +126,6 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
 pub struct Vim {
     active_editor: Option<WeakViewHandle<Editor>>,
     editor_subscription: Option<Subscription>,
-    mode_indicator: Option<ViewHandle<ModeIndicator>>,
-
     enabled: bool,
     state: VimState,
 }
@@ -181,9 +184,7 @@ impl Vim {
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
-        if let Some(mode_indicator) = &self.mode_indicator {
-            mode_indicator.update(cx, |mode_indicator, cx| mode_indicator.set_mode(mode, cx))
-        }
+        cx.emit_global(VimEvent::ModeChanged { mode });
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
@@ -271,44 +272,6 @@ impl Vim {
         }
     }
 
-    fn sync_mode_indicator(cx: &mut WindowContext) {
-        let Some(workspace) = cx.root_view()
-            .downcast_ref::<Workspace>()
-            .map(|workspace| workspace.downgrade()) else {
-                return;
-            };
-
-        cx.spawn(|mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| {
-                Vim::update(cx, |vim, cx| {
-                    workspace.status_bar().update(cx, |status_bar, cx| {
-                        let current_position = status_bar.position_of_item::<ModeIndicator>();
-
-                        if vim.enabled && current_position.is_none() {
-                            if vim.mode_indicator.is_none() {
-                                vim.mode_indicator =
-                                    Some(cx.add_view(|_| ModeIndicator::new(vim.state.mode)));
-                            };
-                            let mode_indicator = vim.mode_indicator.as_ref().unwrap();
-                            let position = status_bar
-                                .position_of_item::<language_selector::ActiveBufferLanguage>();
-                            if let Some(position) = position {
-                                status_bar.insert_item_after(position, mode_indicator.clone(), cx)
-                            } else {
-                                status_bar.add_left_item(mode_indicator.clone(), cx)
-                            }
-                        } else if !vim.enabled {
-                            if let Some(position) = current_position {
-                                status_bar.remove_item_at(position, cx)
-                            }
-                        }
-                    })
-                })
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
         if self.enabled != enabled {
             self.enabled = enabled;
@@ -359,8 +322,6 @@ impl Vim {
                 self.unhook_vim_settings(editor, cx);
             }
         });
-
-        Vim::sync_mode_indicator(cx);
     }
 
     fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
