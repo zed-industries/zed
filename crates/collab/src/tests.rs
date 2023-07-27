@@ -35,6 +35,7 @@ use workspace::Workspace;
 
 mod integration_tests;
 mod randomized_integration_tests;
+mod channel_tests;
 
 struct TestServer {
     app_state: Arc<AppState>,
