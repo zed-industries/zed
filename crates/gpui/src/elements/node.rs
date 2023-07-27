@@ -273,7 +273,7 @@ impl<V: View> Node<V> {
         }
     }
 
-    fn paint_2d_children(
+    fn paint_children_xy(
         &mut self,
         scene: &mut SceneBuilder,
         axis: Axis2d,
@@ -395,15 +395,7 @@ impl<V: View> Element<V> for Node<V> {
         let mut layout = NodeLayout::default();
 
         let size = if let Some(axis) = self.style.axis.to_2d() {
-            self.layout_xy(
-                axis,
-                constraint.max,
-                cx.rem_pixels(),
-                &mut layout,
-                &mut layout.padding,
-                view,
-                cx,
-            )
+            self.layout_xy(axis, constraint.max, cx.rem_pixels(), &mut layout, view, cx)
         } else {
             todo!()
         };
@@ -421,11 +413,6 @@ impl<V: View> Element<V> for Node<V> {
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let rem_pixels = cx.rem_pixels();
-        // let margin: Edges<f32> = todo!(); // &self.style.margin.to_pixels(rem_size);
-        //
-
-        let size = bounds.size();
-
         let margined_bounds = RectF::from_points(
             bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
             bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
@@ -434,7 +421,7 @@ impl<V: View> Element<V> for Node<V> {
         // Paint drop shadow
         for shadow in &self.style.shadows {
             scene.push_shadow(scene::Shadow {
-                bounds: margin_bounds + shadow.offset,
+                bounds: margined_bounds + shadow.offset,
                 corner_radius: self.style.corner_radius,
                 sigma: shadow.blur,
                 color: shadow.color,
@@ -451,7 +438,7 @@ impl<V: View> Element<V> for Node<V> {
         //     }
         // }
 
-        // Render the background and/or the border (if it not an overlay border).
+        // Render the background and/or the border.
         let Fill::Color(fill_color) = self.style.fill;
         let is_fill_visible = !fill_color.is_fully_transparent();
         if is_fill_visible || self.style.borders.is_visible() {
@@ -472,38 +459,25 @@ impl<V: View> Element<V> for Node<V> {
         }
 
         if !self.children.is_empty() {
-            let padded_bounds = RectF::from_points(
-                margined_bounds.origin() + vec2f(layout.padding.left, layout.padding.top),
-                margined_bounds.lower_right() - vec2f(layout.padding.right, layout.padding.bottom),
-            );
-
             // Account for padding first.
-            let padding: Edges<f32> = todo!(); // &self.style.padding.to_pixels(rem_size);
+            let borders = &self.style.borders;
             let padded_bounds = RectF::from_points(
-                margined_bounds.origin() + vec2f(padding.left, padding.top),
-                margined_bounds.lower_right() - vec2f(padding.right, padding.top),
+                margined_bounds.origin()
+                    + vec2f(
+                        borders.left_width() + layout.padding.left,
+                        borders.top_width() + layout.padding.top,
+                    ),
+                margined_bounds.lower_right()
+                    - vec2f(
+                        layout.padding.right + borders.right_width(),
+                        layout.padding.bottom + borders.bottom_width(),
+                    ),
             );
 
-            match self.style.axis {
-                Axis3d::X => self.paint_2d_children(
-                    scene,
-                    Axis2d::X,
-                    padded_bounds,
-                    visible_bounds,
-                    layout,
-                    view,
-                    cx,
-                ),
-                Axis3d::Y => self.paint_2d_children(
-                    scene,
-                    Axis2d::Y,
-                    padded_bounds,
-                    visible_bounds,
-                    layout,
-                    view,
-                    cx,
-                ),
-                Axis3d::Z => todo!(),
+            if let Some(axis) = self.style.axis.to_2d() {
+                self.paint_children_xy(scene, axis, padded_bounds, visible_bounds, layout, view, cx)
+            } else {
+                todo!();
             }
         }
     }
@@ -631,7 +605,7 @@ pub struct NodeStyle {
     text: OptionalTextStyle,
     opacity: f32,
     fill: Fill,
-    borders: Border,
+    borders: Borders,
     corner_radius: f32,
     shadows: Vec<Shadow>,
 }
@@ -673,7 +647,7 @@ struct Size<T> {
     height: T,
 }
 
-impl<T> Size<T> {
+impl<T: Copy> Size<T> {
     fn get(&self, axis: Axis2d) -> T {
         match axis {
             Axis2d::X => self.width,
@@ -682,7 +656,7 @@ impl<T> Size<T> {
     }
 }
 
-impl<T: Add<Output = T>> Size<Option<T>> {
+impl<T: Copy + Add<Output = T>> Size<Option<T>> {
     fn add_assign_optional(&mut self, rhs: Size<Option<T>>) {
         self.width = optional_add(self.width, rhs.width);
         self.height = optional_add(self.height, rhs.height);
@@ -843,7 +817,7 @@ impl Default for Fill {
 }
 
 #[derive(Clone, Default)]
-struct Border {
+struct Borders {
     color: Color,
     width: f32,
     top: bool,
@@ -852,11 +826,43 @@ struct Border {
     right: bool,
 }
 
-impl Border {
+impl Borders {
     fn is_visible(&self) -> bool {
         self.width > 0.
             && !self.color.is_fully_transparent()
             && (self.top || self.bottom || self.left || self.right)
+    }
+
+    fn top_width(&self) -> f32 {
+        if self.top {
+            self.width
+        } else {
+            0.
+        }
+    }
+
+    fn bottom_width(&self) -> f32 {
+        if self.bottom {
+            self.width
+        } else {
+            0.
+        }
+    }
+
+    fn left_width(&self) -> f32 {
+        if self.left {
+            self.width
+        } else {
+            0.
+        }
+    }
+
+    fn right_width(&self) -> f32 {
+        if self.right {
+            self.width
+        } else {
+            0.
+        }
     }
 
     fn size(&self) -> Vector2F {
@@ -1078,7 +1084,7 @@ pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
 }
 
 #[derive(Default)]
-struct NodeLayout {
+pub struct NodeLayout {
     content_size: Vector2F,
     margins: Edges<f32>,
     padding: Edges<f32>,

@@ -14,10 +14,10 @@ fn main() {
 }
 
 #[derive(Clone, Default)]
-struct Playground(playground_ui::Playground);
+struct Playground(playground_ui::Playground<Self>);
 
 impl Deref for Playground {
-    type Target = playground_ui::Playground;
+    type Target = playground_ui::Playground<Self>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
