@@ -102,6 +102,7 @@ pub struct ProjectSearchView {
     query_editor_was_focused: bool,
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
+    filters_enabled: bool,
 }
 
 struct SemanticSearchState {
@@ -365,11 +366,19 @@ impl Item for ProjectSearchView {
                     .contained()
                     .with_margin_right(tab_theme.spacing),
             )
-            .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
-                let query_text = util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
-
-                Label::new(query_text, tab_theme.label.clone()).aligned()
-            }))
+            .with_child({
+                let tab_name: Option<Cow<_>> =
+                    self.model.read(cx).active_query.as_ref().map(|query| {
+                        let query_text =
+                            util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
+                        query_text.into()
+                    });
+                Label::new(
+                    tab_name.unwrap_or("Project search".into()),
+                    tab_theme.label.clone(),
+                )
+                .aligned()
+            })
             .into_any()
     }
 
@@ -565,7 +574,7 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
-
+        let filters_enabled = false;
         let mut this = ProjectSearchView {
             search_id: model.read(cx).search_id,
             model,
@@ -578,6 +587,7 @@ impl ProjectSearchView {
             query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
+            filters_enabled,
         };
         this.model_changed(cx);
         this
@@ -1012,6 +1022,19 @@ impl ProjectSearchBar {
             false
         }
     }
+    fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.filters_enabled = !search_view.filters_enabled;
+                search_view.semantic = None;
+                search_view.search(cx);
+            });
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
 
     fn toggle_semantic_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
@@ -1249,9 +1272,56 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .left()
             });
+            let filters = search.filters_enabled.then(|| {
+                Flex::row()
+                    .with_child(
+                        Flex::row()
+                            .with_child(included_files_view)
+                            .contained()
+                            .with_style(include_container_style)
+                            .aligned()
+                            .constrained()
+                            .with_min_width(theme.search.include_exclude_editor.min_width)
+                            .with_max_width(theme.search.include_exclude_editor.max_width)
+                            .flex(1., false),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_child(excluded_files_view)
+                            .contained()
+                            .with_style(exclude_container_style)
+                            .aligned()
+                            .constrained()
+                            .with_min_width(theme.search.include_exclude_editor.min_width)
+                            .with_max_width(theme.search.include_exclude_editor.max_width)
+                            .flex(1., false),
+                    )
+            });
+            let filter_button = {
+                let tooltip_style = theme::current(cx).tooltip.clone();
+                let is_active = search.filters_enabled;
+                MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
+                    let theme = theme::current(cx);
+                    let style = theme
+                        .search
+                        .option_button
+                        .in_state(is_active)
+                        .style_for(state);
+                    Label::new("Filter", style.text.clone())
+                        .contained()
+                        .with_style(style.container)
+                })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.toggle_filters(cx);
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<Self>(0, "Toggle filters".into(), None, tooltip_style, cx)
+                .into_any()
+            };
             let case_button = self.render_option_button("Case", SearchOptions::CASE_SENSITIVE, cx);
             let word_button = self.render_option_button("Word", SearchOptions::WHOLE_WORD, cx);
             let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
+
             let semantic_index =
                 SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
             Flex::row()
@@ -1288,10 +1358,9 @@ impl View for ProjectSearchBar {
                                 )
                                 .with_child(
                                     Flex::row()
-                                        .with_children(semantic_index)
                                         .with_child(case_button)
                                         .with_child(word_button)
-                                        .with_child(regex_button)
+                                        .with_child(filter_button)
                                         .contained()
                                         .with_style(theme.search.option_button_group)
                                         .aligned()
@@ -1300,52 +1369,20 @@ impl View for ProjectSearchBar {
                                 .contained()
                                 .with_margin_bottom(row_spacing),
                         )
-                        .with_child(
-                            Flex::row()
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(included_files_view)
-                                        .contained()
-                                        .with_style(include_container_style)
-                                        .aligned()
-                                        .constrained()
-                                        .with_min_width(
-                                            theme.search.include_exclude_editor.min_width,
-                                        )
-                                        .with_max_width(
-                                            theme.search.include_exclude_editor.max_width,
-                                        )
-                                        .flex(1., false),
-                                )
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(excluded_files_view)
-                                        .contained()
-                                        .with_style(exclude_container_style)
-                                        .aligned()
-                                        .constrained()
-                                        .with_min_width(
-                                            theme.search.include_exclude_editor.min_width,
-                                        )
-                                        .with_max_width(
-                                            theme.search.include_exclude_editor.max_width,
-                                        )
-                                        .flex(1., false),
-                                ),
-                        )
+                        .with_children(filters)
                         .contained()
                         .with_style(theme.search.container)
                         .flex(2., true),
                 )
                 .with_child(
-                    Flex::row()
-                        .with_child(Label::new(
-                            "Here be dragons",
-                            theme.search.match_index.text.clone(),
-                        ))
-                        .flex(1., true)
-                        .aligned()
-                        .right(),
+                    Flex::column().with_child(
+                        Flex::row()
+                            .with_children(semantic_index)
+                            .with_child(regex_button)
+                            .flex(1., true)
+                            .aligned()
+                            .right(),
+                    ),
                 )
                 .contained()
                 .flex_float()
