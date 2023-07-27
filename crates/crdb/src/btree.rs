@@ -19,13 +19,8 @@ const TREE_BASE: usize = 2;
 const TREE_BASE: usize = 6;
 
 pub trait KvStore {
-    fn load<V: for<'de> Deserialize<'de>>(
-        &self,
-        namespace: &[u8],
-        key: &[u8],
-    ) -> BoxFuture<Result<V>>;
-    fn store<V: Serialize>(&self, namespace: &[u8], key: &[u8], value: &V)
-        -> BoxFuture<Result<()>>;
+    fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>>;
+    fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>>;
 }
 
 pub trait Item: Clone {
@@ -101,8 +96,8 @@ impl Clone for SavedId {
 }
 
 impl SavedId {
-    fn as_bytes(&self) -> [u8; 16] {
-        self.0.load(SeqCst).to_be_bytes()
+    fn as_u128(&self) -> u128 {
+        self.0.load(SeqCst)
     }
 
     fn is_saved(&self) -> bool {
@@ -683,10 +678,17 @@ where
     T: Item + Serialize + for<'a> Deserialize<'a>,
     T::Summary: Serialize + for<'a> Deserialize<'a>,
 {
+    fn namespace_bytes(s: &str) -> [u8; 16] {
+        let mut namespace = [0; 16];
+        namespace[..s.len()].copy_from_slice(s.as_bytes());
+        namespace
+    }
+
     pub async fn from_root<K: KvStore>(root_id: SavedId, kv: &K) -> Result<Self> {
         let root = kv
-            .load::<SavedNode<T>>(b"node", &root_id.as_bytes())
+            .load(Self::namespace_bytes("node"), root_id.as_u128())
             .await?;
+        let root = serde_bare::from_slice(&root)?;
         let node = match root {
             SavedNode::Internal {
                 height,
@@ -812,9 +814,9 @@ where
                     if frame.children_saved {
                         saved_id.save();
                         kv.store(
-                            b"node",
-                            &saved_id.as_bytes(),
-                            &SavedNode::<T>::Internal {
+                            Self::namespace_bytes("node"),
+                            saved_id.as_u128(),
+                            serde_bare::to_vec(&SavedNode::<T>::Internal {
                                 height: *height,
                                 summary: summary.clone(),
                                 child_summaries: child_summaries.clone(),
@@ -822,7 +824,7 @@ where
                                     .iter()
                                     .map(|tree| tree.saved_id().clone())
                                     .collect(),
-                            },
+                            })?,
                         )
                         .await?;
                         stack.pop();
@@ -854,13 +856,13 @@ where
                 } => {
                     saved_id.save();
                     kv.store(
-                        b"node",
-                        &saved_id.as_bytes(),
-                        &SavedNode::Leaf {
+                        Self::namespace_bytes("node"),
+                        saved_id.as_u128(),
+                        serde_bare::to_vec(&SavedNode::Leaf {
                             summary: summary.clone(),
                             items: items.clone(),
                             item_summaries: item_summaries.clone(),
-                        },
+                        })?,
                     )
                     .await?;
                 }
@@ -1853,53 +1855,33 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryKv(Arc<Mutex<InMemoryKvState>>);
-
-    #[derive(Default)]
-    struct InMemoryKvState {
-        namespaces: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Vec<u8>>>,
+    struct InMemoryKv {
+        namespaces: Mutex<BTreeMap<[u8; 16], BTreeMap<u128, Vec<u8>>>>,
     }
 
     impl KvStore for InMemoryKv {
-        fn load<V: for<'de> Deserialize<'de>>(
-            &self,
-            namespace: &[u8],
-            key: &[u8],
-        ) -> BoxFuture<Result<V>> {
-            let state = self.0.clone();
-            let namespace = namespace.to_vec();
-            let key = key.to_vec();
-            async move {
-                let state = state.lock();
-                let namespace = state
-                    .namespaces
-                    .get(&namespace)
-                    .ok_or_else(|| anyhow!("namespace not found"))?;
-                let value = namespace
-                    .get(&key)
-                    .ok_or_else(|| anyhow!("key not found"))?;
-                Ok(serde_bare::from_slice(value)?)
-            }
-            .boxed()
+        fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>> {
+            let value = self
+                .namespaces
+                .lock()
+                .get(&namespace)
+                .ok_or_else(|| anyhow!("namespace not found"))
+                .and_then(|namespace| {
+                    Ok(namespace
+                        .get(&key)
+                        .ok_or_else(|| anyhow!("key not found"))?
+                        .clone())
+                });
+            async move { value }.boxed()
         }
 
-        fn store<V: Serialize>(
-            &self,
-            namespace: &[u8],
-            key: &[u8],
-            value: &V,
-        ) -> BoxFuture<Result<()>> {
-            let state = self.0.clone();
-            let namespace = namespace.to_vec();
-            let key = key.to_vec();
-            let value = serde_bare::to_vec(value);
-            async move {
-                let mut state = state.lock();
-                let namespace = state.namespaces.entry(namespace).or_default();
-                namespace.insert(key, value?);
-                Ok(())
-            }
-            .boxed()
+        fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>> {
+            self.namespaces
+                .lock()
+                .entry(namespace)
+                .or_default()
+                .insert(key, value);
+            async { Ok(()) }.boxed()
         }
     }
 }
