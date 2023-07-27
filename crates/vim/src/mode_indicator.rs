@@ -44,7 +44,11 @@ impl ModeIndicator {
         // Vim doesn't exist in some tests
         let mode = cx
             .has_global::<Vim>()
-            .then(|| cx.global::<Vim>().state.mode);
+            .then(|| {
+                let vim = cx.global::<Vim>();
+                vim.enabled.then(|| vim.state.mode)
+            })
+            .flatten();
 
         Self {
             mode,
