@@ -33,12 +33,12 @@
 (identifier) @variable
 
 ((identifier) @keyword
- (#match? @keyword "^(private|protected|public)$"))
+    (.match? @keyword "^(private|protected|public)$"))
 
 ; Function calls
 
 ((identifier) @function.method.builtin
- (#eq? @function.method.builtin "require"))
+    (.eq? @function.method.builtin "require"))
 
 "defined?" @function.method.builtin
 
@@ -60,7 +60,7 @@
 ] @property
 
 ((identifier) @constant.builtin
- (#match? @constant.builtin "^__(FILE|LINE|ENCODING)__$"))
+ (.match? @constant.builtin "^__(FILE|LINE|ENCODING)__$"))
 
 (file) @constant.builtin
 (line) @constant.builtin
@@ -71,7 +71,7 @@
 ) @constant.builtin
 
 ((constant) @constant
- (#match? @constant "^[A-Z\\d_]+$"))
+ (.match? @constant "^[A-Z\\d_]+$"))
 
 (constant) @type
 
