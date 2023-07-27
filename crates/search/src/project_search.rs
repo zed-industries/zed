@@ -505,6 +505,7 @@ impl ProjectSearchView {
                 Some(Arc::new(|theme| theme.search.editor.input.clone())),
                 cx,
             );
+            editor.set_placeholder_text("Text search all files", cx);
             editor.set_text(query_text, cx);
             editor
         });
@@ -1230,31 +1231,37 @@ impl View for ProjectSearchBar {
                 .flex(1.0, true);
 
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
+            let query = ChildView::new(&search.query_editor, cx)
+                .aligned()
+                .left()
+                .flex(1., true);
+            let matches = search.active_match_index.map(|match_ix| {
+                Label::new(
+                    format!(
+                        "{}/{}",
+                        match_ix + 1,
+                        search.model.read(cx).match_ranges.len()
+                    ),
+                    theme.search.match_index.text.clone(),
+                )
+                .contained()
+                .with_style(theme.search.match_index.container)
+                .aligned()
+                .left()
+            });
+            let case_button = self.render_option_button("Case", SearchOptions::CASE_SENSITIVE, cx);
+            let word_button = self.render_option_button("Word", SearchOptions::WHOLE_WORD, cx);
+            let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
+            let semantic_index =
+                SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
 
             Flex::column()
                 .with_child(
                     Flex::row()
+                        .with_children(matches)
                         .with_child(
                             Flex::row()
-                                .with_child(
-                                    ChildView::new(&search.query_editor, cx)
-                                        .aligned()
-                                        .left()
-                                        .flex(1., true),
-                                )
-                                .with_children(search.active_match_index.map(|match_ix| {
-                                    Label::new(
-                                        format!(
-                                            "{}/{}",
-                                            match_ix + 1,
-                                            search.model.read(cx).match_ranges.len()
-                                        ),
-                                        theme.search.match_index.text.clone(),
-                                    )
-                                    .contained()
-                                    .with_style(theme.search.match_index.container)
-                                    .aligned()
-                                }))
+                                .with_child(query)
                                 .contained()
                                 .with_style(query_container_style)
                                 .aligned()
@@ -1269,35 +1276,17 @@ impl View for ProjectSearchBar {
                                 .with_child(self.render_nav_button(">", Direction::Next, cx))
                                 .aligned(),
                         )
-                        .with_child({
-                            let row = if SemanticIndex::enabled(cx) {
-                                Flex::row().with_child(self.render_semantic_search_button(cx))
-                            } else {
-                                Flex::row()
-                            };
-
-                            let row = row
-                                .with_child(self.render_option_button(
-                                    "Case",
-                                    SearchOptions::CASE_SENSITIVE,
-                                    cx,
-                                ))
-                                .with_child(self.render_option_button(
-                                    "Word",
-                                    SearchOptions::WHOLE_WORD,
-                                    cx,
-                                ))
-                                .with_child(self.render_option_button(
-                                    "Regex",
-                                    SearchOptions::REGEX,
-                                    cx,
-                                ))
+                        .with_child(
+                            Flex::row()
+                                .with_children(semantic_index)
+                                .with_child(case_button)
+                                .with_child(word_button)
+                                .with_child(regex_button)
                                 .contained()
                                 .with_style(theme.search.option_button_group)
-                                .aligned();
-
-                            row
-                        })
+                                .aligned()
+                                .right(),
+                        )
                         .contained()
                         .with_margin_bottom(row_spacing),
                 )
@@ -1328,8 +1317,7 @@ impl View for ProjectSearchBar {
                 )
                 .contained()
                 .with_style(theme.search.container)
-                .aligned()
-                .left()
+                .flex_float()
                 .into_any_named("project search")
         } else {
             Empty::new().into_any()
