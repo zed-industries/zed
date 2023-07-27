@@ -78,7 +78,6 @@ export const syntaxStyle = (
         "string.regex": { color: ramps.orange(0.5).hex() },
         "method.constructor": { color: ramps.blue(0.5).hex() },
         type: { color: ramps.cyan(0.5).hex() },
-        variable: { color: ramps.neutral(1).hex() },
         label: { color: ramps.blue(0.5).hex() },
         attribute: { color: ramps.blue(0.5).hex() },
         property: { color: ramps.blue(0.5).hex() },
@@ -88,8 +87,6 @@ export const syntaxStyle = (
         number: { color: ramps.green(0.5).hex() },
         boolean: { color: ramps.green(0.5).hex() },
         function: { color: ramps.yellow(0.5).hex() },
-        preproc: { color: ramps.neutral(1).hex() },
-        embedded: { color: ramps.neutral(1).hex() },
     }
 
     const baseSyntax = apply_defaults(ramps, syntax_highlights)
