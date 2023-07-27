@@ -143,17 +143,16 @@ impl<V: View> Node<V> {
         &mut self,
         axis: Axis2d,
         max_size: Vector2F,
-        rem_length: f32,
-        computed_margins: &mut Edges<f32>,
-        computed_padding: &mut Edges<f32>,
+        rem_pixels: f32,
+        layout: &mut NodeLayout,
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> Vector2F {
-        *computed_margins = self.style.margins.fixed_pixels(rem_length);
-        *computed_padding = self.style.padding.fixed_pixels(rem_length);
+        layout.margins = self.style.margins.fixed_pixels(rem_pixels);
+        layout.padding = self.style.padding.fixed_pixels(rem_pixels);
 
         let padded_max =
-            max_size - computed_margins.size() - self.style.borders.width - computed_padding.size();
+            max_size - layout.margins.size() - self.style.borders.width - layout.padding.size();
         let mut remaining_length = padded_max.get(axis);
 
         // Pass 1: Total up flex units and layout inflexible children.
@@ -185,13 +184,13 @@ impl<V: View> Node<V> {
         // Pass 2: Allocate the remaining space among flexible lengths along the primary axis.
         if remaining_flex > 0. {
             // Add flex pixels from margin and padding.
-            *computed_margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
-                rem_length,
+            *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
+                rem_pixels,
                 &mut remaining_flex,
                 &mut remaining_length,
             );
-            *computed_padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
-                rem_length,
+            *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
+                rem_pixels,
                 &mut remaining_flex,
                 &mut remaining_length,
             );
@@ -213,22 +212,58 @@ impl<V: View> Node<V> {
             }
 
             // Add flex pixels from margin and padding.
-            *computed_margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
-                rem_length,
+            *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
+                rem_pixels,
                 &mut remaining_flex,
                 &mut remaining_length,
             );
-            *computed_padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
-                rem_length,
+            *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
+                rem_pixels,
                 &mut remaining_flex,
                 &mut remaining_length,
             );
         }
 
-        let width = match self.style.size.width {
-            Length::Hug => todo!(),
-            Length::Fixed(_) => todo!(),
+        let mut size = max_size;
+
+        match self.style.size.get(axis) {
+            Length::Hug => {
+                size.set(axis, max_size.get(axis) - remaining_length);
+            }
+            Length::Fixed(_) => {}
             Length::Auto { flex, min, max } => todo!(),
+        };
+
+        let width = match self.style.size.width {
+            Length::Hug => match axis {
+                Axis2d::X => max_size.get(axis) - remaining_length,
+                Axis2d::Y => {
+                    cross_axis_max
+                        + layout.padding.size().get(cross_axis)
+                        + self.style.borders.size().get(cross_axis)
+                        + layout.margins.size().get(cross_axis)
+                }
+            },
+            Length::Fixed(width) => width.to_pixels(rem_pixels),
+            Length::Auto { flex, min, max } => max_size
+                .x()
+                .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
+        };
+
+        let height = match self.style.size.height {
+            Length::Hug => match axis {
+                Axis2d::Y => max_size.get(axis) - remaining_length,
+                Axis2d::X => {
+                    cross_axis_max
+                        + layout.padding.size().get(cross_axis)
+                        + self.style.borders.size().get(cross_axis)
+                        + layout.margins.size().get(cross_axis)
+                }
+            },
+            Length::Fixed(height) => height.to_pixels(rem_pixels),
+            Length::Auto { flex, min, max } => max_size
+                .y()
+                .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
         };
 
         let length = max_size.get(axis) - remaining_length;
@@ -307,44 +342,44 @@ impl<V: View> Node<V> {
     //     size
     // }
 
-    fn inset_size(&self, rem_size: f32) -> Vector2F {
-        todo!()
-        // self.padding_size(rem_size) + self.border_size() + self.margin_size(rem_size)
-    }
+    // fn inset_size(&self, rem_size: f32) -> Vector2F {
+    //     todo!()
+    //     // self.padding_size(rem_size) + self.border_size() + self.margin_size(rem_size)
+    // }
 
     //
-    fn margin_fixed_size(&self, rem_size: f32) -> Vector2F {
-        self.style.margins.fixed().to_pixels(rem_size)
-    }
+    // fn margin_fixed_size(&self, rem_size: f32) -> Vector2F {
+    //     self.style.margins.fixed().to_pixels(rem_size)
+    // }
 
-    fn padding_size(&self, rem_size: f32) -> Vector2F {
-        // We need to account for auto padding
-        todo!()
-        // vec2f(
-        //     (self.style.padding.left + self.style.padding.right).to_pixels(rem_size),
-        //     (self.style.padding.top + self.style.padding.bottom).to_pixels(rem_size),
-        // )
-    }
+    // fn padding_size(&self, rem_size: f32) -> Vector2F {
+    //     // We need to account for auto padding
+    //     todo!()
+    //     // vec2f(
+    //     //     (self.style.padding.left + self.style.padding.right).to_pixels(rem_size),
+    //     //     (self.style.padding.top + self.style.padding.bottom).to_pixels(rem_size),
+    //     // )
+    // }
 
-    fn border_size(&self) -> Vector2F {
-        let mut x = 0.0;
-        if self.style.borders.left {
-            x += self.style.borders.width;
-        }
-        if self.style.borders.right {
-            x += self.style.borders.width;
-        }
+    // fn border_size(&self) -> Vector2F {
+    //     let mut x = 0.0;
+    //     if self.style.borders.left {
+    //         x += self.style.borders.width;
+    //     }
+    //     if self.style.borders.right {
+    //         x += self.style.borders.width;
+    //     }
 
-        let mut y = 0.0;
-        if self.style.borders.top {
-            y += self.style.borders.width;
-        }
-        if self.style.borders.bottom {
-            y += self.style.borders.width;
-        }
+    //     let mut y = 0.0;
+    //     if self.style.borders.top {
+    //         y += self.style.borders.width;
+    //     }
+    //     if self.style.borders.bottom {
+    //         y += self.style.borders.width;
+    //     }
 
-        vec2f(x, y)
-    }
+    //     vec2f(x, y)
+    // }
 }
 
 impl<V: View> Element<V> for Node<V> {
@@ -364,7 +399,7 @@ impl<V: View> Element<V> for Node<V> {
                 axis,
                 constraint.max,
                 cx.rem_pixels(),
-                &mut layout.margins,
+                &mut layout,
                 &mut layout.padding,
                 view,
                 cx,
@@ -373,7 +408,7 @@ impl<V: View> Element<V> for Node<V> {
             todo!()
         };
 
-        (size, layout);
+        (size, layout)
     }
 
     fn paint(
@@ -390,32 +425,10 @@ impl<V: View> Element<V> for Node<V> {
         //
 
         let size = bounds.size();
-        let mut remaining_flex = layout.flex_size;
-        let mut fixed_size = layout.fixed_size;
 
-        // let margin_left = self.style.margin.left.to_pixels(rem_pixels, size.x() - fixed_size.x() / layout.);
-        // fixed_size +=
-        // let mut origin = bounds.origin();
-        // origin.set_x(
-        //     origin.x()
-        //     ,
-        //             Length::Hug => 0.,
-        //             Length::Fixed(rems) => rems.to_pixels(rem_pixels),
-        //             Length::Auto { flex, min, max } => {
-        //                 flex * (size.x() - fixed_size.x()) / layout.flex_size.x()
-        //             }
-        //         },
-        // );
-
-        let mut low_right = bounds.lower_right();
-
-        let mut remaining_fixed = bounds.size() - layout.fixed_size;
-        let mut remaining_flex = layout.flex_size;
-
-        // Account for margins
-        let margin_bounds = RectF::from_points(
-            bounds.origin() + vec2f(margin.left, margin.top),
-            bounds.lower_right() - vec2f(margin.right, margin.bottom),
+        let margined_bounds = RectF::from_points(
+            bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
+            bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
         );
 
         // Paint drop shadow
@@ -443,7 +456,7 @@ impl<V: View> Element<V> for Node<V> {
         let is_fill_visible = !fill_color.is_fully_transparent();
         if is_fill_visible || self.style.borders.is_visible() {
             scene.push_quad(Quad {
-                bounds: margin_bounds,
+                bounds: margined_bounds,
                 background: is_fill_visible.then_some(fill_color),
                 border: scene::Border {
                     width: self.style.borders.width,
@@ -459,11 +472,16 @@ impl<V: View> Element<V> for Node<V> {
         }
 
         if !self.children.is_empty() {
+            let padded_bounds = RectF::from_points(
+                margined_bounds.origin() + vec2f(layout.padding.left, layout.padding.top),
+                margined_bounds.lower_right() - vec2f(layout.padding.right, layout.padding.bottom),
+            );
+
             // Account for padding first.
             let padding: Edges<f32> = todo!(); // &self.style.padding.to_pixels(rem_size);
             let padded_bounds = RectF::from_points(
-                margin_bounds.origin() + vec2f(padding.left, padding.top),
-                margin_bounds.lower_right() - vec2f(padding.right, padding.top),
+                margined_bounds.origin() + vec2f(padding.left, padding.top),
+                margined_bounds.lower_right() - vec2f(padding.right, padding.top),
             );
 
             match self.style.axis {
@@ -614,7 +632,7 @@ pub struct NodeStyle {
     opacity: f32,
     fill: Fill,
     borders: Border,
-    corner_radius: f32, // corner radius matches swift!
+    corner_radius: f32,
     shadows: Vec<Shadow>,
 }
 
@@ -653,6 +671,15 @@ struct TextStyle {
 struct Size<T> {
     width: T,
     height: T,
+}
+
+impl<T> Size<T> {
+    fn get(&self, axis: Axis2d) -> T {
+        match axis {
+            Axis2d::X => self.width,
+            Axis2d::Y => self.height,
+        }
+    }
 }
 
 impl<T: Add<Output = T>> Size<Option<T>> {
@@ -733,34 +760,34 @@ impl Edges<f32> {
 }
 
 impl Edges<Length> {
-    fn fixed_pixels(&self, rem_length: f32) -> Edges<f32> {
+    fn fixed_pixels(&self, rem_pixels: f32) -> Edges<f32> {
         Edges {
-            top: self.top.fixed_pixels(rem_length),
-            bottom: self.bottom.fixed_pixels(rem_length),
-            left: self.left.fixed_pixels(rem_length),
-            right: self.right.fixed_pixels(rem_length),
+            top: self.top.fixed_pixels(rem_pixels),
+            bottom: self.bottom.fixed_pixels(rem_pixels),
+            left: self.left.fixed_pixels(rem_pixels),
+            right: self.right.fixed_pixels(rem_pixels),
         }
     }
 
     fn flex_pixels(
         &self,
-        rem_length: f32,
+        rem_pixels: f32,
         remaining_flex: &mut f32,
         remaining_length: &mut f32,
     ) -> Edges<f32> {
         Edges {
             top: self
                 .top
-                .flex_pixels(rem_length, remaining_flex, remaining_length),
+                .flex_pixels(rem_pixels, remaining_flex, remaining_length),
             bottom: self
                 .bottom
-                .flex_pixels(rem_length, remaining_flex, remaining_length),
+                .flex_pixels(rem_pixels, remaining_flex, remaining_length),
             left: self
                 .left
-                .flex_pixels(rem_length, remaining_flex, remaining_length),
+                .flex_pixels(rem_pixels, remaining_flex, remaining_length),
             right: self
                 .right
-                .flex_pixels(rem_length, remaining_flex, remaining_length),
+                .flex_pixels(rem_pixels, remaining_flex, remaining_length),
         }
     }
 
@@ -831,6 +858,15 @@ impl Border {
             && !self.color.is_fully_transparent()
             && (self.top || self.bottom || self.left || self.right)
     }
+
+    fn size(&self) -> Vector2F {
+        let width =
+            if self.left { self.width } else { 0. } + if self.right { self.width } else { 0. };
+        let height =
+            if self.top { self.width } else { 0. } + if self.bottom { self.width } else { 0. };
+
+        vec2f(width, height)
+    }
 }
 
 pub mod length {
@@ -844,8 +880,8 @@ pub mod length {
     }
 
     impl Rems {
-        pub fn to_pixels(&self, rem_length: f32) -> f32 {
-            self.0 * rem_length
+        pub fn to_pixels(&self, rem_pixels: f32) -> f32 {
+            self.0 * rem_pixels
         }
     }
 
@@ -890,7 +926,7 @@ pub mod length {
     impl Length {
         pub fn flex_pixels(
             &self,
-            rem_length: f32,
+            rem_pixels: f32,
             remaining_flex: &mut f32,
             remaining_length: &mut f32,
         ) -> f32 {
@@ -898,7 +934,7 @@ pub mod length {
                 Length::Auto { flex, min, max } => {
                     let flex_length = *remaining_length / *remaining_flex;
                     let length = (flex * flex_length)
-                        .clamp(min.to_pixels(rem_length), max.to_pixels(rem_length));
+                        .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels));
                     *remaining_flex -= flex;
                     *remaining_length -= length;
                     length
