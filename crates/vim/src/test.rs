@@ -215,7 +215,7 @@ async fn test_status_indicator(
 
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Mode::Normal
+        Some(Mode::Normal)
     );
 
     // shows the correct mode
@@ -223,7 +223,7 @@ async fn test_status_indicator(
     deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Mode::Insert
+        Some(Mode::Insert)
     );
 
     // shows even in search
@@ -231,7 +231,7 @@ async fn test_status_indicator(
     deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Mode::Visual { line: false }
+        Some(Mode::Visual { line: false })
     );
 
     // hides if vim mode is disabled
@@ -239,15 +239,15 @@ async fn test_status_indicator(
     deterministic.run_until_parked();
     cx.workspace(|workspace, cx| {
         let status_bar = workspace.status_bar().read(cx);
-        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
-        assert!(mode_indicator.is_none());
+        let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
+        assert!(mode_indicator.read(cx).mode.is_none());
     });
 
     cx.enable_vim();
     deterministic.run_until_parked();
     cx.workspace(|workspace, cx| {
         let status_bar = workspace.status_bar().read(cx);
-        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
-        assert!(mode_indicator.is_some());
+        let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
+        assert!(mode_indicator.read(cx).mode.is_some());
     });
 }

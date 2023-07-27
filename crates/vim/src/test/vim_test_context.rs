@@ -43,6 +43,10 @@ impl<'a> VimTestContext<'a> {
                     toolbar.add_item(project_search_bar, cx);
                 })
             });
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                let vim_mode_indicator = cx.add_view(ModeIndicator::new);
+                status_bar.add_right_item(vim_mode_indicator, cx);
+            });
         });
 
         Self { cx }
