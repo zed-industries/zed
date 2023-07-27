@@ -3339,7 +3339,7 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
 
-    pub fn pixels_per_rem(&self) -> f32 {
+    pub fn rem_pixels(&self) -> f32 {
         16.
     }
 }

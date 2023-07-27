@@ -1,5 +1,5 @@
 use crate::{
-    elements::AnyRootElement,
+    elements::{node::Axis2d, AnyRootElement},
     geometry::rect::RectF,
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
@@ -1248,15 +1248,37 @@ impl Column for Axis {
 }
 
 pub trait Vector2FExt {
+    fn infinity() -> Self;
     fn along(self, axis: Axis) -> f32;
+    fn get(self, axis: Axis2d) -> f32;
+    fn set(&mut self, axis: Axis2d, value: f32) -> Self;
 }
 
 impl Vector2FExt for Vector2F {
+    fn infinity() -> Self {
+        Self::new(f32::INFINITY, f32::INFINITY)
+    }
+
     fn along(self, axis: Axis) -> f32 {
         match axis {
             Axis::Horizontal => self.x(),
             Axis::Vertical => self.y(),
         }
+    }
+
+    fn get(self, axis: Axis2d) -> f32 {
+        match axis {
+            Axis2d::X => self.x(),
+            Axis2d::Y => self.y(),
+        }
+    }
+
+    fn set(&mut self, axis: Axis2d, value: f32) -> Self {
+        match axis {
+            Axis2d::X => self.set_x(value),
+            Axis2d::Y => self.set_y(value),
+        }
+        *self
     }
 }
 
@@ -1288,6 +1310,12 @@ impl SizeConstraint {
         Self {
             min: size,
             max: size,
+        }
+    }
+    pub fn loose(max: Vector2F) -> Self {
+        Self {
+            min: Vector2F::zero(),
+            max,
         }
     }
 
