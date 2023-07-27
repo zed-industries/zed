@@ -1,4 +1,4 @@
-import { ThemeLicenseType, ThemeSyntax, ThemeFamilyMeta } from "../../common"
+import { ThemeLicenseType, ThemeFamilyMeta, ThemeConfigInputSyntax } from "../../common"
 
 export interface Variant {
     colors: {
@@ -29,7 +29,7 @@ export const meta: ThemeFamilyMeta = {
         "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/",
 }
 
-export const build_syntax = (variant: Variant): ThemeSyntax => {
+export const build_syntax = (variant: Variant): ThemeConfigInputSyntax => {
     const { colors } = variant
     return {
         primary: { color: colors.base06 },
@@ -50,7 +50,6 @@ export const build_syntax = (variant: Variant): ThemeSyntax => {
         property: { color: colors.base08 },
         variable: { color: colors.base06 },
         "variable.special": { color: colors.base0E },
-        variant: { color: colors.base0A },
         keyword: { color: colors.base0E },
     }
 }

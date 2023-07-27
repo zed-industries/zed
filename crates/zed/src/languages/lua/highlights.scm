@@ -158,7 +158,7 @@
 [
   "{"
   "}"
-] @constructor)
+] @method.constructor)
 
 ;; Functions
 

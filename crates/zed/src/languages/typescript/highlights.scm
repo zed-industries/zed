@@ -43,8 +43,8 @@
 
 ; Special identifiers
 
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
+((identifier) @method.constructor
+ (#match? @method.constructor "^[A-Z]"))
 
 ((identifier) @type
  (#match? @type "^[A-Z]"))

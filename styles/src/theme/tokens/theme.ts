@@ -6,15 +6,13 @@ import {
 } from "@tokens-studio/types"
 import {
     Shadow,
-    SyntaxHighlightStyle,
-    ThemeSyntax,
 } from "../create_theme"
 import { LayerToken, layer_token } from "./layer"
 import { PlayersToken, players_token } from "./players"
 import { color_token } from "./token"
-import { Syntax } from "../syntax"
 import editor from "../../style_tree/editor"
 import { useTheme } from "../../../src/common"
+import { Syntax, SyntaxHighlightStyle } from "../../types/syntax"
 
 interface ThemeTokens {
     name: SingleOtherToken
@@ -51,7 +49,7 @@ const modal_shadow_token = (): SingleBoxShadowToken => {
     return create_shadow_token(shadow, "modal_shadow")
 }
 
-type ThemeSyntaxColorTokens = Record<keyof ThemeSyntax, SingleColorToken>
+type ThemeSyntaxColorTokens = Record<keyof Syntax, SingleColorToken>
 
 function syntax_highlight_style_color_tokens(
     syntax: Syntax

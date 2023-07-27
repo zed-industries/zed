@@ -1,12 +1,12 @@
 import { Scale, Color } from "chroma-js"
-import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
-export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 import {
     ThemeConfig,
     ThemeAppearance,
-    ThemeConfigInputColors,
+    ThemeConfigInputColors
 } from "./theme_config"
 import { get_ramps } from "./ramps"
+import { syntaxStyle } from "./syntax"
+import { Syntax } from "../types/syntax"
 
 export interface Theme {
     name: string
@@ -31,7 +31,7 @@ export interface Theme {
     modal_shadow: Shadow
 
     players: Players
-    syntax?: Partial<ThemeSyntax>
+    syntax: Syntax
 }
 
 export interface Meta {
@@ -119,7 +119,6 @@ export function create_theme(theme: ThemeConfig): Theme {
         name,
         appearance,
         input_color,
-        override: { syntax },
     } = theme
 
     const is_light = appearance === ThemeAppearance.Light
@@ -161,6 +160,8 @@ export function create_theme(theme: ThemeConfig): Theme {
         "6": player(ramps.red),
         "7": player(ramps.yellow),
     }
+
+    const syntax = syntaxStyle(ramps, theme.override.syntax ? theme.override.syntax : {})
 
     return {
         name,

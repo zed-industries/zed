@@ -47,8 +47,8 @@
 ((name) @constant.builtin
  (#match? @constant.builtin "^__[A-Z][A-Z\d_]+__$"))
 
-((name) @constructor
- (#match? @constructor "^[A-Z]"))
+((name) @method.constructor
+(#match? @method.constructor "^[A-Z]"))
 
 ((name) @variable.builtin
  (#eq? @variable.builtin "this"))

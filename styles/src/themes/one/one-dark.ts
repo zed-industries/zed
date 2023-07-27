@@ -54,7 +54,6 @@ export const theme: ThemeConfig = {
         syntax: {
             boolean: { color: color.orange },
             comment: { color: color.grey },
-            enum: { color: color.red },
             "emphasis.strong": { color: color.orange },
             function: { color: color.blue },
             keyword: { color: color.purple },
@@ -73,8 +72,7 @@ export const theme: ThemeConfig = {
             "text.literal": { color: color.green },
             type: { color: color.teal },
             "variable.special": { color: color.orange },
-            variant: { color: color.blue },
-            constructor: { color: color.blue },
+            "method.constructor": { color: color.blue },
         },
     },
 }
