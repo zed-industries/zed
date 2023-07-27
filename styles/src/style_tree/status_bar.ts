@@ -44,7 +44,7 @@ export default function status_bar(): any {
                 icon_spacing: 4,
                 icon_width: 14,
                 height: 18,
-                message: text(layer, "sans"),
+                message: text(layer, "sans", { size: "xs" }),
                 icon_color: foreground(layer),
             },
             state: {
