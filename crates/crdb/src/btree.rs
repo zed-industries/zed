@@ -423,8 +423,31 @@ impl<T: Item> Sequence<T> {
                     }
                 }
             }
-            ChildTree::Unloaded { .. } => {
-                if let Some(split_tree) = self.push_tree_recursive(other_child, other_summary, cx) {
+            ChildTree::Unloaded { saved_id } => {
+                if self.0.is_leaf() {
+                    let mut summary = self.0.summary().clone();
+                    Summary::add_summary(&mut summary, &other_summary, cx);
+
+                    let mut child_summaries = ArrayVec::new();
+                    child_summaries.push(self.0.summary().clone());
+                    child_summaries.push(other_summary);
+
+                    let mut child_trees = ArrayVec::new();
+                    child_trees.push(ChildTree::Loaded { tree: self.clone() });
+                    child_trees.push(ChildTree::Unloaded {
+                        saved_id: saved_id.clone(),
+                    });
+
+                    *self = Self(Arc::new(Node::Internal {
+                        saved_id: Default::default(),
+                        height: self.0.height() + 1,
+                        summary,
+                        child_summaries,
+                        child_trees,
+                    }));
+                } else if let Some(split_tree) =
+                    self.push_tree_recursive(other_child, other_summary, cx)
+                {
                     *self = Self::from_child_trees(self.clone(), split_tree, cx);
                 }
             }
@@ -1380,7 +1403,7 @@ mod tests {
                 let mut full_tree = tree.clone();
                 smol::block_on(full_tree.load(&kv, &(), |_| true)).unwrap();
 
-                assert_eq!(tree.items(&()), reference_items);
+                assert_eq!(full_tree.items(&()), reference_items);
                 assert_eq!(
                     tree.iter().collect::<Vec<_>>(),
                     tree.cursor::<()>().collect::<Vec<_>>()
