@@ -1,4 +1,7 @@
 mod access_token;
+mod channel;
+mod channel_member;
+mod channel_parent;
 mod contact;
 mod follower;
 mod language_server;
@@ -36,7 +39,7 @@ use sea_orm::{
     DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect,
     Statement, TransactionTrait,
 };
-use sea_query::{Alias, Expr, OnConflict, Query};
+use sea_query::{Alias, Expr, OnConflict, Query, SelectStatement};
 use serde::{Deserialize, Serialize};
 pub use signup::{Invite, NewSignup, WaitlistSummary};
 use sqlx::migrate::{Migrate, Migration, MigrationSource};
@@ -3027,6 +3030,138 @@ impl Database {
         .await
     }
 
+    // channels
+
+    pub async fn get_channels(&self, user_id: UserId) -> Result<Vec<ChannelId>> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+
+            let user = user::Model {
+                id: user_id,
+                ..Default::default()
+            };
+            let mut channel_ids = user
+                .find_related(channel_member::Entity)
+                .select_only()
+                .column(channel_member::Column::ChannelId)
+                .all(&*tx)
+                .await;
+
+            let descendants = Alias::new("descendants");
+            let cte_referencing = SelectStatement::new()
+                .column(channel_parent::Column::ChildId)
+                .from(channel::Entity)
+                .and_where(
+                    Expr::col(channel_parent::Column::ParentId)
+                        .in_subquery(SelectStatement::new().from(descendants).take())
+                );
+
+            /*
+            WITH RECURSIVE descendant_ids(id) AS (
+                $1
+                UNION ALL
+                SELECT child_id as id FROM channel_parents WHERE parent_id IN descendants
+            )
+            SELECT * from channels where id in descendant_ids
+            */
+
+
+            // WITH RECURSIVE descendants(id) AS (
+            //    // SQL QUERY FOR SELECTING Initial IDs
+            //   UNION
+            //    SELECT id FROM ancestors WHERE p.parent = id
+            // )
+            // SELECT * FROM descendants;
+
+
+
+            // let descendant_channel_ids =
+
+
+
+            // let query = sea_query::Query::with().recursive(true);
+
+
+            for id_path in id_paths {
+                //
+            }
+
+
+            // zed/public/plugins
+            // zed/public/plugins/js
+            // zed/zed-livekit
+            // livekit/zed-livekit
+            // zed - 101
+            // livekit - 500
+            // zed-livekit - 510
+            // public - 150
+            // plugins - 200
+            // js - 300
+            //
+            // Channel, Parent - edges
+            // 510 - 500
+            // 510 - 101
+            //
+            // Given the channel 'Zed' (101)
+            // Select * from EDGES where parent = 101 => 510
+            //
+
+
+            "SELECT * from channels where id_path like '$1?'"
+
+            // https://www.postgresql.org/docs/current/queries-with.html
+            // https://www.sqlite.org/lang_with.html
+
+            "SELECT channel_id from channel_ancestors where ancestor_id IN $()"
+
+            // | channel_id | ancestor_ids |
+            // 150              150
+            // 150              101
+            // 200              101
+            // 300              101
+            // 200              150
+            // 300              150
+            // 300              200
+            //
+            // // | channel_id | ancestor_ids |
+            // 150              101
+            // 200              101
+            // 300              101
+            // 200              150
+            // 300              [150, 200]
+
+            channel::Entity::find()
+                .filter(channel::Column::IdPath.like(id_paths.unwrap()))
+
+            dbg!(&id_paths.unwrap()[0].id_path);
+
+            // let mut channel_members_by_channel_id = HashMap::new();
+            // for channel_member in channel_members {
+            //     channel_members_by_channel_id
+            //         .entry(channel_member.channel_id)
+            //         .or_insert_with(Vec::new)
+            //         .push(channel_member);
+            // }
+
+            // let mut channel_messages = channel_message::Entity::find()
+            //     .filter(channel_message::Column::ChannelId.in_selection(channel_ids))
+            //     .all(&*tx)
+            //     .await?;
+
+            // let mut channel_messages_by_channel_id = HashMap::new();
+            // for channel_message in channel_messages {
+            //     channel_messages_by_channel_id
+            //         .entry(channel_message.channel_id)
+            //         .or_insert_with(Vec::new)
+            //         .push(channel_message);
+            // }
+
+            todo!();
+            // Ok(channels)
+        })
+        .await
+    }
+
     async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
@@ -3400,6 +3535,8 @@ macro_rules! id_type {
 }
 
 id_type!(AccessTokenId);
+id_type!(ChannelId);
+id_type!(ChannelMemberId);
 id_type!(ContactId);
 id_type!(FollowerId);
 id_type!(RoomId);

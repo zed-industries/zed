@@ -17,10 +17,7 @@ use gpui::{
         Canvas, ChildView, Empty, Flex, Image, Label, List, ListOffset, ListState,
         MouseEventHandler, Orientation, Padding, ParentElement, Stack, Svg,
     },
-    geometry::{
-        rect::RectF,
-        vector::vec2f,
-    },
+    geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, PromptLevel},
     serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -1452,11 +1449,8 @@ impl View for CollabPanel {
                 .with_child(ChildView::new(&self.context_menu, cx))
                 .into_any()
         })
-        .on_click(MouseButton::Left, |_, v, cx| {
-            cx.focus_self()
-        })
+        .on_click(MouseButton::Left, |_, _, cx| cx.focus_self())
         .into_any_named("channels panel")
-
     }
 }
 

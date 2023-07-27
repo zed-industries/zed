@@ -26,6 +26,8 @@ pub enum Relation {
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
     HostedProjects,
+    #[sea_orm(has_many = "super::channel_member::Entity")]
+    ChannelMemberships,
 }
 
 impl Related<super::access_token::Entity> for Entity {
@@ -43,6 +45,12 @@ impl Related<super::room_participant::Entity> for Entity {
 impl Related<super::project::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::HostedProjects.def()
+    }
+}
+
+impl Related<super::channel_member::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ChannelMemberships.def()
     }
 }
 

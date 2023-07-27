@@ -37,4 +37,10 @@ impl Related<super::follower::Entity> for Entity {
     }
 }
 
+impl Related<super::channel::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Follower.def()
+    }
+}
+
 impl ActiveModelBehavior for ActiveModel {}
