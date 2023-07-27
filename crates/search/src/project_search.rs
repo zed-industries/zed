@@ -1254,69 +1254,100 @@ impl View for ProjectSearchBar {
             let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
             let semantic_index =
                 SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
-
-            Flex::column()
+            Flex::row()
+                .with_child(Flex::row().flex(1., true))
                 .with_child(
-                    Flex::row()
-                        .with_children(matches)
+                    Flex::column()
                         .with_child(
                             Flex::row()
-                                .with_child(query)
+                                .with_children(matches)
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(query)
+                                        .contained()
+                                        .with_style(query_container_style)
+                                        .aligned()
+                                        .constrained()
+                                        .with_min_width(theme.search.editor.min_width)
+                                        .with_max_width(theme.search.editor.max_width)
+                                        .flex(1., false),
+                                )
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(self.render_nav_button(
+                                            "<",
+                                            Direction::Prev,
+                                            cx,
+                                        ))
+                                        .with_child(self.render_nav_button(
+                                            ">",
+                                            Direction::Next,
+                                            cx,
+                                        ))
+                                        .aligned(),
+                                )
+                                .with_child(
+                                    Flex::row()
+                                        .with_children(semantic_index)
+                                        .with_child(case_button)
+                                        .with_child(word_button)
+                                        .with_child(regex_button)
+                                        .contained()
+                                        .with_style(theme.search.option_button_group)
+                                        .aligned()
+                                        .right(),
+                                )
                                 .contained()
-                                .with_style(query_container_style)
-                                .aligned()
-                                .constrained()
-                                .with_min_width(theme.search.editor.min_width)
-                                .with_max_width(theme.search.editor.max_width)
-                                .flex(1., false),
+                                .with_margin_bottom(row_spacing),
                         )
                         .with_child(
                             Flex::row()
-                                .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                                .with_child(self.render_nav_button(">", Direction::Next, cx))
-                                .aligned(),
-                        )
-                        .with_child(
-                            Flex::row()
-                                .with_children(semantic_index)
-                                .with_child(case_button)
-                                .with_child(word_button)
-                                .with_child(regex_button)
-                                .contained()
-                                .with_style(theme.search.option_button_group)
-                                .aligned()
-                                .right(),
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(included_files_view)
+                                        .contained()
+                                        .with_style(include_container_style)
+                                        .aligned()
+                                        .constrained()
+                                        .with_min_width(
+                                            theme.search.include_exclude_editor.min_width,
+                                        )
+                                        .with_max_width(
+                                            theme.search.include_exclude_editor.max_width,
+                                        )
+                                        .flex(1., false),
+                                )
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(excluded_files_view)
+                                        .contained()
+                                        .with_style(exclude_container_style)
+                                        .aligned()
+                                        .constrained()
+                                        .with_min_width(
+                                            theme.search.include_exclude_editor.min_width,
+                                        )
+                                        .with_max_width(
+                                            theme.search.include_exclude_editor.max_width,
+                                        )
+                                        .flex(1., false),
+                                ),
                         )
                         .contained()
-                        .with_margin_bottom(row_spacing),
+                        .with_style(theme.search.container)
+                        .flex(2., true),
                 )
                 .with_child(
                     Flex::row()
-                        .with_child(
-                            Flex::row()
-                                .with_child(included_files_view)
-                                .contained()
-                                .with_style(include_container_style)
-                                .aligned()
-                                .constrained()
-                                .with_min_width(theme.search.include_exclude_editor.min_width)
-                                .with_max_width(theme.search.include_exclude_editor.max_width)
-                                .flex(1., false),
-                        )
-                        .with_child(
-                            Flex::row()
-                                .with_child(excluded_files_view)
-                                .contained()
-                                .with_style(exclude_container_style)
-                                .aligned()
-                                .constrained()
-                                .with_min_width(theme.search.include_exclude_editor.min_width)
-                                .with_max_width(theme.search.include_exclude_editor.max_width)
-                                .flex(1., false),
-                        ),
+                        .with_child(Label::new(
+                            "Here be dragons",
+                            theme.search.match_index.text.clone(),
+                        ))
+                        .flex(1., true)
+                        .aligned()
+                        .right(),
                 )
                 .contained()
-                .with_style(theme.search.container)
                 .flex_float()
                 .into_any_named("project search")
         } else {
