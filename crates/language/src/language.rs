@@ -1188,25 +1188,39 @@ impl Language {
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
-            self = self.with_highlights_query(query.as_ref()).context("Error loading highlights query")?;
+            self = self
+                .with_highlights_query(query.as_ref())
+                .context("Error loading highlights query")?;
         }
         if let Some(query) = queries.brackets {
-            self = self.with_brackets_query(query.as_ref()).context("Error loading brackets query")?;
+            self = self
+                .with_brackets_query(query.as_ref())
+                .context("Error loading brackets query")?;
         }
         if let Some(query) = queries.indents {
-            self = self.with_indents_query(query.as_ref()).context("Error loading indents query")?;
+            self = self
+                .with_indents_query(query.as_ref())
+                .context("Error loading indents query")?;
         }
         if let Some(query) = queries.outline {
-            self = self.with_outline_query(query.as_ref()).context("Error loading outline query")?;
+            self = self
+                .with_outline_query(query.as_ref())
+                .context("Error loading outline query")?;
         }
         if let Some(query) = queries.embedding {
-            self = self.with_embedding_query(query.as_ref()).context("Error loading embedding query")?;
+            self = self
+                .with_embedding_query(query.as_ref())
+                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
-            self = self.with_injection_query(query.as_ref()).context("Error loading injection query")?;
+            self = self
+                .with_injection_query(query.as_ref())
+                .context("Error loading injection query")?;
         }
         if let Some(query) = queries.overrides {
-            self = self.with_override_query(query.as_ref()).context("Error loading override query")?;
+            self = self
+                .with_override_query(query.as_ref())
+                .context("Error loading override query")?;
         }
         Ok(self)
     }
