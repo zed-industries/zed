@@ -120,14 +120,15 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
     }
 }
 
-pub trait ResultExt {
+pub trait ResultExt<E> {
     type Ok;
 
     fn log_err(self) -> Option<Self::Ok>;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn inspect_error(self, func: impl FnOnce(&E)) -> Self;
 }
 
-impl<T, E> ResultExt for Result<T, E>
+impl<T, E> ResultExt<E> for Result<T, E>
 where
     E: std::fmt::Debug,
 {
@@ -153,6 +154,15 @@ where
                 None
             }
         }
+    }
+
+    /// https://doc.rust-lang.org/std/result/enum.Result.html#method.inspect_err
+    fn inspect_error(self, func: impl FnOnce(&E)) -> Self {
+        if let Err(err) = &self {
+            func(err);
+        }
+
+        self
     }
 }
 

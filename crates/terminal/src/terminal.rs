@@ -51,7 +51,7 @@ use gpui::{
     fonts,
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::Keystroke,
-    platform::{MouseButton, MouseMovedEvent, TouchPhase},
+    platform::{Modifiers, MouseButton, MouseMovedEvent, TouchPhase},
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
     AppContext, ClipboardItem, Entity, ModelContext, Task,
 };
@@ -72,14 +72,17 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
-// Regex Copied from alacritty's ui_config.rs
-
 lazy_static! {
-    static ref URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+    // Regex Copied from alacritty's ui_config.rs and modified its declaration slightly:
+    // * avoid Rust-specific escaping.
+    // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
+    static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
+
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.:/@\-~]+"#).unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
@@ -88,6 +91,18 @@ pub enum Event {
     Wakeup,
     BlinkChanged,
     SelectionsChanged,
+    NewNavigationTarget(Option<MaybeNavigationTarget>),
+    Open(MaybeNavigationTarget),
+}
+
+/// A string inside terminal, potentially useful as a URI that can be opened.
+#[derive(Clone, Debug)]
+pub enum MaybeNavigationTarget {
+    /// HTTP, git, etc. string determined by the [`URL_REGEX`] regex.
+    Url(String),
+    /// File system path, absolute or relative, existing or not.
+    /// Might have line and column number(s) attached as `file.rs:1:23`
+    PathLike(String),
 }
 
 #[derive(Clone)]
@@ -198,7 +213,7 @@ impl TerminalLineHeight {
         match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
-            TerminalLineHeight::Custom(line_height) => *line_height,
+            TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
         }
     }
 }
@@ -493,6 +508,8 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
+            cmd_pressed: false,
+            hovered_word: false,
         };
 
         Ok(TerminalBuilder {
@@ -589,7 +606,14 @@ pub struct TerminalContent {
     pub cursor: RenderableCursor,
     pub cursor_char: char,
     pub size: TerminalSize,
-    pub last_hovered_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
+    pub last_hovered_word: Option<HoveredWord>,
+}
+
+#[derive(Clone)]
+pub struct HoveredWord {
+    pub word: String,
+    pub word_match: RangeInclusive<Point>,
+    pub id: usize,
 }
 
 impl Default for TerminalContent {
@@ -606,7 +630,7 @@ impl Default for TerminalContent {
             },
             cursor_char: Default::default(),
             size: Default::default(),
-            last_hovered_hyperlink: None,
+            last_hovered_word: None,
         }
     }
 }
@@ -623,7 +647,7 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, AlacDirection)>,
-    /// This is only used for terminal hyperlink checking
+    /// This is only used for terminal hovered word checking
     last_mouse_position: Option<Vector2F>,
     pub matches: Vec<RangeInclusive<Point>>,
     pub last_content: TerminalContent,
@@ -637,6 +661,8 @@ pub struct Terminal {
     scroll_px: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
+    cmd_pressed: bool,
+    hovered_word: bool,
 }
 
 impl Terminal {
@@ -769,7 +795,7 @@ impl Terminal {
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
-                self.refresh_hyperlink();
+                self.refresh_hovered_word();
             }
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
@@ -804,20 +830,20 @@ impl Terminal {
             }
             InternalEvent::ScrollToPoint(point) => {
                 term.scroll_to_point(*point);
-                self.refresh_hyperlink();
+                self.refresh_hovered_word();
             }
             InternalEvent::FindHyperlink(position, open) => {
-                let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
+                let prev_hovered_word = self.last_content.last_hovered_word.take();
 
                 let point = grid_point(
                     *position,
                     self.last_content.size,
                     term.grid().display_offset(),
                 )
-                .grid_clamp(term, alacritty_terminal::index::Boundary::Cursor);
+                .grid_clamp(term, alacritty_terminal::index::Boundary::Grid);
 
                 let link = term.grid().index(point).hyperlink();
-                let found_url = if link.is_some() {
+                let found_word = if link.is_some() {
                     let mut min_index = point;
                     loop {
                         let new_min_index =
@@ -847,42 +873,80 @@ impl Terminal {
                     let url = link.unwrap().uri().to_owned();
                     let url_match = min_index..=max_index;
 
-                    Some((url, url_match))
-                } else if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
-                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-
-                    Some((url, url_match))
+                    Some((url, true, url_match))
+                } else if let Some(word_match) = regex_match_at(term, point, &WORD_REGEX) {
+                    let maybe_url_or_path =
+                        term.bounds_to_string(*word_match.start(), *word_match.end());
+                    let is_url = match regex_match_at(term, point, &URL_REGEX) {
+                        Some(url_match) => url_match == word_match,
+                        None => false,
+                    };
+                    Some((maybe_url_or_path, is_url, word_match))
                 } else {
                     None
                 };
 
-                if let Some((url, url_match)) = found_url {
-                    if *open {
-                        cx.platform().open_url(url.as_str());
-                    } else {
-                        self.update_hyperlink(prev_hyperlink, url, url_match);
+                match found_word {
+                    Some((maybe_url_or_path, is_url, url_match)) => {
+                        if *open {
+                            let target = if is_url {
+                                MaybeNavigationTarget::Url(maybe_url_or_path)
+                            } else {
+                                MaybeNavigationTarget::PathLike(maybe_url_or_path)
+                            };
+                            cx.emit(Event::Open(target));
+                        } else {
+                            self.update_selected_word(
+                                prev_hovered_word,
+                                url_match,
+                                maybe_url_or_path,
+                                is_url,
+                                cx,
+                            );
+                        }
+                        self.hovered_word = true;
+                    }
+                    None => {
+                        if self.hovered_word {
+                            cx.emit(Event::NewNavigationTarget(None));
+                        }
+                        self.hovered_word = false;
                     }
                 }
             }
         }
     }
 
-    fn update_hyperlink(
+    fn update_selected_word(
         &mut self,
-        prev_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
-        url: String,
-        url_match: RangeInclusive<Point>,
+        prev_word: Option<HoveredWord>,
+        word_match: RangeInclusive<Point>,
+        word: String,
+        is_url: bool,
+        cx: &mut ModelContext<Self>,
     ) {
-        if let Some(prev_hyperlink) = prev_hyperlink {
-            if prev_hyperlink.0 == url && prev_hyperlink.1 == url_match {
-                self.last_content.last_hovered_hyperlink = Some((url, url_match, prev_hyperlink.2));
-            } else {
-                self.last_content.last_hovered_hyperlink =
-                    Some((url, url_match, self.next_link_id()));
+        if let Some(prev_word) = prev_word {
+            if prev_word.word == word && prev_word.word_match == word_match {
+                self.last_content.last_hovered_word = Some(HoveredWord {
+                    word,
+                    word_match,
+                    id: prev_word.id,
+                });
+                return;
             }
-        } else {
-            self.last_content.last_hovered_hyperlink = Some((url, url_match, self.next_link_id()));
         }
+
+        self.last_content.last_hovered_word = Some(HoveredWord {
+            word: word.clone(),
+            word_match,
+            id: self.next_link_id(),
+        });
+        let navigation_target = if is_url {
+            MaybeNavigationTarget::Url(word)
+        } else {
+            MaybeNavigationTarget::PathLike(word)
+        };
+        cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -905,6 +969,21 @@ impl Terminal {
 
             self.events
                 .push_back(InternalEvent::ScrollToPoint(*search_match.start()));
+        }
+    }
+
+    pub fn select_matches(&mut self, matches: Vec<RangeInclusive<Point>>) {
+        let matches_to_select = self
+            .matches
+            .iter()
+            .filter(|self_match| matches.contains(self_match))
+            .cloned()
+            .collect::<Vec<_>>();
+        for match_to_select in matches_to_select {
+            self.set_selection(Some((
+                make_selection(&match_to_select),
+                *match_to_select.end(),
+            )));
         }
     }
 
@@ -947,6 +1026,15 @@ impl Terminal {
         } else {
             false
         }
+    }
+
+    pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
+        let changed = self.cmd_pressed != modifiers.cmd;
+        if !self.cmd_pressed && modifiers.cmd {
+            self.refresh_hovered_word();
+        }
+        self.cmd_pressed = modifiers.cmd;
+        changed
     }
 
     ///Paste text into the terminal
@@ -1020,7 +1108,7 @@ impl Terminal {
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
             size: last_content.size,
-            last_hovered_hyperlink: last_content.last_hovered_hyperlink.clone(),
+            last_hovered_word: last_content.last_hovered_word.clone(),
         }
     }
 
@@ -1074,14 +1162,14 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else {
-            self.hyperlink_from_position(Some(position));
+        } else if self.cmd_pressed {
+            self.word_from_position(Some(position));
         }
     }
 
-    fn hyperlink_from_position(&mut self, position: Option<Vector2F>) {
+    fn word_from_position(&mut self, position: Option<Vector2F>) {
         if self.selection_phase == SelectionPhase::Selecting {
-            self.last_content.last_hovered_hyperlink = None;
+            self.last_content.last_hovered_word = None;
         } else if let Some(position) = position {
             self.events
                 .push_back(InternalEvent::FindHyperlink(position, false));
@@ -1193,7 +1281,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.platform().open_url(link.uri());
-                } else {
+                } else if self.cmd_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }
@@ -1240,8 +1328,8 @@ impl Terminal {
         }
     }
 
-    pub fn refresh_hyperlink(&mut self) {
-        self.hyperlink_from_position(self.last_mouse_position);
+    fn refresh_hovered_word(&mut self) {
+        self.word_from_position(self.last_mouse_position);
     }
 
     fn determine_scroll_lines(&mut self, e: &MouseScrollWheel, mouse_mode: bool) -> Option<i32> {
@@ -1318,6 +1406,10 @@ impl Terminal {
                 )
             })
             .unwrap_or_else(|| "Terminal".to_string())
+    }
+
+    pub fn can_navigate_to_selected_word(&self) -> bool {
+        self.cmd_pressed && self.hovered_word
     }
 }
 

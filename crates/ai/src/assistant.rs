@@ -39,7 +39,7 @@ use std::{
     time::Duration,
 };
 use theme::AssistantStyle;
-use util::{channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
+use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     searchable::Direction,
@@ -51,7 +51,7 @@ const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
 actions!(
     assistant,
     [
-        NewContext,
+        NewConversation,
         Assist,
         Split,
         CycleMessageRole,
@@ -62,22 +62,12 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
-        cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
-            filter.filtered_namespaces.insert("assistant");
-        });
-    }
-
     settings::register::<AssistantSettings>(cx);
     cx.add_action(
-        |workspace: &mut Workspace, _: &NewContext, cx: &mut ViewContext<Workspace>| {
-            if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-                this.update(cx, |this, cx| {
-                    this.new_conversation(cx);
-                })
-            }
-
-            workspace.focus_panel::<AssistantPanel>(cx);
+        |this: &mut AssistantPanel,
+         _: &workspace::NewFile,
+         cx: &mut ViewContext<AssistantPanel>| {
+            this.new_conversation(cx);
         },
     );
     cx.add_action(ConversationEditor::assist);
@@ -157,8 +147,9 @@ impl AssistantPanel {
                                 .await
                                 .log_err()
                                 .unwrap_or_default();
-                            this.update(&mut cx, |this, _| {
-                                this.saved_conversations = saved_conversations
+                            this.update(&mut cx, |this, cx| {
+                                this.saved_conversations = saved_conversations;
+                                cx.notify();
                             })
                             .ok();
                         }
@@ -307,12 +298,22 @@ impl AssistantPanel {
     }
 
     fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
+        let mut propagate_action = true;
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, true, cx)) {
-                return;
-            }
+            search_bar.update(cx, |search_bar, cx| {
+                if search_bar.show(cx) {
+                    search_bar.search_suggested(cx);
+                    if action.focus {
+                        search_bar.select_query(cx);
+                        cx.focus_self();
+                    }
+                    propagate_action = false
+                }
+            });
         }
-        cx.propagate_action();
+        if propagate_action {
+            cx.propagate_action();
+        }
     }
 
     fn handle_editor_cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
@@ -329,13 +330,13 @@ impl AssistantPanel {
 
     fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, cx));
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, 1, cx));
         }
     }
 
     fn select_prev_match(&mut self, _: &search::SelectPrevMatch, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, cx));
+            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, 1, cx));
         }
     }
 
@@ -344,9 +345,10 @@ impl AssistantPanel {
     }
 
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        enum ListConversations {}
+        enum History {}
         let theme = theme::current(cx);
-        MouseEventHandler::<ListConversations, _>::new(0, cx, |state, _| {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        MouseEventHandler::<History, _>::new(0, cx, |state, _| {
             let style = theme.assistant.hamburger_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -360,6 +362,7 @@ impl AssistantPanel {
                 this.set_active_editor_index(this.prev_active_editor_index, cx);
             }
         })
+        .with_tooltip::<History>(1, "History".into(), None, tooltip_style, cx)
     }
 
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement<Self>> {
@@ -443,7 +446,7 @@ impl AssistantPanel {
         })
         .with_tooltip::<QuoteSelection>(
             1,
-            "Assist".into(),
+            "Quote Selection".into(),
             Some(Box::new(QuoteSelection)),
             tooltip_style,
             cx,
@@ -451,9 +454,9 @@ impl AssistantPanel {
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        enum AddConversation {}
         let theme = theme::current(cx);
-        MouseEventHandler::<AddConversation, _>::new(0, cx, |state, _| {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        MouseEventHandler::<NewConversation, _>::new(0, cx, |state, _| {
             let style = theme.assistant.plus_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -463,12 +466,20 @@ impl AssistantPanel {
         .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
             this.new_conversation(cx);
         })
+        .with_tooltip::<NewConversation>(
+            1,
+            "New Conversation".into(),
+            Some(Box::new(NewConversation)),
+            tooltip_style,
+            cx,
+        )
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
         enum ToggleZoomButton {}
 
         let theme = theme::current(cx);
+        let tooltip_style = theme::current(cx).tooltip.clone();
         let style = if self.zoomed {
             &theme.assistant.zoom_out_button
         } else {
@@ -485,6 +496,17 @@ impl AssistantPanel {
         .on_click(MouseButton::Left, |_, this, cx| {
             this.toggle_zoom(&ToggleZoom, cx);
         })
+        .with_tooltip::<ToggleZoom>(
+            0,
+            if self.zoomed {
+                "Zoom Out".into()
+            } else {
+                "Zoom In".into()
+            },
+            Some(Box::new(ToggleZoom)),
+            tooltip_style,
+            cx,
+        )
     }
 
     fn render_saved_conversation(
@@ -610,19 +632,22 @@ impl View for AssistantPanel {
                     .left()
                     .flex(1., false)
             });
+            let mut header = Flex::row()
+                .with_child(Self::render_hamburger_button(cx).aligned())
+                .with_children(title);
+            if self.has_focus {
+                header.add_children(
+                    self.render_editor_tools(cx)
+                        .into_iter()
+                        .map(|tool| tool.aligned().flex_float()),
+                );
+                header.add_child(Self::render_plus_button(cx).aligned().flex_float());
+                header.add_child(self.render_zoom_button(cx).aligned());
+            }
 
             Flex::column()
                 .with_child(
-                    Flex::row()
-                        .with_child(Self::render_hamburger_button(cx).aligned())
-                        .with_children(title)
-                        .with_children(
-                            self.render_editor_tools(cx)
-                                .into_iter()
-                                .map(|tool| tool.aligned().flex_float()),
-                        )
-                        .with_child(Self::render_plus_button(cx).aligned().flex_float())
-                        .with_child(self.render_zoom_button(cx).aligned())
+                    header
                         .contained()
                         .with_style(theme.workspace.tab_bar.container)
                         .expanded()
@@ -658,6 +683,7 @@ impl View for AssistantPanel {
         self.has_focus = true;
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
+        cx.notify();
         if cx.is_self_focused() {
             if let Some(editor) = self.active_editor() {
                 cx.focus(editor);
@@ -671,6 +697,7 @@ impl View for AssistantPanel {
         self.has_focus = false;
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
+        cx.notify();
     }
 }
 
@@ -1659,6 +1686,8 @@ impl ConversationEditor {
                     |selections| selections.select_ranges(new_selections),
                 );
             });
+            // Avoid scrolling to the new cursor position so the assistant's output is stable.
+            cx.defer(|this, _| this.scroll_position = None);
         }
     }
 
@@ -1893,7 +1922,7 @@ impl ConversationEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(editor) = workspace.active_item(cx).and_then(|item| item.downcast::<Editor>()) else {
+        let Some(editor) = workspace.active_item(cx).and_then(|item| item.act_as::<Editor>(cx)) else {
             return;
         };
 
@@ -2042,6 +2071,8 @@ impl ConversationEditor {
         let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
         let remaining_tokens_style = if remaining_tokens <= 0 {
             &style.no_remaining_tokens
+        } else if remaining_tokens <= 500 {
+            &style.low_remaining_tokens
         } else {
             &style.remaining_tokens
         };

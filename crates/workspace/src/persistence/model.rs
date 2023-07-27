@@ -127,10 +127,11 @@ impl Bind for DockData {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SerializedPaneGroup {
     Group {
         axis: Axis,
+        flexes: Option<Vec<f32>>,
         children: Vec<SerializedPaneGroup>,
     },
     Pane(SerializedPane),
@@ -149,7 +150,7 @@ impl Default for SerializedPaneGroup {
 impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
-        &self,
+        self,
         project: &ModelHandle<Project>,
         workspace_id: WorkspaceId,
         workspace: &WeakViewHandle<Workspace>,
@@ -160,7 +161,11 @@ impl SerializedPaneGroup {
         Vec<Option<Box<dyn ItemHandle>>>,
     )> {
         match self {
-            SerializedPaneGroup::Group { axis, children } => {
+            SerializedPaneGroup::Group {
+                axis,
+                children,
+                flexes,
+            } => {
                 let mut current_active_pane = None;
                 let mut members = Vec::new();
                 let mut items = Vec::new();
@@ -184,10 +189,7 @@ impl SerializedPaneGroup {
                 }
 
                 Some((
-                    Member::Axis(PaneAxis {
-                        axis: *axis,
-                        members,
-                    }),
+                    Member::Axis(PaneAxis::load(axis, members, flexes)),
                     current_active_pane,
                     items,
                 ))

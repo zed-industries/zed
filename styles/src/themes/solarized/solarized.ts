@@ -1,6 +1,6 @@
 import {
     chroma,
-    colorRamp,
+    color_ramp,
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
@@ -19,24 +19,24 @@ const ramps = {
             "#fdf6e3",
         ])
         .domain([0, 0.2, 0.38, 0.45, 0.65, 0.7, 0.85, 1]),
-    red: colorRamp(chroma("#dc322f")),
-    orange: colorRamp(chroma("#cb4b16")),
-    yellow: colorRamp(chroma("#b58900")),
-    green: colorRamp(chroma("#859900")),
-    cyan: colorRamp(chroma("#2aa198")),
-    blue: colorRamp(chroma("#268bd2")),
-    violet: colorRamp(chroma("#6c71c4")),
-    magenta: colorRamp(chroma("#d33682")),
+    red: color_ramp(chroma("#dc322f")),
+    orange: color_ramp(chroma("#cb4b16")),
+    yellow: color_ramp(chroma("#b58900")),
+    green: color_ramp(chroma("#859900")),
+    cyan: color_ramp(chroma("#2aa198")),
+    blue: color_ramp(chroma("#268bd2")),
+    violet: color_ramp(chroma("#6c71c4")),
+    magenta: color_ramp(chroma("#d33682")),
 }
 
 export const dark: ThemeConfig = {
     name: "Solarized Dark",
     author: "Ethan Schoonover",
     appearance: ThemeAppearance.Dark,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/altercation/solarized",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: ramps,
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/altercation/solarized",
+    license_file: `${__dirname}/LICENSE`,
+    input_color: ramps,
     override: { syntax: {} },
 }
 
@@ -44,9 +44,9 @@ export const light: ThemeConfig = {
     name: "Solarized Light",
     author: "Ethan Schoonover",
     appearance: ThemeAppearance.Light,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/altercation/solarized",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: ramps,
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/altercation/solarized",
+    license_file: `${__dirname}/LICENSE`,
+    input_color: ramps,
     override: { syntax: {} },
 }

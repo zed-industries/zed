@@ -5,11 +5,15 @@ use crate::{
 use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
 use client::{proto, Client};
+use gpui::geometry::vector::Vector2F;
 use gpui::{
     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
+use schemars::JsonSchema;
+use serde_derive::{Deserialize, Serialize};
+use settings::Setting;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -27,7 +31,50 @@ use std::{
 };
 use theme::Theme;
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Deserialize)]
+pub struct ItemSettings {
+    pub git_status: bool,
+    pub close_position: ClosePosition,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ClosePosition {
+    Left,
+    #[default]
+    Right,
+}
+
+impl ClosePosition {
+    pub fn right(&self) -> bool {
+        match self {
+            ClosePosition::Left => false,
+            ClosePosition::Right => true,
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ItemSettingsContent {
+    git_status: Option<bool>,
+    close_position: Option<ClosePosition>,
+}
+
+impl Setting for ItemSettings {
+    const KEY: Option<&'static str> = Some("tabs");
+
+    type FileContent = ItemSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &gpui::AppContext,
+    ) -> anyhow::Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Debug)]
 pub enum ItemEvent {
     CloseItem,
     UpdateTab,
@@ -157,6 +204,9 @@ pub trait Item: View {
     fn show_toolbar(&self) -> bool {
         true
     }
+    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+        None
+    }
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
@@ -225,6 +275,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F>;
 }
 
 pub trait WeakItemHandle {
@@ -568,6 +619,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn show_toolbar(&self, cx: &AppContext) -> bool {
         self.read(cx).show_toolbar()
+    }
+
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
+        self.read(cx).pixel_position_of_cursor()
     }
 }
 

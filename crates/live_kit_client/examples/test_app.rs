@@ -63,7 +63,7 @@ fn main() {
             let audio_track = LocalAudioTrack::create();
             let audio_track_publication = room_a.publish_audio_track(&audio_track).await.unwrap();
 
-            if let RemoteAudioTrackUpdate::Subscribed(track) =
+            if let RemoteAudioTrackUpdate::Subscribed(track, _) =
                 audio_track_updates.next().await.unwrap()
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
@@ -74,19 +74,51 @@ fn main() {
                 panic!("unexpected message");
             }
 
+            audio_track_publication.set_mute(true).await.unwrap();
+
+            println!("waiting for mute changed!");
+            if let RemoteAudioTrackUpdate::MuteChanged { track_id, muted } =
+                audio_track_updates.next().await.unwrap()
+            {
+                let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
+                assert_eq!(remote_tracks[0].sid(), track_id);
+                assert_eq!(muted, true);
+            } else {
+                panic!("unexpected message");
+            }
+
+            audio_track_publication.set_mute(false).await.unwrap();
+
+            if let RemoteAudioTrackUpdate::MuteChanged { track_id, muted } =
+                audio_track_updates.next().await.unwrap()
+            {
+                let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
+                assert_eq!(remote_tracks[0].sid(), track_id);
+                assert_eq!(muted, false);
+            } else {
+                panic!("unexpected message");
+            }
+
             println!("Pausing for 5 seconds to test audio, make some noise!");
             let timer = cx.background().timer(Duration::from_secs(5));
             timer.await;
-
             let remote_audio_track = room_b
                 .remote_audio_tracks("test-participant-1")
                 .pop()
                 .unwrap();
             room_a.unpublish_track(audio_track_publication);
+
+            // Clear out any active speakers changed messages
+            let mut next = audio_track_updates.next().await.unwrap();
+            while let RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers } = next {
+                println!("Speakers changed: {:?}", speakers);
+                next = audio_track_updates.next().await.unwrap();
+            }
+
             if let RemoteAudioTrackUpdate::Unsubscribed {
                 publisher_id,
                 track_id,
-            } = audio_track_updates.next().await.unwrap()
+            } = next
             {
                 assert_eq!(publisher_id, "test-participant-1");
                 assert_eq!(remote_audio_track.sid(), track_id);

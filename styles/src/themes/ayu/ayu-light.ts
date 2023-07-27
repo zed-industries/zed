@@ -1,16 +1,16 @@
 import { ThemeAppearance, ThemeConfig } from "../../common"
-import { ayu, meta, buildTheme } from "./common"
+import { ayu, meta, build_theme } from "./common"
 
 const variant = ayu.light
-const { ramps, syntax } = buildTheme(variant, true)
+const { ramps, syntax } = build_theme(variant, true)
 
 export const theme: ThemeConfig = {
     name: `${meta.name} Light`,
     author: meta.author,
     appearance: ThemeAppearance.Light,
-    licenseType: meta.licenseType,
-    licenseUrl: meta.licenseUrl,
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: ramps,
+    license_type: meta.license_type,
+    license_url: meta.license_url,
+    license_file: `${__dirname}/LICENSE`,
+    input_color: ramps,
     override: { syntax },
 }

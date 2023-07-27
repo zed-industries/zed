@@ -65,7 +65,7 @@ pub struct Theme {
     pub assistant: AssistantStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
-    pub color_scheme: ColorScheme,
+    pub titlebar: Titlebar,
 }
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
@@ -80,7 +80,6 @@ pub struct ThemeMeta {
 pub struct Workspace {
     pub background: Color,
     pub blank_pane: BlankPaneStyle,
-    pub titlebar: Titlebar,
     pub tab_bar: TabBar,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
@@ -118,8 +117,9 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
-    pub title: TextStyle,
-    pub highlight_color: Color,
+    pub project_menu_button: Toggleable<Interactive<ContainedText>>,
+    pub project_name_divider: ContainedText,
+    pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
@@ -129,13 +129,31 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
+    pub sign_in_button: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
     pub share_button: Toggleable<Interactive<ContainedText>>,
-    pub call_control: Interactive<IconButton>,
+    pub muted: Color,
+    pub speaking: Color,
+    pub screen_share_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
-    pub user_menu_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_microphone_button: Toggleable<Interactive<IconButton>>,
+    pub toggle_speakers_button: Toggleable<Interactive<IconButton>>,
+    pub leave_call_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
+    pub user_menu: UserMenu,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenu {
+    pub user_menu_button_online: UserMenuButton,
+    pub user_menu_button_offline: UserMenuButton,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct UserMenuButton {
+    pub user_menu: Toggleable<Interactive<Icon>>,
+    pub avatar: AvatarStyle,
+    pub icon: Icon,
 }
 
 #[derive(Copy, Clone, Deserialize, Default, JsonSchema)]
@@ -332,6 +350,7 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+    pub git: GitProjectStatus,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -361,6 +380,7 @@ pub struct Search {
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
     pub option_button: Toggleable<Interactive<ContainedText>>,
+    pub action_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
@@ -382,6 +402,7 @@ pub struct StatusBar {
     pub height: f32,
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
+    pub vim_mode_indicator: ContainedText,
     pub active_language: Interactive<ContainedText>,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
@@ -460,8 +481,10 @@ pub struct ProjectPanelEntry {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,
-    pub icon_color: Color,
     pub icon_size: f32,
+    pub icon_color: Color,
+    pub chevron_color: Color,
+    pub chevron_size: f32,
     pub icon_spacing: f32,
     pub status: EntryStatus,
 }
@@ -567,6 +590,8 @@ pub struct Picker {
     pub empty_input_editor: FieldEditor,
     pub no_matches: ContainedLabel,
     pub item: Toggleable<Interactive<ContainedLabel>>,
+    pub header: ContainedLabel,
+    pub footer: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -667,10 +692,13 @@ pub struct Editor {
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
     pub diff: DiffStyle,
+    pub wrap_guide: Color,
+    pub active_wrap_guide: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
+    pub hint: HighlightStyle,
     pub suggestion: HighlightStyle,
     pub diagnostic_path_header: DiagnosticPathHeader,
     pub diagnostic_header: DiagnosticHeader,
@@ -700,11 +728,12 @@ pub struct Scrollbar {
     pub thumb: ContainerStyle,
     pub width: f32,
     pub min_height_factor: f32,
-    pub git: GitDiffColors,
+    pub git: BufferGitDiffColors,
+    pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct GitDiffColors {
+pub struct BufferGitDiffColors {
     pub inserted: Color,
     pub modified: Color,
     pub deleted: Color,
@@ -1008,6 +1037,7 @@ pub struct AssistantStyle {
     pub system_sender: Interactive<ContainedText>,
     pub model: Interactive<ContainedText>,
     pub remaining_tokens: ContainedText,
+    pub low_remaining_tokens: ContainedText,
     pub no_remaining_tokens: ContainedText,
     pub error_icon: Icon,
     pub api_key_editor: FieldEditor,

@@ -12,6 +12,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
+    ffi::OsStr,
     fmt::{self, Display},
     path::PathBuf,
     sync::Arc,
@@ -80,6 +81,9 @@ impl SavedConversationMetadata {
         let mut conversations = Vec::<SavedConversationMetadata>::new();
         while let Some(path) = paths.next().await {
             let path = path?;
+            if path.extension() != Some(OsStr::new("json")) {
+                continue;
+            }
 
             let pattern = r" - \d+.zed.json$";
             let re = Regex::new(pattern).unwrap();

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Task};
 pub use language::*;
-use lsp::{CompletionItemKind, SymbolKind};
+use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -62,16 +62,23 @@ impl LspAdapter for ElixirLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("elixir-lsp/elixir-ls", false, delegate.http_client()).await?;
-        let asset_name = "elixir-ls.zip";
+        let http = delegate.http_client();
+        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
+        let version_name = release
+            .name
+            .strip_prefix("Release ")
+            .context("Elixir-ls release name does not start with prefix")?
+            .to_owned();
+
+        let asset_name = format!("elixir-ls-{}.zip", &version_name);
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: version_name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
@@ -116,7 +123,7 @@ impl LspAdapter for ElixirLspAdapter {
                 .await?
                 .status;
             if !unzip_status.success() {
-                Err(anyhow!("failed to unzip clangd archive"))?;
+                Err(anyhow!("failed to unzip elixir-ls archive"))?;
             }
 
             remove_matching(&container_dir, |entry| entry != version_dir).await;
@@ -133,20 +140,14 @@ impl LspAdapter for ElixirLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        (|| async move {
-            let mut last = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                last = Some(entry?.path());
-            }
-            last.map(|path| LanguageServerBinary {
-                path,
-                arguments: vec![],
-            })
-            .ok_or_else(|| anyhow!("no cached binary"))
-        })()
-        .await
-        .log_err()
+        get_cached_server_binary(container_dir).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
     }
 
     async fn label_for_completion(
@@ -231,4 +232,21 @@ impl LspAdapter for ElixirLspAdapter {
             filter_range,
         })
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    (|| async move {
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
+        }
+        last.map(|path| LanguageServerBinary {
+            path,
+            arguments: vec![],
+        })
+        .ok_or_else(|| anyhow!("no cached binary"))
+    })()
+    .await
+    .log_err()
 }

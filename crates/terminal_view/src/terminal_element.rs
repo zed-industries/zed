@@ -163,6 +163,7 @@ pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
     focused: bool,
     cursor_visible: bool,
+    can_navigate_to_selected_word: bool,
 }
 
 impl TerminalElement {
@@ -170,11 +171,13 @@ impl TerminalElement {
         terminal: WeakModelHandle<Terminal>,
         focused: bool,
         cursor_visible: bool,
+        can_navigate_to_selected_word: bool,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
             focused,
             cursor_visible,
+            can_navigate_to_selected_word,
         }
     }
 
@@ -395,18 +398,23 @@ impl TerminalElement {
         // Terminal Emulator controlled behavior:
         region = region
             // Start selections
-            .on_down(
-                MouseButton::Left,
-                TerminalElement::generic_button_handler(
-                    connection,
-                    origin,
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
-                    },
-                ),
-            )
+            .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
+                cx.focus_parent();
+                v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
+                if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, cx| {
+                        terminal.mouse_down(&event, origin);
+
+                        cx.notify();
+                    })
+                }
+            })
             // Update drag selections
             .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
+                if event.end {
+                    return;
+                }
+
                 if cx.is_self_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
@@ -579,20 +587,30 @@ impl Element<TerminalView> for TerminalElement {
         let background_color = terminal_theme.background;
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let last_hovered_hyperlink = terminal_handle.update(cx, |terminal, cx| {
+        let last_hovered_word = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
-            terminal.last_content.last_hovered_hyperlink.clone()
+            if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
+                terminal.last_content.last_hovered_word.clone()
+            } else {
+                None
+            }
         });
 
-        let hyperlink_tooltip = last_hovered_hyperlink.map(|(uri, _, id)| {
+        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
             let mut tooltip = Overlay::new(
                 Empty::new()
                     .contained()
                     .constrained()
                     .with_width(dimensions.width())
                     .with_height(dimensions.height())
-                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx),
+                    .with_tooltip::<TerminalElement>(
+                        hovered_word.id,
+                        hovered_word.word,
+                        None,
+                        tooltip_style,
+                        cx,
+                    ),
             )
             .with_position_mode(gpui::elements::OverlayPositionMode::Local)
             .into_any();
@@ -612,7 +630,6 @@ impl Element<TerminalView> for TerminalElement {
             cursor_char,
             selection,
             cursor,
-            last_hovered_hyperlink,
             ..
         } = { &terminal_handle.read(cx).last_content };
 
@@ -633,9 +650,9 @@ impl Element<TerminalView> for TerminalElement {
             &terminal_theme,
             cx.text_layout_cache(),
             cx.font_cache(),
-            last_hovered_hyperlink
+            last_hovered_word
                 .as_ref()
-                .map(|(_, range, _)| (link_style, range)),
+                .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even

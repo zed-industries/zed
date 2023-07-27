@@ -160,7 +160,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
 
-    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if !self.matches.is_empty() {
             let window_id = cx.window_id();
             let focused_view_id = self.focused_view_id;
@@ -369,6 +369,7 @@ mod tests {
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
+            Project::init_settings(cx);
             app_state
         })
     }

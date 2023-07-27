@@ -279,6 +279,9 @@ impl Fs for RealFs {
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in chunks(text, line_ending) {
@@ -388,6 +391,7 @@ struct FakeFsState {
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
     events_paused: bool,
     buffered_events: Vec<fsevent::Event>,
+    metadata_call_count: usize,
     read_dir_call_count: usize,
 }
 
@@ -538,6 +542,7 @@ impl FakeFs {
                 buffered_events: Vec::new(),
                 events_paused: false,
                 read_dir_call_count: 0,
+                metadata_call_count: 0,
             }),
         })
     }
@@ -774,8 +779,14 @@ impl FakeFs {
         result
     }
 
+    /// How many `read_dir` calls have been issued.
     pub fn read_dir_call_count(&self) -> usize {
         self.state.lock().read_dir_call_count
+    }
+
+    /// How many `metadata` calls have been issued.
+    pub fn metadata_call_count(&self) -> usize {
+        self.state.lock().metadata_call_count
     }
 
     async fn simulate_random_delay(&self) {
@@ -1069,6 +1080,9 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect();
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         self.write_file_internal(path, content)?;
         Ok(())
     }
@@ -1098,7 +1112,8 @@ impl Fs for FakeFs {
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let state = self.state.lock();
+        let mut state = self.state.lock();
+        state.metadata_call_count += 1;
         if let Some((mut entry, _)) = state.try_read_path(&path, false) {
             let is_symlink = entry.lock().is_symlink();
             if is_symlink {

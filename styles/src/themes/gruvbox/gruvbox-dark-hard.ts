@@ -1,1 +1,1 @@
-export { darkHard } from "./gruvbox-common"
+export { dark_hard } from "./gruvbox-common"

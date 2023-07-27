@@ -1,9 +1,10 @@
-use std::ops::{Deref, DerefMut};
+use indoc::indoc;
+use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
 use language::OffsetRangeExt;
-use util::test::marked_text_offsets;
+use util::test::{generate_marked_text, marked_text_offsets};
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
@@ -112,6 +113,43 @@ impl<'a> NeovimBackedTestContext<'a> {
         context_handle
     }
 
+    pub async fn assert_shared_state(&mut self, marked_text: &str) {
+        let neovim = self.neovim_state().await;
+        if neovim != marked_text {
+            panic!(
+                indoc! {"Test is incorrect (currently expected != neovim state)
+
+                # currently expected:
+                {}
+                # neovim state:
+                {}
+                # zed state:
+                {}"},
+                marked_text,
+                neovim,
+                self.editor_state(),
+            )
+        }
+        self.assert_editor_state(marked_text)
+    }
+
+    pub async fn neovim_state(&mut self) -> String {
+        generate_marked_text(
+            self.neovim.text().await.as_str(),
+            &vec![self.neovim_selection().await],
+            true,
+        )
+    }
+
+    async fn neovim_selection(&mut self) -> Range<usize> {
+        let mut neovim_selection = self.neovim.selection().await;
+        // Zed selections adjust themselves to make the end point visually make sense
+        if neovim_selection.start > neovim_selection.end {
+            neovim_selection.start.column += 1;
+        }
+        neovim_selection.to_offset(&self.buffer_snapshot())
+    }
+
     pub async fn assert_state_matches(&mut self) {
         assert_eq!(
             self.neovim.text().await,
@@ -120,13 +158,8 @@ impl<'a> NeovimBackedTestContext<'a> {
             self.assertion_context()
         );
 
-        let mut neovim_selection = self.neovim.selection().await;
-        // Zed selections adjust themselves to make the end point visually make sense
-        if neovim_selection.start > neovim_selection.end {
-            neovim_selection.start.column += 1;
-        }
-        let neovim_selection = neovim_selection.to_offset(&self.buffer_snapshot());
-        self.assert_editor_selections(vec![neovim_selection]);
+        let selections = vec![self.neovim_selection().await];
+        self.assert_editor_selections(selections);
 
         if let Some(neovim_mode) = self.neovim.mode().await {
             assert_eq!(neovim_mode, self.mode(), "{}", self.assertion_context(),);

@@ -9,6 +9,7 @@ path = "src/search.rs"
 doctest = false
 
 [dependencies]
+bitflags = "1"
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
@@ -19,6 +20,7 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
+semantic_index = { path = "../semantic_index" }
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true

@@ -29,7 +29,7 @@ jobs:
           rustup update stable
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
@@ -54,12 +54,12 @@ jobs:
           cargo install cargo-nextest
 
       - name: Install Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
@@ -104,12 +104,12 @@ jobs:
           rustup target add wasm32-wasi
 
       - name: Install Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           clean: false
           submodules: 'recursive'
@@ -148,8 +148,8 @@ jobs:
       - name: Create app bundle
         run: script/bundle
 
-      - name: Upload app bundle to workflow run if main branch or specifi label
-        uses: actions/upload-artifact@v2
+      - name: Upload app bundle to workflow run if main branch or specific label
+        uses: actions/upload-artifact@v3
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg

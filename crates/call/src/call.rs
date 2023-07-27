@@ -1,10 +1,12 @@
+pub mod call_settings;
 pub mod participant;
 pub mod room;
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use client::{proto, Client, TypedEnvelope, User, UserStore};
+use call_settings::CallSettings;
+use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
@@ -19,6 +21,8 @@ pub use participant::ParticipantLocation;
 pub use room::Room;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
+    settings::register::<CallSettings>(cx);
+
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
@@ -198,6 +202,7 @@ impl ActiveCall {
             let result = invite.await;
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
+                this.report_call_event("invite", cx);
                 cx.notify();
             });
             result
@@ -243,21 +248,26 @@ impl ActiveCall {
         };
 
         let join = Room::join(&call, self.client.clone(), self.user_store.clone(), cx);
+
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
             this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
                 .await?;
+            this.update(&mut cx, |this, cx| {
+                this.report_call_event("accept incoming", cx)
+            });
             Ok(())
         })
     }
 
-    pub fn decline_incoming(&mut self) -> Result<()> {
+    pub fn decline_incoming(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         let call = self
             .incoming_call
             .0
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
+        Self::report_call_event_for_room("decline incoming", call.room_id, &self.client, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -266,6 +276,7 @@ impl ActiveCall {
 
     pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
+        self.report_call_event("hang up", cx);
         if let Some((room, _)) = self.room.take() {
             room.update(cx, |room, cx| room.leave(cx))
         } else {
@@ -279,6 +290,7 @@ impl ActiveCall {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
+            self.report_call_event("share project", cx);
             room.update(cx, |room, cx| room.share_project(project, cx))
         } else {
             Task::ready(Err(anyhow!("no active call")))
@@ -291,6 +303,7 @@ impl ActiveCall {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
+            self.report_call_event("unshare project", cx);
             room.update(cx, |room, cx| room.unshare_project(project, cx))
         } else {
             Err(anyhow!("no active call"))
@@ -349,7 +362,29 @@ impl ActiveCall {
         self.room.as_ref().map(|(room, _)| room)
     }
 
+    pub fn client(&self) -> Arc<Client> {
+        self.client.clone()
+    }
+
     pub fn pending_invites(&self) -> &HashSet<u64> {
         &self.pending_invites
+    }
+
+    fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+        if let Some(room) = self.room() {
+            Self::report_call_event_for_room(operation, room.read(cx).id(), &self.client, cx)
+        }
+    }
+
+    pub fn report_call_event_for_room(
+        operation: &'static str,
+        room_id: u64,
+        client: &Arc<Client>,
+        cx: &AppContext,
+    ) {
+        let telemetry = client.telemetry();
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        let event = ClickhouseEvent::Call { operation, room_id };
+        telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 }

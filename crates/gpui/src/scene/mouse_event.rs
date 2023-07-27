@@ -32,6 +32,7 @@ pub struct MouseDrag {
     pub region: RectF,
     pub prev_mouse_position: Vector2F,
     pub platform_event: MouseMovedEvent,
+    pub end: bool,
 }
 
 impl Deref for MouseDrag {
@@ -100,6 +101,20 @@ impl Deref for MouseClick {
 }
 
 #[derive(Debug, Default, Clone)]
+pub struct MouseClickOut {
+    pub region: RectF,
+    pub platform_event: MouseButtonEvent,
+}
+
+impl Deref for MouseClickOut {
+    type Target = MouseButtonEvent;
+
+    fn deref(&self) -> &Self::Target {
+        &self.platform_event
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct MouseDownOut {
     pub region: RectF,
     pub platform_event: MouseButtonEvent,
@@ -150,6 +165,7 @@ pub enum MouseEvent {
     Down(MouseDown),
     Up(MouseUp),
     Click(MouseClick),
+    ClickOut(MouseClickOut),
     DownOut(MouseDownOut),
     UpOut(MouseUpOut),
     ScrollWheel(MouseScrollWheel),
@@ -165,6 +181,7 @@ impl MouseEvent {
             MouseEvent::Down(r) => r.region = region,
             MouseEvent::Up(r) => r.region = region,
             MouseEvent::Click(r) => r.region = region,
+            MouseEvent::ClickOut(r) => r.region = region,
             MouseEvent::DownOut(r) => r.region = region,
             MouseEvent::UpOut(r) => r.region = region,
             MouseEvent::ScrollWheel(r) => r.region = region,
@@ -182,6 +199,7 @@ impl MouseEvent {
             MouseEvent::Down(_) => true,
             MouseEvent::Up(_) => true,
             MouseEvent::Click(_) => true,
+            MouseEvent::ClickOut(_) => true,
             MouseEvent::DownOut(_) => false,
             MouseEvent::UpOut(_) => false,
             MouseEvent::ScrollWheel(_) => true,
@@ -222,6 +240,10 @@ impl MouseEvent {
         discriminant(&MouseEvent::Click(Default::default()))
     }
 
+    pub fn click_out_disc() -> Discriminant<MouseEvent> {
+        discriminant(&MouseEvent::ClickOut(Default::default()))
+    }
+
     pub fn down_out_disc() -> Discriminant<MouseEvent> {
         discriminant(&MouseEvent::DownOut(Default::default()))
     }
@@ -239,6 +261,7 @@ impl MouseEvent {
             MouseEvent::Down(e) => HandlerKey::new(Self::down_disc(), Some(e.button)),
             MouseEvent::Up(e) => HandlerKey::new(Self::up_disc(), Some(e.button)),
             MouseEvent::Click(e) => HandlerKey::new(Self::click_disc(), Some(e.button)),
+            MouseEvent::ClickOut(e) => HandlerKey::new(Self::click_out_disc(), Some(e.button)),
             MouseEvent::UpOut(e) => HandlerKey::new(Self::up_out_disc(), Some(e.button)),
             MouseEvent::DownOut(e) => HandlerKey::new(Self::down_out_disc(), Some(e.button)),
             MouseEvent::ScrollWheel(_) => HandlerKey::new(Self::scroll_wheel_disc(), None),

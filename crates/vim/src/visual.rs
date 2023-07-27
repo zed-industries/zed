@@ -58,7 +58,9 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
 pub fn visual_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        if let Operator::Object { around } = vim.pop_operator(cx) {
+        if let Some(Operator::Object { around }) = vim.active_operator() {
+            vim.pop_operator(cx);
+
             vim.update_active_editor(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {

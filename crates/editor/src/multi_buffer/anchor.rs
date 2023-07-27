@@ -49,6 +49,10 @@ impl Anchor {
         }
     }
 
+    pub fn bias(&self) -> Bias {
+        self.text_anchor.bias
+    }
+
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
         if self.text_anchor.bias != Bias::Left {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
@@ -80,6 +84,19 @@ impl Anchor {
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
         snapshot.summary_for_anchor(self)
+    }
+
+    pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        if *self == Anchor::min() || *self == Anchor::max() {
+            true
+        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+            excerpt.contains(self)
+                && (self.text_anchor == excerpt.range.context.start
+                    || self.text_anchor == excerpt.range.context.end
+                    || self.text_anchor.is_valid(&excerpt.buffer))
+        } else {
+            false
+        }
     }
 }
 

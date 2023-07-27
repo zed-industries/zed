@@ -1,6 +1,6 @@
 import {
     chroma,
-    colorRamp,
+    color_ramp,
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
@@ -10,10 +10,10 @@ export const theme: ThemeConfig = {
     name: "Summercamp",
     author: "zoefiri",
     appearance: ThemeAppearance.Dark,
-    licenseType: ThemeLicenseType.MIT,
-    licenseUrl: "https://github.com/zoefiri/base16-sc",
-    licenseFile: `${__dirname}/LICENSE`,
-    inputColor: {
+    license_type: ThemeLicenseType.MIT,
+    license_url: "https://github.com/zoefiri/base16-sc",
+    license_file: `${__dirname}/LICENSE`,
+    input_color: {
         neutral: chroma
             .scale([
                 "#1c1810",
@@ -26,14 +26,14 @@ export const theme: ThemeConfig = {
                 "#f8f5de",
             ])
             .domain([0, 0.2, 0.38, 0.4, 0.65, 0.7, 0.85, 1]),
-        red: colorRamp(chroma("#e35142")),
-        orange: colorRamp(chroma("#fba11b")),
-        yellow: colorRamp(chroma("#f2ff27")),
-        green: colorRamp(chroma("#5ceb5a")),
-        cyan: colorRamp(chroma("#5aebbc")),
-        blue: colorRamp(chroma("#489bf0")),
-        violet: colorRamp(chroma("#FF8080")),
-        magenta: colorRamp(chroma("#F69BE7")),
+        red: color_ramp(chroma("#e35142")),
+        orange: color_ramp(chroma("#fba11b")),
+        yellow: color_ramp(chroma("#f2ff27")),
+        green: color_ramp(chroma("#5ceb5a")),
+        cyan: color_ramp(chroma("#5aebbc")),
+        blue: color_ramp(chroma("#489bf0")),
+        violet: color_ramp(chroma("#FF8080")),
+        magenta: color_ramp(chroma("#F69BE7")),
     },
     override: { syntax: {} },
 }

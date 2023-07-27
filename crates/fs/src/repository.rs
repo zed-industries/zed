@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
-use git2::ErrorCode;
+use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
@@ -10,23 +10,46 @@ use std::{
     os::unix::prelude::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use sum_tree::{MapSeekTarget, TreeMap};
 use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
 
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct Branch {
+    pub name: Box<str>,
+    /// Timestamp of most recent commit, normalized to Unix Epoch format.
+    pub unix_timestamp: Option<i64>,
+}
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
-
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
-
     fn branch_name(&self) -> Option<String>;
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
+    /// Get the statuses of all of the files in the index that start with the given
+    /// path and have changes with resepect to the HEAD commit. This is fast because
+    /// the index stores hashes of trees, so that unchanged directories can be skipped.
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
 
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
+    /// Get the status of a given file in the working directory with respect to
+    /// the index. In the common case, when there are no changes, this only requires
+    /// an index lookup. The index stores the mtime of each file when it was added,
+    /// so there's no work to do if the mtime matches.
+    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
+
+    /// Get the status of a given file in the working directory with respect to
+    /// the HEAD commit. In the common case, when there are no changes, this only
+    /// requires an index lookup and blob comparison between the index and the HEAD
+    /// commit. The index stores the mtime of each file when it was added, so there's
+    /// no need to consider the working directory file if the mtime matches.
+    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
+
+    fn branches(&self) -> Result<Vec<Branch>>;
+    fn change_branch(&self, _: &str) -> Result<()>;
+    fn create_branch(&self, _: &str) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -35,7 +58,6 @@ impl std::fmt::Debug for dyn GitRepository {
     }
 }
 
-#[async_trait::async_trait]
 impl GitRepository for LibGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.index() {
@@ -73,39 +95,122 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
-        let statuses = self.statuses(None).log_err()?;
-
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
 
-        for status in statuses
-            .iter()
-            .filter(|status| !status.status().contains(git2::Status::IGNORED))
-        {
-            let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
-            let Some(status) = read_status(status.status()) else {
-                continue
-            };
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(path_prefix);
+        options.show(StatusShow::Index);
 
-            map.insert(path, status)
+        if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
+            for status in statuses.iter() {
+                let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
+                let status = status.status();
+                if !status.contains(git2::Status::IGNORED) {
+                    if let Some(status) = read_status(status) {
+                        map.insert(path, status)
+                    }
+                }
+            }
         }
-
-        Some(map)
+        map
     }
 
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
-        let status = self.status_file(path);
-        match status {
-            Ok(status) => Ok(read_status(status)),
-            Err(e) => {
-                if e.code() == ErrorCode::NotFound {
-                    Ok(None)
-                } else {
-                    Err(e.into())
+    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
+        // If the file has not changed since it was added to the index, then
+        // there can't be any changes.
+        if matches_index(self, path, mtime) {
+            return None;
+        }
+
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(&path.0);
+        options.disable_pathspec_match(true);
+        options.include_untracked(true);
+        options.recurse_untracked_dirs(true);
+        options.include_unmodified(true);
+        options.show(StatusShow::Workdir);
+
+        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let status = statuses.get(0).and_then(|s| read_status(s.status()));
+        status
+    }
+
+    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
+        let mut options = git2::StatusOptions::new();
+        options.pathspec(&path.0);
+        options.disable_pathspec_match(true);
+        options.include_untracked(true);
+        options.recurse_untracked_dirs(true);
+        options.include_unmodified(true);
+
+        // If the file has not changed since it was added to the index, then
+        // there's no need to examine the working directory file: just compare
+        // the blob in the index to the one in the HEAD commit.
+        if matches_index(self, path, mtime) {
+            options.show(StatusShow::Index);
+        }
+
+        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let status = statuses.get(0).and_then(|s| read_status(s.status()));
+        status
+    }
+
+    fn branches(&self) -> Result<Vec<Branch>> {
+        let local_branches = self.branches(Some(BranchType::Local))?;
+        let valid_branches = local_branches
+            .filter_map(|branch| {
+                branch.ok().and_then(|(branch, _)| {
+                    let name = branch.name().ok().flatten().map(Box::from)?;
+                    let timestamp = branch.get().peel_to_commit().ok()?.time();
+                    let unix_timestamp = timestamp.seconds();
+                    let timezone_offset = timestamp.offset_minutes();
+                    let utc_offset =
+                        time::UtcOffset::from_whole_seconds(timezone_offset * 60).ok()?;
+                    let unix_timestamp =
+                        time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
+                    Some(Branch {
+                        name,
+                        unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
+                    })
+                })
+            })
+            .collect();
+        Ok(valid_branches)
+    }
+    fn change_branch(&self, name: &str) -> Result<()> {
+        let revision = self.find_branch(name, BranchType::Local)?;
+        let revision = revision.get();
+        let as_tree = revision.peel_to_tree()?;
+        self.checkout_tree(as_tree.as_object(), None)?;
+        self.set_head(
+            revision
+                .name()
+                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+        )?;
+        Ok(())
+    }
+    fn create_branch(&self, name: &str) -> Result<()> {
+        let current_commit = self.head()?.peel_to_commit()?;
+        self.branch(name, &current_commit, false)?;
+
+        Ok(())
+    }
+}
+
+fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
+    if let Some(index) = repo.index().log_err() {
+        if let Some(entry) = index.get_path(&path, 0) {
+            if let Some(mtime) = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err() {
+                if entry.mtime.seconds() == mtime.as_secs() as i32
+                    && entry.mtime.nanoseconds() == mtime.subsec_nanos()
+                {
+                    return true;
                 }
             }
         }
     }
+    false
 }
 
 fn read_status(status: git2::Status) -> Option<GitFileStatus> {
@@ -157,18 +262,40 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
-        let state = self.state.lock();
+    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
         let mut map = TreeMap::default();
+        let state = self.state.lock();
         for (repo_path, status) in state.worktree_statuses.iter() {
-            map.insert(repo_path.to_owned(), status.to_owned());
+            if repo_path.0.starts_with(path_prefix) {
+                map.insert(repo_path.to_owned(), status.to_owned());
+            }
         }
-        Some(map)
+        map
     }
 
-    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
+    fn unstaged_status(&self, _path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
+        None
+    }
+
+    fn status(&self, path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
         let state = self.state.lock();
-        Ok(state.worktree_statuses.get(path).cloned())
+        state.worktree_statuses.get(path).cloned()
+    }
+
+    fn branches(&self) -> Result<Vec<Branch>> {
+        Ok(vec![])
+    }
+
+    fn change_branch(&self, name: &str) -> Result<()> {
+        let mut state = self.state.lock();
+        state.branch_name = Some(name.to_owned());
+        Ok(())
+    }
+
+    fn create_branch(&self, name: &str) -> Result<()> {
+        let mut state = self.state.lock();
+        state.branch_name = Some(name.to_owned());
+        Ok(())
     }
 }
 

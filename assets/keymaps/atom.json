@@ -9,6 +9,7 @@
     "context": "Editor",
     "bindings": {
       "cmd-b": "editor::GoToDefinition",
+      "alt-cmd-b": "editor::GoToDefinitionSplit",
       "cmd-<": "editor::ScrollCursorCenter",
       "cmd-g": [
         "editor::SelectNext",
@@ -24,9 +25,7 @@
       ],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
-      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
-      "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow"
+      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine"
     }
   },
   {

@@ -10,7 +10,6 @@ doctest = false
 
 [features]
 test-support = [
-    "rand",
     "copilot/test-support",
     "text/test-support",
     "language/test-support",
@@ -57,16 +56,16 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 pulldown-cmark = { version = "0.9.2", default-features = false }
-rand = { workspace = true, optional = true }
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-tree-sitter-rust = { version = "*", optional = true }
-tree-sitter-html = { version = "*", optional = true }
-tree-sitter-javascript = { version = "*", optional = true }
-tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259", optional = true }
+rand.workspace = true
+
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
 copilot = { path = "../copilot", features = ["test-support"] }
@@ -84,7 +83,6 @@ env_logger.workspace = true
 rand.workspace = true
 unindent.workspace = true
 tree-sitter.workspace = true
-tree-sitter-rust = "0.20"
-tree-sitter-html = "0.19"
-tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-javascript = "0.20"
+tree-sitter-rust.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-typescript.workspace = true

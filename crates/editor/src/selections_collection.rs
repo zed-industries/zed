@@ -16,13 +16,13 @@ use crate::{
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSelection {
     pub selection: Selection<Anchor>,
     pub mode: SelectMode,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     display_map: ModelHandle<DisplayMap>,
     buffer: ModelHandle<MultiBuffer>,
@@ -138,7 +138,7 @@ impl SelectionsCollection {
         .collect()
     }
 
-    // Returns all of the selections, adjusted to take into account the selection line_mode
+    /// Returns all of the selections, adjusted to take into account the selection line_mode
     pub fn all_adjusted(&self, cx: &mut AppContext) -> Vec<Selection<Point>> {
         let mut selections = self.all::<Point>(cx);
         if self.line_mode {

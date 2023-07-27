@@ -31,6 +31,8 @@ pub enum Motion {
     CurrentLine,
     StartOfLine,
     EndOfLine,
+    StartOfParagraph,
+    EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
     Matching,
@@ -60,6 +62,12 @@ struct PreviousWordStart {
     ignore_punctuation: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq)]
+struct RepeatFind {
+    #[serde(default)]
+    backwards: bool,
+}
+
 actions!(
     vim,
     [
@@ -72,13 +80,18 @@ actions!(
         StartOfLine,
         EndOfLine,
         CurrentLine,
+        StartOfParagraph,
+        EndOfParagraph,
         StartOfDocument,
         EndOfDocument,
         Matching,
         NextLineStart,
     ]
 );
-impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
+impl_actions!(
+    vim,
+    [NextWordStart, NextWordEnd, PreviousWordStart, RepeatFind]
+);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
@@ -92,6 +105,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &StartOfLine, cx: _| motion(Motion::StartOfLine, cx));
     cx.add_action(|_: &mut Workspace, _: &EndOfLine, cx: _| motion(Motion::EndOfLine, cx));
     cx.add_action(|_: &mut Workspace, _: &CurrentLine, cx: _| motion(Motion::CurrentLine, cx));
+    cx.add_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
+        motion(Motion::StartOfParagraph, cx)
+    });
+    cx.add_action(|_: &mut Workspace, _: &EndOfParagraph, cx: _| {
+        motion(Motion::EndOfParagraph, cx)
+    });
     cx.add_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
         motion(Motion::StartOfDocument, cx)
     });
@@ -113,13 +132,15 @@ pub fn init(cx: &mut AppContext) {
          &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
-    cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx))
+    cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx));
+    cx.add_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
+        repeat_motion(action.backwards, cx)
+    })
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
-    if let Some(Operator::Namespace(_))
-    | Some(Operator::FindForward { .. })
-    | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()
+    if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
+        Vim::read(cx).active_operator()
     {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
@@ -136,13 +157,43 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| vim.clear_operator(cx));
 }
 
+fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
+    let find = match Vim::read(cx).state.last_find.clone() {
+        Some(Motion::FindForward { before, text }) => {
+            if backwards {
+                Motion::FindBackward {
+                    after: before,
+                    text,
+                }
+            } else {
+                Motion::FindForward { before, text }
+            }
+        }
+
+        Some(Motion::FindBackward { after, text }) => {
+            if backwards {
+                Motion::FindForward {
+                    before: after,
+                    text,
+                }
+            } else {
+                Motion::FindBackward { after, text }
+            }
+        }
+        _ => return,
+    };
+
+    motion(find, cx)
+}
+
 // Motion handling is specified here:
 // https://github.com/vim/vim/blob/master/runtime/doc/motion.txt
 impl Motion {
     pub fn linewise(&self) -> bool {
         use Motion::*;
         match self {
-            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart => true,
+            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart
+            | StartOfParagraph | EndOfParagraph => true,
             EndOfLine
             | NextWordEnd { .. }
             | Matching
@@ -172,6 +223,8 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine
+            | StartOfParagraph
+            | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace
@@ -197,6 +250,8 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine
+            | StartOfParagraph
+            | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace
@@ -235,6 +290,14 @@ impl Motion {
             FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
             StartOfLine => (start_of_line(map, point), SelectionGoal::None),
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
+            StartOfParagraph => (
+                movement::start_of_paragraph(map, point, times),
+                SelectionGoal::None,
+            ),
+            EndOfParagraph => (
+                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                SelectionGoal::None,
+            ),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
@@ -502,10 +565,13 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     if line_end == point {
         line_end = map.max_point().to_point(map);
     }
-    line_end.column = line_end.column.saturating_sub(1);
 
     let line_range = map.prev_line_boundary(point).0..line_end;
-    let ranges = map.buffer_snapshot.bracket_ranges(line_range.clone());
+    let visible_line_range =
+        line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
+    let ranges = map
+        .buffer_snapshot
+        .bracket_ranges(visible_line_range.clone());
     if let Some(ranges) = ranges {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
@@ -589,4 +655,151 @@ fn find_backward(
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let new_row = (point.row() + times as u32).min(map.max_buffer_row());
     map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+}
+
+#[cfg(test)]
+
+mod test {
+
+    use crate::test::NeovimBackedTestContext;
+    use indoc::indoc;
+
+    #[gpui::test]
+    async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let initial_state = indoc! {r"ˇabc
+            def
+
+            paragraph
+            the second
+
+
+
+            third and
+            final"};
+
+        // goes down once
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+            def
+            ˇ
+            paragraph
+            the second
+
+
+
+            third and
+            final"})
+            .await;
+
+        // goes up once
+        cx.simulate_shared_keystrokes(["{"]).await;
+        cx.assert_shared_state(initial_state).await;
+
+        // goes down twice
+        cx.simulate_shared_keystrokes(["2", "}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+            def
+
+            paragraph
+            the second
+            ˇ
+
+
+            third and
+            final"})
+            .await;
+
+        // goes down over multiple blanks
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+                def
+
+                paragraph
+                the second
+
+
+
+                third and
+                finaˇl"})
+            .await;
+
+        // goes up twice
+        cx.simulate_shared_keystrokes(["2", "{"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+                def
+                ˇ
+                paragraph
+                the second
+
+
+
+                third and
+                final"})
+            .await
+    }
+
+    #[gpui::test]
+    async fn test_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"func ˇ(a string) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a stringˇ) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+
+        // test it works on the last character of the line
+        cx.set_shared_state(indoc! {r"func (a string) ˇ{
+            do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a string) {
+            do(something(with<Types>.and_arrays[0, 2]))
+            ˇ}"})
+            .await;
+
+        // test it works on immediate nesting
+        cx.set_shared_state("ˇ{()}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{()ˇ}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("ˇ{()}").await;
+
+        // test it works on immediate nesting inside braces
+        cx.set_shared_state("{\n    ˇ{()}\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{\n    {()ˇ}\n}").await;
+
+        // test it jumps to the next paren on a line
+        cx.set_shared_state("func ˇboop() {\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("func boop(ˇ) {\n}").await;
+    }
+
+    #[gpui::test]
+    async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["f", "o"]).await;
+        cx.assert_shared_state("one twˇo three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("one two three fˇour").await;
+        cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
+        cx.assert_shared_state("one two threeˇ four").await;
+        cx.simulate_shared_keystrokes(["3", ";"]).await;
+        cx.assert_shared_state("oneˇ two three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("one two thˇree four").await;
+    }
 }

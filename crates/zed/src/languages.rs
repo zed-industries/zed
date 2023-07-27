@@ -13,9 +13,11 @@ mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
+mod php;
 mod python;
 mod ruby;
 mod rust;
+mod svelte;
 mod typescript;
 mod yaml;
 
@@ -38,6 +40,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
 
+    language("bash", tree_sitter_bash::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
@@ -135,8 +138,22 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
     language(
         "yaml",
         tree_sitter_yaml::language(),
-        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime))],
+        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
     );
+    language(
+        "svelte",
+        tree_sitter_svelte::language(),
+        vec![Arc::new(svelte::SvelteLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
+    language(
+        "php",
+        tree_sitter_php::language(),
+        vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
+    );
+    language("elm", tree_sitter_elm::language(), vec![]);
+    language("glsl", tree_sitter_glsl::language(), vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -170,6 +187,7 @@ fn load_queries(name: &str) -> LanguageQueries {
         brackets: load_query(name, "/brackets"),
         indents: load_query(name, "/indents"),
         outline: load_query(name, "/outline"),
+        embedding: load_query(name, "/embedding"),
         injections: load_query(name, "/injections"),
         overrides: load_query(name, "/overrides"),
     }

@@ -16,6 +16,7 @@ use smol::{
     process::{self, Child},
 };
 use std::{
+    ffi::OsString,
     fmt,
     future::Future,
     io::Write,
@@ -36,6 +37,12 @@ type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppCon
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(bool, &str)>;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinary {
+    pub path: PathBuf,
+    pub arguments: Vec<OsString>,
+}
+
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicUsize,
@@ -51,7 +58,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    _server: Option<Child>,
+    _server: Option<Mutex<Child>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -119,10 +126,9 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new<T: AsRef<std::ffi::OsStr>>(
+    pub fn new(
         server_id: LanguageServerId,
-        binary_path: &Path,
-        arguments: &[T],
+        binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -133,9 +139,9 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
-        let mut server = process::Command::new(binary_path)
+        let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
-            .args(arguments)
+            .args(binary.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -145,16 +151,17 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stout = server.stdout.take().unwrap();
         let mut server = Self::new_internal(
-            server_id,
+            server_id.clone(),
             stdin,
             stout,
             Some(server),
             root_path,
             code_action_kinds,
             cx,
-            |notification| {
+            move |notification| {
                 log::info!(
-                    "unhandled notification {}:\n{}",
+                    "{} unhandled notification {}:\n{}",
+                    server_id,
                     notification.method,
                     serde_json::to_string_pretty(
                         &notification
@@ -167,9 +174,10 @@ impl LanguageServer {
             },
         );
 
-        if let Some(name) = binary_path.file_name() {
+        if let Some(name) = binary.path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
+
         Ok(server)
     }
 
@@ -231,7 +239,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            _server: server,
+            _server: server.map(|server| Mutex::new(server)),
         }
     }
 
@@ -381,6 +389,9 @@ impl LanguageServer {
                         resolve_support: None,
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
+                    inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -421,6 +432,10 @@ impl LanguageServer {
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
                         ..Default::default()
+                    }),
+                    inlay_hint: Some(InlayHintClientCapabilities {
+                        resolve_support: None,
+                        dynamic_registration: Some(false),
                     }),
                     ..Default::default()
                 }),
@@ -600,6 +615,7 @@ impl LanguageServer {
                                 })
                                 .detach();
                         }
+
                         Err(error) => {
                             log::error!(
                                 "error deserializing {} request: {:?}, message: {:?}",
@@ -701,7 +717,7 @@ impl LanguageServer {
                                         .context("failed to deserialize response"),
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
-                                let _ = tx.send(response);
+                                _ = tx.send(response);
                             })
                             .detach();
                     }),

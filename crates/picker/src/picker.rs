@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext,
     ViewHandle,
 };
-use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
 use std::{cmp, sync::Arc};
 use util::ResultExt;
@@ -25,6 +25,7 @@ pub struct Picker<D: PickerDelegate> {
     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
     confirmed: bool,
     pending_update_matches: Task<Option<()>>,
+    has_focus: bool,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -33,7 +34,7 @@ pub trait PickerDelegate: Sized + 'static {
     fn selected_index(&self) -> usize;
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
-    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
     fn render_match(
         &self,
@@ -44,6 +45,18 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> AnyElement<Picker<Self>>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
+    }
+    fn render_header(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
+        None
+    }
+    fn render_footer(
+        &self,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<AnyElement<Picker<Self>>> {
+        None
     }
 }
 
@@ -77,6 +90,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .contained()
                     .with_style(editor_style),
             )
+            .with_children(self.delegate.render_header(cx))
             .with_children(if match_count == 0 {
                 if query.is_empty() {
                     None
@@ -104,8 +118,8 @@ impl<D: PickerDelegate> View for Picker<D> {
                                 // Capture mouse events
                                 .on_down(MouseButton::Left, |_, _, _| {})
                                 .on_up(MouseButton::Left, |_, _, _| {})
-                                .on_click(MouseButton::Left, move |_, picker, cx| {
-                                    picker.select_index(ix, cx);
+                                .on_click(MouseButton::Left, move |click, picker, cx| {
+                                    picker.select_index(ix, click.cmd, cx);
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .into_any()
@@ -118,6 +132,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .into_any(),
                 )
             })
+            .with_children(self.delegate.render_footer(cx))
             .contained()
             .with_style(container_style)
             .constrained()
@@ -132,13 +147,22 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         if cx.is_self_focused() {
             cx.focus(&self.query_editor);
         }
     }
+
+    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
 }
 
 impl<D: PickerDelegate> Modal for Picker<D> {
+    fn has_focus(&self) -> bool {
+        self.has_focus
+    }
+
     fn dismiss_on_event(event: &Self::Event) -> bool {
         matches!(event, PickerEvent::Dismiss)
     }
@@ -151,6 +175,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::select_next);
         cx.add_action(Self::select_prev);
         cx.add_action(Self::confirm);
+        cx.add_action(Self::secondary_confirm);
         cx.add_action(Self::cancel);
     }
 
@@ -183,6 +208,7 @@ impl<D: PickerDelegate> Picker<D> {
             theme,
             confirmed: false,
             pending_update_matches: Task::ready(None),
+            has_focus: false,
         };
         this.update_matches(String::new(), cx);
         this
@@ -263,11 +289,11 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    pub fn select_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    pub fn select_index(&mut self, index: usize, cmd: bool, cx: &mut ViewContext<Self>) {
         if self.delegate.match_count() > 0 {
             self.confirmed = true;
             self.delegate.set_selected_index(index, cx);
-            self.delegate.confirm(cx);
+            self.delegate.confirm(cmd, cx);
         }
     }
 
@@ -305,7 +331,12 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         self.confirmed = true;
-        self.delegate.confirm(cx);
+        self.delegate.confirm(false, cx);
+    }
+
+    pub fn secondary_confirm(&mut self, _: &SecondaryConfirm, cx: &mut ViewContext<Self>) {
+        self.confirmed = true;
+        self.delegate.confirm(true, cx);
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {

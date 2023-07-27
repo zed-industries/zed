@@ -1,14 +1,14 @@
 import merge from "ts-deepmerge"
 import { DeepPartial } from "utility-types"
 
-type InteractiveState =
+export type InteractiveState =
     | "default"
     | "hovered"
     | "clicked"
     | "selected"
     | "disabled"
 
-type Interactive<T> = {
+export type Interactive<T> = {
     default: T
     hovered?: T
     clicked?: T
@@ -37,61 +37,61 @@ interface InteractiveProps<T> {
  * @param state Object containing optional modified fields to be included in the resulting object for each state.
  * @returns Interactive<T> object with fields from `base` and `state`.
  */
-export function interactive<T extends Object>({
+export function interactive<T extends object>({
     base,
     state,
 }: InteractiveProps<T>): Interactive<T> {
     if (!base && !state.default) throw new Error(NO_DEFAULT_OR_BASE_ERROR)
 
-    let defaultState: T
+    let default_state: T
 
     if (state.default && base) {
-        defaultState = merge(base, state.default) as T
+        default_state = merge(base, state.default) as T
     } else {
-        defaultState = base ? base : (state.default as T)
+        default_state = base ? base : (state.default as T)
     }
 
-    let interactiveObj: Interactive<T> = {
-        default: defaultState,
+    const interactive_obj: Interactive<T> = {
+        default: default_state,
     }
 
-    let stateCount = 0
+    let state_count = 0
 
     if (state.hovered !== undefined) {
-        interactiveObj.hovered = merge(
-            interactiveObj.default,
+        interactive_obj.hovered = merge(
+            interactive_obj.default,
             state.hovered
         ) as T
-        stateCount++
+        state_count++
     }
 
     if (state.clicked !== undefined) {
-        interactiveObj.clicked = merge(
-            interactiveObj.default,
+        interactive_obj.clicked = merge(
+            interactive_obj.default,
             state.clicked
         ) as T
-        stateCount++
+        state_count++
     }
 
     if (state.selected !== undefined) {
-        interactiveObj.selected = merge(
-            interactiveObj.default,
+        interactive_obj.selected = merge(
+            interactive_obj.default,
             state.selected
         ) as T
-        stateCount++
+        state_count++
     }
 
     if (state.disabled !== undefined) {
-        interactiveObj.disabled = merge(
-            interactiveObj.default,
+        interactive_obj.disabled = merge(
+            interactive_obj.default,
             state.disabled
         ) as T
-        stateCount++
+        state_count++
     }
 
-    if (stateCount < 1) {
+    if (state_count < 1) {
         throw new Error(NOT_ENOUGH_STATES_ERROR)
     }
 
-    return interactiveObj
+    return interactive_obj
 }

@@ -21,12 +21,14 @@ impl<'a> VimTestContext<'a> {
         cx.update(|cx| {
             search::init(cx);
             crate::init(cx);
+            command_palette::init(cx);
         });
 
         cx.update(|cx| {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
+            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
             settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
         });
 
@@ -88,6 +90,7 @@ impl<'a> VimTestContext<'a> {
         self.cx.set_state(text)
     }
 
+    #[track_caller]
     pub fn assert_state(&mut self, text: &str, mode: Mode) {
         self.assert_editor_state(text);
         assert_eq!(self.mode(), mode, "{}", self.assertion_context());

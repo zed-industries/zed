@@ -1,6 +1,6 @@
 use crate::{File, Language};
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use globset::GlobMatcher;
 use gpui::AppContext;
 use schemars::{
@@ -44,6 +44,8 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
+    pub show_wrap_guides: bool,
+    pub wrap_guides: Vec<usize>,
     pub format_on_save: FormatOnSave,
     pub remove_trailing_whitespace_on_save: bool,
     pub ensure_final_newline_on_save: bool,
@@ -52,6 +54,7 @@ pub struct LanguageSettings {
     pub show_copilot_suggestions: bool,
     pub show_whitespaces: ShowWhitespaceSetting,
     pub extend_comment_on_newline: bool,
+    pub inlay_hints: InlayHintSettings,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -83,6 +86,10 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub preferred_line_length: Option<u32>,
     #[serde(default)]
+    pub show_wrap_guides: Option<bool>,
+    #[serde(default)]
+    pub wrap_guides: Option<Vec<usize>>,
+    #[serde(default)]
     pub format_on_save: Option<FormatOnSave>,
     #[serde(default)]
     pub remove_trailing_whitespace_on_save: Option<bool>,
@@ -98,6 +105,8 @@ pub struct LanguageSettingsContent {
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
     #[serde(default)]
     pub extend_comment_on_newline: Option<bool>,
+    #[serde(default)]
+    pub inlay_hints: Option<InlayHintSettings>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -150,6 +159,38 @@ pub enum Formatter {
     },
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct InlayHintSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub show_type_hints: bool,
+    #[serde(default = "default_true")]
+    pub show_parameter_hints: bool,
+    #[serde(default = "default_true")]
+    pub show_other_hints: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl InlayHintSettings {
+    pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
+        let mut kinds = HashSet::default();
+        if self.show_type_hints {
+            kinds.insert(Some(InlayHintKind::Type));
+        }
+        if self.show_parameter_hints {
+            kinds.insert(Some(InlayHintKind::Parameter));
+        }
+        if self.show_other_hints {
+            kinds.insert(None);
+        }
+        kinds
+    }
+}
+
 impl AllLanguageSettings {
     pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
@@ -181,6 +222,29 @@ impl AllLanguageSettings {
 
         self.language(language.map(|l| l.name()).as_deref())
             .show_copilot_suggestions
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InlayHintKind {
+    Type,
+    Parameter,
+}
+
+impl InlayHintKind {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "type" => Some(InlayHintKind::Type),
+            "parameter" => Some(InlayHintKind::Parameter),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            InlayHintKind::Type => "type",
+            InlayHintKind::Parameter => "parameter",
+        }
     }
 }
 
@@ -320,6 +384,9 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
+    merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
+    merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+
     merge(
         &mut settings.preferred_line_length,
         src.preferred_line_length,
@@ -347,6 +414,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,
     );
+    merge(&mut settings.inlay_hints, src.inlay_hints);
     fn merge<T>(target: &mut T, value: Option<T>) {
         if let Some(value) = value {
             *target = value;

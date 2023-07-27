@@ -27,7 +27,9 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
-pub use window::{Axis, SizeConstraint, Vector2FExt, WindowContext};
+pub use window::{Axis, RectFExt, SizeConstraint, Vector2FExt, WindowContext};
 
 pub use anyhow;
 pub use serde_json;
+
+actions!(zed, [NoAction]);

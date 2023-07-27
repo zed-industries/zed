@@ -8,8 +8,8 @@ use crate::{
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
     },
     scene::{
-        CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
-        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
+        CursorRegion, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag, MouseEvent,
+        MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
     util::post_inc,
@@ -53,7 +53,7 @@ pub struct Window {
     last_mouse_moved_event: Option<Event>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
     pub(crate) clicked_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_button: Option<MouseButton>,
+    pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
     mouse_position: Vector2F,
     text_layout_cache: TextLayoutCache,
 }
@@ -86,7 +86,7 @@ impl Window {
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
-            clicked_button: None,
+            clicked_region: None,
             mouse_position: vec2f(0., 0.),
             titlebar_height,
             appearance,
@@ -363,17 +363,13 @@ impl<'a> WindowContext<'a> {
     ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         let window_id = self.window_id;
         let mut contexts = Vec::new();
-        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
+        let mut handler_depths_by_action_id = HashMap::<TypeId, usize>::default();
         for (depth, view_id) in self.ancestors(view_id).enumerate() {
             if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
                 contexts.push(view_metadata.keymap_context.clone());
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    handler_depths_by_action_type.extend(
-                        actions
-                            .keys()
-                            .copied()
-                            .map(|action_type| (action_type, depth)),
-                    );
+                    handler_depths_by_action_id
+                        .extend(actions.keys().copied().map(|action_id| (action_id, depth)));
                 }
             } else {
                 log::error!(
@@ -383,21 +379,21 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        handler_depths_by_action_type.extend(
+        handler_depths_by_action_id.extend(
             self.global_actions
                 .keys()
                 .copied()
-                .map(|action_type| (action_type, contexts.len())),
+                .map(|action_id| (action_id, contexts.len())),
         );
 
         self.action_deserializers
             .iter()
-            .filter_map(move |(name, (type_id, deserialize))| {
-                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
+            .filter_map(move |(name, (action_id, deserialize))| {
+                if let Some(action_depth) = handler_depths_by_action_id.get(action_id).copied() {
                     let action = deserialize(serde_json::Value::Object(Default::default())).ok()?;
                     let bindings = self
                         .keystroke_matcher
-                        .bindings_for_action_type(*type_id)
+                        .bindings_for_action(*action_id)
                         .filter(|b| {
                             action.eq(b.action())
                                 && (0..=action_depth)
@@ -480,8 +476,8 @@ impl<'a> WindowContext<'a> {
                 // specific ancestor element that contained both [positions]'
                 // So we need to store the overlapping regions on mouse down.
 
-                // If there is already clicked_button stored, don't replace it.
-                if self.window.clicked_button.is_none() {
+                // If there is already region being clicked, don't replace it.
+                if self.window.clicked_region.is_none() {
                     self.window.clicked_region_ids = self
                         .window
                         .mouse_regions
@@ -495,7 +491,17 @@ impl<'a> WindowContext<'a> {
                         })
                         .collect();
 
-                    self.window.clicked_button = Some(e.button);
+                    let mut highest_z_index = 0;
+                    let mut clicked_region_id = None;
+                    for (region, z_index) in self.window.mouse_regions.iter() {
+                        if region.bounds.contains_point(e.position) && *z_index >= highest_z_index {
+                            highest_z_index = *z_index;
+                            clicked_region_id = Some(region.id());
+                        }
+                    }
+
+                    self.window.clicked_region =
+                        clicked_region_id.map(|region_id| (region_id, e.button));
                 }
 
                 mouse_events.push(MouseEvent::Down(MouseDown {
@@ -512,6 +518,18 @@ impl<'a> WindowContext<'a> {
                 // NOTE: The order of event pushes is important! MouseUp events MUST be fired
                 // before click events, and so the MouseUp events need to be pushed before
                 // MouseClick events.
+
+                // Synthesize one last drag event to end the drag
+                mouse_events.push(MouseEvent::Drag(MouseDrag {
+                    region: Default::default(),
+                    prev_mouse_position: self.window.mouse_position,
+                    platform_event: MouseMovedEvent {
+                        position: e.position,
+                        pressed_button: Some(e.button),
+                        modifiers: e.modifiers,
+                    },
+                    end: true,
+                }));
                 mouse_events.push(MouseEvent::Up(MouseUp {
                     region: Default::default(),
                     platform_event: e.clone(),
@@ -521,6 +539,10 @@ impl<'a> WindowContext<'a> {
                     platform_event: e.clone(),
                 }));
                 mouse_events.push(MouseEvent::Click(MouseClick {
+                    region: Default::default(),
+                    platform_event: e.clone(),
+                }));
+                mouse_events.push(MouseEvent::ClickOut(MouseClickOut {
                     region: Default::default(),
                     platform_event: e.clone(),
                 }));
@@ -555,8 +577,16 @@ impl<'a> WindowContext<'a> {
                             region: Default::default(),
                             prev_mouse_position: self.window.mouse_position,
                             platform_event: e.clone(),
+                            end: false,
                         }));
-                    } else if let Some(clicked_button) = self.window.clicked_button {
+                    } else if let Some((_, clicked_button)) = self.window.clicked_region {
+                        mouse_events.push(MouseEvent::Drag(MouseDrag {
+                            region: Default::default(),
+                            prev_mouse_position: self.window.mouse_position,
+                            platform_event: e.clone(),
+                            end: true,
+                        }));
+
                         // Mouse up event happened outside the current window. Simulate mouse up button event
                         let button_event = e.to_button_event(clicked_button);
                         mouse_events.push(MouseEvent::Up(MouseUp {
@@ -679,8 +709,8 @@ impl<'a> WindowContext<'a> {
                     // Only raise click events if the released button is the same as the one stored
                     if self
                         .window
-                        .clicked_button
-                        .map(|clicked_button| clicked_button == e.button)
+                        .clicked_region
+                        .map(|(_, clicked_button)| clicked_button == e.button)
                         .unwrap_or(false)
                     {
                         // Clear clicked regions and clicked button
@@ -688,7 +718,7 @@ impl<'a> WindowContext<'a> {
                             &mut self.window.clicked_region_ids,
                             Default::default(),
                         );
-                        self.window.clicked_button = None;
+                        self.window.clicked_region = None;
 
                         // Find regions which still overlap with the mouse since the last MouseDown happened
                         for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
@@ -712,7 +742,10 @@ impl<'a> WindowContext<'a> {
                     }
                 }
 
-                MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
+                MouseEvent::MoveOut(_)
+                | MouseEvent::UpOut(_)
+                | MouseEvent::DownOut(_)
+                | MouseEvent::ClickOut(_) => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
                         if !mouse_region
@@ -860,18 +893,10 @@ impl<'a> WindowContext<'a> {
         }
         for view_id in &invalidation.updated {
             let titlebar_height = self.window.titlebar_height;
-            let hovered_region_ids = self.window.hovered_region_ids.clone();
-            let clicked_region_ids = self
-                .window
-                .clicked_button
-                .map(|button| (self.window.clicked_region_ids.clone(), button));
-
             let element = self
                 .render_view(RenderParams {
                     view_id: *view_id,
                     titlebar_height,
-                    hovered_region_ids,
-                    clicked_region_ids,
                     refreshing: false,
                     appearance,
                 })
@@ -1085,6 +1110,10 @@ impl<'a> WindowContext<'a> {
         self.window.focused_view_id
     }
 
+    pub fn focus(&mut self, view_id: Option<usize>) {
+        self.app_context.focus(self.window_id, view_id);
+    }
+
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.bounds()
     }
@@ -1176,8 +1205,6 @@ impl<'a> WindowContext<'a> {
 pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
-    pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
     pub appearance: Appearance,
 }
@@ -1249,6 +1276,19 @@ impl Vector2FExt for Vector2F {
         match axis {
             Axis::Horizontal => self.x(),
             Axis::Vertical => self.y(),
+        }
+    }
+}
+
+pub trait RectFExt {
+    fn length_along(self, axis: Axis) -> f32;
+}
+
+impl RectFExt for RectF {
+    fn length_along(self, axis: Axis) -> f32 {
+        match axis {
+            Axis::Horizontal => self.width(),
+            Axis::Vertical => self.height(),
         }
     }
 }

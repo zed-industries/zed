@@ -24,6 +24,7 @@ pub struct GoToLine {
     prev_scroll_position: Option<Vector2F>,
     cursor_point: Point,
     max_point: Point,
+    has_focus: bool,
 }
 
 pub enum Event {
@@ -57,6 +58,7 @@ impl GoToLine {
             prev_scroll_position: scroll_position,
             cursor_point,
             max_point,
+            has_focus: false,
         }
     }
 
@@ -178,11 +180,20 @@ impl View for GoToLine {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         cx.focus(&self.line_editor);
+    }
+
+    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
     }
 }
 
 impl Modal for GoToLine {
+    fn has_focus(&self) -> bool {
+        self.has_focus
+    }
+
     fn dismiss_on_event(event: &Self::Event) -> bool {
         matches!(event, Event::Dismissed)
     }

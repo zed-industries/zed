@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
@@ -36,6 +37,14 @@ impl LspAdapter for RubyLanguageServer {
             path: "solargraph".into(),
             arguments: vec!["stdio".into()],
         })
+    }
+
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
     }
 
     async fn label_for_completion(
