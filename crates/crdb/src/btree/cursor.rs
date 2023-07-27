@@ -418,6 +418,7 @@ where
                 } => {
                     if ascending {
                         entry.index += 1;
+                        entry.position = self.position.clone();
                     }
 
                     for (child_tree, child_summary) in child_trees[entry.index..]
