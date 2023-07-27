@@ -3,7 +3,7 @@
         operator: "@"
         operand: (call
             target: (identifier) @unary
-            (#match? @unary "^(doc)$"))
+            (.match? @unary "^(doc)$"))
         ) @context
     .
     (call
@@ -18,10 +18,10 @@
                     target: (identifier) @name)
                     operator: "when")
             ])
-        (#match? @name "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
+        (.match? @name "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
         )
 
     (call
         target: (identifier) @name
         (arguments (alias) @name)
-        (#match? @name "^(defmodule|defprotocol)$")) @item
+        (.match? @name "^(defmodule|defprotocol)$")) @item

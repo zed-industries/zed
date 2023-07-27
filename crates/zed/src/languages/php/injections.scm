@@ -1,3 +1,3 @@
 ((text) @content
- (#set! "language" "html")
- (#set! "combined"))
+ (.set! "language" "html")
+ (.set! "combined"))

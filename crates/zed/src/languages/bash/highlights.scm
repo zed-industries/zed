@@ -54,5 +54,5 @@
 
 (
   (command (_) @constant)
-  (#match? @constant "^-")
+  (.match? @constant "^-")
 )

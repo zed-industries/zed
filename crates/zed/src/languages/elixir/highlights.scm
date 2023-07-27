@@ -54,13 +54,13 @@
   (sigil_name) @__name__
   quoted_start: _ @string
   quoted_end: _ @string
-  (#match? @__name__ "^[sS]$")) @string
+  (.match? @__name__ "^[sS]$")) @string
 
 (sigil
   (sigil_name) @__name__
   quoted_start: _ @string.regex
   quoted_end: _ @string.regex
-  (#match? @__name__ "^[rR]$")) @string.regex
+  (.match? @__name__ "^[rR]$")) @string.regex
 
 (sigil
   (sigil_name) @__name__
@@ -69,7 +69,7 @@
 
 (
   (identifier) @comment.unused
-  (#match? @comment.unused "^_")
+  (.match? @comment.unused "^_")
 )
 
 (call
@@ -91,7 +91,7 @@
         operator: "|>"
         right: (identifier))
     ])
-  (#match? @keyword "^(def|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp|defp)$"))
+  (.match? @keyword "^(def|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp|defp)$"))
 
 (binary_operator
   operator: "|>"
@@ -99,15 +99,15 @@
 
 (call
   target: (identifier) @keyword
-  (#match? @keyword "^(def|defdelegate|defexception|defguard|defguardp|defimpl|defmacro|defmacrop|defmodule|defn|defnp|defoverridable|defp|defprotocol|defstruct)$"))
+  (.match? @keyword "^(def|defdelegate|defexception|defguard|defguardp|defimpl|defmacro|defmacrop|defmodule|defn|defnp|defoverridable|defp|defprotocol|defstruct)$"))
 
 (call
   target: (identifier) @keyword
-  (#match? @keyword "^(alias|case|cond|else|for|if|import|quote|raise|receive|require|reraise|super|throw|try|unless|unquote|unquote_splicing|use|with)$"))
+  (.match? @keyword "^(alias|case|cond|else|for|if|import|quote|raise|receive|require|reraise|super|throw|try|unless|unquote|unquote_splicing|use|with)$"))
 
 (
   (identifier) @constant.builtin
-  (#match? @constant.builtin "^(__MODULE__|__DIR__|__ENV__|__CALLER__|__STACKTRACE__)$")
+  (.match? @constant.builtin "^(__MODULE__|__DIR__|__ENV__|__CALLER__|__STACKTRACE__)$")
 )
 
 (unary_operator
@@ -121,7 +121,7 @@
         (sigil)
         (boolean)
       ] @comment.doc))
-  (#match? @__attribute__ "^(moduledoc|typedoc|doc)$"))
+  (.match? @__attribute__ "^(moduledoc|typedoc|doc)$"))
 
 (comment) @comment
 
@@ -150,4 +150,4 @@
 ((sigil
   (sigil_name) @_sigil_name
   (quoted_content) @embedded)
- (#eq? @_sigil_name "H"))
+ (.eq? @_sigil_name "H"))
