@@ -6273,8 +6273,8 @@ impl Editor {
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
+            let range = self.range_for_match(&range);
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
-                let range = self.range_for_match(&range);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
@@ -6291,7 +6291,6 @@ impl Editor {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
                         pane.update(cx, |pane, _| pane.disable_history());
-                        let range = target_editor.range_for_match(&range);
                         target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
