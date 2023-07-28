@@ -7,11 +7,10 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use globset::Glob;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use pretty_assertions::assert_eq;
-use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
+use project::{project_settings::ProjectSettings, search::PathMatcher, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
@@ -121,8 +120,8 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     );
 
     // Test Include Files Functonality
-    let include_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
-    let exclude_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
+    let include_files = vec![PathMatcher::new("*.rs").unwrap()];
+    let exclude_files = vec![PathMatcher::new("*.rs").unwrap()];
     let rust_only_search_results = store
         .update(cx, |store, cx| {
             store.search_project(

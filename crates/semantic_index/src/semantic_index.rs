@@ -11,13 +11,12 @@ use anyhow::{anyhow, Result};
 use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
-use globset::GlobMatcher;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{Fs, Project, WorktreeId};
+use project::{search::PathMatcher, Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
@@ -682,8 +681,8 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         phrase: String,
         limit: usize,
-        include_globs: Vec<GlobMatcher>,
-        exclude_globs: Vec<GlobMatcher>,
+        includes: Vec<PathMatcher>,
+        excludes: Vec<PathMatcher>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<SearchResult>>> {
         let project_state = if let Some(state) = self.projects.get(&project.downgrade()) {
@@ -714,11 +713,8 @@ impl SemanticIndex {
                 .next()
                 .unwrap();
 
-            let file_ids = database.retrieve_included_file_ids(
-                &worktree_db_ids,
-                include_globs,
-                exclude_globs,
-            )?;
+            let file_ids =
+                database.retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)?;
 
             let batch_n = cx.background().num_cpus();
             let ids_len = file_ids.clone().len();
