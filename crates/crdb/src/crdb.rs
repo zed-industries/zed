@@ -24,7 +24,7 @@ use std::{
     future::Future,
     ops::Range,
     path::Path,
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -211,7 +211,7 @@ pub trait Executor: 'static + Send + Sync {
 struct Client<E, N: ClientNetwork> {
     db: Db,
     network: Arc<N>,
-    checkouts: Arc<Mutex<HashMap<RepoId, Checkout<E, N>>>>,
+    checkouts: Mutex<HashMap<RepoId, Checkout<E, N>>>,
     executor: Arc<E>,
 }
 
@@ -219,8 +219,9 @@ struct Checkout<E, N: ClientNetwork> {
     repo: Repo,
     network_room: Arc<N::Room>,
     operations_tx: mpsc::UnboundedSender<Operation>,
-    message_handlers:
-        Arc<RwLock<HashMap<TypeId, Box<dyn Send + Sync + Fn(Client<E, N>, RepoId, Box<dyn Any>)>>>>,
+    message_handlers: Arc<
+        RwLock<HashMap<TypeId, Box<dyn Send + Sync + Fn(&Client<E, N>, RepoId, Box<dyn Any>)>>>,
+    >,
 }
 
 impl<E, N: ClientNetwork> Clone for Checkout<E, N> {
@@ -235,7 +236,7 @@ impl<E, N: ClientNetwork> Clone for Checkout<E, N> {
 }
 
 impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
-    fn new(client: Client<E, N>, repo: Repo, network_room: N::Room) -> Self {
+    fn new(client: &Arc<Client<E, N>>, repo: Repo, network_room: N::Room) -> Self {
         let (operations_tx, operations_rx) = mpsc::unbounded();
         let this = Self {
             repo: repo.clone(),
@@ -246,14 +247,16 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
 
         {
             let handlers = this.message_handlers.clone();
-            let client = client.clone();
+            let client = Arc::downgrade(&client);
             this.network_room.handle_messages(move |message| {
                 if let Some(envelope) =
                     serde_bare::from_slice::<MessageEnvelope>(&message).log_err()
                 {
                     let message = envelope.unwrap();
-                    if let Some(handler) = handlers.read().get(&message.as_ref().type_id()) {
-                        handler(client.clone(), repo.id, message);
+                    if let Some(client) = client.upgrade() {
+                        if let Some(handler) = handlers.read().get(&message.as_ref().type_id()) {
+                            handler(&client, repo.id, message);
+                        }
                     }
                 };
             });
@@ -261,21 +264,29 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
 
         client.executor.spawn({
             let this = this.clone();
-            let client = client.clone();
+            let client = Arc::downgrade(client);
             async move {
-                this.sync(&client).await.expect("network is infallible");
+                if let Some(client) = client.upgrade() {
+                    this.sync(&client).await.expect("network is infallible");
+                }
+
                 let mut operations_rx = operations_rx.ready_chunks(CHUNK_SIZE);
                 while let Some(operations) = operations_rx.next().await {
-                    client
-                        .request(messages::PublishOperations {
-                            repo_id: this.repo.id,
-                            operations: operations.clone(),
-                        })
-                        .await
-                        .expect("network is infallible");
-                    for operation in operations {
-                        this.network_room
-                            .broadcast(MessageEnvelope::Operation(operation).to_bytes());
+                    if let Some(client) = client.upgrade() {
+                        client
+                            .request(messages::PublishOperations {
+                                repo_id: this.repo.id,
+                                operations: operations.clone(),
+                            })
+                            .await
+                            .expect("network is infallible");
+
+                        for operation in operations {
+                            this.network_room
+                                .broadcast(MessageEnvelope::Operation(operation).to_bytes());
+                        }
+                    } else {
+                        break;
                     }
                 }
             }
@@ -287,7 +298,7 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
     fn handle_messages<M: Message, H>(&self, handle_message: H)
     where
         M: Message,
-        H: 'static + Fn(Client<E, N>, RepoId, M) + Send + Sync,
+        H: 'static + Fn(&Client<E, N>, RepoId, M) + Send + Sync,
     {
         self.message_handlers.write().insert(
             TypeId::of::<M>(),
@@ -337,30 +348,25 @@ pub struct RoomCredentials {
     token: RoomToken,
 }
 
-impl<E, N: ClientNetwork> Clone for Client<E, N> {
-    fn clone(&self) -> Self {
-        Self {
-            db: self.db.clone(),
-            network: self.network.clone(),
-            checkouts: self.checkouts.clone(),
-            executor: self.executor.clone(),
-        }
-    }
-}
-
 impl<E: Executor, N: ClientNetwork> Client<E, N> {
-    pub fn new(executor: E, network: N, kv: Arc<dyn KvStore>) -> Self {
-        let mut this = Self {
-            db: Db::new(kv),
-            network: Arc::new(network),
-            checkouts: Default::default(),
-            executor: Arc::new(executor),
-        };
-        this.db.on_local_operation({
-            let this = this.clone();
-            move |repo_id, operation| this.handle_local_operation(repo_id, operation)
-        });
-        this
+    pub fn new(executor: E, network: N, kv: Arc<dyn KvStore>) -> Arc<Self> {
+        Arc::new_cyclic(|weak_self: &Weak<Self>| {
+            let mut this = Self {
+                db: Db::new(kv),
+                network: Arc::new(network),
+                checkouts: Default::default(),
+                executor: Arc::new(executor),
+            };
+            this.db.on_local_operation({
+                let this = weak_self.clone();
+                move |repo_id, operation| {
+                    if let Some(this) = this.upgrade() {
+                        this.handle_local_operation(repo_id, operation)
+                    }
+                }
+            });
+            this
+        })
     }
 
     pub fn create_repo(&self) -> Repo {
@@ -374,7 +380,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         repo
     }
 
-    pub fn clone_repo(&self, name: impl Into<Arc<str>>) -> impl Future<Output = Result<Repo>> {
+    pub fn clone_repo(
+        self: &Arc<Self>,
+        name: impl Into<Arc<str>>,
+    ) -> impl Future<Output = Result<Repo>> {
         let this = self.clone();
         let name = name.into();
         async move {
@@ -392,7 +401,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
-            let checkout = Checkout::new(this.clone(), repo.clone(), room);
+            let checkout = Checkout::new(&this, repo.clone(), room);
             checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo_id, checkout);
 
@@ -401,7 +410,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
     }
 
     pub fn publish_repo(
-        &self,
+        self: &Arc<Self>,
         repo: &Repo,
         name: impl Into<Arc<str>>,
     ) -> impl Future<Output = Result<()>> {
@@ -414,7 +423,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 .await?;
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
-            let checkout = Checkout::new(this.clone(), repo.clone(), room);
+            let checkout = Checkout::new(&this, repo.clone(), room);
             checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo.id, checkout);
 
@@ -458,7 +467,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         }
     }
 
-    fn handle_remote_operation(self, repo_id: RepoId, operation: Operation) {
+    fn handle_remote_operation(&self, repo_id: RepoId, operation: Operation) {
         let repo = self.db.repo(repo_id).expect("repo must exist");
         repo.apply_operations([operation]);
     }
@@ -2032,17 +2041,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_repo(deterministic: Arc<Deterministic>) {
+    async fn test_basic_collaboration(deterministic: Arc<Deterministic>) {
         let network = TestNetwork::new(deterministic.build_background());
-        let server = Server::new(
-            network.server(),
-            Arc::new(TestKv::new(deterministic.build_background())),
-        );
+        let server_kv = Arc::new(TestKv::new(deterministic.build_background()));
+        let server = Server::new(network.server(), server_kv);
 
+        let kv_a = Arc::new(TestKv::new(deterministic.build_background()));
         let client_a = Client::new(
             deterministic.build_background(),
             network.client("client-a"),
-            Arc::new(TestKv::new(deterministic.build_background())),
+            kv_a,
         );
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
@@ -2080,6 +2088,8 @@ mod tests {
 
         assert_eq!(doc1_a.text().to_string(), "aghic");
         assert_eq!(doc1_b.text().to_string(), "aghic");
+
+        drop(client_a);
     }
 
     #[derive(Clone)]
@@ -2221,11 +2231,11 @@ mod tests {
 
     struct TestClient {
         id: usize,
-        client: Client<Arc<Background>, TestClientNetwork>,
+        client: Arc<Client<Arc<Background>, TestClientNetwork>>,
     }
 
     impl Deref for TestClient {
-        type Target = Client<Arc<Background>, TestClientNetwork>;
+        type Target = Arc<Client<Arc<Background>, TestClientNetwork>>;
 
         fn deref(&self) -> &Self::Target {
             &self.client
