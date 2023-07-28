@@ -1526,7 +1526,7 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
-    fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
             return range.start..range.start;
         }
