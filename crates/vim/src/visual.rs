@@ -24,13 +24,15 @@ actions!(
         VisualDelete,
         VisualChange,
         VisualYank,
-        VisualPaste
+        VisualPaste,
+        OtherEnd,
     ]
 );
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(toggle_visual);
     cx.add_action(toggle_visual_line);
+    cx.add_action(other_end);
     cx.add_action(change);
     cx.add_action(delete);
     cx.add_action(yank);
@@ -148,6 +150,18 @@ pub fn toggle_visual_line(
             vim.switch_mode(Mode::Normal, false, cx);
         }
     })
+}
+
+pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|_, selection| {
+                    selection.reversed = !selection.reversed;
+                })
+            })
+        })
+    });
 }
 
 pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
