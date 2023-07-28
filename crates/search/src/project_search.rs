@@ -2,14 +2,13 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
-use anyhow::Result;
+use anyhow::Context;
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
-use globset::{Glob, GlobMatcher};
 use gpui::{
     actions,
     elements::*,
@@ -19,7 +18,10 @@ use gpui::{
 };
 use menu::Confirm;
 use postage::stream::Stream;
-use project::{search::SearchQuery, Entry, Project};
+use project::{
+    search::{PathMatcher, SearchQuery},
+    Entry, Project,
+};
 use semantic_index::SemanticIndex;
 use smallvec::SmallVec;
 use std::{
@@ -185,21 +187,15 @@ impl ProjectSearch {
         cx.notify();
     }
 
-    fn semantic_search(
-        &mut self,
-        query: String,
-        include_files: Vec<GlobMatcher>,
-        exclude_files: Vec<GlobMatcher>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn semantic_search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = SemanticIndex::global(cx).map(|index| {
             index.update(cx, |semantic_index, cx| {
                 semantic_index.search_project(
                     self.project.clone(),
-                    query.clone(),
+                    query.as_str().to_owned(),
                     10,
-                    include_files,
-                    exclude_files,
+                    query.files_to_include().to_vec(),
+                    query.files_to_exclude().to_vec(),
                     cx,
                 )
             })
@@ -590,8 +586,7 @@ impl ProjectSearchView {
         if !dir_entry.is_dir() {
             return;
         }
-        let filter_path = dir_entry.path.join("**");
-        let Some(filter_str) = filter_path.to_str() else { return; };
+        let Some(filter_str) = dir_entry.path.to_str() else { return; };
 
         let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
@@ -662,16 +657,10 @@ impl ProjectSearchView {
             if semantic.outstanding_file_count > 0 {
                 return;
             }
-
-            let query = self.query_editor.read(cx).text(cx);
-            if let Some((included_files, exclude_files)) =
-                self.get_included_and_excluded_globsets(cx)
-            {
-                self.model.update(cx, |model, cx| {
-                    model.semantic_search(query, included_files, exclude_files, cx)
-                });
+            if let Some(query) = self.build_search_query(cx) {
+                self.model
+                    .update(cx, |model, cx| model.semantic_search(query, cx));
             }
-            return;
         }
 
         if let Some(query) = self.build_search_query(cx) {
@@ -679,42 +668,10 @@ impl ProjectSearchView {
         }
     }
 
-    fn get_included_and_excluded_globsets(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(Vec<GlobMatcher>, Vec<GlobMatcher>)> {
-        let included_files =
-            match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
-                Ok(included_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Include);
-                    included_files
-                }
-                Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Include);
-                    cx.notify();
-                    return None;
-                }
-            };
-        let excluded_files =
-            match Self::load_glob_set(&self.excluded_files_editor.read(cx).text(cx)) {
-                Ok(excluded_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Exclude);
-                    excluded_files
-                }
-                Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Exclude);
-                    cx.notify();
-                    return None;
-                }
-            };
-
-        Some((included_files, excluded_files))
-    }
-
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
         let included_files =
-            match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
+            match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
                     self.panels_with_errors.remove(&InputPanel::Include);
                     included_files
@@ -726,7 +683,7 @@ impl ProjectSearchView {
                 }
             };
         let excluded_files =
-            match Self::load_glob_set(&self.excluded_files_editor.read(cx).text(cx)) {
+            match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
                 Ok(excluded_files) => {
                     self.panels_with_errors.remove(&InputPanel::Exclude);
                     excluded_files
@@ -766,11 +723,14 @@ impl ProjectSearchView {
         }
     }
 
-    fn load_glob_set(text: &str) -> Result<Vec<GlobMatcher>> {
+    fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
         text.split(',')
             .map(str::trim)
-            .filter(|glob_str| !glob_str.is_empty())
-            .map(|glob_str| anyhow::Ok(Glob::new(glob_str)?.compile_matcher()))
+            .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
+            .map(|maybe_glob_str| {
+                PathMatcher::new(maybe_glob_str)
+                    .with_context(|| format!("parsing {maybe_glob_str} as path matcher"))
+            })
             .collect()
     }
 
@@ -1769,7 +1729,7 @@ pub mod tests {
             search_view.included_files_editor.update(cx, |editor, cx| {
                 assert_eq!(
                     editor.display_text(cx),
-                    a_dir_entry.path.join("**").display().to_string(),
+                    a_dir_entry.path.to_str().unwrap(),
                     "New search in directory should have included dir entry path"
                 );
             });
