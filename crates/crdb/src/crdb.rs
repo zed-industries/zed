@@ -435,17 +435,24 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         !self.checkouts.lock().contains_key(&repo.id)
     }
 
-    pub fn repo(&self, id: RepoId) -> Result<Repo> {
-        self.db
-            .snapshot
-            .lock()
-            .repos
-            .get(&id)
-            .map(|_| Repo {
+    pub fn repo(self: &Arc<Self>, id: RepoId) -> impl Future<Output = Result<Repo>> {
+        let this = self.clone();
+        async move {
+            if let Some(repo) = this.db.repo(id) {
+                return Ok(repo);
+            }
+
+            let repo = RepoSnapshot::load(id, &*this.db.kv).await?;
+            let mut db = this.db.snapshot.lock();
+            if !db.repos.contains_key(&id) {
+                db.repos.insert(id, repo);
+            }
+
+            Ok(Repo {
                 id,
-                db: self.db.clone(),
+                db: this.db.clone(),
             })
-            .ok_or_else(|| anyhow!("repo not found"))
+        }
     }
 
     pub fn repos(&self) -> Vec<Repo> {
@@ -1529,6 +1536,16 @@ pub struct RepoSnapshot {
     deferred_operations: btree::Sequence<DeferredOperation>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SavedRepoSnapshot {
+    last_operation_id: OperationId,
+    branches: btree::SavedId,
+    operations: btree::SavedId,
+    revisions: btree::SavedId,
+    max_operation_ids: btree::SavedId,
+    deferred_operations: btree::SavedId,
+}
+
 impl Default for RepoSnapshot {
     fn default() -> Self {
         Self {
@@ -1551,6 +1568,22 @@ impl RepoSnapshot {
             last_operation_id: OperationId::new(replica_id),
             ..Default::default()
         }
+    }
+
+    async fn load(id: RepoId, kv: &dyn KvStore) -> Result<Self> {
+        let repo_bytes = kv
+            .load(btree::namespace_bytes("repo"), id.0.as_u128())
+            .await?;
+        let saved_repo = serde_bare::from_slice::<SavedRepoSnapshot>(&repo_bytes)?;
+        Ok(Self {
+            last_operation_id: saved_repo.last_operation_id,
+            branches: btree::Map::load(saved_repo.branches, kv).await?,
+            operations: btree::Map::load(saved_repo.operations, kv).await?,
+            revisions: Default::default(),
+            max_operation_ids: btree::Map::load(saved_repo.max_operation_ids, kv).await?,
+            deferred_operations: btree::Sequence::from_root(saved_repo.deferred_operations, kv)
+                .await?,
+        })
     }
 
     fn create_empty_branch(&mut self, name: impl Into<Arc<str>>) -> (Operation, OperationId) {
@@ -1819,7 +1852,7 @@ impl RepoSnapshot {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct DeferredOperation {
     parent: OperationId,
     operation: Operation,
@@ -1863,7 +1896,7 @@ impl btree::KeyedItem for DeferredOperation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct BranchSnapshot {
     name: Arc<str>,
     head: RevisionId,
@@ -2050,7 +2083,7 @@ mod tests {
         let client_a = Client::new(
             deterministic.build_background(),
             network.client("client-a"),
-            kv_a,
+            kv_a.clone(),
         );
         let repo_a = client_a.create_repo();
         let branch_a = repo_a.create_empty_branch("main");
@@ -2090,6 +2123,12 @@ mod tests {
         assert_eq!(doc1_b.text().to_string(), "aghic");
 
         drop(client_a);
+        let client_a2 = Client::new(
+            deterministic.build_background(),
+            network.client("client-a"),
+            kv_a,
+        );
+        let repo_a2 = client_a2.repo(repo_b.id).await.unwrap();
     }
 
     #[derive(Clone)]
@@ -2415,7 +2454,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*id)?;
+                    let repo = client.repo(*id).await?;
                     let publish = client.publish_repo(&repo, name.clone());
                     let publish = async move {
                         publish.await.log_err();
@@ -2444,7 +2483,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id)?;
+                    let repo = client.repo(*repo_id).await?;
                     repo.create_empty_branch(name.as_str());
                 }
 
@@ -2457,7 +2496,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id)?;
+                    let repo = client.repo(*repo_id).await?;
                     let branch = repo.branch(branch_name)?;
                     branch.create_document();
                 }
@@ -2473,7 +2512,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id)?;
+                    let repo = client.repo(*repo_id).await?;
                     let branch = repo.branch(branch_name)?;
                     let document = branch.document(*document_id)?;
                     document.edit(edits.iter().cloned());

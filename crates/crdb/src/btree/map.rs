@@ -1,4 +1,8 @@
-use super::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, Sequence, Summary};
+use super::{
+    Bias, Dimension, Edit, Item, KeyedItem, KvStore, SavedId, SeekTarget, Sequence, Summary,
+};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -12,13 +16,13 @@ where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapEntry<K, V> {
     key: K,
     value: V,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MapKey<K>(K);
 
 #[derive(Clone, Debug, Default)]
@@ -42,6 +46,14 @@ where
             &(),
         );
         Self(tree)
+    }
+
+    pub async fn load(id: SavedId, kv: &dyn KvStore) -> Result<Self>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        Ok(Self(Sequence::from_root(id, kv).await?))
     }
 
     pub fn is_empty(&self) -> bool {

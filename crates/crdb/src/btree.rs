@@ -678,16 +678,8 @@ where
     T: Item + Serialize + for<'a> Deserialize<'a>,
     T::Summary: Serialize + for<'a> Deserialize<'a>,
 {
-    fn namespace_bytes(s: &str) -> [u8; 16] {
-        let mut namespace = [0; 16];
-        namespace[..s.len()].copy_from_slice(s.as_bytes());
-        namespace
-    }
-
-    pub async fn from_root<K: KvStore>(root_id: SavedId, kv: &K) -> Result<Self> {
-        let root = kv
-            .load(Self::namespace_bytes("node"), root_id.as_u128())
-            .await?;
+    pub async fn from_root(root_id: SavedId, kv: &dyn KvStore) -> Result<Self> {
+        let root = kv.load(namespace_bytes("node"), root_id.as_u128()).await?;
         let root = serde_bare::from_slice(&root)?;
         let node = match root {
             SavedNode::Internal {
@@ -814,7 +806,7 @@ where
                     if frame.children_saved {
                         saved_id.save();
                         kv.store(
-                            Self::namespace_bytes("node"),
+                            namespace_bytes("node"),
                             saved_id.as_u128(),
                             serde_bare::to_vec(&SavedNode::<T>::Internal {
                                 height: *height,
@@ -856,7 +848,7 @@ where
                 } => {
                     saved_id.save();
                     kv.store(
-                        Self::namespace_bytes("node"),
+                        namespace_bytes("node"),
                         saved_id.as_u128(),
                         serde_bare::to_vec(&SavedNode::Leaf {
                             summary: summary.clone(),
@@ -1162,6 +1154,12 @@ where
         sum.add_summary(value, cx);
     }
     sum
+}
+
+pub fn namespace_bytes(s: &str) -> [u8; 16] {
+    let mut namespace = [0; 16];
+    namespace[..s.len()].copy_from_slice(s.as_bytes());
+    namespace
 }
 
 #[cfg(test)]
