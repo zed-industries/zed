@@ -21,7 +21,6 @@ use drag_and_drop::DragAndDrop;
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
-    stream::FuturesUnordered,
     FutureExt, StreamExt,
 };
 use gpui::{
