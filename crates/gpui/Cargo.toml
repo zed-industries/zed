@@ -31,7 +31,6 @@ itertools = "0.10"
 lazy_static.workspace = true
 log.workspace = true
 num_cpus = "1.13"
-optional_struct = "0.3.1"
 ordered-float.workspace = true
 parking = "2.0.0"
 parking_lot.workspace = true

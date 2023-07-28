@@ -400,58 +400,6 @@ pub fn layout_highlighted_chunks<'a>(
     layouts
 }
 
-// Need to figure out how fonts flow through the tree to implement this.
-impl<V: View> Element<V> for Cow<'static, str> {
-    type LayoutState = ();
-
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut LayoutContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
-        todo!()
-    }
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        view: &mut V,
-        cx: &mut PaintContext<V>,
-    ) -> Self::PaintState {
-        todo!()
-    }
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF> {
-        todo!()
-    }
-
-    fn debug(
-        &self,
-        bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> crate::serde_json::Value {
-        todo!()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

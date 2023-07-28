@@ -1,13 +1,7 @@
-pub mod color {
-    use gpui::color::Color;
-
-    pub fn background(elevation: f32) -> Color {
-        todo!()
-    }
-}
+pub mod color {}
 
 pub mod text {
-    use gpui::elements::node::length::{rems, Rems};
+    use crate::node::length::{rems, Rems};
 
     pub fn xs() -> Rems {
         rems(0.75)
@@ -37,21 +31,21 @@ pub mod text {
         rems(1.875)
     }
 
-    pub fn x4l() -> Rems {
+    pub fn xxxxl() -> Rems {
         rems(2.25)
     }
 
-    pub fn x5l() -> Rems {
+    pub fn xxxxxl() -> Rems {
         rems(3.0)
     }
 
-    pub fn x6l() -> Rems {
+    pub fn xxxxxxl() -> Rems {
         rems(4.0)
     }
 }
 
 pub mod padding {
-    use gpui::elements::node::length::{rems, Rems};
+    use crate::node::length::{rems, Rems};
 
     pub fn p1() -> Rems {
         rems(0.25)
@@ -107,7 +101,7 @@ pub mod padding {
 }
 
 pub mod margin {
-    use gpui::elements::node::length::{rems, Rems};
+    use crate::node::length::{rems, Rems};
 
     pub fn m1() -> Rems {
         rems(0.25)

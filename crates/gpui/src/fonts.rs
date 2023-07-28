@@ -223,6 +223,27 @@ impl TextStyle {
         })
     }
 
+    pub fn default(font_cache: &FontCache) -> Self {
+        let font_family_id = font_cache.known_existing_family();
+        let font_id = font_cache
+            .select_font(font_family_id, &Default::default())
+            .expect("did not have any font in system-provided family");
+        let font_family_name = font_cache
+            .family_name(font_family_id)
+            .expect("we loaded this family from the font cache, so this should work");
+
+        Self {
+            color: Color::default(),
+            font_family_name,
+            font_family_id,
+            font_id,
+            font_size: 14.,
+            font_properties: Default::default(),
+            underline: Default::default(),
+            soft_wrap: true,
+        }
+    }
+
     pub fn with_font_size(mut self, font_size: f32) -> Self {
         self.font_size = font_size;
         self
@@ -350,25 +371,7 @@ impl Default for TextStyle {
             let font_cache = font_cache
                 .as_ref()
                 .expect("TextStyle::default can only be called within a call to with_font_cache");
-
-            let font_family_id = font_cache.known_existing_family();
-            let font_id = font_cache
-                .select_font(font_family_id, &Default::default())
-                .expect("did not have any font in system-provided family");
-            let font_family_name = font_cache
-                .family_name(font_family_id)
-                .expect("we loaded this family from the font cache, so this should work");
-
-            Self {
-                color: Color::default(),
-                font_family_name,
-                font_family_id,
-                font_id,
-                font_size: 14.,
-                font_properties: Default::default(),
-                underline: Default::default(),
-                soft_wrap: true,
-            }
+            Self::default(font_cache)
         })
     }
 }

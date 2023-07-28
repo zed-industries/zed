@@ -3440,7 +3440,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
         self.text_style_stack
             .last()
             .cloned()
-            .unwrap_or(Default::default())
+            .unwrap_or(Arc::new(TextStyle::default(&self.font_cache)))
     }
 
     pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
@@ -3506,7 +3506,7 @@ impl<'a, 'b, 'c, V: View> PaintContext<'a, 'b, 'c, V> {
         self.text_style_stack
             .last()
             .cloned()
-            .unwrap_or(Default::default())
+            .unwrap_or(Arc::new(TextStyle::default(&self.font_cache)))
     }
 
     pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T

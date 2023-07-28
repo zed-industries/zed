@@ -1,10 +1,12 @@
-use gpui::{
-    elements::node::{column, length::auto, row, text},
-    AnyElement, Element, LayoutContext, View, ViewContext,
+use gpui::{color::Color, AnyElement, Element, LayoutContext, View, ViewContext};
+use node::{
+    length::{auto, rems},
+    *,
 };
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
 use tokens::{margin::m4, text::lg};
 
+mod node;
 mod tokens;
 
 #[derive(Element, Clone, Default)]
@@ -13,13 +15,32 @@ pub struct Playground<V: View>(PhantomData<V>);
 impl<V: View> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> AnyElement<V> {
         column()
+            .id("red column")
             .width(auto())
+            .height(auto())
+            .fill(Color::red())
             .child(
-                dialog("This is a dialog", "You would see a description here.")
-                    .button("Button 1", 1, Self::action_1)
-                    .button("Button 2", 2, Self::action_2),
+                row()
+                    .id("green row")
+                    .width(auto())
+                    .height(rems(20.))
+                    .margin_left(auto())
+                    .fill(Color::green()), // .child(
+                                           //     row()
+                                           //         .id("blue child")
+                                           //         .height(auto())
+                                           //         .width(rems(20.))
+                                           //         .fill(Color::blue())
+                                           //         .margin_left(auto()),
+                                           // ),
             )
             .into_any()
+
+        // .child(
+        //     dialog("This is a dialog", "You would see a description here.")
+        //         .button("Button 1", 1, Self::action_1)
+        //         .button("Button 2", 2, Self::action_2),
+        // )
     }
 
     fn action_1(_: &mut V, data: &usize, _: &mut ViewContext<V>) {
@@ -118,7 +139,8 @@ where
     F: ClickHandler<V, D>,
 {
     fn render(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> AnyElement<V> {
-        todo!()
+        // TODO! Handle click etc
+        row().child(text(self.label.clone())).into_any()
     }
 }
 

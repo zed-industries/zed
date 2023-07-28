@@ -18,7 +18,7 @@ use serde_json::json;
 pub struct Color(#[schemars(with = "String")] ColorU);
 
 pub fn color(rgba: u32) -> Color {
-    color(rgba)
+    Color::from_u32(rgba)
 }
 
 pub fn rgb(r: f32, g: f32, b: f32) -> Color {

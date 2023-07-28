@@ -12,7 +12,6 @@ mod keystroke_label;
 mod label;
 mod list;
 mod mouse_event_handler;
-pub mod node;
 mod overlay;
 mod resizable;
 mod stack;
@@ -28,11 +27,7 @@ pub use self::{
 };
 pub use crate::window::ChildView;
 
-use self::{
-    clipped::Clipped,
-    expanded::Expanded,
-    node::{length::Length, node, Node},
-};
+use self::{clipped::Clipped, expanded::Expanded};
 use crate::{
     geometry::{
         rect::RectF,
@@ -203,13 +198,6 @@ pub trait Element<V: View>: 'static {
         Self: Sized,
     {
         MouseEventHandler::for_child(self.into_any(), region_id)
-    }
-
-    fn margin_left(self, margin_left: impl Into<Length>) -> Node<V>
-    where
-        Self: Sized,
-    {
-        node(self).margin_left(margin_left)
     }
 }
 
