@@ -319,7 +319,10 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                 max_operation_ids: self.repo.read(|repo| (&repo.max_operation_ids).into()),
             })
             .await?;
-        self.repo.apply_operations(response.operations);
+        self.repo.update(|repo| {
+            repo.apply_operations(response.operations);
+            (None, ())
+        });
 
         let operations = self
             .repo
@@ -476,7 +479,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
     fn handle_remote_operation(&self, repo_id: RepoId, operation: Operation) {
         let repo = self.db.repo(repo_id).expect("repo must exist");
-        repo.apply_operations([operation]);
+        repo.update(|repo| {
+            repo.apply_operations([operation]);
+            (None, ())
+        });
     }
 
     fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>> {
@@ -661,7 +667,10 @@ impl<N: ServerNetwork> Server<N> {
             .db
             .repo(request.repo_id)
             .ok_or_else(|| anyhow!("repo not found"))?;
-        repo.apply_operations(request.operations);
+        repo.update(|repo| {
+            repo.apply_operations(request.operations);
+            (None, ())
+        });
         Ok(())
     }
 }
@@ -709,7 +718,10 @@ pub struct Repo {
 
 impl Repo {
     fn create_empty_branch(&self, name: impl Into<Arc<str>>) -> Branch {
-        let branch_id = self.update(|repo| repo.create_empty_branch(name));
+        let branch_id = self.update(|repo| {
+            let (operation, branch_id) = repo.create_empty_branch(name);
+            (Some(operation), branch_id)
+        });
         Branch {
             id: branch_id,
             repo: self.clone(),
@@ -760,7 +772,7 @@ impl Repo {
 
     fn update<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut RepoSnapshot) -> (Operation, T),
+        F: FnOnce(&mut RepoSnapshot) -> (Option<Operation>, T),
     {
         self.db
             .snapshot
@@ -768,20 +780,17 @@ impl Repo {
             .repos
             .update(&self.id, |repo| {
                 let (operation, result) = f(repo);
-                repo.save_operation(operation.clone());
-                if let Some(local_operation_created) = self.db.local_operation_created.as_ref() {
-                    local_operation_created(self.id, operation);
+                if let Some(operation) = operation {
+                    repo.save_operation(operation.clone());
+                    if let Some(local_operation_created) = self.db.local_operation_created.as_ref()
+                    {
+                        local_operation_created(self.id, operation);
+                    }
                 }
 
                 result
             })
             .expect("repo must exist")
-    }
-
-    fn apply_operations(&self, operations: impl Into<VecDeque<Operation>>) {
-        self.db.snapshot.lock().repos.update(&self.id, |repo| {
-            repo.apply_operations(operations);
-        });
     }
 }
 
@@ -857,7 +866,7 @@ impl Branch {
             repo.branches
                 .update(&self.id, |branch| branch.head = operation_id.into());
             repo.revisions.insert(operation_id.into(), revision);
-            (operation, result)
+            (Some(operation), result)
         })
     }
 
