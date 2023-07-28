@@ -498,7 +498,6 @@ impl<'a> MutableSelectionsCollection<'a> {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-
         selections.sort_unstable_by_key(|s| s.start);
         // Merge overlapping selections.
         let mut i = 1;
