@@ -6,6 +6,16 @@ jobs:
   discord_release:
     runs-on: ubuntu-latest
     steps:
+    - name: Get appropriate URL
+      id: get-appropriate-url
+      run: |
+        if [ "${{ github.event.release.prerelease }}" == "true" ]; then
+          URL="https://zed.dev/releases/preview/latest"
+        else
+          URL="https://zed.dev/releases/stable/latest"
+        fi
+        echo "::set-output name=URL::$URL"
+
     - name: Discord Webhook Action
       uses: tsickert/discord-webhook@v5.3.0
       with:
@@ -13,6 +23,6 @@ jobs:
         content: |
           📣 Zed ${{ github.event.release.tag_name }} was just released!
 
-          Restart your Zed or head to https://zed.dev/releases/stable/latest to grab it.
+          Restart your Zed or head to ${{ steps.get-appropriate-url.outputs.URL }} to grab it.
 
           ${{ github.event.release.body }}
