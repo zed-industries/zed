@@ -1666,7 +1666,7 @@ impl workspace::dock::Panel for ProjectPanel {
     fn set_active(&mut self, _: bool, _: &mut ViewContext<Self>) {}
 
     fn icon_path(&self) -> &'static str {
-        "icons/folder_tree_16.svg"
+        "icons/project.svg"
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {

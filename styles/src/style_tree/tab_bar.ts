@@ -23,8 +23,8 @@ export default function tab_bar(): any {
             overlay: true,
         }),
         padding: {
-            left: 8,
-            right: 12,
+            left: 14,
+            right: 14,
         },
         spacing: 8,
 
@@ -32,7 +32,7 @@ export default function tab_bar(): any {
         type_icon_width: 14,
 
         // Close icons
-        close_icon_width: 8,
+        close_icon_width: 14,
         icon_close: foreground(layer, "variant"),
         icon_close_active: foreground(layer, "hovered"),
 
@@ -108,7 +108,7 @@ export default function tab_bar(): any {
             base: interactive({
                 base: {
                     color: foreground(layer, "variant"),
-                    icon_width: 12,
+                    icon_width: 14,
                     button_width: active_pane_active_tab.height,
                 },
                 state: {

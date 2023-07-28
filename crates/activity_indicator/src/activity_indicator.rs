@@ -17,7 +17,7 @@ use workspace::{item::ItemHandle, StatusItemView, Workspace};
 actions!(lsp_status, [ShowErrorMessage]);
 
 const DOWNLOAD_ICON: &str = "icons/download_12.svg";
-const WARNING_ICON: &str = "icons/triangle_exclamation_12.svg";
+const WARNING_ICON: &str = "icons/war.svg";
 
 pub enum Event {
     ShowError { lsp_name: Arc<str>, error: String },

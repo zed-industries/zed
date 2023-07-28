@@ -1028,9 +1028,9 @@ impl ContactList {
             Flex::row()
                 .with_child(
                     Svg::new(if is_collapsed {
-                        "icons/chevron_right_8.svg"
+                        "icons/chevron_right.svg"
                     } else {
-                        "icons/chevron_down_8.svg"
+                        "icons/chevron_down.svg"
                     })
                     .with_color(header_style.text.color)
                     .constrained()
@@ -1119,7 +1119,7 @@ impl ContactList {
                             cx,
                             |mouse_state, _| {
                                 let button_style = theme.contact_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x_mark_8.svg")
+                                render_icon_button(button_style, "icons/x.svg")
                                     .aligned()
                                     .flex_float()
                             },
@@ -1214,7 +1214,7 @@ impl ContactList {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
+                    render_icon_button(button_style, "icons/x.svg").aligned()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1260,7 +1260,7 @@ impl ContactList {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/x_mark_8.svg")
+                    render_icon_button(button_style, "icons/x.svg")
                         .aligned()
                         .flex_float()
                 })

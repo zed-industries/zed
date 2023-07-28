@@ -81,28 +81,19 @@ export default function status_bar(): any {
                 },
                 container_warning: {
                     ...diagnostic_status_container,
-                    background: background(layer, "warning"),
-                    border: border(layer, "warning"),
                 },
                 container_error: {
                     ...diagnostic_status_container,
-                    background: background(layer, "negative"),
-                    border: border(layer, "negative"),
                 },
             },
             state: {
                 hovered: {
                     icon_color_ok: foreground(layer, "on"),
                     container_ok: {
-                        background: background(layer, "on", "hovered"),
                     },
                     container_warning: {
-                        background: background(layer, "warning", "hovered"),
-                        border: border(layer, "warning", "hovered"),
                     },
                     container_error: {
-                        background: background(layer, "negative", "hovered"),
-                        border: border(layer, "negative", "hovered"),
                     },
                 },
             },

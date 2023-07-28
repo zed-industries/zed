@@ -270,7 +270,7 @@ impl Pane {
                     // New menu
                     .with_child(Self::render_tab_bar_button(
                         0,
-                        "icons/plus_12.svg",
+                        "icons/plus.svg",
                         false,
                         Some(("New...".into(), None)),
                         cx,
@@ -285,7 +285,7 @@ impl Pane {
                     ))
                     .with_child(Self::render_tab_bar_button(
                         1,
-                        "icons/split_12.svg",
+                        "icons/split.svg",
                         false,
                         Some(("Split Pane".into(), None)),
                         cx,
@@ -302,10 +302,10 @@ impl Pane {
                         let icon_path;
                         let tooltip_label;
                         if pane.is_zoomed() {
-                            icon_path = "icons/minimize_8.svg";
+                            icon_path = "icons/minimize.svg";
                             tooltip_label = "Zoom In".into();
                         } else {
-                            icon_path = "icons/maximize_8.svg";
+                            icon_path = "icons/maximize.svg";
                             tooltip_label = "Zoom In".into();
                         }
 
@@ -1419,7 +1419,7 @@ impl Pane {
         let close_element = if hovered {
             let item_id = item.id();
             enum TabCloseButton {}
-            let icon = Svg::new("icons/x_mark_8.svg");
+            let icon = Svg::new("icons/x.svg");
             MouseEventHandler::<TabCloseButton, _>::new(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered() {
                     icon.with_color(tab_style.icon_close_active)

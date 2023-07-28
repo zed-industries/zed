@@ -353,7 +353,7 @@ impl Item for ProjectSearchView {
     ) -> AnyElement<T> {
         Flex::row()
             .with_child(
-                Svg::new("icons/magnifying_glass_12.svg")
+                Svg::new("icons/magnifying_glass.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)

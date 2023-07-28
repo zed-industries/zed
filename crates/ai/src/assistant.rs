@@ -791,7 +791,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon_path(&self) -> &'static str {
-        "icons/robot_14.svg"
+        "icons/ai.svg"
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
@@ -1878,7 +1878,7 @@ impl ConversationEditor {
                                 .with_children(
                                     if let MessageStatus::Error(error) = &message.status {
                                         Some(
-                                            Svg::new("icons/circle_x_mark_12.svg")
+                                            Svg::new("icons/e.svg")
                                                 .with_color(style.error_icon.color)
                                                 .constrained()
                                                 .with_width(style.error_icon.width)

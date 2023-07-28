@@ -72,16 +72,16 @@ export default function assistant(): any {
             icon: "icons/radix/quote.svg",
         }),
         assist_button: tab_bar_button(theme, {
-            icon: "icons/radix/magic-wand.svg",
+            icon: "icons/ai.svg",
         }),
         zoom_in_button: tab_bar_button(theme, {
-            icon: "icons/radix/maximize.svg",
+            icon: "icons/maximize.svg",
         }),
         zoom_out_button: tab_bar_button(theme, {
-            icon: "icons/radix/minimize.svg",
+            icon: "icons/minimize.svg",
         }),
         plus_button: tab_bar_button(theme, {
-            icon: "icons/radix/plus.svg",
+            icon: "icons/plus.svg",
         }),
         title: {
             ...text(theme.highest, "sans", "default", { size: "xs" }),

@@ -91,7 +91,7 @@ export default function copilot(): any {
                 base: {
                     icon: svg(
                         foreground(theme.middle, "variant"),
-                        "icons/x_mark_8.svg",
+                        "icons/x.svg",
                         8,
                         8
                     ),
@@ -112,7 +112,7 @@ export default function copilot(): any {
                     hovered: {
                         icon: svg(
                             foreground(theme.middle, "on"),
-                            "icons/x_mark_8.svg",
+                            "icons/x.svg",
                             8,
                             8
                         ),
@@ -120,7 +120,7 @@ export default function copilot(): any {
                     clicked: {
                         icon: svg(
                             foreground(theme.middle, "base"),
-                            "icons/x_mark_8.svg",
+                            "icons/x.svg",
                             8,
                             8
                         ),

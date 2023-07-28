@@ -104,8 +104,8 @@ export default function editor(): any {
         },
         folds: {
             icon_margin_scale: 2.5,
-            folded_icon: "icons/chevron_right_8.svg",
-            foldable_icon: "icons/chevron_down_8.svg",
+            folded_icon: "icons/chevron_right.svg",
+            foldable_icon: "icons/chevron_down.svg",
             indicator: toggleable({
                 base: interactive({
                     base: {
