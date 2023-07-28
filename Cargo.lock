@@ -8388,6 +8388,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-nix"
+version = "0.0.1"
+source = "git+https://github.com/nix-community/tree-sitter-nix?rev=66e3e9ce9180ae08fc57372061006ef83f0abde7#66e3e9ce9180ae08fc57372061006ef83f0abde7"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-php?rev=d43130fd1525301e9826f420c5393a4d169819fc#d43130fd1525301e9826f420c5393a4d169819fc"
@@ -9933,6 +9942,7 @@ dependencies = [
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
  "tree-sitter-markdown",
+ "tree-sitter-nix",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-racket",
