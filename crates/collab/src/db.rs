@@ -39,10 +39,7 @@ use sea_orm::{
     DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect,
     Statement, TransactionTrait,
 };
-use sea_query::{
-    Alias, ColumnRef, CommonTableExpression, Expr, OnConflict, Order, Query, QueryStatementWriter,
-    SelectStatement, UnionType, WithClause,
-};
+use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
 pub use signup::{Invite, NewSignup, WaitlistSummary};
 use sqlx::migrate::{Migrate, Migration, MigrationSource};
@@ -3086,13 +3083,12 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            // This is the SQL statement we want to generate:
             let sql = r#"
             WITH RECURSIVE channel_tree(child_id, parent_id, depth) AS (
-                    SELECT channel_id as child_id, NULL as parent_id, 0
+                    SELECT channel_id as child_id, CAST(NULL as INTEGER) as parent_id, 0
                     FROM channel_members
-                    WHERE user_id = ?
-                UNION ALL
+                    WHERE user_id = $1
+                UNION
                     SELECT channel_parents.child_id, channel_parents.parent_id, channel_tree.depth + 1
                     FROM channel_parents, channel_tree
                     WHERE channel_parents.parent_id = channel_tree.child_id
@@ -3102,70 +3098,6 @@ impl Database {
             JOIN channels ON channels.id = channel_tree.child_id
             ORDER BY channel_tree.depth;
             "#;
-
-            // let root_channel_ids_query = SelectStatement::new()
-            //     .column(channel_member::Column::ChannelId)
-            //     .expr(Expr::value("NULL"))
-            //     .from(channel_member::Entity.table_ref())
-            //     .and_where(
-            //         Expr::col(channel_member::Column::UserId)
-            //             .eq(Expr::cust_with_values("?", vec![user_id])),
-            //     );
-
-            // let build_tree_query = SelectStatement::new()
-            //     .column(channel_parent::Column::ChildId)
-            //     .column(channel_parent::Column::ParentId)
-            //     .expr(Expr::col(Alias::new("channel_tree.depth")).add(1i32))
-            //     .from(Alias::new("channel_tree"))
-            //     .and_where(
-            //         Expr::col(channel_parent::Column::ParentId)
-            //             .equals(Alias::new("channel_tree"), Alias::new("child_id")),
-            //     )
-            //     .to_owned();
-
-            // let common_table_expression = CommonTableExpression::new()
-            //     .query(
-            //         root_channel_ids_query
-            //             .union(UnionType::Distinct, build_tree_query)
-            //             .to_owned(),
-            //     )
-            //     .column(Alias::new("child_id"))
-            //     .column(Alias::new("parent_id"))
-            //     .column(Alias::new("depth"))
-            //     .table_name(Alias::new("channel_tree"))
-            //     .to_owned();
-
-            // let select = SelectStatement::new()
-            //     .expr_as(
-            //         Expr::col(Alias::new("channel_tree.child_id")),
-            //         Alias::new("id"),
-            //     )
-            //     .column(channel::Column::Name)
-            //     .column(Alias::new("channel_tree.parent_id"))
-            //     .from(Alias::new("channel_tree"))
-            //     .inner_join(
-            //         channel::Entity.table_ref(),
-            //         Expr::eq(
-            //             channel::Column::Id.into_expr(),
-            //             Expr::tbl(Alias::new("channel_tree"), Alias::new("child_id")),
-            //         ),
-            //     )
-            //     .order_by(Alias::new("channel_tree.child_id"), Order::Asc)
-            //     .to_owned();
-
-            // let with_clause = WithClause::new()
-            //     .recursive(true)
-            //     .cte(common_table_expression)
-            //     .to_owned();
-
-            // let query = select.with(with_clause);
-
-            // let query = SelectStatement::new()
-            //     .column(ColumnRef::Asterisk)
-            //     .from_subquery(query, Alias::new("channel_tree")
-            //     .to_owned();
-
-            // let stmt = self.pool.get_database_backend().build(&query);
 
             let stmt = Statement::from_sql_and_values(
                 self.pool.get_database_backend(),

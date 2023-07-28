@@ -879,6 +879,73 @@ async fn test_invite_codes() {
     assert!(db.has_contact(user5, user1).await.unwrap());
 }
 
+test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
+    let a_id = db
+        .create_user(
+            "user1@example.com",
+            false,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 5,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let zed_id = db.create_root_channel("zed").await.unwrap();
+    let crdb_id = db.create_channel("crdb", Some(zed_id)).await.unwrap();
+    let livestreaming_id = db
+        .create_channel("livestreaming", Some(zed_id))
+        .await
+        .unwrap();
+    let replace_id = db.create_channel("replace", Some(zed_id)).await.unwrap();
+    let rust_id = db.create_root_channel("rust").await.unwrap();
+    let cargo_id = db.create_channel("cargo", Some(rust_id)).await.unwrap();
+
+    db.add_channel_member(zed_id, a_id).await.unwrap();
+    db.add_channel_member(rust_id, a_id).await.unwrap();
+
+    let channels = db.get_channels(a_id).await.unwrap();
+
+    assert_eq!(
+        channels,
+        vec![
+            Channel {
+                id: zed_id,
+                name: "zed".to_string(),
+                parent_id: None,
+            },
+            Channel {
+                id: rust_id,
+                name: "rust".to_string(),
+                parent_id: None,
+            },
+            Channel {
+                id: crdb_id,
+                name: "crdb".to_string(),
+                parent_id: Some(zed_id),
+            },
+            Channel {
+                id: livestreaming_id,
+                name: "livestreaming".to_string(),
+                parent_id: Some(zed_id),
+            },
+            Channel {
+                id: replace_id,
+                name: "replace".to_string(),
+                parent_id: Some(zed_id),
+            },
+            Channel {
+                id: cargo_id,
+                name: "cargo".to_string(),
+                parent_id: Some(rust_id),
+            }
+        ]
+    );
+});
+
 #[gpui::test]
 async fn test_multiple_signup_overwrite() {
     let test_db = TestDb::postgres(build_background_executor());
