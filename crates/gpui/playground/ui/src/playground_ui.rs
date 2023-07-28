@@ -18,13 +18,15 @@ impl<V: View> Playground<V> {
             .id("red column")
             .width(auto())
             .height(auto())
+            .margin_bottom(auto())
             .fill(Color::red())
             // .child(
             //     row()
             //         .id("green row")
             //         .width(auto())
             //         .height(rems(20.))
-            //         .margin_left(auto())
+            //         .fill(Color::green()),
+            // )
             //         .fill(Color::green()), // .child(
             //                                //     row()
             //                                //         .id("blue child")
@@ -35,12 +37,6 @@ impl<V: View> Playground<V> {
             //                                // ),
             // )
             .into_any()
-
-        // .child(
-        //     dialog("This is a dialog", "You would see a description here.")
-        //         .button("Button 1", 1, Self::action_1)
-        //         .button("Button 2", 2, Self::action_2),
-        // )
     }
 
     fn action_1(_: &mut V, data: &usize, _: &mut ViewContext<V>) {

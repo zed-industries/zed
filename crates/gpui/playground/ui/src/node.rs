@@ -164,7 +164,7 @@ impl<V: View> Node<V> {
     ) -> NodeLayout {
         let mut child_constraint = SizeConstraint::default();
         let mut layout = NodeLayout {
-            content_size: Default::default(),
+            size: Default::default(),
             padding: self.style.padding.fixed_pixels(rem_pixels),
             margins: self.style.margins.fixed_pixels(rem_pixels),
             borders: self.style.borders.edges(),
@@ -172,7 +172,7 @@ impl<V: View> Node<V> {
         let fixed_padding_size = layout.padding.size();
         let fixed_margin_size = layout.margins.size();
         let borders_size = layout.borders.size();
-        let flex_size = self.style.flex();
+        let flex_size = dbg!(self.style.flex());
         let cross_axis = primary_axis.rotate();
 
         for axis in [Axis2d::X, Axis2d::Y] {
@@ -342,17 +342,40 @@ impl<V: View> Node<V> {
                         &mut remaining_flex,
                         &mut remaining_length,
                     );
+
+                    layout.size.set(
+                        axis,
+                        content_size.get(axis)
+                            + layout.padding.size().get(axis)
+                            + layout.borders.size().get(axis)
+                            + layout.margins.size().get(axis),
+                    );
                 }
-                Length::Auto { flex, .. } => {
+                Length::Fixed(fixed) => {
+                    // For a fixed length, we've already computed margins and padding
+                    // before laying out children.
+                    layout.size.set(
+                        axis,
+                        fixed.to_pixels(rem_pixels) + layout.margins.size().get(axis),
+                    )
+                }
+                Length::Auto { .. } => {
                     // If the length is flex, we subtract the fixed margins, padding, and
                     // children length along the current dimension, then distribute the
                     // remaining length among margins and padding.
-                    let mut remaining_flex = flex_size.get(axis) - flex;
+                    let mut remaining_flex = flex_size.get(axis);
                     let mut remaining_length = constraint.max.get(axis)
                         - fixed_margin_size.get(axis)
                         - borders_size.get(axis)
-                        - fixed_padding_size.get(axis)
-                        - content_size.get(axis);
+                        - fixed_padding_size.get(axis);
+
+                    // Performed for its side effect of decrementing the remaining
+                    // flex and length.
+                    self.style.size.get(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
 
                     // Distribute remaining length to flexible padding
                     *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
@@ -378,14 +401,9 @@ impl<V: View> Node<V> {
                         &mut remaining_length,
                     );
                 }
-                Length::Fixed(_) => {
-                    // If we had a fixed length, we've already computed margins and
-                    // padding, so there's nothing to do.
-                }
             }
         }
 
-        layout.content_size = content_size;
         layout
     }
 
@@ -455,7 +473,7 @@ impl<V: View> Element<V> for Node<V> {
             todo!()
         };
 
-        (layout.size().max(constraint.min), layout)
+        (layout.size.max(constraint.min), layout)
     }
 
     fn paint(
@@ -674,7 +692,7 @@ pub struct NodeStyle {
 
 impl NodeStyle {
     fn flex(&self) -> Vector2F {
-        self.margins.flex() + self.padding.flex() + self.size.flex()
+        self.size.flex() + self.padding.flex() + self.margins.flex()
     }
 }
 
@@ -1148,16 +1166,10 @@ pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
 
 #[derive(Default, Debug)]
 pub struct NodeLayout {
-    content_size: Vector2F,
+    size: Vector2F,
     padding: Edges<f32>,
     borders: Edges<f32>,
     margins: Edges<f32>,
-}
-
-impl NodeLayout {
-    fn size(&self) -> Vector2F {
-        self.content_size + self.padding.size() + self.borders.size() + self.margins.size()
-    }
 }
 
 impl<V: View> Element<V> for Text {
@@ -1451,8 +1463,8 @@ where
 trait Vector2FExt {
     fn infinity() -> Self;
     fn get(self, axis: Axis2d) -> f32;
-    fn set(&mut self, axis: Axis2d, value: f32) -> Self;
-    fn inc_x(&mut self, delta: f32) -> f32;
+    fn set(&mut self, axis: Axis2d, value: f32);
+    fn increment_x(&mut self, delta: f32) -> f32;
     fn increment_y(&mut self, delta: f32) -> f32;
 }
 
@@ -1468,16 +1480,14 @@ impl Vector2FExt for Vector2F {
         }
     }
 
-    // TODO: It's a bit weird to mutate and return.
-    fn set(&mut self, axis: Axis2d, value: f32) -> Self {
+    fn set(&mut self, axis: Axis2d, value: f32) {
         match axis {
             Axis2d::X => self.set_x(value),
             Axis2d::Y => self.set_y(value),
         }
-        *self
     }
 
-    fn inc_x(&mut self, delta: f32) -> f32 {
+    fn increment_x(&mut self, delta: f32) -> f32 {
         self.set_x(self.x() + delta);
         self.x()
     }
