@@ -8,7 +8,6 @@ pub struct Model {
     pub id: ChannelId,
     pub name: String,
     pub room_id: Option<RoomId>,
-    // pub id_path: String,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
