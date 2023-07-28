@@ -19,21 +19,21 @@ impl<V: View> Playground<V> {
             .width(auto())
             .height(auto())
             .fill(Color::red())
-            .child(
-                row()
-                    .id("green row")
-                    .width(auto())
-                    .height(rems(20.))
-                    .margin_left(auto())
-                    .fill(Color::green()), // .child(
-                                           //     row()
-                                           //         .id("blue child")
-                                           //         .height(auto())
-                                           //         .width(rems(20.))
-                                           //         .fill(Color::blue())
-                                           //         .margin_left(auto()),
-                                           // ),
-            )
+            // .child(
+            //     row()
+            //         .id("green row")
+            //         .width(auto())
+            //         .height(rems(20.))
+            //         .margin_left(auto())
+            //         .fill(Color::green()), // .child(
+            //                                //     row()
+            //                                //         .id("blue child")
+            //                                //         .height(auto())
+            //                                //         .width(rems(20.))
+            //                                //         .fill(Color::blue())
+            //                                //         .margin_left(auto()),
+            //                                // ),
+            // )
             .into_any()
 
         // .child(

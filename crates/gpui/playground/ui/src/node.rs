@@ -159,18 +159,21 @@ impl<V: View> Node<V> {
         primary_axis: Axis2d,
         constraint: SizeConstraint,
         rem_pixels: f32,
-        layout: &mut NodeLayout,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> Vector2F {
-        layout.padding = self.style.padding.fixed_pixels(rem_pixels);
-        layout.margins = self.style.margins.fixed_pixels(rem_pixels);
+    ) -> NodeLayout {
+        let mut child_constraint = SizeConstraint::default();
+        let mut layout = NodeLayout {
+            content_size: Default::default(),
+            padding: self.style.padding.fixed_pixels(rem_pixels),
+            margins: self.style.margins.fixed_pixels(rem_pixels),
+            borders: self.style.borders.edges(),
+        };
         let fixed_padding_size = layout.padding.size();
         let fixed_margin_size = layout.margins.size();
-        let borders_size = &self.style.borders.size();
-        let flex_2f = self.style.flex();
+        let borders_size = layout.borders.size();
+        let flex_size = self.style.flex();
         let cross_axis = primary_axis.rotate();
-        let mut child_constraint = SizeConstraint::default();
 
         for axis in [Axis2d::X, Axis2d::Y] {
             let length = self.style.size.get(axis);
@@ -185,7 +188,7 @@ impl<V: View> Node<V> {
                         - fixed_padding_size.get(axis)
                         - fixed_length;
 
-                    let mut remaining_flex = flex_2f.get(axis);
+                    let mut remaining_flex = flex_size.get(axis);
 
                     // Distribute remaining length to flexible padding, but only so long as the
                     // padding does not exceed the fixed length.
@@ -222,8 +225,10 @@ impl<V: View> Node<V> {
                     }
                 }
                 Length::Auto { .. } => {
-                    // If the length is flex, we calculate the content's share first
-                    let mut remaining_flex = flex_2f.get(axis);
+                    // If the length is flex, we calculate the content's share first.
+                    // We then layout the children and determine the flexible padding
+                    // and margins in a second phase.
+                    let mut remaining_flex = flex_size.get(axis);
                     let mut remaining_length = constraint.max.get(axis)
                         - fixed_margin_size.get(axis)
                         - borders_size.get(axis)
@@ -237,8 +242,9 @@ impl<V: View> Node<V> {
                     }
                 }
                 Length::Hug => {
-                    // Leave the min/max children size at 0 for this dimension,
-                    // so that children can be as small as they want.
+                    // If hug, leave the child constraint in its default zero state.
+                    // This will tell children to be as small as possible along this dimension,
+                    // and we calculate the flexible padding and margins in a second phase.
                 }
             }
         }
@@ -293,7 +299,7 @@ impl<V: View> Node<V> {
             }
         }
 
-        let children_size = match primary_axis {
+        let content_size = match primary_axis {
             Axis2d::X => vec2f(total_child_length, cross_axis_max),
             Axis2d::Y => vec2f(cross_axis_max, total_child_length),
         };
@@ -306,12 +312,12 @@ impl<V: View> Node<V> {
                 Length::Hug => {
                     // Now that we know the size of our children, we can distribute
                     // space to flexible padding and margins.
-                    let mut remaining_flex = flex_2f.get(axis);
+                    let mut remaining_flex = flex_size.get(axis);
                     let mut remaining_length = constraint.max.get(axis)
                         - fixed_margin_size.get(axis)
                         - borders_size.get(axis)
                         - fixed_padding_size.get(axis)
-                        - children_size.get(axis);
+                        - content_size.get(axis);
 
                     // Distribute remaining length to flexible padding
                     *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
@@ -341,12 +347,12 @@ impl<V: View> Node<V> {
                     // If the length is flex, we subtract the fixed margins, padding, and
                     // children length along the current dimension, then distribute the
                     // remaining length among margins and padding.
-                    let mut remaining_flex = flex_2f.get(axis) - flex;
+                    let mut remaining_flex = flex_size.get(axis) - flex;
                     let mut remaining_length = constraint.max.get(axis)
                         - fixed_margin_size.get(axis)
                         - borders_size.get(axis)
                         - fixed_padding_size.get(axis)
-                        - children_size.get(axis);
+                        - content_size.get(axis);
 
                     // Distribute remaining length to flexible padding
                     *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
@@ -379,179 +385,9 @@ impl<V: View> Node<V> {
             }
         }
 
-        children_size + layout.padding.size() + self.style.borders.size() + layout.margins.size()
+        layout.content_size = content_size;
+        layout
     }
-
-    // If this element is flexible, we need to distribute the available space
-    // between the margin, padding, and content, any of which can be flexible.
-    //
-    // If the node's size is fixed, we distribute the flexible space
-    //
-    // let mut remaining_size = todo!();
-
-    // layout.margins = self.style.margins.fixed_pixels(rem_pixels);
-    // remaining_size -= layout.margins.size();
-    // layout.padding = self.style.padding.fixed_pixels(rem_pixels);
-    // remaining_size -= layout.padding.size();
-    // remaining_size -= self.style.size.fixed_pixels(rem_pixels);
-
-    // //
-    // // The available space
-    // let flex = self.style.flex();
-
-    // let mut padded_max =
-    //     max_size - layout.margins.size() - self.style.borders.size() - layout.padding.size();
-
-    // match self.style.size.width {
-    //     Length::Hug => {}
-    //     Length::Fixed(width) => {
-    //         padded_max.set_x(width.to_pixels(rem_pixels));
-    //     }
-    //     Length::Auto { min, max, .. } => padded_max.set_x(
-    //         padded_max
-    //             .x()
-    //             .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-    //     ),
-    // };
-    // match self.style.size.height {
-    //     Length::Hug => {}
-    //     Length::Fixed(height) => padded_max.set_y(height.to_pixels(rem_pixels)),
-    //     Length::Auto { min, max, .. } => padded_max.set_y(
-    //         padded_max
-    //             .y()
-    //             .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-    //     ),
-    // };
-
-    // let mut remaining_length =
-    //     padded_max.get(axis) - self.style.size.get(axis).fixed_pixels(rem_pixels);
-    // dbg!(padded_max, remaining_length);
-
-    // // Pass 1: Total up flex units and layout inflexible children.
-    // //
-    // // Consume the remaining length as we layout inflexible children, so that any
-    // // remaining length can be distributed among flexible children in the next pass.
-    // let mut cross_axis_max: f32 = 0.;
-    // let cross_axis = axis.rotate();
-
-    // // Fixed children are unconstrained along the primary axis, and constrained to
-    // // the padded max size along the cross axis.
-    // let child_constraint =
-    //     SizeConstraint::loose(Vector2F::infinity().set(cross_axis, padded_max.get(cross_axis)));
-
-    // eprintln!(
-    //     "{}: child_max = {:?}, remaining_length: {}",
-    //     self.id.as_deref().unwrap_or(""),
-    //     child_constraint.max,
-    //     remaining_length
-    // );
-
-    // for child in &mut self.children {
-    //     if let Some(child_flex) = child
-    //         .metadata::<NodeStyle>()
-    //         .map(|style| style.flex().get(axis))
-    //     {
-    //         remaining_flex += child_flex;
-    //     } else {
-    //         let child_size = child.layout(child_constraint, view, cx);
-    //         cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
-    //         remaining_length -= child_size.get(axis);
-    //     }
-    // }
-
-    // eprintln!(
-    //     "{}: child_max = {:?}, remaining_length: {}",
-    //     self.id.as_deref().unwrap_or(""),
-    //     child_constraint.max,
-    //     remaining_length
-    // );
-
-    // // Pass 2: Allocate the remaining space among flexible lengths along the primary axis.
-    // if remaining_flex > 0. {
-    //     dbg!(self.id.as_deref(), remaining_length, remaining_flex);
-
-    //     // Add flex pixels from margin and padding.
-    //     *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
-    //         rem_pixels,
-    //         &mut remaining_flex,
-    //         &mut remaining_length,
-    //     );
-
-    //     dbg!(self.id.as_deref(), layout.margins.start(axis));
-
-    //     *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
-    //         rem_pixels,
-    //         &mut remaining_flex,
-    //         &mut remaining_length,
-    //     );
-
-    //     // Lay out the flexible children
-    //     let mut child_max = padded_max;
-    //     for child in &mut self.children {
-    //         if let Some(child_flex) = child.metadata::<NodeStyle>().map(|style| style.flex()) {
-    //             child_max.set(axis, child_flex / remaining_flex * remaining_length);
-    //             let child_size = child.layout(SizeConstraint::loose(child_max), view, cx);
-
-    //             remaining_flex -= child_flex;
-    //             remaining_length -= child_size.get(axis);
-    //             cross_axis_max = child_size.get(cross_axis).max(cross_axis_max);
-    //         }
-    //     }
-
-    //     // Add flex pixels from margin and padding.
-    //     *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
-    //         rem_pixels,
-    //         &mut remaining_flex,
-    //         &mut remaining_length,
-    //     );
-    //     *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
-    //         rem_pixels,
-    //         &mut remaining_flex,
-    //         &mut remaining_length,
-    //     );
-    // }
-
-    // let width = match self.style.size.width {
-    //     Length::Hug => match axis {
-    //         Axis2d::X => max_size.get(axis) - remaining_length,
-    //         Axis2d::Y => {
-    //             cross_axis_max
-    //                 + layout.padding.size().get(cross_axis)
-    //                 + self.style.borders.size().get(cross_axis)
-    //                 + layout.margins.size().get(cross_axis)
-    //         }
-    //     },
-    //     Length::Fixed(width) => width.to_pixels(rem_pixels),
-    //     Length::Auto { min, max, .. } => max_size
-    //         .x()
-    //         .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-    // };
-
-    // let height = match self.style.size.height {
-    //     Length::Hug => match axis {
-    //         Axis2d::Y => max_size.get(axis) - remaining_length,
-    //         Axis2d::X => {
-    //             cross_axis_max
-    //                 + layout.padding.size().get(cross_axis)
-    //                 + self.style.borders.size().get(cross_axis)
-    //                 + layout.margins.size().get(cross_axis)
-    //         }
-    //     },
-    //     Length::Fixed(height) => height.to_pixels(rem_pixels),
-    //     Length::Auto { min, max, .. } => max_size
-    //         .y()
-    //         .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-    // };
-
-    // eprintln!(
-    //     "{}: size = {} {}",
-    //     self.id.as_deref().unwrap_or(""),
-    //     width,
-    //     height
-    // );
-
-    // vec2f(width, height)
-    // }
 
     fn paint_children_xy(
         &mut self,
@@ -595,11 +431,6 @@ impl<V: View> Node<V> {
             //     align_vertically,
             // );
             //
-            eprintln!(
-                "{}: child origin {:?}",
-                self.id.as_deref().unwrap_or(""),
-                child_origin
-            );
             child.paint(scene, child_origin, visible_bounds, view, cx);
 
             // Advance along the primary axis by the size of this child
@@ -618,15 +449,13 @@ impl<V: View> Element<V> for Node<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let mut layout = NodeLayout::default();
-
-        let size = if let Some(axis) = self.style.axis.to_2d() {
-            self.layout_xy(axis, constraint, cx.rem_pixels(), &mut layout, view, cx)
+        let layout = if let Some(axis) = self.style.axis.to_2d() {
+            self.layout_xy(axis, constraint, cx.rem_pixels(), view, cx)
         } else {
             todo!()
         };
 
-        (size, layout)
+        (layout.size().max(constraint.min), layout)
     }
 
     fn paint(
@@ -1080,6 +909,25 @@ impl Borders {
         }
     }
 
+    fn edges(&self) -> Edges<f32> {
+        let mut edges = Edges::default();
+        if self.width > 0. {
+            if self.top {
+                edges.top = self.width;
+            }
+            if self.bottom {
+                edges.bottom = self.width;
+            }
+            if self.left {
+                edges.left = self.width;
+            }
+            if self.right {
+                edges.right = self.width;
+            }
+        }
+        edges
+    }
+
     fn size(&self) -> Vector2F {
         let width =
             if self.left { self.width } else { 0. } + if self.right { self.width } else { 0. };
@@ -1301,8 +1149,15 @@ pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
 #[derive(Default, Debug)]
 pub struct NodeLayout {
     content_size: Vector2F,
-    margins: Edges<f32>,
     padding: Edges<f32>,
+    borders: Edges<f32>,
+    margins: Edges<f32>,
+}
+
+impl NodeLayout {
+    fn size(&self) -> Vector2F {
+        self.content_size + self.padding.size() + self.borders.size() + self.margins.size()
+    }
 }
 
 impl<V: View> Element<V> for Text {
