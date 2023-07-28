@@ -18,33 +18,23 @@ impl<V: View> Playground<V> {
             .id("red column")
             .width(auto())
             .height(auto())
-            .margin_bottom(auto())
             .fill(Color::red())
-            // .child(
-            //     row()
-            //         .id("green row")
-            //         .width(auto())
-            //         .height(rems(20.))
-            //         .fill(Color::green()),
-            // )
-            //         .fill(Color::green()), // .child(
-            //                                //     row()
-            //                                //         .id("blue child")
-            //                                //         .height(auto())
-            //                                //         .width(rems(20.))
-            //                                //         .fill(Color::blue())
-            //                                //         .margin_left(auto()),
-            //                                // ),
-            // )
+            .child(
+                row()
+                    .id("green row")
+                    .width(auto())
+                    .height(rems(20.))
+                    .margins(rems(0.), auto())
+                    .fill(Color::green())
+                    .child(
+                        row()
+                            .id("blue row")
+                            .width(rems(20.))
+                            .height(auto())
+                            .fill(Color::blue()),
+                    ),
+            )
             .into_any()
-    }
-
-    fn action_1(_: &mut V, data: &usize, _: &mut ViewContext<V>) {
-        println!("action 1: data is {}", *data);
-    }
-
-    fn action_2(_: &mut V, data: &usize, _: &mut ViewContext<V>) {
-        println!("action 1: data is {}", *data);
     }
 }
 

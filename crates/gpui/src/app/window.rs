@@ -30,7 +30,7 @@ use sqlez::{
 use std::{
     any::TypeId,
     mem,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut, Range, Sub},
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -1329,6 +1329,17 @@ impl SizeConstraint {
             size.x().min(self.max.x()).max(self.min.x()),
             size.y().min(self.max.y()).max(self.min.y()),
         )
+    }
+}
+
+impl Sub<Vector2F> for SizeConstraint {
+    type Output = SizeConstraint;
+
+    fn sub(self, rhs: Vector2F) -> SizeConstraint {
+        SizeConstraint {
+            min: self.min - rhs,
+            max: self.max - rhs,
+        }
     }
 }
 
