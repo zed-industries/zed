@@ -654,6 +654,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
+                let range_to_select = editor.range_for_match(&range_to_select);
                 editor.unfold_ranges([range_to_select.clone()], false, true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range_to_select])
@@ -695,8 +696,12 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
+                    let range_to_select = match_ranges
+                        .first()
+                        .clone()
+                        .map(|range| editor.range_for_match(range));
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_ranges(match_ranges.first().cloned())
+                        s.select_ranges(range_to_select)
                     });
                 }
                 editor.highlight_background::<Self>(
