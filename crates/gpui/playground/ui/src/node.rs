@@ -146,183 +146,412 @@ impl<V: View> Node<V> {
         self
     }
 
+    fn id_as_str(&self) -> &str {
+        self.id.as_deref().unwrap_or("<anonymous>")
+    }
+
+    fn layout_children(&mut self, constraint: SizeConstraint) -> Vector2F {
+        todo!()
+    }
+
     fn layout_xy(
         &mut self,
-        axis: Axis2d,
-        max_size: Vector2F,
+        primary_axis: Axis2d,
+        constraint: SizeConstraint,
         rem_pixels: f32,
         layout: &mut NodeLayout,
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> Vector2F {
-        eprintln!(
-            "{}: max_size = {:?}",
-            self.id.as_deref().unwrap_or(""),
-            max_size
-        );
-
-        let mut remaining_flex: f32 = 0.;
-        layout.margins = self.style.margins.fixed_pixels(rem_pixels);
-        remaining_flex += self.style.margins.flex().get(axis);
         layout.padding = self.style.padding.fixed_pixels(rem_pixels);
-        remaining_flex += self.style.padding.flex().get(axis);
+        layout.margins = self.style.margins.fixed_pixels(rem_pixels);
+        let fixed_padding_size = layout.padding.size();
+        let fixed_margin_size = layout.margins.size();
+        let borders_size = &self.style.borders.size();
+        let flex_2f = self.style.flex();
+        let cross_axis = primary_axis.rotate();
+        let mut child_constraint = SizeConstraint::default();
 
-        let mut padded_max =
-            max_size - layout.margins.size() - self.style.borders.size() - layout.padding.size();
+        for axis in [Axis2d::X, Axis2d::Y] {
+            let length = self.style.size.get(axis);
 
-        match self.style.size.width {
-            Length::Hug => {}
-            Length::Fixed(width) => {
-                padded_max.set_x(width.to_pixels(rem_pixels));
+            // Before we layout children
+            match length {
+                Length::Fixed(fixed_length) => {
+                    let fixed_length = fixed_length.to_pixels(rem_pixels);
+                    let mut remaining_length = constraint.min.get(axis)
+                        - fixed_margin_size.get(axis)
+                        - borders_size.get(axis)
+                        - fixed_padding_size.get(axis)
+                        - fixed_length;
+
+                    let mut remaining_flex = flex_2f.get(axis);
+
+                    // Distribute remaining length to flexible padding, but only so long as the
+                    // padding does not exceed the fixed length.
+                    let mut padding_flex = self.style.padding.flex().get(axis);
+                    let mut padding_length =
+                        ((padding_flex / remaining_flex) * remaining_length).min(fixed_length);
+                    remaining_flex -= padding_flex;
+                    *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut padding_flex,
+                        &mut padding_length,
+                    );
+                    *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut padding_flex,
+                        &mut padding_length,
+                    );
+
+                    // Distribute remaining length to flexible margins.
+                    *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                    *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+
+                    child_constraint.max.set(axis, remaining_length);
+                    if axis == cross_axis {
+                        child_constraint.min.set(axis, remaining_length);
+                    }
+                }
+                Length::Auto { .. } => {
+                    // If the length is flex, we calculate the content's share first
+                    let mut remaining_flex = flex_2f.get(axis);
+                    let mut remaining_length = constraint.max.get(axis)
+                        - fixed_margin_size.get(axis)
+                        - borders_size.get(axis)
+                        - fixed_padding_size.get(axis);
+
+                    let children_length =
+                        length.flex_pixels(rem_pixels, &mut remaining_flex, &mut remaining_length);
+                    child_constraint.max.set(axis, children_length);
+                    if axis == cross_axis {
+                        child_constraint.min.set(axis, children_length);
+                    }
+                }
+                Length::Hug => {
+                    // Leave the min/max children size at 0 for this dimension,
+                    // so that children can be as small as they want.
+                }
             }
-            Length::Auto { min, max, .. } => padded_max.set_x(
-                padded_max
-                    .x()
-                    .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-            ),
-        };
-        match self.style.size.height {
-            Length::Hug => {}
-            Length::Fixed(height) => padded_max.set_y(height.to_pixels(rem_pixels)),
-            Length::Auto { min, max, .. } => padded_max.set_y(
-                padded_max
-                    .y()
-                    .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-            ),
-        };
+        }
 
-        let mut remaining_length =
-            padded_max.get(axis) - self.style.size.get(axis).fixed_pixels(rem_pixels);
-        dbg!(padded_max, remaining_length);
-
-        // Pass 1: Total up flex units and layout inflexible children.
-        //
-        // Consume the remaining length as we layout inflexible children, so that any
-        // remaining length can be distributed among flexible children in the next pass.
+        // Layout fixed children using the child constraint determined above.
+        let mut remaining_child_length = child_constraint.max.get(primary_axis);
+        let mut remaining_child_flex = 0.;
+        let mut total_child_length = 0.;
         let mut cross_axis_max: f32 = 0.;
-        let cross_axis = axis.rotate();
+        child_constraint.min.set(primary_axis, 0.);
+        child_constraint.max.set(primary_axis, 0.);
 
-        // Fixed children are unconstrained along the primary axis, and constrained to
-        // the padded max size along the cross axis.
-        let child_constraint =
-            SizeConstraint::loose(Vector2F::infinity().set(cross_axis, padded_max.get(cross_axis)));
+        for child in &mut self.children {
+            // Skip children that are flexible in the primary for this first pass.
+            if let Some(child_flex) = child
+                .metadata::<NodeStyle>()
+                .map(|style| style.flex().get(primary_axis))
+            {
+                if child_flex > 0. {
+                    remaining_child_flex += child_flex;
+                    continue;
+                }
+            }
 
-        eprintln!(
-            "{}: child_max = {:?}, remaining_length: {}",
-            self.id.as_deref().unwrap_or(""),
-            child_constraint.max,
-            remaining_length
-        );
+            // The child is fixed along the primary axis, so perform layout.
+            let child_size = child.layout(child_constraint, view, cx);
+            let child_length = child_size.get(primary_axis);
+            remaining_child_length -= child_length;
+            total_child_length += child_length;
+            cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
+        }
 
+        // Now layout all the flexible children.
         for child in &mut self.children {
             if let Some(child_flex) = child
                 .metadata::<NodeStyle>()
-                .and_then(|style| style.flex(axis))
+                .map(|style| style.flex().get(primary_axis))
             {
-                remaining_flex += child_flex;
-            } else {
-                let child_size = child.layout(child_constraint, view, cx);
-                cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
-                remaining_length -= child_size.get(axis);
+                if child_flex > 0. {
+                    child_constraint.max.set(
+                        primary_axis,
+                        (child_flex / remaining_child_flex) * remaining_child_length,
+                    );
+
+                    let child_size = child.layout(child_constraint, view, cx);
+                    let child_length = child_size.get(primary_axis);
+                    total_child_length += child_length;
+                    remaining_child_length -= child_length;
+                    remaining_child_flex -= child_flex;
+                    cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
+                }
             }
         }
 
-        eprintln!(
-            "{}: child_max = {:?}, remaining_length: {}",
-            self.id.as_deref().unwrap_or(""),
-            child_constraint.max,
-            remaining_length
-        );
+        let children_size = match primary_axis {
+            Axis2d::X => vec2f(total_child_length, cross_axis_max),
+            Axis2d::Y => vec2f(cross_axis_max, total_child_length),
+        };
 
-        // Pass 2: Allocate the remaining space among flexible lengths along the primary axis.
-        if remaining_flex > 0. {
-            dbg!(self.id.as_deref(), remaining_length, remaining_flex);
+        for axis in [Axis2d::X, Axis2d::Y] {
+            let length = self.style.size.get(axis);
 
-            // Add flex pixels from margin and padding.
-            *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
-                rem_pixels,
-                &mut remaining_flex,
-                &mut remaining_length,
-            );
+            // Finish with flexible margins and padding now that children are laid out.
+            match length {
+                Length::Hug => {
+                    // Now that we know the size of our children, we can distribute
+                    // space to flexible padding and margins.
+                    let mut remaining_flex = flex_2f.get(axis);
+                    let mut remaining_length = constraint.max.get(axis)
+                        - fixed_margin_size.get(axis)
+                        - borders_size.get(axis)
+                        - fixed_padding_size.get(axis)
+                        - children_size.get(axis);
 
-            dbg!(self.id.as_deref(), layout.margins.start(axis));
+                    // Distribute remaining length to flexible padding
+                    *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                    *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
 
-            *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
-                rem_pixels,
-                &mut remaining_flex,
-                &mut remaining_length,
-            );
+                    // Distribute remaining length to flexible margins.
+                    *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                    *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                }
+                Length::Auto { flex, .. } => {
+                    // If the length is flex, we subtract the fixed margins, padding, and
+                    // children length along the current dimension, then distribute the
+                    // remaining length among margins and padding.
+                    let mut remaining_flex = flex_2f.get(axis) - flex;
+                    let mut remaining_length = constraint.max.get(axis)
+                        - fixed_margin_size.get(axis)
+                        - borders_size.get(axis)
+                        - fixed_padding_size.get(axis)
+                        - children_size.get(axis);
 
-            // Lay out the flexible children
-            let mut child_max = padded_max;
-            for child in &mut self.children {
-                if let Some(child_flex) = child
-                    .metadata::<NodeStyle>()
-                    .and_then(|style| style.flex(axis))
-                {
-                    child_max.set(axis, child_flex / remaining_flex * remaining_length);
-                    let child_size = child.layout(SizeConstraint::loose(child_max), view, cx);
+                    // Distribute remaining length to flexible padding
+                    *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                    *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
 
-                    remaining_flex -= child_flex;
-                    remaining_length -= child_size.get(axis);
-                    cross_axis_max = child_size.get(cross_axis).max(cross_axis_max);
+                    // Distribute remaining length to flexible margins.
+                    *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                    *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
+                        rem_pixels,
+                        &mut remaining_flex,
+                        &mut remaining_length,
+                    );
+                }
+                Length::Fixed(_) => {
+                    // If we had a fixed length, we've already computed margins and
+                    // padding, so there's nothing to do.
                 }
             }
-
-            // Add flex pixels from margin and padding.
-            *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
-                rem_pixels,
-                &mut remaining_flex,
-                &mut remaining_length,
-            );
-            *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
-                rem_pixels,
-                &mut remaining_flex,
-                &mut remaining_length,
-            );
         }
 
-        let width = match self.style.size.width {
-            Length::Hug => match axis {
-                Axis2d::X => max_size.get(axis) - remaining_length,
-                Axis2d::Y => {
-                    cross_axis_max
-                        + layout.padding.size().get(cross_axis)
-                        + self.style.borders.size().get(cross_axis)
-                        + layout.margins.size().get(cross_axis)
-                }
-            },
-            Length::Fixed(width) => width.to_pixels(rem_pixels),
-            Length::Auto { min, max, .. } => max_size
-                .x()
-                .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-        };
-
-        let height = match self.style.size.height {
-            Length::Hug => match axis {
-                Axis2d::Y => max_size.get(axis) - remaining_length,
-                Axis2d::X => {
-                    cross_axis_max
-                        + layout.padding.size().get(cross_axis)
-                        + self.style.borders.size().get(cross_axis)
-                        + layout.margins.size().get(cross_axis)
-                }
-            },
-            Length::Fixed(height) => height.to_pixels(rem_pixels),
-            Length::Auto { min, max, .. } => max_size
-                .y()
-                .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
-        };
-
-        eprintln!(
-            "{}: size = {} {}",
-            self.id.as_deref().unwrap_or(""),
-            width,
-            height
-        );
-
-        vec2f(width, height)
+        children_size + layout.padding.size() + self.style.borders.size() + layout.margins.size()
     }
+
+    // If this element is flexible, we need to distribute the available space
+    // between the margin, padding, and content, any of which can be flexible.
+    //
+    // If the node's size is fixed, we distribute the flexible space
+    //
+    // let mut remaining_size = todo!();
+
+    // layout.margins = self.style.margins.fixed_pixels(rem_pixels);
+    // remaining_size -= layout.margins.size();
+    // layout.padding = self.style.padding.fixed_pixels(rem_pixels);
+    // remaining_size -= layout.padding.size();
+    // remaining_size -= self.style.size.fixed_pixels(rem_pixels);
+
+    // //
+    // // The available space
+    // let flex = self.style.flex();
+
+    // let mut padded_max =
+    //     max_size - layout.margins.size() - self.style.borders.size() - layout.padding.size();
+
+    // match self.style.size.width {
+    //     Length::Hug => {}
+    //     Length::Fixed(width) => {
+    //         padded_max.set_x(width.to_pixels(rem_pixels));
+    //     }
+    //     Length::Auto { min, max, .. } => padded_max.set_x(
+    //         padded_max
+    //             .x()
+    //             .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
+    //     ),
+    // };
+    // match self.style.size.height {
+    //     Length::Hug => {}
+    //     Length::Fixed(height) => padded_max.set_y(height.to_pixels(rem_pixels)),
+    //     Length::Auto { min, max, .. } => padded_max.set_y(
+    //         padded_max
+    //             .y()
+    //             .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
+    //     ),
+    // };
+
+    // let mut remaining_length =
+    //     padded_max.get(axis) - self.style.size.get(axis).fixed_pixels(rem_pixels);
+    // dbg!(padded_max, remaining_length);
+
+    // // Pass 1: Total up flex units and layout inflexible children.
+    // //
+    // // Consume the remaining length as we layout inflexible children, so that any
+    // // remaining length can be distributed among flexible children in the next pass.
+    // let mut cross_axis_max: f32 = 0.;
+    // let cross_axis = axis.rotate();
+
+    // // Fixed children are unconstrained along the primary axis, and constrained to
+    // // the padded max size along the cross axis.
+    // let child_constraint =
+    //     SizeConstraint::loose(Vector2F::infinity().set(cross_axis, padded_max.get(cross_axis)));
+
+    // eprintln!(
+    //     "{}: child_max = {:?}, remaining_length: {}",
+    //     self.id.as_deref().unwrap_or(""),
+    //     child_constraint.max,
+    //     remaining_length
+    // );
+
+    // for child in &mut self.children {
+    //     if let Some(child_flex) = child
+    //         .metadata::<NodeStyle>()
+    //         .map(|style| style.flex().get(axis))
+    //     {
+    //         remaining_flex += child_flex;
+    //     } else {
+    //         let child_size = child.layout(child_constraint, view, cx);
+    //         cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
+    //         remaining_length -= child_size.get(axis);
+    //     }
+    // }
+
+    // eprintln!(
+    //     "{}: child_max = {:?}, remaining_length: {}",
+    //     self.id.as_deref().unwrap_or(""),
+    //     child_constraint.max,
+    //     remaining_length
+    // );
+
+    // // Pass 2: Allocate the remaining space among flexible lengths along the primary axis.
+    // if remaining_flex > 0. {
+    //     dbg!(self.id.as_deref(), remaining_length, remaining_flex);
+
+    //     // Add flex pixels from margin and padding.
+    //     *layout.margins.start_mut(axis) += self.style.margins.start(axis).flex_pixels(
+    //         rem_pixels,
+    //         &mut remaining_flex,
+    //         &mut remaining_length,
+    //     );
+
+    //     dbg!(self.id.as_deref(), layout.margins.start(axis));
+
+    //     *layout.padding.start_mut(axis) += self.style.padding.start(axis).flex_pixels(
+    //         rem_pixels,
+    //         &mut remaining_flex,
+    //         &mut remaining_length,
+    //     );
+
+    //     // Lay out the flexible children
+    //     let mut child_max = padded_max;
+    //     for child in &mut self.children {
+    //         if let Some(child_flex) = child.metadata::<NodeStyle>().map(|style| style.flex()) {
+    //             child_max.set(axis, child_flex / remaining_flex * remaining_length);
+    //             let child_size = child.layout(SizeConstraint::loose(child_max), view, cx);
+
+    //             remaining_flex -= child_flex;
+    //             remaining_length -= child_size.get(axis);
+    //             cross_axis_max = child_size.get(cross_axis).max(cross_axis_max);
+    //         }
+    //     }
+
+    //     // Add flex pixels from margin and padding.
+    //     *layout.margins.end_mut(axis) += self.style.margins.end(axis).flex_pixels(
+    //         rem_pixels,
+    //         &mut remaining_flex,
+    //         &mut remaining_length,
+    //     );
+    //     *layout.padding.end_mut(axis) += self.style.padding.end(axis).flex_pixels(
+    //         rem_pixels,
+    //         &mut remaining_flex,
+    //         &mut remaining_length,
+    //     );
+    // }
+
+    // let width = match self.style.size.width {
+    //     Length::Hug => match axis {
+    //         Axis2d::X => max_size.get(axis) - remaining_length,
+    //         Axis2d::Y => {
+    //             cross_axis_max
+    //                 + layout.padding.size().get(cross_axis)
+    //                 + self.style.borders.size().get(cross_axis)
+    //                 + layout.margins.size().get(cross_axis)
+    //         }
+    //     },
+    //     Length::Fixed(width) => width.to_pixels(rem_pixels),
+    //     Length::Auto { min, max, .. } => max_size
+    //         .x()
+    //         .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
+    // };
+
+    // let height = match self.style.size.height {
+    //     Length::Hug => match axis {
+    //         Axis2d::Y => max_size.get(axis) - remaining_length,
+    //         Axis2d::X => {
+    //             cross_axis_max
+    //                 + layout.padding.size().get(cross_axis)
+    //                 + self.style.borders.size().get(cross_axis)
+    //                 + layout.margins.size().get(cross_axis)
+    //         }
+    //     },
+    //     Length::Fixed(height) => height.to_pixels(rem_pixels),
+    //     Length::Auto { min, max, .. } => max_size
+    //         .y()
+    //         .clamp(min.to_pixels(rem_pixels), max.to_pixels(rem_pixels)),
+    // };
+
+    // eprintln!(
+    //     "{}: size = {} {}",
+    //     self.id.as_deref().unwrap_or(""),
+    //     width,
+    //     height
+    // );
+
+    // vec2f(width, height)
+    // }
 
     fn paint_children_xy(
         &mut self,
@@ -392,7 +621,7 @@ impl<V: View> Element<V> for Node<V> {
         let mut layout = NodeLayout::default();
 
         let size = if let Some(axis) = self.style.axis.to_2d() {
-            self.layout_xy(axis, constraint.max, cx.rem_pixels(), &mut layout, view, cx)
+            self.layout_xy(axis, constraint, cx.rem_pixels(), &mut layout, view, cx)
         } else {
             todo!()
         };
@@ -615,25 +844,8 @@ pub struct NodeStyle {
 }
 
 impl NodeStyle {
-    fn flex(&self, axis: Axis2d) -> Option<f32> {
-        let mut sum = None;
-        match axis {
-            Axis2d::X => {
-                sum = optional_add(sum, self.margins.left.flex());
-                sum = optional_add(sum, self.padding.left.flex());
-                sum = optional_add(sum, self.size.width.flex());
-                sum = optional_add(sum, self.padding.right.flex());
-                sum = optional_add(sum, self.margins.right.flex());
-            }
-            Axis2d::Y => {
-                sum = optional_add(sum, self.margins.top.flex());
-                sum = optional_add(sum, self.padding.top.flex());
-                sum = optional_add(sum, self.size.height.flex());
-                sum = optional_add(sum, self.padding.bottom.flex());
-                sum = optional_add(sum, self.margins.bottom.flex());
-            }
-        }
-        sum
+    fn flex(&self) -> Vector2F {
+        self.margins.flex() + self.padding.flex() + self.size.flex()
     }
 }
 
@@ -660,14 +872,14 @@ impl<T: Copy> Size<T> {
     }
 }
 
-impl<T: Copy + Add<Output = T>> Size<Option<T>> {
-    fn add_assign_optional(&mut self, rhs: Size<Option<T>>) {
-        self.width = optional_add(self.width, rhs.width);
-        self.height = optional_add(self.height, rhs.height);
-    }
-}
-
 impl Size<Length> {
+    fn fixed_pixels(&self, rem_pixels: f32) -> Size<f32> {
+        Size {
+            width: self.width.fixed_pixels(rem_pixels),
+            height: self.height.fixed_pixels(rem_pixels),
+        }
+    }
+
     pub fn fixed(&self) -> Size<Rems> {
         Size {
             width: self.width.fixed().unwrap_or_default(),
@@ -1002,7 +1214,7 @@ impl Axis3d {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Axis2d {
     X,
     #[default]
@@ -1385,6 +1597,8 @@ trait Vector2FExt {
     fn infinity() -> Self;
     fn get(self, axis: Axis2d) -> f32;
     fn set(&mut self, axis: Axis2d, value: f32) -> Self;
+    fn inc_x(&mut self, delta: f32) -> f32;
+    fn increment_y(&mut self, delta: f32) -> f32;
 }
 
 impl Vector2FExt for Vector2F {
@@ -1406,6 +1620,16 @@ impl Vector2FExt for Vector2F {
             Axis2d::Y => self.set_y(value),
         }
         *self
+    }
+
+    fn inc_x(&mut self, delta: f32) -> f32 {
+        self.set_x(self.x() + delta);
+        self.x()
+    }
+
+    fn increment_y(&mut self, delta: f32) -> f32 {
+        self.set_y(self.y() + delta);
+        self.y()
     }
 }
 
