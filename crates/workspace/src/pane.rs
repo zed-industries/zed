@@ -746,6 +746,10 @@ impl Pane {
         _: &CloseAllItems,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+
         Some(self.close_items(cx, move |_| true))
     }
 

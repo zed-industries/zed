@@ -21,6 +21,7 @@ use drag_and_drop::DragAndDrop;
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
+    stream::FuturesUnordered,
     FutureExt, StreamExt,
 };
 use gpui::{
@@ -122,7 +123,7 @@ actions!(
         NewFile,
         NewWindow,
         CloseWindow,
-        CloseInactiveEditors,
+        CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
         Save,
@@ -240,7 +241,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
-    cx.add_async_action(Workspace::close_inactive_editors);
+    cx.add_async_action(Workspace::close_inactive_items_and_panes);
     cx.add_global_action(Workspace::close_global);
     cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
@@ -1635,32 +1636,43 @@ impl Workspace {
         }
     }
 
-    pub fn close_inactive_editors(
+    pub fn close_inactive_items_and_panes(
         &mut self,
-        _: &CloseInactiveEditors,
+        _: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
 
-        // let mut tasks: Vec<Task<Result<()>>> = Vec::new();
-        current_pane
-            .update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx).unwrap()
-            })
-            .detach_and_log_err(cx);
+        let mut tasks = Vec::new();
+
+        if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, cx)
+        }) {
+            tasks.push(current_pane_close);
+        };
 
         for pane in self.panes() {
             if pane.id() == current_pane.id() {
                 continue;
             }
 
-            pane.update(cx, |pane: &mut Pane, cx| {
-                pane.close_all_items(&CloseAllItems, cx).unwrap()
-            })
-            .detach_and_log_err(cx);
+            if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
+                pane.close_all_items(&CloseAllItems, cx)
+            }) {
+                tasks.push(close_pane_items)
+            }
         }
 
-        Some(Task::ready(Ok(())))
+        if tasks.is_empty() {
+            None
+        } else {
+            Some(cx.spawn(|_, _| async move {
+                for task in tasks {
+                    task.await?
+                }
+                Ok(())
+            }))
+        }
     }
 
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
