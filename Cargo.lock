@@ -3851,7 +3851,7 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
- "tree-sitter-elixir 0.1.0 (git+https://github.com/elixir-lang/tree-sitter-elixir?rev=2616034f78ffa83ca6a521ebd7eee1868cb5c14c)",
+ "tree-sitter-elixir 0.1.0 (git+https://github.com/elixir-lang/tree-sitter-elixir?rev=a2861e88a730287a60c11ea9299c033c7d076e30)",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
  "tree-sitter-html",
@@ -8287,7 +8287,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-elixir"
 version = "0.1.0"
-source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=2616034f78ffa83ca6a521ebd7eee1868cb5c14c#2616034f78ffa83ca6a521ebd7eee1868cb5c14c"
+source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=a2861e88a730287a60c11ea9299c033c7d076e30#a2861e88a730287a60c11ea9299c033c7d076e30"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9923,7 +9923,7 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp 0.20.0",
  "tree-sitter-css",
- "tree-sitter-elixir 0.1.0 (git+https://github.com/elixir-lang/tree-sitter-elixir?rev=2616034f78ffa83ca6a521ebd7eee1868cb5c14c)",
+ "tree-sitter-elixir 0.1.0 (git+https://github.com/elixir-lang/tree-sitter-elixir?rev=a2861e88a730287a60c11ea9299c033c7d076e30)",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
  "tree-sitter-glsl",
