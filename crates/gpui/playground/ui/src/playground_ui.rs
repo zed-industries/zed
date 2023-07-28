@@ -14,27 +14,20 @@ pub struct Playground<V: View>(PhantomData<V>);
 
 impl<V: View> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> AnyElement<V> {
-        column()
-            .id("red column")
+        row()
+            .id("green row")
             .width(auto())
-            .height(auto())
-            .fill(Color::red())
-            .child(
-                row()
-                    .id("green row")
-                    .width(auto())
-                    .height(rems(20.))
-                    .margins(rems(0.), auto())
-                    .fill(Color::green())
-                    .child(
-                        row()
-                            .id("blue row")
-                            .width(rems(20.))
-                            .height(auto())
-                            .fill(Color::blue()),
-                    ),
-            )
-            .into_any()
+            .height(rems(20.))
+            .fill(Color::green())
+        // .child(
+        //     row()
+        //         .id("blue box")
+        //         .width(rems(20.))
+        //         .height(auto())
+        //         .margin_left(auto())
+        //         .fill(Color::blue()),
+        // )
+        // .into_any()
     }
 }
 
@@ -162,7 +155,7 @@ impl<V: View, D: DialogDelegate<V>> Dialog<V, D> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> AnyElement<V> {
         column()
             .child(text(self.title.clone()).text_size(lg()))
-            .child(text(self.description.clone()).margins(m4(), auto()))
+            .child(text(self.description.clone()).margins((m4(), auto())))
             .child(row().children(self.buttons.drain(..).map(|button| (button)())))
             .into_any()
     }
