@@ -711,15 +711,14 @@ where
         Ok(Self(Arc::new(node)))
     }
 
-    pub async fn load<F, K>(
+    pub async fn load<F>(
         &mut self,
-        kv: &K,
+        kv: &dyn KvStore,
         cx: &<T::Summary as Summary>::Context,
         mut f: F,
     ) -> Result<()>
     where
         F: FnMut(Probe<T::Summary>) -> bool,
-        K: KvStore,
     {
         struct Frame<'a, T: Item> {
             tree: &'a mut Sequence<T>,
@@ -773,10 +772,7 @@ where
         Ok(())
     }
 
-    pub async fn save<K>(&self, kv: &K) -> Result<()>
-    where
-        K: KvStore,
-    {
+    pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId> {
         struct Frame<'a, T: Item> {
             node: &'a Node<T>,
             children_saved: bool,
@@ -861,7 +857,7 @@ where
             }
         }
 
-        Ok(())
+        Ok(self.0.saved_id().clone())
     }
 
     pub fn prune<F>(&mut self, cx: &<T::Summary as Summary>::Context, mut f: F)

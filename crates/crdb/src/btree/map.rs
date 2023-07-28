@@ -56,6 +56,14 @@ where
         Ok(Self(Sequence::from_root(id, kv).await?))
     }
 
+    pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        self.0.save(kv).await
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
