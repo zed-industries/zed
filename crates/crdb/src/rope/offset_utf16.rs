@@ -1,6 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub};
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct OffsetUtf16(pub usize);
 
 impl<'a> Add<&'a Self> for OffsetUtf16 {

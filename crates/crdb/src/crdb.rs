@@ -8,7 +8,7 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
-use btree::{Bias, KvStore};
+use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
@@ -1987,6 +1987,15 @@ pub struct Revision {
     insertion_fragments: btree::Sequence<InsertionFragment>,
     visible_text: Rope,
     hidden_text: Rope,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedRevision {
+    document_metadata: SavedId,
+    document_fragments: SavedId,
+    insertion_fragments: SavedId,
+    visible_text: SavedId,
+    hidden_text: SavedId,
 }
 
 impl Revision {

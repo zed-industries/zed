@@ -16,7 +16,7 @@ util = { path = "../util" }
 
 anyhow.workspace = true
 arrayvec = { version = "0.7.1", features = ["serde"] }
-bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "950bc5482c216c395049ae33ae4501e08975f17f" }
+bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "6faf816bd5b4b7b2b6ea77495686634732ded095" }
 futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true

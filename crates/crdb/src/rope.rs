@@ -3,9 +3,11 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use crate::btree::{self, Bias, Dimension, Sequence};
+use crate::btree::{self, Bias, Dimension, KvStore, SavedId, Sequence};
+use anyhow::Result;
 use arrayvec::ArrayString;
 use bromberg_sl2::HashMatrix;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -39,6 +41,26 @@ pub struct Rope {
 impl Rope {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub async fn load_root(id: SavedId, kv: &dyn KvStore) -> Result<Self> {
+        let chunks = Sequence::load_root(id, kv).await?;
+        Ok(Self { chunks })
+    }
+
+    pub async fn load(&mut self, range: Range<usize>, kv: &dyn KvStore) -> Result<()> {
+        self.chunks
+            .load(kv, &(), |probe| {
+                let probe_start = probe.start.text.len;
+                let probe_end = probe_start + probe.summary.text.len;
+                range.end > probe_start && range.start < probe_end
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId> {
+        self.chunks.save(kv).await
     }
 
     pub fn append(&mut self, rope: Rope) {
@@ -659,7 +681,7 @@ impl<'a> io::Read for Bytes<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Chunk(ArrayString<{ 2 * CHUNK_BASE }>);
 
 impl Chunk {
@@ -905,7 +927,7 @@ impl btree::Item for Chunk {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChunkSummary {
     text: TextSummary,
     fingerprint: RopeFingerprint,
@@ -929,7 +951,7 @@ impl btree::Summary for ChunkSummary {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextSummary {
     pub len: usize,
     pub len_utf16: OffsetUtf16,

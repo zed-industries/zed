@@ -1,9 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     ops::{Add, AddAssign, Sub},
 };
 
-#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, Serialize, Deserialize)]
 pub struct Point {
     pub row: u32,
     pub column: u32,

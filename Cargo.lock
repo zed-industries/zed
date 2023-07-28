@@ -983,12 +983,13 @@ dependencies = [
 [[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
-source = "git+https://github.com/zed-industries/bromberg_sl2?rev=950bc5482c216c395049ae33ae4501e08975f17f#950bc5482c216c395049ae33ae4501e08975f17f"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=6faf816bd5b4b7b2b6ea77495686634732ded095#6faf816bd5b4b7b2b6ea77495686634732ded095"
 dependencies = [
  "digest 0.9.0",
  "lazy_static",
  "rayon",
  "seq-macro",
+ "serde",
 ]
 
 [[package]]
