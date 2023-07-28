@@ -355,8 +355,8 @@ impl<V: View> Node<V> {
 
         dbg!(self.id_as_string());
         for axis in [Axis2d::X, Axis2d::Y] {
-            dbg!(axis);
             let length = self.style.size.get(axis);
+            dbg!(axis, length);
 
             match length {
                 Length::Fixed(fixed_length) => {
@@ -364,7 +364,8 @@ impl<V: View> Node<V> {
                     // before laying out the children.
                     let fixed_length = fixed_length.to_pixels(rem_pixels);
                     let mut remaining_flex = total_flex.get(axis);
-                    let mut remaining_length = padded_constraint.max.get(axis) - fixed_length;
+                    let mut remaining_length =
+                        (padded_constraint.max.get(axis) - fixed_length).max(0.);
 
                     // Here we avoid the padding exceeding the fixed length by giving
                     // the padding calculation its own remaining_flex and remaining_length.
@@ -379,7 +380,7 @@ impl<V: View> Node<V> {
                         rem_pixels,
                     );
                     remaining_flex -= padding_flex;
-                    remaining_length -= padding_flex;
+                    remaining_length -= padding_length;
                     layout.margins.compute_flex_edges(
                         &self.style.margins,
                         axis,
@@ -387,6 +388,8 @@ impl<V: View> Node<V> {
                         &mut remaining_length,
                         rem_pixels,
                     );
+
+                    dbg!(remaining_flex, remaining_length);
 
                     child_constraint.max.set(axis, remaining_length);
                     if axis == cross_axis {
