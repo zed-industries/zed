@@ -1,7 +1,7 @@
 use gpui::WindowContext;
 use language::Point;
 
-use crate::{motion::Motion, Mode, Vim};
+use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
     let line_mode = vim.state.mode == Mode::Visual { line: true };
@@ -26,19 +26,20 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
                     }
                 })
             });
-            let selections = editor.selections.all::<Point>(cx);
-            for selection in selections.into_iter().rev() {
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit([(selection.start..selection.end, "")], None, cx)
-                })
-            }
+            copy_selections_content(editor, line_mode, cx);
+            let selections = editor.selections.all::<Point>(cx).into_iter();
+            let edits = selections.map(|selection| (selection.start..selection.end, ""));
+            editor.edit(edits, cx);
         });
     });
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
     use indoc::indoc;
 
     #[gpui::test]
@@ -93,5 +94,72 @@ mod test {
             alpha
               ˇ
             gamma"});
+    }
+
+    #[gpui::test]
+    async fn test_visual_change(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("The quick ˇbrown").await;
+        cx.simulate_shared_keystrokes(["v", "w", "c"]).await;
+        cx.assert_shared_state("The quick ˇ").await;
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "j", "c"]).await;
+        cx.assert_shared_state(indoc! {"
+            The ˇver
+            the lazy dog"})
+            .await;
+
+        let cases = cx.each_marked_position(indoc! {"
+            The ˇquick brown
+            fox jumps ˇover
+            the ˇlazy dog"});
+        for initial_state in cases {
+            cx.assert_neovim_compatible(&initial_state, ["v", "w", "j", "c"])
+                .await;
+            cx.assert_neovim_compatible(&initial_state, ["v", "w", "k", "c"])
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["shift-v", "c"]);
+        cx.assert(indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        // Test pasting code copied on change
+        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
+        cx.assert_state_matches().await;
+
+        cx.assert_all(indoc! {"
+            The quick brown
+            fox juˇmps over
+            the laˇzy dog"})
+            .await;
+        let mut cx = cx.binding(["shift-v", "j", "c"]);
+        cx.assert(indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        // Test pasting code copied on delete
+        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
+        cx.assert_state_matches().await;
+
+        cx.assert_all(indoc! {"
+            The quick brown
+            fox juˇmps over
+            the laˇzy dog"})
+            .await;
     }
 }

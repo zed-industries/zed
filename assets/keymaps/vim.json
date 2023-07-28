@@ -362,12 +362,12 @@
       "u": "editor::Undo",
       "o": "vim::OtherEnd",
       "shift-o": "vim::OtherEnd",
-      "c": "vim::VisualChange",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
       "s": "vim::Substitute",
+      "c": "vim::Substitute",
       "~": "vim::ChangeCase",
       "r": [
         "vim::PushOperator",

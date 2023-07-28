@@ -22,7 +22,6 @@ actions!(
         ToggleVisual,
         ToggleVisualLine,
         VisualDelete,
-        VisualChange,
         VisualYank,
         VisualPaste,
         OtherEnd,
@@ -33,7 +32,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(toggle_visual);
     cx.add_action(toggle_visual_line);
     cx.add_action(other_end);
-    cx.add_action(change);
     cx.add_action(delete);
     cx.add_action(yank);
     cx.add_action(paste);
@@ -164,48 +162,6 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
     });
 }
 
-pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            // Compute edits and resulting anchor selections. If in line mode, adjust
-            // the anchor location and additional newline
-            let mut edits = Vec::new();
-            let mut new_selections = Vec::new();
-            let line_mode = editor.selections.line_mode;
-            editor.change_selections(None, cx, |s| {
-                s.move_with(|map, selection| {
-                    if line_mode {
-                        let range = selection.map(|p| p.to_point(map)).range();
-                        let expanded_range = map.expand_to_line(range);
-                        // If we are at the last line, the anchor needs to be after the newline so that
-                        // it is on a line of its own. Otherwise, the anchor may be after the newline
-                        let anchor = if expanded_range.end == map.buffer_snapshot.max_point() {
-                            map.buffer_snapshot.anchor_after(expanded_range.end)
-                        } else {
-                            map.buffer_snapshot.anchor_before(expanded_range.start)
-                        };
-
-                        edits.push((expanded_range, "\n"));
-                        new_selections.push(selection.map(|_| anchor));
-                    } else {
-                        let range = selection.map(|p| p.to_point(map)).range();
-                        let anchor = map.buffer_snapshot.anchor_after(range.end);
-                        edits.push((range, ""));
-                        new_selections.push(selection.map(|_| anchor));
-                    }
-                    selection.goal = SelectionGoal::None;
-                });
-            });
-            copy_selections_content(editor, editor.selections.line_mode, cx);
-            editor.edit_with_autoindent(edits, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_anchors(new_selections);
-            });
-        });
-        vim.switch_mode(Mode::Insert, true, cx);
-    });
-}
-
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
@@ -228,16 +184,13 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
+            editor.set_clip_at_line_ends(true, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head().to_point(map);
 
                     if let Some(column) = original_columns.get(&selection.id) {
-                        if *column < map.line_len(cursor.row) {
-                            cursor.column = *column;
-                        } else {
-                            cursor.column = map.line_len(cursor.row).saturating_sub(1);
-                        }
+                        cursor.column = *column
                     }
                     let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
                     selection.collapse_to(cursor, selection.goal)
@@ -547,6 +500,9 @@ mod test {
     async fn test_visual_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
+        cx.assert_binding_matches(["v", "w"], "The quick ˇbrown")
+            .await;
+
         cx.assert_binding_matches(["v", "w", "x"], "The quick ˇbrown")
             .await;
         cx.assert_binding_matches(
@@ -618,73 +574,6 @@ mod test {
             .await;
         cx.simulate_shared_keystrokes(["shift-v", "$", "x"]).await;
         cx.assert_state_matches().await;
-    }
-
-    #[gpui::test]
-    async fn test_visual_change(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        cx.set_shared_state("The quick ˇbrown").await;
-        cx.simulate_shared_keystrokes(["v", "w", "c"]).await;
-        cx.assert_shared_state("The quick ˇ").await;
-
-        cx.set_shared_state(indoc! {"
-            The ˇquick brown
-            fox jumps over
-            the lazy dog"})
-            .await;
-        cx.simulate_shared_keystrokes(["v", "w", "j", "c"]).await;
-        cx.assert_shared_state(indoc! {"
-            The ˇver
-            the lazy dog"})
-            .await;
-
-        let cases = cx.each_marked_position(indoc! {"
-                         The ˇquick brown
-                         fox jumps ˇover
-                         the ˇlazy dog"});
-        for initial_state in cases {
-            cx.assert_neovim_compatible(&initial_state, ["v", "w", "j", "c"])
-                .await;
-            cx.assert_neovim_compatible(&initial_state, ["v", "w", "k", "c"])
-                .await;
-        }
-    }
-
-    #[gpui::test]
-    async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["shift-v", "c"]);
-        cx.assert(indoc! {"
-                The quˇick brown
-                fox jumps over
-                the lazy dog"})
-            .await;
-        // Test pasting code copied on change
-        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
-        cx.assert_state_matches().await;
-
-        cx.assert_all(indoc! {"
-                The quick brown
-                fox juˇmps over
-                the laˇzy dog"})
-            .await;
-        let mut cx = cx.binding(["shift-v", "j", "c"]);
-        cx.assert(indoc! {"
-                The quˇick brown
-                fox jumps over
-                the lazy dog"})
-            .await;
-        // Test pasting code copied on delete
-        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
-        cx.assert_state_matches().await;
-
-        cx.assert_all(indoc! {"
-                The quick brown
-                fox juˇmps over
-                the laˇzy dog"})
-            .await;
     }
 
     #[gpui::test]
