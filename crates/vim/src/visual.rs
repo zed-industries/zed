@@ -197,6 +197,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
         vim.update_active_editor(cx, |editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
+
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
@@ -218,9 +219,13 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     let mut cursor = selection.head().to_point(map);
 
                     if let Some(column) = original_columns.get(&selection.id) {
-                        cursor.column = *column
+                        if *column < map.line_len(cursor.row) {
+                            cursor.column = *column;
+                        } else {
+                            cursor.column = map.line_len(cursor.row).saturating_sub(1);
+                        }
                     }
-                    let cursor = map.clip_at_line_end(cursor.to_display_point(map));
+                    let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
                     selection.collapse_to(cursor, selection.goal)
                 });
             });
@@ -590,6 +595,15 @@ mod test {
                 fox juˇmps over
                 the laˇzy dog"})
             .await;
+
+        cx.set_shared_state(indoc! {"
+            The ˇlong line
+            should not
+            crash
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-v", "$", "x"]).await;
+        cx.assert_state_matches().await;
     }
 
     #[gpui::test]
