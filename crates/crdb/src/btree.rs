@@ -678,7 +678,7 @@ where
     T: Item + Serialize + for<'a> Deserialize<'a>,
     T::Summary: Serialize + for<'a> Deserialize<'a>,
 {
-    pub async fn from_root(root_id: SavedId, kv: &dyn KvStore) -> Result<Self> {
+    pub async fn load_root(root_id: SavedId, kv: &dyn KvStore) -> Result<Self> {
         let root = kv.load(namespace_bytes("node"), root_id.as_u128()).await?;
         let root = serde_bare::from_slice(&root)?;
         let node = match root {
@@ -750,7 +750,7 @@ where
                                     start_summary: summary.clone(),
                                 }),
                                 ChildTree::Unloaded { saved_id } => {
-                                    let tree = Sequence::from_root(saved_id.clone(), kv).await?;
+                                    let tree = Sequence::load_root(saved_id.clone(), kv).await?;
                                     *child_tree = ChildTree::Loaded { tree };
                                     if let ChildTree::Loaded { tree } = child_tree {
                                         stack.push(Frame {

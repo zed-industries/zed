@@ -48,12 +48,29 @@ where
         Self(tree)
     }
 
-    pub async fn load(id: SavedId, kv: &dyn KvStore) -> Result<Self>
+    pub async fn load_root(id: SavedId, kv: &dyn KvStore) -> Result<Self>
     where
         K: Serialize + for<'de> Deserialize<'de>,
         V: Serialize + for<'de> Deserialize<'de>,
     {
-        Ok(Self(Sequence::from_root(id, kv).await?))
+        Ok(Self(Sequence::load_root(id, kv).await?))
+    }
+
+    pub async fn load(&mut self, key: &K, kv: &dyn KvStore) -> Result<Option<&V>>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        self.0
+            .load(kv, &(), |probe| {
+                let key_range = (
+                    Bound::Excluded(&probe.start.0),
+                    Bound::Included(&probe.summary.0),
+                );
+                key_range.contains(key)
+            })
+            .await?;
+        Ok(self.get(key))
     }
 
     pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId>
