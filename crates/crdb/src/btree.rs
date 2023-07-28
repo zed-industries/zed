@@ -662,8 +662,8 @@ impl<T: Item> Sequence<T> {
 }
 
 pub struct Probe<'a, T> {
-    start: &'a T,
-    summary: &'a T,
+    pub start: &'a T,
+    pub summary: &'a T,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1390,9 +1390,8 @@ pub mod tests {
                 let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let splice_start = rng.gen_range(0..splice_end + 1);
                 smol::block_on(tree.load(&kv, &(), |probe| {
-                    let probe_start = probe.start.count;
-                    let probe_end = probe.start.count + probe.summary.count;
-                    probe_end >= splice_start && probe_start <= splice_end
+                    let probe_range = probe.start.count..(probe.start.count + probe.summary.count);
+                    probe_range.contains(&splice_start) || probe_range.contains(&splice_end)
                 }))
                 .unwrap();
                 let count = rng.gen_range(0..5);
