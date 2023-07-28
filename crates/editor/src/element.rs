@@ -546,8 +546,18 @@ impl EditorElement {
                 });
             }
 
+            let scroll_left =
+                layout.position_map.snapshot.scroll_position().x() * layout.position_map.em_width;
+
             for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x = text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.;
+                let x =
+                    (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
+                        - scroll_left;
+
+                if x < text_bounds.origin_x() {
+                    continue;
+                }
+
                 let color = if *active {
                     self.style.active_wrap_guide
                 } else {
