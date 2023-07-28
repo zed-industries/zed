@@ -35,12 +35,6 @@ pub enum FoldStatus {
     Foldable,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Clip {
-    None,
-    EndOfLine,
-}
-
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -56,7 +50,7 @@ pub struct DisplayMap {
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
     text_highlights: TextHighlights,
-    pub default_clip: Clip,
+    pub clip_at_line_ends: bool,
 }
 
 impl Entity for DisplayMap {
@@ -91,7 +85,7 @@ impl DisplayMap {
             wrap_map,
             block_map,
             text_highlights: Default::default(),
-            default_clip: Clip::None,
+            clip_at_line_ends: false,
         }
     }
 
@@ -115,7 +109,7 @@ impl DisplayMap {
             wrap_snapshot,
             block_snapshot,
             text_highlights: self.text_highlights.clone(),
-            default_clip: self.default_clip,
+            clip_at_line_ends: self.clip_at_line_ends,
         }
     }
 
@@ -302,7 +296,7 @@ pub struct DisplaySnapshot {
     wrap_snapshot: wrap_map::WrapSnapshot,
     block_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
-    default_clip: Clip,
+    clip_at_line_ends: bool,
 }
 
 impl DisplaySnapshot {
@@ -361,6 +355,9 @@ impl DisplaySnapshot {
 
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let mut new_start = self.prev_line_boundary(range.start).0;
+        if range.end.column == 0 {
+            return new_start..range.end;
+        }
         let mut new_end = self.next_line_boundary(range.end).0;
 
         if new_start.row == range.start.row && new_end.row == range.end.row {
@@ -583,33 +580,21 @@ impl DisplaySnapshot {
         column
     }
 
-    pub fn move_left(&self, point: DisplayPoint, clip: Clip) -> DisplayPoint {
-        self.clip_point_with(
-            DisplayPoint::new(point.row(), point.column().saturating_sub(1)),
-            Bias::Left,
-            clip,
-        )
-    }
-
-    pub fn move_right(&self, point: DisplayPoint, clip: Clip) -> DisplayPoint {
-        self.clip_point_with(
-            DisplayPoint::new(point.row(), point.column() + 1),
-            Bias::Right,
-            clip,
-        )
-    }
-
-    pub fn clip_point_with(&self, point: DisplayPoint, bias: Bias, clip: Clip) -> DisplayPoint {
-        let new_point = DisplayPoint(self.block_snapshot.clip_point(point.0, bias));
-        if clip == Clip::EndOfLine && new_point.column() == self.line_len(new_point.row()) {
-            self.move_left(new_point, Clip::None)
-        } else {
-            new_point
-        }
-    }
-
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        self.clip_point_with(point, bias, self.default_clip)
+        let mut clipped = self.block_snapshot.clip_point(point.0, bias);
+        if self.clip_at_line_ends {
+            clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
+        }
+        DisplayPoint(clipped)
+    }
+
+    pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
+        let mut point = point.0;
+        if point.column == self.line_len(point.row) {
+            point.column = point.column.saturating_sub(1);
+            point = self.block_snapshot.clip_point(point, Bias::Left);
+        }
+        DisplayPoint(point)
     }
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
@@ -1598,7 +1583,7 @@ pub mod tests {
 
         fn assert(text: &str, cx: &mut gpui::AppContext) {
             let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
-            unmarked_snapshot.default_clip = Clip::EndOfLine;
+            unmarked_snapshot.clip_at_line_ends = true;
             assert_eq!(
                 unmarked_snapshot.clip_point(markers[1], Bias::Left),
                 markers[0]

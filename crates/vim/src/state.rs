@@ -1,4 +1,3 @@
-use editor::display_map::Clip;
 use gpui::keymap_matcher::KeymapContext;
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -88,10 +87,10 @@ impl VimState {
             )
     }
 
-    pub fn default_clip(&self) -> Clip {
+    pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual { .. } => Clip::None,
-            Mode::Normal => Clip::EndOfLine,
+            Mode::Insert | Mode::Visual { .. } => false,
+            Mode::Normal => true,
         }
     }
 

@@ -101,6 +101,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "v": "vim::ToggleVisual",
+      "shift-v": "vim::ToggleVisualLine",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
@@ -266,8 +268,6 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
-      "v": "vim::ToggleVisual",
-      "shift-v": "vim::ToggleVisualLine",
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",

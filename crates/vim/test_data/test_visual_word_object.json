@@ -43,17 +43,17 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \nˇ\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n«\nˇ»\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\nˇ\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\nˇ\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n«\nˇ»\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\nˇ\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\nˇ\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n«\nˇ»The-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThˇe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
@@ -118,7 +118,7 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \nˇ\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n«\nˇ»","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick ˇbrown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
@@ -158,17 +158,17 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"shift-w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \nˇ\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n«\nˇ»\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\nˇ\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"shift-w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\nˇ\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n«\nˇ»\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\nˇ\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"shift-w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\nˇ\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n«\nˇ»The-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n","mode":{"Visual":{"line":false}}}}
 {"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThˇe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}
@@ -233,4 +233,4 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"shift-w"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \nˇ\n","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n«\nˇ»","mode":{"Visual":{"line":false}}}}

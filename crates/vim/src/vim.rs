@@ -13,7 +13,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::CommandPaletteFilter;
-use editor::{display_map::Clip, Editor, EditorMode, Event};
+use editor::{movement, Editor, EditorMode, Event};
 use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
     Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -201,12 +201,12 @@ impl Vim {
                     if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed {
-                            point = map.move_left(selection.head(), Clip::None);
+                            point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() {
                         if selection.is_empty() {
-                            selection.end = map.move_right(selection.start, Clip::None);
+                            selection.end = movement::right(map, selection.start);
                         }
                     }
                 });
@@ -314,7 +314,7 @@ impl Vim {
         self.update_active_editor(cx, |editor, cx| {
             if self.enabled && editor.mode() == EditorMode::Full {
                 editor.set_cursor_shape(cursor_shape, cx);
-                editor.set_default_clip(state.default_clip(), cx);
+                editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
                 editor.set_collapse_matches(true);
                 editor.set_input_enabled(!state.vim_controlled());
                 editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
@@ -331,7 +331,7 @@ impl Vim {
 
     fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
-        editor.set_default_clip(Clip::None, cx);
+        editor.set_clip_at_line_ends(false, cx);
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
 

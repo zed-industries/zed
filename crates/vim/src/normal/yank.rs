@@ -1,12 +1,11 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::HashMap;
-use editor::display_map::Clip;
 use gpui::WindowContext;
 
 pub fn yank_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
-            editor.set_default_clip(Clip::None, cx);
+            editor.set_clip_at_line_ends(false, cx);
             let mut original_positions: HashMap<_, _> = Default::default();
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
@@ -29,7 +28,7 @@ pub fn yank_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut
 pub fn yank_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
-            editor.set_default_clip(Clip::None, cx);
+            editor.set_clip_at_line_ends(false, cx);
             let mut original_positions: HashMap<_, _> = Default::default();
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {

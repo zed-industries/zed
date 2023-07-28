@@ -2,10 +2,7 @@ use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use editor::{
-    display_map::{Clip, ToDisplayPoint},
-    movement,
-    scroll::autoscroll::Autoscroll,
-    Bias, ClipboardSelection,
+    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
 };
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, SelectionGoal};
@@ -53,7 +50,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                     // but in (forward) visual mode the current character is just
                     // before the end of the selection.
                     if !selection.reversed {
-                        current_head = map.move_left(current_head, Clip::None);
+                        current_head = movement::left(map, selection.end)
                     }
 
                     let Some((new_head, goal)) =
@@ -63,16 +60,16 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
                     // ensure the current character is included in the selection.
                     if !selection.reversed {
-                        selection.end = map.move_right(selection.end, Clip::None);
+                        selection.end = movement::right(map, selection.end)
                     }
 
                     // vim always ensures the anchor character stays selected.
                     // if our selection has reversed, we need to move the opposite end
                     // to ensure the anchor is still selected.
                     if was_reversed && !selection.reversed {
-                        selection.start = map.move_left(selection.start, Clip::None);
+                        selection.start = movement::left(map, selection.start);
                     } else if !was_reversed && selection.reversed {
-                        selection.end = map.move_right(selection.end, Clip::None);
+                        selection.end = movement::right(map, selection.end);
                     }
                 });
             });
@@ -94,7 +91,7 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                         // after the cursor; however in the case of a visual selection
                         // the current character is before the cursor.
                         if !selection.reversed {
-                            head = map.move_left(head, Clip::None);
+                            head = movement::left(map, head);
                         }
 
                         if let Some(range) = object.range(map, head, around) {
@@ -109,7 +106,6 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                                 } else {
                                     false
                                 };
-                                dbg!(expand_both_ways);
 
                                 if expand_both_ways {
                                     selection.start = range.start;
@@ -206,7 +202,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     if line_mode {
                         let mut position = selection.head();
                         if !selection.reversed {
-                            position = map.move_left(position, Clip::None);
+                            position = movement::left(map, position);
                         }
                         original_columns.insert(selection.id, position.to_point(map).column);
                     }
@@ -224,11 +220,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     if let Some(column) = original_columns.get(&selection.id) {
                         cursor.column = *column
                     }
-                    let cursor = map.clip_point_with(
-                        cursor.to_display_point(map),
-                        Bias::Left,
-                        Clip::EndOfLine,
-                    );
+                    let cursor = map.clip_at_line_end(cursor.to_display_point(map));
                     selection.collapse_to(cursor, selection.goal)
                 });
             });
@@ -401,6 +393,7 @@ pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
+    use workspace::item::Item;
 
     use crate::{
         state::Mode,
@@ -417,6 +410,7 @@ mod test {
             the lazy dog"
         })
         .await;
+        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
 
         // entering visual mode should select the character
         // under cursor
@@ -425,6 +419,7 @@ mod test {
             fox jumps over
             the lazy dog"})
             .await;
+        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
 
         // forwards motions should extend the selection
         cx.simulate_shared_keystrokes(["w", "j"]).await;
@@ -445,6 +440,87 @@ mod test {
         cx.assert_shared_state(indoc! { "The «ˇquick brown
             fox jumps o»ver
             the lazy dog"})
+            .await;
+
+        // works on empty lines
+        cx.set_shared_state(indoc! {"
+            a
+            ˇ
+            b
+            "})
+            .await;
+        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state(indoc! {"
+            a
+            «
+            ˇ»b
+        "})
+            .await;
+        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+
+        // toggles off again
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state(indoc! {"
+            a
+            ˇ
+            b
+            "})
+            .await;
+
+        // works at the end of a document
+        cx.set_shared_state(indoc! {"
+            a
+            b
+            ˇ"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state(indoc! {"
+            a
+            b
+            ˇ"})
+            .await;
+        assert_eq!(cx.mode(), cx.neovim_mode().await);
+    }
+
+    #[gpui::test]
+    async fn test_enter_visual_line_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["shift-v"]).await;
+        cx.assert_shared_state(indoc! { "The «qˇ»uick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        assert_eq!(cx.mode(), cx.neovim_mode().await);
+        cx.simulate_shared_keystrokes(["x"]).await;
+        cx.assert_shared_state(indoc! { "fox ˇjumps over
+        the lazy dog"})
+            .await;
+
+        // it should work on empty lines
+        cx.set_shared_state(indoc! {"
+            a
+            ˇ
+            b"})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-v"]).await;
+        cx.assert_shared_state(indoc! { "
+            a
+            «
+            ˇ»b"})
+            .await;
+        cx.simulate_shared_keystrokes(["x"]).await;
+        cx.assert_shared_state(indoc! { "
+            a
+            ˇb"})
             .await;
     }
 

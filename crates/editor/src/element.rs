@@ -847,23 +847,26 @@ impl EditorElement {
 
                 if editor.show_local_cursors(cx) || replica_id != local_replica_id {
                     let cursor_position = selection.head;
+                    let mut cursor_column = cursor_position.column() as usize;
+                    let mut cursor_row = cursor_position.row();
 
-                    if layout
-                        .visible_display_row_range
-                        .contains(&cursor_position.row())
+                    if CursorShape::Block == selection.cursor_shape
+                        && !selection.range.is_empty()
+                        && !selection.reversed
                     {
-                        let cursor_row_layout = &layout.position_map.line_layouts
-                            [(cursor_position.row() - start_row) as usize]
-                            .line;
-                        let mut cursor_column = cursor_position.column() as usize;
-
-                        if CursorShape::Block == selection.cursor_shape
-                            && !selection.range.is_empty()
-                            && !selection.reversed
-                            && cursor_column > 0
-                        {
+                        if cursor_column > 0 {
                             cursor_column -= 1;
+                        } else if cursor_row > 0 {
+                            cursor_row -= 1;
+                            cursor_column =
+                                layout.position_map.snapshot.line_len(cursor_row) as usize;
                         }
+                    }
+
+                    if layout.visible_display_row_range.contains(&cursor_row) {
+                        let cursor_row_layout = &layout.position_map.line_layouts
+                            [(cursor_row - start_row) as usize]
+                            .line;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
                         let mut block_width =
@@ -876,7 +879,7 @@ impl EditorElement {
                                 .position_map
                                 .snapshot
                                 .chars_at(DisplayPoint::new(
-                                    cursor_position.row(),
+                                    cursor_row as u32,
                                     cursor_column as u32,
                                 ))
                                 .next()
@@ -903,8 +906,7 @@ impl EditorElement {
                         };
 
                         let x = cursor_character_x - scroll_left;
-                        let y = cursor_position.row() as f32 * layout.position_map.line_height
-                            - scroll_top;
+                        let y = cursor_row as f32 * layout.position_map.line_height - scroll_top;
                         if selection.is_newest {
                             editor.pixel_position_of_newest_cursor = Some(vec2f(
                                 bounds.origin_x() + x + block_width / 2.,

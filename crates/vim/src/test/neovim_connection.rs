@@ -237,10 +237,11 @@ impl NeovimConnection {
             .join("\n");
 
         // nvim columns are 1-based, so -1.
-        let cursor_row = self.read_position("echo line('.')").await - 1;
+        let mut cursor_row = self.read_position("echo line('.')").await - 1;
         let mut cursor_col = self.read_position("echo col('.')").await - 1;
-        let selection_row = self.read_position("echo line('v')").await - 1;
+        let mut selection_row = self.read_position("echo line('v')").await - 1;
         let mut selection_col = self.read_position("echo col('v')").await - 1;
+        let total_rows = self.read_position("echo line('$')").await - 1;
 
         let nvim_mode_text = self
             .nvim
@@ -273,14 +274,20 @@ impl NeovimConnection {
                 if selection_col > cursor_col {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
-                    if selection_line_length > 0 {
+                    if selection_line_length > selection_col {
                         selection_col += 1;
+                    } else if selection_row < total_rows {
+                        selection_col = 0;
+                        selection_row += 1;
                     }
                 } else {
                     let cursor_line_length =
                         self.read_position("echo strlen(getline(line('.')))").await;
-                    if cursor_line_length > 0 {
+                    if cursor_line_length > cursor_col {
                         cursor_col += 1;
+                    } else if cursor_row < total_rows {
+                        cursor_col = 0;
+                        cursor_row += 1;
                     }
                 }
             }
