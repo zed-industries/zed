@@ -2015,37 +2015,6 @@ impl LocalSnapshot {
         entry
     }
 
-    #[must_use = "Changed paths must be used for diffing later"]
-    fn scan_statuses(
-        &mut self,
-        repo_ptr: &dyn GitRepository,
-        work_directory: &RepositoryWorkDirectory,
-    ) -> Vec<Arc<Path>> {
-        let mut changes = vec![];
-        let mut edits = vec![];
-
-        let statuses = repo_ptr.statuses();
-
-        for mut entry in self
-            .descendent_entries(false, false, &work_directory.0)
-            .cloned()
-        {
-            let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
-                continue;
-            };
-            let repo_path = RepoPath(repo_path.to_path_buf());
-            let git_file_status = statuses.as_ref().and_then(|s| s.get(&repo_path).copied());
-            if entry.git_status != git_file_status {
-                entry.git_status = git_file_status;
-                changes.push(entry.path.clone());
-                edits.push(Edit::Insert(entry));
-            }
-        }
-
-        self.entries_by_path.edit(edits, &());
-        changes
-    }
-
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
         let mut inodes = TreeSet::default();
         for ancestor in path.ancestors().skip(1) {
@@ -2189,6 +2158,38 @@ impl BackgroundScannerState {
                 .any(|p| entry.path.starts_with(p))
     }
 
+    fn enqueue_scan_dir(&self, abs_path: Arc<Path>, entry: &Entry, scan_job_tx: &Sender<ScanJob>) {
+        let path = entry.path.clone();
+        let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
+        let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
+        let mut containing_repository = None;
+        if !ignore_stack.is_all() {
+            if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
+                if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
+                    containing_repository = Some((
+                        workdir_path,
+                        repo.repo_ptr.clone(),
+                        repo.repo_ptr.lock().staged_statuses(repo_path),
+                    ));
+                }
+            }
+        }
+        if !ancestor_inodes.contains(&entry.inode) {
+            ancestor_inodes.insert(entry.inode);
+            scan_job_tx
+                .try_send(ScanJob {
+                    abs_path,
+                    path,
+                    ignore_stack,
+                    scan_queue: scan_job_tx.clone(),
+                    ancestor_inodes,
+                    is_external: entry.is_external,
+                    containing_repository,
+                })
+                .unwrap();
+        }
+    }
+
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
             entry.id = removed_entry_id;
@@ -2201,7 +2202,7 @@ impl BackgroundScannerState {
         self.reuse_entry_id(&mut entry);
         let entry = self.snapshot.insert_entry(entry, fs);
         if entry.path.file_name() == Some(&DOT_GIT) {
-            self.build_repository(entry.path.clone(), fs);
+            self.build_git_repository(entry.path.clone(), fs);
         }
 
         #[cfg(test)]
@@ -2215,7 +2216,6 @@ impl BackgroundScannerState {
         parent_path: &Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
-        fs: &dyn Fs,
     ) {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
@@ -2244,16 +2244,12 @@ impl BackgroundScannerState {
                 .insert(abs_parent_path, (ignore, false));
         }
 
-        self.scanned_dirs.insert(parent_entry.id);
+        let parent_entry_id = parent_entry.id;
+        self.scanned_dirs.insert(parent_entry_id);
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
-        let mut dotgit_path = None;
 
         for entry in entries {
-            if entry.path.file_name() == Some(&DOT_GIT) {
-                dotgit_path = Some(entry.path.clone());
-            }
-
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -2268,9 +2264,6 @@ impl BackgroundScannerState {
             .edit(entries_by_path_edits, &());
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
-        if let Some(dotgit_path) = dotgit_path {
-            self.build_repository(dotgit_path, fs);
-        }
         if let Err(ix) = self.changed_paths.binary_search(parent_path) {
             self.changed_paths.insert(ix, parent_path.clone());
         }
@@ -2346,7 +2339,7 @@ impl BackgroundScannerState {
                 });
             match repository {
                 None => {
-                    self.build_repository(dot_git_dir.into(), fs);
+                    self.build_git_repository(dot_git_dir.into(), fs);
                 }
                 Some((entry_id, repository)) => {
                     if repository.git_dir_scan_id == scan_id {
@@ -2370,13 +2363,7 @@ impl BackgroundScannerState {
                         .repository_entries
                         .update(&work_dir, |entry| entry.branch = branch.map(Into::into));
 
-                    let changed_paths = self.snapshot.scan_statuses(&*repository, &work_dir);
-                    util::extend_sorted(
-                        &mut self.changed_paths,
-                        changed_paths,
-                        usize::MAX,
-                        Ord::cmp,
-                    )
+                    self.update_git_statuses(&work_dir, &*repository);
                 }
             }
         }
@@ -2397,7 +2384,15 @@ impl BackgroundScannerState {
         snapshot.repository_entries = repository_entries;
     }
 
-    fn build_repository(&mut self, dot_git_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
+    fn build_git_repository(
+        &mut self,
+        dot_git_path: Arc<Path>,
+        fs: &dyn Fs,
+    ) -> Option<(
+        RepositoryWorkDirectory,
+        Arc<Mutex<dyn GitRepository>>,
+        TreeMap<RepoPath, GitFileStatus>,
+    )> {
         log::info!("build git repository {:?}", dot_git_path);
 
         let work_dir_path: Arc<Path> = dot_git_path.parent().unwrap().into();
@@ -2429,22 +2424,54 @@ impl BackgroundScannerState {
             },
         );
 
-        let changed_paths = self
-            .snapshot
-            .scan_statuses(repo_lock.deref(), &work_directory);
+        let staged_statuses = self.update_git_statuses(&work_directory, &*repo_lock);
         drop(repo_lock);
 
         self.snapshot.git_repositories.insert(
             work_dir_id,
             LocalRepositoryEntry {
                 git_dir_scan_id: 0,
-                repo_ptr: repository,
+                repo_ptr: repository.clone(),
                 git_dir_path: dot_git_path.clone(),
             },
         );
 
-        util::extend_sorted(&mut self.changed_paths, changed_paths, usize::MAX, Ord::cmp);
-        Some(())
+        Some((work_directory, repository, staged_statuses))
+    }
+
+    fn update_git_statuses(
+        &mut self,
+        work_directory: &RepositoryWorkDirectory,
+        repo: &dyn GitRepository,
+    ) -> TreeMap<RepoPath, GitFileStatus> {
+        let staged_statuses = repo.staged_statuses(Path::new(""));
+
+        let mut changes = vec![];
+        let mut edits = vec![];
+
+        for mut entry in self
+            .snapshot
+            .descendent_entries(false, false, &work_directory.0)
+            .cloned()
+        {
+            let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
+                continue;
+            };
+            let repo_path = RepoPath(repo_path.to_path_buf());
+            let git_file_status = combine_git_statuses(
+                staged_statuses.get(&repo_path).copied(),
+                repo.unstaged_status(&repo_path, entry.mtime),
+            );
+            if entry.git_status != git_file_status {
+                entry.git_status = git_file_status;
+                changes.push(entry.path.clone());
+                edits.push(Edit::Insert(entry));
+            }
+        }
+
+        self.snapshot.entries_by_path.edit(edits, &());
+        util::extend_sorted(&mut self.changed_paths, changes, usize::MAX, Ord::cmp);
+        staged_statuses
     }
 }
 
@@ -3031,16 +3058,8 @@ impl BackgroundScanner {
     ) {
         use futures::FutureExt as _;
 
-        let (root_abs_path, root_inode) = {
-            let snapshot = &self.state.lock().snapshot;
-            (
-                snapshot.abs_path.clone(),
-                snapshot.root_entry().map(|e| e.inode),
-            )
-        };
-
         // Populate ignores above the root.
-        let ignore_stack;
+        let root_abs_path = self.state.lock().snapshot.abs_path.clone();
         for ancestor in root_abs_path.ancestors().skip(1) {
             if let Ok(ignore) = build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
             {
@@ -3051,31 +3070,24 @@ impl BackgroundScanner {
                     .insert(ancestor.into(), (ignore.into(), false));
             }
         }
+
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
             let mut state = self.state.lock();
             state.snapshot.scan_id += 1;
-            ignore_stack = state
-                .snapshot
-                .ignore_stack_for_abs_path(&root_abs_path, true);
-            if ignore_stack.is_all() {
-                if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
+            if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
+                let ignore_stack = state
+                    .snapshot
+                    .ignore_stack_for_abs_path(&root_abs_path, true);
+                if ignore_stack.is_all() {
                     root_entry.is_ignored = true;
-                    state.insert_entry(root_entry, self.fs.as_ref());
+                    state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
+                state.enqueue_scan_dir(root_abs_path, &root_entry, &scan_job_tx);
             }
         };
 
         // Perform an initial scan of the directory.
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        smol::block_on(scan_job_tx.send(ScanJob {
-            abs_path: root_abs_path,
-            path: Arc::from(Path::new("")),
-            ignore_stack,
-            ancestor_inodes: TreeSet::from_ordered_entries(root_inode),
-            is_external: false,
-            scan_queue: scan_job_tx.clone(),
-        }))
-        .unwrap();
         drop(scan_job_tx);
         self.scan_dirs(true, scan_job_rx).await;
         {
@@ -3263,20 +3275,7 @@ impl BackgroundScanner {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
                         if entry.kind == EntryKind::UnloadedDir {
                             let abs_path = root_path.join(ancestor);
-                            let ignore_stack =
-                                state.snapshot.ignore_stack_for_abs_path(&abs_path, true);
-                            let ancestor_inodes =
-                                state.snapshot.ancestor_inodes_for_path(&ancestor);
-                            scan_job_tx
-                                .try_send(ScanJob {
-                                    abs_path: abs_path.into(),
-                                    path: ancestor.into(),
-                                    ignore_stack,
-                                    scan_queue: scan_job_tx.clone(),
-                                    ancestor_inodes,
-                                    is_external: entry.is_external,
-                                })
-                                .unwrap();
+                            state.enqueue_scan_dir(abs_path.into(), entry, &scan_job_tx);
                             state.paths_to_scan.insert(path.clone());
                             break;
                         }
@@ -3391,18 +3390,16 @@ impl BackgroundScanner {
 
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
-        let (root_abs_path, root_char_bag, next_entry_id, repository) = {
+        let (root_abs_path, root_char_bag, next_entry_id) = {
             let snapshot = &self.state.lock().snapshot;
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
                 self.next_entry_id.clone(),
-                snapshot
-                    .local_repo_for_path(&job.path)
-                    .map(|(work_dir, repo)| (work_dir, repo.clone())),
             )
         };
 
+        let mut dotgit_path = None;
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
@@ -3465,6 +3462,10 @@ impl BackgroundScanner {
                     }
                 }
             }
+            // If we find a .git, we'll need to load the repository.
+            else if child_name == *DOT_GIT {
+                dotgit_path = Some(child_path.clone());
+            }
 
             let mut child_entry = Entry::new(
                 child_path.clone(),
@@ -3525,6 +3526,7 @@ impl BackgroundScanner {
                         },
                         ancestor_inodes,
                         scan_queue: job.scan_queue.clone(),
+                        containing_repository: job.containing_repository.clone(),
                     }));
                 } else {
                     new_jobs.push(None);
@@ -3532,14 +3534,17 @@ impl BackgroundScanner {
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
                 if !child_entry.is_ignored {
-                    if let Some((repo_path, repo)) = &repository {
-                        if let Ok(path) = child_path.strip_prefix(&repo_path.0) {
-                            child_entry.git_status = repo
-                                .repo_ptr
-                                .lock()
-                                .status(&RepoPath(path.into()))
-                                .log_err()
-                                .flatten();
+                    if let Some((repository_dir, repository, staged_statuses)) =
+                        &job.containing_repository
+                    {
+                        if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
+                            let repo_path = RepoPath(repo_path.into());
+                            child_entry.git_status = combine_git_statuses(
+                                staged_statuses.get(&repo_path).copied(),
+                                repository
+                                    .lock()
+                                    .unstaged_status(&repo_path, child_entry.mtime),
+                            );
                         }
                     }
                 }
@@ -3549,27 +3554,39 @@ impl BackgroundScanner {
         }
 
         let mut state = self.state.lock();
-        let mut new_jobs = new_jobs.into_iter();
+
+        // Identify any subdirectories that should not be scanned.
+        let mut job_ix = 0;
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
-
             if entry.is_dir() {
-                let new_job = new_jobs.next().expect("missing scan job for entry");
                 if state.should_scan_directory(&entry) {
-                    if let Some(new_job) = new_job {
-                        job.scan_queue
-                            .try_send(new_job)
-                            .expect("channel is unbounded");
-                    }
+                    job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
+                    new_jobs.remove(job_ix);
                 }
             }
         }
-        assert!(new_jobs.next().is_none());
 
-        state.populate_dir(&job.path, new_entries, new_ignore, self.fs.as_ref());
+        state.populate_dir(&job.path, new_entries, new_ignore);
+
+        let repository =
+            dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
+
+        for new_job in new_jobs {
+            if let Some(mut new_job) = new_job {
+                if let Some(containing_repository) = &repository {
+                    new_job.containing_repository = Some(containing_repository.clone());
+                }
+
+                job.scan_queue
+                    .try_send(new_job)
+                    .expect("channel is unbounded");
+            }
+        }
+
         Ok(())
     }
 
@@ -3638,13 +3655,10 @@ impl BackgroundScanner {
                             if let Some((work_dir, repo)) =
                                 state.snapshot.local_repo_for_path(&path)
                             {
-                                if let Ok(path) = path.strip_prefix(work_dir.0) {
-                                    fs_entry.git_status = repo
-                                        .repo_ptr
-                                        .lock()
-                                        .status(&RepoPath(path.into()))
-                                        .log_err()
-                                        .flatten()
+                                if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
+                                    let repo_path = RepoPath(repo_path.into());
+                                    let repo = repo.repo_ptr.lock();
+                                    fs_entry.git_status = repo.status(&repo_path, fs_entry.mtime);
                                 }
                             }
                         }
@@ -3652,20 +3666,7 @@ impl BackgroundScanner {
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
                         if state.should_scan_directory(&fs_entry) {
-                            let mut ancestor_inodes =
-                                state.snapshot.ancestor_inodes_for_path(&path);
-                            if !ancestor_inodes.contains(&metadata.inode) {
-                                ancestor_inodes.insert(metadata.inode);
-                                smol::block_on(scan_queue_tx.send(ScanJob {
-                                    abs_path,
-                                    path: path.clone(),
-                                    ignore_stack,
-                                    ancestor_inodes,
-                                    is_external: fs_entry.is_external,
-                                    scan_queue: scan_queue_tx.clone(),
-                                }))
-                                .unwrap();
-                            }
+                            state.enqueue_scan_dir(abs_path, &fs_entry, scan_queue_tx);
                         } else {
                             fs_entry.kind = EntryKind::UnloadedDir;
                         }
@@ -3822,18 +3823,7 @@ impl BackgroundScanner {
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock();
                     if state.should_scan_directory(&entry) {
-                        job.scan_queue
-                            .try_send(ScanJob {
-                                abs_path: abs_path.clone(),
-                                path: entry.path.clone(),
-                                ignore_stack: child_ignore_stack.clone(),
-                                scan_queue: job.scan_queue.clone(),
-                                ancestor_inodes: state
-                                    .snapshot
-                                    .ancestor_inodes_for_path(&entry.path),
-                                is_external: false,
-                            })
-                            .unwrap();
+                        state.enqueue_scan_dir(abs_path.clone(), &entry, &job.scan_queue);
                     }
                 }
 
@@ -4022,6 +4012,11 @@ struct ScanJob {
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
+    containing_repository: Option<(
+        RepositoryWorkDirectory,
+        Arc<Mutex<dyn GitRepository>>,
+        TreeMap<RepoPath, GitFileStatus>,
+    )>,
 }
 
 struct UpdateIgnoreStatusJob {
@@ -4346,5 +4341,24 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 entry.path
             ))
         }
+    }
+}
+
+fn combine_git_statuses(
+    staged: Option<GitFileStatus>,
+    unstaged: Option<GitFileStatus>,
+) -> Option<GitFileStatus> {
+    if let Some(staged) = staged {
+        if let Some(unstaged) = unstaged {
+            if unstaged != staged {
+                Some(GitFileStatus::Modified)
+            } else {
+                Some(staged)
+            }
+        } else {
+            Some(staged)
+        }
+    } else {
+        unstaged
     }
 }

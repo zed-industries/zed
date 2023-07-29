@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Weak,
     },
     thread,
@@ -136,7 +136,7 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = NodeRuntime::instance(http.clone(), cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http.clone());
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -154,10 +154,10 @@ fn main() {
         file_finder::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(cx);
+        project_panel::init(Assets, cx);
         diagnostics::init(cx);
         search::init(cx);
-        vector_store::init(fs.clone(), http.clone(), languages.clone(), cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
@@ -166,6 +166,7 @@ fn main() {
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
+        watch_file_types(fs.clone(), cx);
 
         languages.set_theme(theme::current(cx).clone());
         cx.observe_global::<SettingsStore, _>({
@@ -405,11 +406,18 @@ struct PanicRequest {
     token: String,
 }
 
+static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
+
 fn init_panic_hook(app: &App, installation_id: Option<String>) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
     panic::set_hook(Box::new(move |info| {
+        let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
+        if prior_panic_count > 0 {
+            std::panic::resume_unwind(Box::new(()));
+        }
+
         let app_version = ZED_APP_VERSION
             .or_else(|| platform.app_version().ok())
             .map_or("dev".to_string(), |v| v.to_string());
@@ -464,7 +472,6 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
         if is_pty {
             if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
                 eprintln!("{}", panic_data_json);
-                return;
             }
         } else {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
@@ -481,6 +488,8 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 }
             }
         }
+
+        std::process::abort();
     }));
 }
 
@@ -677,6 +686,26 @@ async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> O
     Some(())
 }
 
+#[cfg(debug_assertions)]
+fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    cx.spawn(|mut cx| async move {
+        let mut events = fs
+            .watch(
+                "assets/icons/file_icons/file_types.json".as_ref(),
+                Duration::from_millis(100),
+            )
+            .await;
+        while (events.next().await).is_some() {
+            cx.update(|cx| {
+                cx.update_global(|file_types, _| {
+                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                });
+            })
+        }
+    })
+    .detach()
+}
+
 #[cfg(not(debug_assertions))]
 async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
     None
@@ -686,6 +715,9 @@ async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
 async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
     None
 }
+
+#[cfg(not(debug_assertions))]
+fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
 
 fn connect_to_cli(
     server_name: &str,
@@ -887,7 +919,14 @@ pub fn dock_default_item_factory(
         })
         .notify_err(workspace, cx)?;
 
-    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+    let terminal_view = cx.add_view(|cx| {
+        TerminalView::new(
+            terminal,
+            workspace.weak_handle(),
+            workspace.database_id(),
+            cx,
+        )
+    });
 
     Some(Box::new(terminal_view))
 }

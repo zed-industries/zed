@@ -7,8 +7,10 @@ use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, AsyncAppContext, Entity, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*,
+    geometry::vector::{vec2f, Vector2F},
+    AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -750,6 +752,10 @@ impl Item for Editor {
         Some(Box::new(handle.clone()))
     }
 
+    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+        self.pixel_position_of_newest_cursor
+    }
+
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
@@ -946,21 +952,27 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.unfold_ranges([matches[index].clone()], false, true, cx);
+        let range = self.range_for_match(&matches[index]);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select_ranges([matches[index].clone()])
-        });
+            s.select_ranges([range]);
+        })
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
         self.unfold_ranges(matches.clone(), false, false, cx);
-        self.change_selections(None, cx, |s| s.select_ranges(matches));
+        let mut ranges = Vec::new();
+        for m in &matches {
+            ranges.push(self.range_for_match(&m))
+        }
+        self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
 
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,
-        mut current_index: usize,
+        current_index: usize,
         direction: Direction,
+        count: usize,
         cx: &mut ViewContext<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
@@ -969,40 +981,39 @@ impl SearchableItem for Editor {
         } else {
             matches[current_index].start
         };
-        if matches[current_index]
-            .start
-            .cmp(&current_index_position, &buffer)
-            .is_gt()
-        {
-            if direction == Direction::Prev {
-                if current_index == 0 {
-                    current_index = matches.len() - 1;
+
+        let mut count = count % matches.len();
+        if count == 0 {
+            return current_index;
+        }
+        match direction {
+            Direction::Next => {
+                if matches[current_index]
+                    .start
+                    .cmp(&current_index_position, &buffer)
+                    .is_gt()
+                {
+                    count = count - 1
+                }
+
+                (current_index + count) % matches.len()
+            }
+            Direction::Prev => {
+                if matches[current_index]
+                    .end
+                    .cmp(&current_index_position, &buffer)
+                    .is_lt()
+                {
+                    count = count - 1;
+                }
+
+                if current_index >= count {
+                    current_index - count
                 } else {
-                    current_index -= 1;
+                    matches.len() - (count - current_index)
                 }
             }
-        } else if matches[current_index]
-            .end
-            .cmp(&current_index_position, &buffer)
-            .is_lt()
-        {
-            if direction == Direction::Next {
-                current_index = 0;
-            }
-        } else if direction == Direction::Prev {
-            if current_index == 0 {
-                current_index = matches.len() - 1;
-            } else {
-                current_index -= 1;
-            }
-        } else if direction == Direction::Next {
-            if current_index == matches.len() - 1 {
-                current_index = 0
-            } else {
-                current_index += 1;
-            }
-        };
-        current_index
+        }
     }
 
     fn find_matches(

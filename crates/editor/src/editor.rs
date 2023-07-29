@@ -74,6 +74,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rand::{seq::SliceRandom, thread_rng};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -226,6 +227,10 @@ actions!(
         MoveLineUp,
         MoveLineDown,
         JoinLines,
+        SortLinesCaseSensitive,
+        SortLinesCaseInsensitive,
+        ReverseLines,
+        ShuffleLines,
         Transpose,
         Cut,
         Copy,
@@ -344,6 +349,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::join_lines);
+    cx.add_action(Editor::sort_lines_case_sensitive);
+    cx.add_action(Editor::sort_lines_case_insensitive);
+    cx.add_action(Editor::reverse_lines);
+    cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -534,6 +543,7 @@ pub struct Editor {
     show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
+    show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -549,6 +559,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    collapse_matches: bool,
     workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
@@ -562,6 +573,7 @@ pub struct Editor {
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
+    pixel_position_of_newest_cursor: Option<Vector2F>,
 }
 
 pub struct EditorSnapshot {
@@ -1364,6 +1376,7 @@ impl Editor {
             show_local_selections: true,
             mode,
             show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -1381,6 +1394,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            collapse_matches: false,
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
@@ -1392,6 +1406,7 @@ impl Editor {
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
+            pixel_position_of_newest_cursor: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1518,6 +1533,17 @@ impl Editor {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
+    }
+
+    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+        self.collapse_matches = collapse_matches;
+    }
+
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+        if self.collapse_matches {
+            return range.start..range.start;
+        }
+        range.clone()
     }
 
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
@@ -2659,11 +2685,16 @@ impl Editor {
             InlayRefreshReason::RefreshRequested => (InvalidationStrategy::RefreshRequested, None),
         };
 
-        self.inlay_hint_cache.refresh_inlay_hints(
+        if let Some(InlaySplice {
+            to_remove,
+            to_insert,
+        }) = self.inlay_hint_cache.spawn_hint_refresh(
             self.excerpt_visible_offsets(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,
-        )
+        ) {
+            self.splice_inlay_hints(to_remove, to_insert, cx);
+        }
     }
 
     fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
@@ -4185,6 +4216,96 @@ impl Editor {
         });
     }
 
+    pub fn sort_lines_case_sensitive(
+        &mut self,
+        _: &SortLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort())
+    }
+
+    pub fn sort_lines_case_insensitive(
+        &mut self,
+        _: &SortLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+    }
+
+    pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.reverse())
+    }
+
+    pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
+    }
+
+    fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&mut [&str]),
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        let mut contiguous_row_selections = Vec::new();
+        let mut new_selections = Vec::new();
+
+        while let Some(selection) = selections.next() {
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
+
+            let start_point = Point::new(start_row, 0);
+            let end_point = Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            let text = buffer
+                .text_for_range(start_point..end_point)
+                .collect::<String>();
+            let mut text = text.split("\n").collect_vec();
+
+            let text_len = text.len();
+            callback(&mut text);
+
+            // This is a current limitation with selections.
+            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
+            debug_assert!(
+                text.len() == text_len,
+                "callback should not change the number of lines"
+            );
+
+            edits.push((start_point..end_point, text.join("\n")));
+            let start_anchor = buffer.anchor_after(start_point);
+            let end_anchor = buffer.anchor_before(end_point);
+
+            // Make selection and push
+            new_selections.push(Selection {
+                id: selection.id,
+                start: start_anchor.to_offset(&buffer),
+                end: end_anchor.to_offset(&buffer),
+                goal: SelectionGoal::None,
+                reversed: selection.reversed,
+            });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -5278,7 +5399,7 @@ impl Editor {
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let end = self.buffer.read(cx).read(cx).len();
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        self.change_selections(None, cx, |s| {
             s.select_ranges(vec![0..end]);
         });
     }
@@ -6255,6 +6376,7 @@ impl Editor {
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
+            let range = self.range_for_match(&range);
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
@@ -7064,6 +7186,24 @@ impl Editor {
             .text()
     }
 
+    pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
+        let mut wrap_guides = smallvec::smallvec![];
+
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
+
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        if settings.show_wrap_guides {
+            if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
+                wrap_guides.push((soft_wrap as usize, true));
+            }
+            wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
+        }
+
+        wrap_guides
+    }
+
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self
@@ -7107,6 +7247,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_gutter);
         cx.notify();
     }
 

@@ -1,9 +1,12 @@
+pub mod file_associations;
 mod project_panel_settings;
 
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
-use editor::{Cancel, Editor};
+use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
+use file_associations::FileAssociations;
+
 use futures::stream::StreamExt;
 use gpui::{
     actions,
@@ -15,8 +18,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AnyElement, AppContext, AssetSource, AsyncAppContext, ClipboardItem, Element, Entity,
+    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -94,6 +97,7 @@ pub enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct EntryDetails {
     filename: String,
+    icon: Option<Arc<str>>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -111,6 +115,7 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
+        CollapseAllEntries,
         NewDirectory,
         NewFile,
         Copy,
@@ -121,7 +126,9 @@ actions!(
         Paste,
         Delete,
         Rename,
-        ToggleFocus
+        Open,
+        ToggleFocus,
+        NewSearchInDirectory,
     ]
 );
 
@@ -129,10 +136,12 @@ pub fn init_settings(cx: &mut AppContext) {
     settings::register::<ProjectPanelSettings>(cx);
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
+    file_associations::init(assets, cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
+    cx.add_action(ProjectPanel::collapse_all_entries);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::new_file);
@@ -140,12 +149,14 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
+    cx.add_async_action(ProjectPanel::open_file);
     cx.add_action(ProjectPanel::cancel);
     cx.add_action(ProjectPanel::cut);
     cx.add_action(ProjectPanel::copy);
     cx.add_action(ProjectPanel::copy_path);
     cx.add_action(ProjectPanel::copy_relative_path);
     cx.add_action(ProjectPanel::reveal_in_finder);
+    cx.add_action(ProjectPanel::new_search_in_directory);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
             this.paste(action, cx);
@@ -164,6 +175,10 @@ pub enum Event {
     },
     DockPositionChanged,
     Focus,
+    NewSearchInDirectory {
+        dir_entry: Entry,
+    },
+    ActivatePanel,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -189,6 +204,9 @@ impl ProjectPanel {
                         this.autoscroll(cx);
                         cx.notify();
                     }
+                }
+                project::Event::ActivateProjectPanel => {
+                    cx.emit(Event::ActivatePanel);
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -227,6 +245,11 @@ impl ProjectPanel {
                     this.edit_state = None;
                     this.update_visible_entries(None, cx);
                 }
+            })
+            .detach();
+
+            cx.observe_global::<FileAssociations, _>(|_, cx| {
+                cx.notify();
             })
             .detach();
 
@@ -407,6 +430,12 @@ impl ProjectPanel {
                 CopyRelativePath,
             ));
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
+            if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::action(
+                    "Search Inside",
+                    NewSearchInDirectory,
+                ));
+            }
             if let Some(clipboard_entry) = self.clipboard_entry {
                 if clipboard_entry.worktree_id() == worktree.id() {
                     menu_entries.push(ContextMenuItem::action("Paste", Paste));
@@ -487,6 +516,12 @@ impl ProjectPanel {
         }
     }
 
+    pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
+        self.expanded_dir_ids.clear();
+        self.update_visible_entries(None, cx);
+        cx.notify();
+    }
+
     fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
@@ -535,15 +570,20 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         if let Some(task) = self.confirm_edit(cx) {
-            Some(task)
-        } else if let Some((_, entry)) = self.selected_entry(cx) {
+            return Some(task);
+        }
+
+        None
+    }
+
+    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
             }
-            None
-        } else {
-            None
         }
+
+        None
     }
 
     fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -720,13 +760,20 @@ impl ProjectPanel {
                         is_dir: entry.is_dir(),
                         processing_filename: None,
                     });
-                    let filename = entry
+                    let file_name = entry
                         .path
                         .file_name()
-                        .map_or(String::new(), |s| s.to_string_lossy().to_string());
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default()
+                        .to_string();
+                    let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
+                    let selection_end =
+                        file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     self.filename_editor.update(cx, |editor, cx| {
-                        editor.set_text(filename, cx);
-                        editor.select_all(&Default::default(), cx);
+                        editor.set_text(file_name, cx);
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([0..selection_end])
+                        })
                     });
                     cx.focus(&self.filename_editor);
                     self.update_visible_entries(None, cx);
@@ -918,6 +965,20 @@ impl ProjectPanel {
         }
     }
 
+    pub fn new_search_in_directory(
+        &mut self,
+        _: &NewSearchInDirectory,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_dir() {
+                cx.emit(Event::NewSearchInDirectory {
+                    dir_entry: entry.clone(),
+                });
+            }
+        }
+    }
+
     fn move_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
@@ -972,7 +1033,10 @@ impl ProjectPanel {
         None
     }
 
-    fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
+    pub fn selected_entry<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Worktree, &'a project::Entry)> {
         let (worktree, entry) = self.selected_entry_handle(cx)?;
         Some((worktree.read(cx), entry))
     }
@@ -1166,7 +1230,14 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let git_status_setting = settings::get::<ProjectPanelSettings>(cx).git_status;
+            let (git_status_setting, show_file_icons, show_folder_icons) = {
+                let settings = settings::get::<ProjectPanelSettings>(cx);
+                (
+                    settings.git_status,
+                    settings.file_icons,
+                    settings.folder_icons,
+                )
+            };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
@@ -1179,6 +1250,23 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
+                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+                    let icon = match entry.kind {
+                        EntryKind::File(_) => {
+                            if show_file_icons {
+                                Some(FileAssociations::get_icon(&entry.path, cx))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => {
+                            if show_folder_icons {
+                                Some(FileAssociations::get_folder_icon(is_expanded, cx))
+                            } else {
+                                Some(FileAssociations::get_chevron_icon(is_expanded, cx))
+                            }
+                        }
+                    };
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1187,11 +1275,12 @@ impl ProjectPanel {
                             .unwrap_or(root_name)
                             .to_string_lossy()
                             .to_string(),
+                        icon,
                         path: entry.path.clone(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
-                        is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
+                        is_expanded,
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
@@ -1239,7 +1328,6 @@ impl ProjectPanel {
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
     ) -> AnyElement<V> {
-        let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
         let mut filename_text_style = style.text.clone();
@@ -1254,23 +1342,24 @@ impl ProjectPanel {
             .unwrap_or(style.text.color);
 
         Flex::row()
-            .with_child(
-                if kind.is_dir() {
-                    if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
-                    } else {
-                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
-                    }
+            .with_child(if let Some(icon) = &details.icon {
+                Svg::new(icon.to_string())
+                    .with_color(style.icon_color)
                     .constrained()
-                } else {
-                    Empty::new().constrained()
-                }
-                .with_max_width(style.icon_size)
-                .with_max_height(style.icon_size)
-                .aligned()
-                .constrained()
-                .with_width(style.icon_size),
-            )
+                    .with_max_width(style.icon_size)
+                    .with_max_height(style.icon_size)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.icon_size)
+            } else {
+                Empty::new()
+                    .constrained()
+                    .with_max_width(style.icon_size)
+                    .with_max_height(style.icon_size)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.icon_size)
+            })
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
                     .contained()
@@ -1305,7 +1394,8 @@ impl ProjectPanel {
     ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
-        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
+        let settings = settings::get::<ProjectPanelSettings>(cx);
+        let padding = theme.container.padding.left + details.depth as f32 * settings.indent_size;
 
         let entry_style = if details.is_cut {
             &theme.cut_entry
@@ -1641,7 +1731,11 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{collections::HashSet, path::Path};
+    use std::{
+        collections::HashSet,
+        path::Path,
+        sync::atomic::{self, AtomicUsize},
+    };
     use workspace::{pane, AppState};
 
     #[gpui::test]
@@ -1877,7 +1971,7 @@ mod tests {
             .update(cx, |panel, cx| {
                 panel
                     .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("another-filename", cx));
+                    .update(cx, |editor, cx| editor.set_text("another-filename.txt", cx));
                 panel.confirm(&Confirm, cx).unwrap()
             })
             .await
@@ -1891,14 +1985,14 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          another-filename  <== selected",
+                "          another-filename.txt  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
         );
 
-        select_path(&panel, "root1/b/another-filename", cx);
+        select_path(&panel, "root1/b/another-filename.txt", cx);
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -1909,7 +2003,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [EDITOR: 'another-filename']  <== selected",
+                "          [EDITOR: 'another-filename.txt']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1917,9 +2011,15 @@ mod tests {
         );
 
         let confirm = panel.update(cx, |panel, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("a-different-filename", cx));
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "another-filename".len(), "Should not select file extension");
+
+                editor.set_text("a-different-filename.tar.gz", cx)
+            });
             panel.confirm(&Confirm, cx).unwrap()
         });
         assert_eq!(
@@ -1931,7 +2031,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [PROCESSING: 'a-different-filename']  <== selected",
+                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1948,12 +2048,41 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          a-different-filename  <== selected",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
         );
+
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot");
+
+            });
+            panel.cancel(&Cancel, cx)
+        });
 
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
         assert_eq!(
@@ -1966,7 +2095,7 @@ mod tests {
                 "        > [EDITOR: '']  <== selected",
                 "        > 3",
                 "        > 4",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -1989,7 +2118,7 @@ mod tests {
                 "        > [PROCESSING: 'new-dir']",
                 "        > 3  <== selected",
                 "        > 4",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2006,7 +2135,7 @@ mod tests {
                 "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2023,7 +2152,7 @@ mod tests {
                 "        > [EDITOR: '3']  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2041,7 +2170,7 @@ mod tests {
                 "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename",
+                "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -2268,7 +2397,7 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2296,7 +2425,7 @@ mod tests {
         ensure_no_open_items_and_panes(window_id, &workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
-        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2480,6 +2609,140 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_new_search_in_directory_trigger(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        let new_search_events_count = Arc::new(AtomicUsize::new(0));
+        let _subscription = panel.update(cx, |_, cx| {
+            let subcription_count = Arc::clone(&new_search_events_count);
+            cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                if matches!(event, Event::NewSearchInDirectory { .. }) {
+                    subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+            })
+        });
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            0,
+            "Should not trigger new search in directory when called on a file"
+        );
+
+        select_path(&panel, "src/test", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test  <== selected",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            1,
+            "Should trigger new search in directory when called on a directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                },
+                "dir_2": {
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        panel.update(cx, |panel, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, cx)
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v project_root", "    > dir_1", "    > dir_2",]
+        );
+
+        // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1  <== selected",
+                "        > nested_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+            ]
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &ViewHandle<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -2581,7 +2844,7 @@ mod tests {
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
-            crate::init(cx);
+            crate::init((), cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
         });
@@ -2596,7 +2859,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
-            crate::init(cx);
+            crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
         });
@@ -2680,3 +2943,4 @@ mod tests {
         });
     }
 }
+// TODO - a workspace command?

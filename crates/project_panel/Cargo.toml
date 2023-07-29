@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 context_menu = { path = "../context_menu" }
+collections = { path = "../collections" }
 db = { path = "../db" }
 drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }

@@ -1,18 +1,15 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::lock::Mutex;
-use futures::{future::Shared, FutureExt};
-use gpui::{executor::Background, Task};
 use serde::Deserialize;
 use smol::{fs, io::BufReader, process::Command};
-use std::process::Output;
+use std::process::{Output, Stdio};
 use std::{
     env::consts,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, ResultExt};
+use util::http::HttpClient;
 
 const VERSION: &str = "v18.15.0";
 
@@ -33,20 +30,12 @@ pub struct NpmInfoDistTags {
 
 pub struct NodeRuntime {
     http: Arc<dyn HttpClient>,
-    background: Arc<Background>,
-    installation_path: Mutex<Option<Shared<Task<Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
 impl NodeRuntime {
-    pub fn instance(http: Arc<dyn HttpClient>, background: Arc<Background>) -> Arc<NodeRuntime> {
+    pub fn instance(http: Arc<dyn HttpClient>) -> Arc<NodeRuntime> {
         RUNTIME_INSTANCE
-            .get_or_init(|| {
-                Arc::new(NodeRuntime {
-                    http,
-                    background,
-                    installation_path: Mutex::new(None),
-                })
-            })
+            .get_or_init(|| Arc::new(NodeRuntime { http }))
             .clone()
     }
 
@@ -61,7 +50,17 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
-        let attempt = |installation_path: PathBuf| async move {
+        let attempt = || async move {
+            let installation_path = self.install_if_needed().await?;
+
+            let mut env_path = installation_path.join("bin").into_os_string();
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                if !existing_path.is_empty() {
+                    env_path.push(":");
+                    env_path.push(&existing_path);
+                }
+            }
+
             let node_binary = installation_path.join("bin/node");
             let npm_file = installation_path.join("bin/npm");
 
@@ -74,6 +73,7 @@ impl NodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
+            command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand).args(args);
 
             if let Some(directory) = directory {
@@ -83,11 +83,9 @@ impl NodeRuntime {
             command.output().await.map_err(|e| anyhow!("{e}"))
         };
 
-        let installation_path = self.install_if_needed().await?;
-        let mut output = attempt(installation_path).await;
+        let mut output = attempt().await;
         if output.is_err() {
-            let installation_path = self.reinstall().await?;
-            output = attempt(installation_path).await;
+            output = attempt().await;
             if output.is_err() {
                 return Err(anyhow!(
                     "failed to launch npm subcommand {subcommand} subcommand"
@@ -158,47 +156,9 @@ impl NodeRuntime {
         Ok(())
     }
 
-    async fn reinstall(&self) -> Result<PathBuf> {
-        log::info!("beginnning to reinstall Node runtime");
-        let mut installation_path = self.installation_path.lock().await;
-
-        if let Some(task) = installation_path.as_ref().cloned() {
-            if let Ok(installation_path) = task.await {
-                smol::fs::remove_dir_all(&installation_path)
-                    .await
-                    .context("node dir removal")
-                    .log_err();
-            }
-        }
-
-        let http = self.http.clone();
-        let task = self
-            .background
-            .spawn(async move { Self::install(http).await.map_err(Arc::new) })
-            .shared();
-
-        *installation_path = Some(task.clone());
-        task.await.map_err(|e| anyhow!("{}", e))
-    }
-
     async fn install_if_needed(&self) -> Result<PathBuf> {
-        let task = self
-            .installation_path
-            .lock()
-            .await
-            .get_or_insert_with(|| {
-                let http = self.http.clone();
-                self.background
-                    .spawn(async move { Self::install(http).await.map_err(Arc::new) })
-                    .shared()
-            })
-            .clone();
+        log::info!("Node runtime install_if_needed");
 
-        task.await.map_err(|e| anyhow!("{}", e))
-    }
-
-    async fn install(http: Arc<dyn HttpClient>) -> Result<PathBuf> {
-        log::info!("installing Node runtime");
         let arch = match consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
@@ -209,8 +169,19 @@ impl NodeRuntime {
         let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join("bin/node");
+        let npm_file = node_dir.join("bin/npm");
 
-        if fs::metadata(&node_binary).await.is_err() {
+        let result = Command::new(&node_binary)
+            .arg(npm_file)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        let valid = matches!(result, Ok(status) if status.success());
+
+        if !valid {
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -218,7 +189,8 @@ impl NodeRuntime {
 
             let file_name = format!("node-{VERSION}-darwin-{arch}.tar.gz");
             let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
-            let mut response = http
+            let mut response = self
+                .http
                 .get(&url, Default::default(), true)
                 .await
                 .context("error downloading Node binary tarball")?;

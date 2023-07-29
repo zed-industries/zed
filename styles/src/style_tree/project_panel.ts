@@ -46,9 +46,11 @@ export default function project_panel(): any {
         const base_properties = {
             height: 22,
             background: background(theme.middle),
-            icon_color: foreground(theme.middle, "variant"),
-            icon_size: 7,
-            icon_spacing: 5,
+            chevron_color: foreground(theme.middle, "variant"),
+            icon_color: with_opacity(foreground(theme.middle, "active"), 0.3),
+            chevron_size: 7,
+            icon_size: 14,
+            icon_spacing: 6,
             text: text(theme.middle, "sans", "variant", { size: "sm" }),
             status: {
                 ...git_status,
@@ -155,7 +157,7 @@ export default function project_panel(): any {
         }),
         background: background(theme.middle),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
-        indent_width: 12,
+        indent_width: 20,
         entry: default_entry,
         dragged_entry: {
             ...default_entry.inactive.default,

@@ -50,6 +50,13 @@
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
+  // Whether to show wrap guides in the editor. Setting this to true will
+  // show a guide at the 'preferred_line_length' value if softwrap is set to
+  // 'preferred_line_length', and will show any additional guides as specified
+  // by the 'wrap_guides' setting.
+  "show_wrap_guides": true,
+  // Character counts at which to show wrap guides in the editor.
+  "wrap_guides": [],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -66,6 +73,11 @@
   // 3. Draw all invisible symbols:
   //   "all"
   "show_whitespaces": "selection",
+  // Settings related to calls in Zed
+  "calls": {
+    // Join calls with the microphone muted by default
+    "mute_on_join": true
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
@@ -97,12 +109,18 @@
     "show_other_hints": true
   },
   "project_panel": {
-    // Whether to show the git status in the project panel.
-    "git_status": true,
+    // Default width of the project panel.
+    "default_width": 240,
     // Where to dock project panel. Can be 'left' or 'right'.
     "dock": "left",
-    // Default width of the project panel.
-    "default_width": 240
+    // Whether to show file icons in the project panel.
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the project panel.
+    "folder_icons": true,
+    // Whether to show the git status in the project panel.
+    "git_status": true,
+    // Amount of indentation for nested items.
+    "indent_size": 20
   },
   "assistant": {
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
@@ -198,9 +216,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -310,8 +326,8 @@
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono"
   },
-  // Difference settings for vector_store
-  "vector_store": {
+  // Difference settings for semantic_index
+  "semantic_index": {
     "enabled": false,
     "reindexing_delay_seconds": 600
   },
@@ -349,12 +365,6 @@
   // LSP Specific settings.
   "lsp": {
     // Specify the LSP name as a key here.
-    // As of 8/10/22, supported LSPs are:
-    // pyright
-    // gopls
-    // rust-analyzer
-    // typescript-language-server
-    // vscode-json-languageserver
     // "rust-analyzer": {
     //     //These initialization options are merged into Zed's defaults
     //     "initialization_options": {

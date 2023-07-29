@@ -6,7 +6,7 @@ import ScreenCaptureKit
 class LKRoomDelegate: RoomDelegate {
     var data: UnsafeRawPointer
     var onDidDisconnect: @convention(c) (UnsafeRawPointer) -> Void
-    var onDidSubscribeToRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
+    var onDidSubscribeToRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
     var onMuteChangedFromRemoteAudioTrack: @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void
     var onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void
@@ -16,7 +16,7 @@ class LKRoomDelegate: RoomDelegate {
     init(
         data: UnsafeRawPointer,
         onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
-        onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
+        onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer, UnsafeRawPointer) -> Void,
         onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
         onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
         onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void,
@@ -43,7 +43,7 @@ class LKRoomDelegate: RoomDelegate {
         if track.kind == .video {
             self.onDidSubscribeToRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque())
         } else if track.kind == .audio {
-            self.onDidSubscribeToRemoteAudioTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque())
+            self.onDidSubscribeToRemoteAudioTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque(), Unmanaged.passUnretained(publication).toOpaque())
         }
     }
 
@@ -52,12 +52,12 @@ class LKRoomDelegate: RoomDelegate {
             self.onMuteChangedFromRemoteAudioTrack(self.data, publication.sid as CFString, muted)
         }
     }
-    
+
     func room(_ room: Room, didUpdate speakers: [Participant]) {
         guard let speaker_ids = speakers.compactMap({ $0.identity as CFString }) as CFArray? else { return }
         self.onActiveSpeakersChanged(self.data, speaker_ids)
     }
-    
+
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
             self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString)
@@ -104,7 +104,7 @@ class LKVideoRenderer: NSObject, VideoRenderer {
 public func LKRoomDelegateCreate(
     data: UnsafeRawPointer,
     onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
-    onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
+    onDidSubscribeToRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer, UnsafeRawPointer) -> Void,
     onDidUnsubscribeFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
     onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
     onActiveSpeakerChanged: @escaping @convention(c) (UnsafeRawPointer, CFArray) -> Void,
@@ -180,39 +180,39 @@ public func LKRoomUnpublishTrack(room: UnsafeRawPointer, publication: UnsafeRawP
 @_cdecl("LKRoomAudioTracksForRemoteParticipant")
 public func LKRoomAudioTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
-    
+
     for (_, participant) in room.remoteParticipants {
         if participant.identity == participantId as String {
             return participant.audioTracks.compactMap { $0.track as? RemoteAudioTrack } as CFArray?
         }
     }
-    
+
     return nil;
 }
 
 @_cdecl("LKRoomAudioTrackPublicationsForRemoteParticipant")
 public func LKRoomAudioTrackPublicationsForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
-    
+
     for (_, participant) in room.remoteParticipants {
         if participant.identity == participantId as String {
             return participant.audioTracks.compactMap { $0 as? RemoteTrackPublication } as CFArray?
         }
     }
-    
+
     return nil;
 }
 
 @_cdecl("LKRoomVideoTracksForRemoteParticipant")
 public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
-    
+
     for (_, participant) in room.remoteParticipants {
         if participant.identity == participantId as String {
             return participant.videoTracks.compactMap { $0.track as? RemoteVideoTrack } as CFArray?
         }
     }
-    
+
     return nil;
 }
 
@@ -222,7 +222,7 @@ public func LKLocalAudioTrackCreateTrack() -> UnsafeMutableRawPointer {
       echoCancellation: true,
       noiseSuppression: true
     ))
-    
+
     return Unmanaged.passRetained(track).toOpaque()
 }
 
@@ -276,7 +276,7 @@ public func LKLocalTrackPublicationSetMute(
     callback_data: UnsafeRawPointer
 ) {
     let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
-    
+
     if muted {
         publication.mute().then {
             on_complete(callback_data, nil)
@@ -306,4 +306,22 @@ public func LKRemoteTrackPublicationSetEnabled(
     }.catch { error in
         on_complete(callback_data, error.localizedDescription as CFString)
     }
+}
+
+@_cdecl("LKRemoteTrackPublicationIsMuted")
+public func LKRemoteTrackPublicationIsMuted(
+    publication: UnsafeRawPointer
+) -> Bool {
+    let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+
+    return publication.muted
+}
+
+@_cdecl("LKRemoteTrackPublicationGetSid")
+public func LKRemoteTrackPublicationGetSid(
+    publication: UnsafeRawPointer
+) -> CFString {
+    let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+
+    return publication.sid as CFString
 }

@@ -1,6 +1,9 @@
 use gpui::keymap_matcher::KeymapContext;
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
+use workspace::searchable::Direction;
+
+use crate::motion::Motion;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
@@ -16,15 +19,8 @@ impl Default for Mode {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
-pub enum Namespace {
-    G,
-    Z,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
     Number(usize),
-    Namespace(Namespace),
     Change,
     Delete,
     Yank,
@@ -38,6 +34,25 @@ pub enum Operator {
 pub struct VimState {
     pub mode: Mode,
     pub operator_stack: Vec<Operator>,
+    pub search: SearchState,
+
+    pub last_find: Option<Motion>,
+}
+
+pub struct SearchState {
+    pub direction: Direction,
+    pub count: usize,
+    pub initial_query: String,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            direction: Direction::Next,
+            count: 1,
+            initial_query: "".to_string(),
+        }
+    }
 }
 
 impl VimState {
@@ -73,6 +88,7 @@ impl VimState {
 
     pub fn keymap_context_layer(&self) -> KeymapContext {
         let mut context = KeymapContext::default();
+        context.add_identifier("VimEnabled");
         context.add_key(
             "vim_mode",
             match self.mode {
@@ -107,8 +123,6 @@ impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
             Operator::Number(_) => "n",
-            Operator::Namespace(Namespace::G) => "g",
-            Operator::Namespace(Namespace::Z) => "z",
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",

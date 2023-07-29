@@ -33,6 +33,11 @@ export default function feedback(): any {
                     background: background(theme.highest, "on", "hovered"),
                     border: border(theme.highest, "on", "hovered"),
                 },
+                disabled: {
+                    ...text(theme.highest, "mono", "on", "disabled"),
+                    background: background(theme.highest, "on", "disabled"),
+                    border: border(theme.highest, "on", "disabled"),
+                },
             },
         }),
         button_margin: 8,

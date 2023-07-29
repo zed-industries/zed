@@ -43,6 +43,10 @@ impl<'a> VimTestContext<'a> {
                     toolbar.add_item(project_search_bar, cx);
                 })
             });
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                let vim_mode_indicator = cx.add_view(ModeIndicator::new);
+                status_bar.add_right_item(vim_mode_indicator, cx);
+            });
         });
 
         Self { cx }
@@ -90,6 +94,7 @@ impl<'a> VimTestContext<'a> {
         self.cx.set_state(text)
     }
 
+    #[track_caller]
     pub fn assert_state(&mut self, text: &str, mode: Mode) {
         self.assert_editor_state(text);
         assert_eq!(self.mode(), mode, "{}", self.assertion_context());

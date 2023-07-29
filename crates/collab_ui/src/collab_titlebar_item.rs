@@ -374,7 +374,7 @@ impl CollabTitlebarItem {
                         "Share Feedback",
                         feedback::feedback_editor::GiveFeedback,
                     ),
-                    ContextMenuItem::action("Sign out", SignOut),
+                    ContextMenuItem::action("Sign Out", SignOut),
                 ]
             } else {
                 vec![
@@ -652,10 +652,10 @@ impl CollabTitlebarItem {
         let is_muted = room.read(cx).is_muted();
         if is_muted {
             icon = "icons/radix/mic-mute.svg";
-            tooltip = "Unmute microphone\nRight click for options";
+            tooltip = "Unmute microphone";
         } else {
             icon = "icons/radix/mic.svg";
-            tooltip = "Mute microphone\nRight click for options";
+            tooltip = "Mute microphone";
         }
 
         let titlebar = &theme.titlebar;
@@ -705,10 +705,10 @@ impl CollabTitlebarItem {
         let is_deafened = room.read(cx).is_deafened().unwrap_or(false);
         if is_deafened {
             icon = "icons/radix/speaker-off.svg";
-            tooltip = "Unmute speakers\nRight click for options";
+            tooltip = "Unmute speakers";
         } else {
             icon = "icons/radix/speaker-loud.svg";
-            tooltip = "Mute speakers\nRight click for options";
+            tooltip = "Mute speakers";
         }
 
         let titlebar = &theme.titlebar;

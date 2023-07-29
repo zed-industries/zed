@@ -1,4 +1,5 @@
 use crate::{
+    call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant, RemoteVideoTrack},
     IncomingCall,
 };
@@ -153,8 +154,10 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
 
-                this.update(&mut cx, |this, cx| this.share_microphone(cx))
-                    .await?;
+                if !cx.read(|cx| settings::get::<CallSettings>(cx).mute_on_join) {
+                    this.update(&mut cx, |this, cx| this.share_microphone(cx))
+                        .await?;
+                }
 
                 anyhow::Ok(())
             })
@@ -656,7 +659,7 @@ impl Room {
                                     peer_id,
                                     projects: participant.projects,
                                     location,
-                                    muted: false,
+                                    muted: true,
                                     speaking: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
@@ -670,6 +673,10 @@ impl Room {
                                     live_kit.room.remote_video_tracks(&user.id.to_string());
                                 let audio_tracks =
                                     live_kit.room.remote_audio_tracks(&user.id.to_string());
+                                let publications = live_kit
+                                    .room
+                                    .remote_audio_track_publications(&user.id.to_string());
+
                                 for track in video_tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),
@@ -677,9 +684,15 @@ impl Room {
                                     )
                                     .log_err();
                                 }
-                                for track in audio_tracks {
+
+                                for (track, publication) in
+                                    audio_tracks.iter().zip(publications.iter())
+                                {
                                     this.remote_audio_track_updated(
-                                        RemoteAudioTrackUpdate::Subscribed(track),
+                                        RemoteAudioTrackUpdate::Subscribed(
+                                            track.clone(),
+                                            publication.clone(),
+                                        ),
                                         cx,
                                     )
                                     .log_err();
@@ -819,8 +832,8 @@ impl Room {
                 cx.notify();
             }
             RemoteAudioTrackUpdate::MuteChanged { track_id, muted } => {
+                let mut found = false;
                 for participant in &mut self.remote_participants.values_mut() {
-                    let mut found = false;
                     for track in participant.audio_tracks.values() {
                         if track.sid() == track_id {
                             found = true;
@@ -832,16 +845,20 @@ impl Room {
                         break;
                     }
                 }
+
                 cx.notify();
             }
-            RemoteAudioTrackUpdate::Subscribed(track) => {
+            RemoteAudioTrackUpdate::Subscribed(track, publication) => {
                 let user_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
                     .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
+
                 participant.audio_tracks.insert(track_id.clone(), track);
+                participant.muted = publication.is_muted();
+
                 cx.emit(Event::RemoteAudioTracksChanged {
                     participant_id: participant.peer_id,
                 });
@@ -1053,7 +1070,7 @@ impl Room {
         self.live_kit
             .as_ref()
             .and_then(|live_kit| match &live_kit.microphone_track {
-                LocalTrack::None => None,
+                LocalTrack::None => Some(true),
                 LocalTrack::Pending { muted, .. } => Some(*muted),
                 LocalTrack::Published { muted, .. } => Some(*muted),
             })
@@ -1070,6 +1087,7 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
+    #[track_caller]
     pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -1244,6 +1262,10 @@ impl Room {
     pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
         let should_mute = !self.is_muted();
         if let Some(live_kit) = self.live_kit.as_mut() {
+            if matches!(live_kit.microphone_track, LocalTrack::None) {
+                return Ok(self.share_microphone(cx));
+            }
+
             let (ret_task, old_muted) = live_kit.set_mute(should_mute, cx)?;
             live_kit.muted_by_user = should_mute;
 

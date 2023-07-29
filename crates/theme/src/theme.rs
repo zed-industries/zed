@@ -402,6 +402,7 @@ pub struct StatusBar {
     pub height: f32,
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
+    pub vim_mode_indicator: ContainedText,
     pub active_language: Interactive<ContainedText>,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
@@ -480,8 +481,10 @@ pub struct ProjectPanelEntry {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,
-    pub icon_color: Color,
     pub icon_size: f32,
+    pub icon_color: Color,
+    pub chevron_color: Color,
+    pub chevron_size: f32,
     pub icon_spacing: f32,
     pub status: EntryStatus,
 }
@@ -689,6 +692,8 @@ pub struct Editor {
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
     pub diff: DiffStyle,
+    pub wrap_guide: Color,
+    pub active_wrap_guide: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,

@@ -5,6 +5,7 @@ use crate::{
 use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
 use client::{proto, Client};
+use gpui::geometry::vector::Vector2F;
 use gpui::{
     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -222,6 +223,9 @@ pub trait Item: View {
     fn show_toolbar(&self) -> bool {
         true
     }
+    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+        None
+    }
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
@@ -290,6 +294,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F>;
 }
 
 pub trait WeakItemHandle {
@@ -633,6 +638,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn show_toolbar(&self, cx: &AppContext) -> bool {
         self.read(cx).show_toolbar()
+    }
+
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
+        self.read(cx).pixel_position_of_cursor()
     }
 }
 

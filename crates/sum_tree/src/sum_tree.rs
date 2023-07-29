@@ -738,7 +738,7 @@ mod tests {
             for _ in 0..num_operations {
                 let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let splice_start = rng.gen_range(0..splice_end + 1);
-                let count = rng.gen_range(0..3);
+                let count = rng.gen_range(0..10);
                 let tree_end = tree.extent::<Count>(&());
                 let new_items = rng
                     .sample_iter(distributions::Standard)
@@ -805,10 +805,12 @@ mod tests {
                 }
                 assert_eq!(filter_cursor.item(), None);
 
-                let mut pos = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>();
-                cursor.seek(&Count(pos), Bias::Right, &());
+                let start_pos = rng.gen_range(0..=reference_items.len());
+                cursor.seek(&Count(start_pos), Bias::Right, &());
+                let mut pos = rng.gen_range(start_pos..=reference_items.len());
+                cursor.seek_forward(&Count(pos), Bias::Right, &());
 
                 for i in 0..10 {
                     assert_eq!(cursor.start().0, pos);

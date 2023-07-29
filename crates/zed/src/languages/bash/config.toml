@@ -1,0 +1,8 @@
+name = "Shell Script"
+path_suffixes = [".sh", ".bash", ".bashrc", ".bash_profile", ".bash_aliases", ".bash_logout", ".profile", ".zsh", ".zshrc", ".zshenv", ".zsh_profile", ".zsh_aliases", ".zsh_histfile", ".zlogin"]
+first_line_pattern = "^#!.*\\b(?:ba|z)?sh\\b"
+brackets = [
+    { start = "[", end = "]", close = true, newline = false },
+    { start = "(", end = ")", close = true, newline = false },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
+]

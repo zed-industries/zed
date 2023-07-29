@@ -14,8 +14,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
-    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, NoAction, SceneBuilder,
-    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
+    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
+    View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -363,17 +363,13 @@ impl<'a> WindowContext<'a> {
     ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         let window_id = self.window_id;
         let mut contexts = Vec::new();
-        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
+        let mut handler_depths_by_action_id = HashMap::<TypeId, usize>::default();
         for (depth, view_id) in self.ancestors(view_id).enumerate() {
             if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
                 contexts.push(view_metadata.keymap_context.clone());
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    handler_depths_by_action_type.extend(
-                        actions
-                            .keys()
-                            .copied()
-                            .map(|action_type| (action_type, depth)),
-                    );
+                    handler_depths_by_action_id
+                        .extend(actions.keys().copied().map(|action_id| (action_id, depth)));
                 }
             } else {
                 log::error!(
@@ -383,21 +379,21 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        handler_depths_by_action_type.extend(
+        handler_depths_by_action_id.extend(
             self.global_actions
                 .keys()
                 .copied()
-                .map(|action_type| (action_type, contexts.len())),
+                .map(|action_id| (action_id, contexts.len())),
         );
 
         self.action_deserializers
             .iter()
-            .filter_map(move |(name, (type_id, deserialize))| {
-                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
+            .filter_map(move |(name, (action_id, deserialize))| {
+                if let Some(action_depth) = handler_depths_by_action_id.get(action_id).copied() {
                     let action = deserialize(serde_json::Value::Object(Default::default())).ok()?;
                     let bindings = self
                         .keystroke_matcher
-                        .bindings_for_action_type(*type_id)
+                        .bindings_for_action(*action_id)
                         .filter(|b| {
                             action.eq(b.action())
                                 && (0..=action_depth)
@@ -434,11 +430,7 @@ impl<'a> WindowContext<'a> {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
-                    let no_action_id = (NoAction {}).id();
                     for (view_id, action) in matches {
-                        if action.id() == no_action_id {
-                            return false;
-                        }
                         if self.dispatch_action(Some(*view_id), action.as_ref()) {
                             self.keystroke_matcher.clear_pending();
                             handled_by = Some(action.boxed_clone());
@@ -526,6 +518,18 @@ impl<'a> WindowContext<'a> {
                 // NOTE: The order of event pushes is important! MouseUp events MUST be fired
                 // before click events, and so the MouseUp events need to be pushed before
                 // MouseClick events.
+
+                // Synthesize one last drag event to end the drag
+                mouse_events.push(MouseEvent::Drag(MouseDrag {
+                    region: Default::default(),
+                    prev_mouse_position: self.window.mouse_position,
+                    platform_event: MouseMovedEvent {
+                        position: e.position,
+                        pressed_button: Some(e.button),
+                        modifiers: e.modifiers,
+                    },
+                    end: true,
+                }));
                 mouse_events.push(MouseEvent::Up(MouseUp {
                     region: Default::default(),
                     platform_event: e.clone(),
@@ -573,8 +577,16 @@ impl<'a> WindowContext<'a> {
                             region: Default::default(),
                             prev_mouse_position: self.window.mouse_position,
                             platform_event: e.clone(),
+                            end: false,
                         }));
                     } else if let Some((_, clicked_button)) = self.window.clicked_region {
+                        mouse_events.push(MouseEvent::Drag(MouseDrag {
+                            region: Default::default(),
+                            prev_mouse_position: self.window.mouse_position,
+                            platform_event: e.clone(),
+                            end: true,
+                        }));
+
                         // Mouse up event happened outside the current window. Simulate mouse up button event
                         let button_event = e.to_button_event(clicked_button);
                         mouse_events.push(MouseEvent::Up(MouseUp {

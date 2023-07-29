@@ -1,5 +1,5 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use client::proto;
 use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
@@ -9,7 +9,7 @@ use smol::future::yield_now;
 use std::{
     io::{BufRead, BufReader, Read},
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -20,8 +20,8 @@ pub enum SearchQuery {
         query: Arc<str>,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<GlobMatcher>,
-        files_to_exclude: Vec<GlobMatcher>,
+        files_to_include: Vec<PathMatcher>,
+        files_to_exclude: Vec<PathMatcher>,
     },
     Regex {
         regex: Regex,
@@ -29,9 +29,34 @@ pub enum SearchQuery {
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<GlobMatcher>,
-        files_to_exclude: Vec<GlobMatcher>,
+        files_to_include: Vec<PathMatcher>,
+        files_to_exclude: Vec<PathMatcher>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct PathMatcher {
+    maybe_path: PathBuf,
+    glob: GlobMatcher,
+}
+
+impl std::fmt::Display for PathMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.maybe_path.to_string_lossy().fmt(f)
+    }
+}
+
+impl PathMatcher {
+    pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
+        Ok(PathMatcher {
+            glob: Glob::new(&maybe_glob)?.compile_matcher(),
+            maybe_path: PathBuf::from(maybe_glob),
+        })
+    }
+
+    pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
+        other.as_ref().starts_with(&self.maybe_path) || self.glob.is_match(other)
+    }
 }
 
 impl SearchQuery {
@@ -39,8 +64,8 @@ impl SearchQuery {
         query: impl ToString,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<GlobMatcher>,
-        files_to_exclude: Vec<GlobMatcher>,
+        files_to_include: Vec<PathMatcher>,
+        files_to_exclude: Vec<PathMatcher>,
     ) -> Self {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -61,8 +86,8 @@ impl SearchQuery {
         query: impl ToString,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<GlobMatcher>,
-        files_to_exclude: Vec<GlobMatcher>,
+        files_to_include: Vec<PathMatcher>,
+        files_to_exclude: Vec<PathMatcher>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -96,16 +121,16 @@ impl SearchQuery {
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
-                deserialize_globs(&message.files_to_include)?,
-                deserialize_globs(&message.files_to_exclude)?,
+                deserialize_path_matches(&message.files_to_include)?,
+                deserialize_path_matches(&message.files_to_exclude)?,
             )
         } else {
             Ok(Self::text(
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
-                deserialize_globs(&message.files_to_include)?,
-                deserialize_globs(&message.files_to_exclude)?,
+                deserialize_path_matches(&message.files_to_include)?,
+                deserialize_path_matches(&message.files_to_exclude)?,
             ))
         }
     }
@@ -120,12 +145,12 @@ impl SearchQuery {
             files_to_include: self
                 .files_to_include()
                 .iter()
-                .map(|g| g.glob().to_string())
+                .map(|matcher| matcher.to_string())
                 .join(","),
             files_to_exclude: self
                 .files_to_exclude()
                 .iter()
-                .map(|g| g.glob().to_string())
+                .map(|matcher| matcher.to_string())
                 .join(","),
         }
     }
@@ -266,7 +291,7 @@ impl SearchQuery {
         matches!(self, Self::Regex { .. })
     }
 
-    pub fn files_to_include(&self) -> &[GlobMatcher] {
+    pub fn files_to_include(&self) -> &[PathMatcher] {
         match self {
             Self::Text {
                 files_to_include, ..
@@ -277,7 +302,7 @@ impl SearchQuery {
         }
     }
 
-    pub fn files_to_exclude(&self) -> &[GlobMatcher] {
+    pub fn files_to_exclude(&self) -> &[PathMatcher] {
         match self {
             Self::Text {
                 files_to_exclude, ..
@@ -306,11 +331,63 @@ impl SearchQuery {
     }
 }
 
-fn deserialize_globs(glob_set: &str) -> Result<Vec<GlobMatcher>> {
+fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<Vec<PathMatcher>> {
     glob_set
         .split(',')
         .map(str::trim)
         .filter(|glob_str| !glob_str.is_empty())
-        .map(|glob_str| Ok(Glob::new(glob_str)?.compile_matcher()))
+        .map(|glob_str| {
+            PathMatcher::new(glob_str)
+                .with_context(|| format!("deserializing path match glob {glob_str}"))
+        })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_matcher_creation_for_valid_paths() {
+        for valid_path in [
+            "file",
+            "Cargo.toml",
+            ".DS_Store",
+            "~/dir/another_dir/",
+            "./dir/file",
+            "dir/[a-z].txt",
+            "../dir/filé",
+        ] {
+            let path_matcher = PathMatcher::new(valid_path).unwrap_or_else(|e| {
+                panic!("Valid path {valid_path} should be accepted, but got: {e}")
+            });
+            assert!(
+                path_matcher.is_match(valid_path),
+                "Path matcher for valid path {valid_path} should match itself"
+            )
+        }
+    }
+
+    #[test]
+    fn path_matcher_creation_for_globs() {
+        for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
+            match PathMatcher::new(invalid_glob) {
+                Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
+                Err(_expected) => {}
+            }
+        }
+
+        for valid_glob in [
+            "dir/?ile",
+            "dir/*.txt",
+            "dir/**/file",
+            "dir/[a-z].txt",
+            "{dir,file}",
+        ] {
+            match PathMatcher::new(valid_glob) {
+                Ok(_expected) => {}
+                Err(e) => panic!("Valid glob {valid_glob} should be accepted, but got: {e}"),
+            }
+        }
+    }
 }

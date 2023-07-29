@@ -1,19 +1,19 @@
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::SystemTime,
-};
-
-use anyhow::{anyhow, Result};
-
-use crate::parsing::ParsedFile;
-use crate::VECTOR_STORE_VERSION;
+use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
+use anyhow::{anyhow, Context, Result};
+use project::{search::PathMatcher, Fs};
 use rpc::proto::Timestamp;
 use rusqlite::{
     params,
     types::{FromSql, FromSqlResult, ValueRef},
+};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+    time::SystemTime,
 };
 
 #[derive(Debug)]
@@ -42,48 +42,94 @@ pub struct VectorDatabase {
 }
 
 impl VectorDatabase {
-    pub fn new(path: String) -> Result<Self> {
+    pub async fn new(fs: Arc<dyn Fs>, path: Arc<PathBuf>) -> Result<Self> {
+        if let Some(db_directory) = path.parent() {
+            fs.create_dir(db_directory).await?;
+        }
+
         let this = Self {
-            db: rusqlite::Connection::open(path)?,
+            db: rusqlite::Connection::open(path.as_path())?,
         };
         this.initialize_database()?;
         Ok(this)
     }
 
+    fn get_existing_version(&self) -> Result<i64> {
+        let mut version_query = self
+            .db
+            .prepare("SELECT version from semantic_index_config")?;
+        version_query
+            .query_row([], |row| Ok(row.get::<_, i64>(0)?))
+            .map_err(|err| anyhow!("version query failed: {err}"))
+    }
+
     fn initialize_database(&self) -> Result<()> {
         rusqlite::vtab::array::load_module(&self.db)?;
 
-        // This will create the database if it doesnt exist
+        // Delete existing tables, if SEMANTIC_INDEX_VERSION is bumped
+        if self
+            .get_existing_version()
+            .map_or(false, |version| version == SEMANTIC_INDEX_VERSION as i64)
+        {
+            log::trace!("vector database schema up to date");
+            return Ok(());
+        }
+
+        log::trace!("vector database schema out of date. updating...");
+        self.db
+            .execute("DROP TABLE IF EXISTS documents", [])
+            .context("failed to drop 'documents' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS files", [])
+            .context("failed to drop 'files' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS worktrees", [])
+            .context("failed to drop 'worktrees' table")?;
+        self.db
+            .execute("DROP TABLE IF EXISTS semantic_index_config", [])
+            .context("failed to drop 'semantic_index_config' table")?;
 
         // Initialize Vector Databasing Tables
         self.db.execute(
-            "CREATE TABLE IF NOT EXISTS worktrees (
+            "CREATE TABLE semantic_index_config (
+                version INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        self.db.execute(
+            "INSERT INTO semantic_index_config (version) VALUES (?1)",
+            params![SEMANTIC_INDEX_VERSION],
+        )?;
+
+        self.db.execute(
+            "CREATE TABLE worktrees (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 absolute_path VARCHAR NOT NULL
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS worktrees_absolute_path ON worktrees (absolute_path);
+            CREATE UNIQUE INDEX worktrees_absolute_path ON worktrees (absolute_path);
             ",
             [],
         )?;
 
         self.db.execute(
-            "CREATE TABLE IF NOT EXISTS files (
+            "CREATE TABLE files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worktree_id INTEGER NOT NULL,
                 relative_path VARCHAR NOT NULL,
                 mtime_seconds INTEGER NOT NULL,
                 mtime_nanos INTEGER NOT NULL,
-                vector_store_version INTEGER NOT NULL,
                 FOREIGN KEY(worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE
             )",
             [],
         )?;
 
         self.db.execute(
-            "CREATE TABLE IF NOT EXISTS documents (
+            "CREATE TABLE documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER NOT NULL,
-                offset INTEGER NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte INTEGER NOT NULL,
                 name VARCHAR NOT NULL,
                 embedding BLOB NOT NULL,
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
@@ -91,6 +137,7 @@ impl VectorDatabase {
             [],
         )?;
 
+        log::trace!("vector database initialized with updated schema.");
         Ok(())
     }
 
@@ -102,43 +149,44 @@ impl VectorDatabase {
         Ok(())
     }
 
-    pub fn insert_file(&self, worktree_id: i64, indexed_file: ParsedFile) -> Result<()> {
+    pub fn insert_file(
+        &self,
+        worktree_id: i64,
+        path: PathBuf,
+        mtime: SystemTime,
+        documents: Vec<Document>,
+    ) -> Result<()> {
         // Write to files table, and return generated id.
         self.db.execute(
             "
             DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2;
             ",
-            params![worktree_id, indexed_file.path.to_str()],
+            params![worktree_id, path.to_str()],
         )?;
-        let mtime = Timestamp::from(indexed_file.mtime);
+        let mtime = Timestamp::from(mtime);
         self.db.execute(
             "
             INSERT INTO files
-            (worktree_id, relative_path, mtime_seconds, mtime_nanos, vector_store_version)
+            (worktree_id, relative_path, mtime_seconds, mtime_nanos)
             VALUES
-            (?1, ?2, $3, $4, $5);
+            (?1, ?2, $3, $4);
             ",
-            params![
-                worktree_id,
-                indexed_file.path.to_str(),
-                mtime.seconds,
-                mtime.nanos,
-                VECTOR_STORE_VERSION
-            ],
+            params![worktree_id, path.to_str(), mtime.seconds, mtime.nanos],
         )?;
 
         let file_id = self.db.last_insert_rowid();
 
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.
-        for document in indexed_file.documents {
+        for document in documents {
             let embedding_blob = bincode::serialize(&document.embedding)?;
 
             self.db.execute(
-                "INSERT INTO documents (file_id, offset, name, embedding) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO documents (file_id, start_byte, end_byte, name, embedding) VALUES (?1, ?2, ?3, ?4, $5)",
                 params![
                     file_id,
-                    document.offset.to_string(),
+                    document.range.start.to_string(),
+                    document.range.end.to_string(),
                     document.name,
                     embedding_blob
                 ],
@@ -146,6 +194,23 @@ impl VectorDatabase {
         }
 
         Ok(())
+    }
+
+    pub fn worktree_previously_indexed(&self, worktree_root_path: &Path) -> Result<bool> {
+        let mut worktree_query = self
+            .db
+            .prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
+        let worktree_id = worktree_query
+            .query_row(params![worktree_root_path.to_string_lossy()], |row| {
+                Ok(row.get::<_, i64>(0)?)
+            })
+            .map_err(|err| anyhow!(err));
+
+        if worktree_id.is_ok() {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
     }
 
     pub fn find_or_create_worktree(&self, worktree_root_path: &Path) -> Result<i64> {
@@ -201,12 +266,12 @@ impl VectorDatabase {
 
     pub fn top_k_search(
         &self,
-        worktree_ids: &[i64],
         query_embedding: &Vec<f32>,
         limit: usize,
-    ) -> Result<Vec<(i64, PathBuf, usize, String)>> {
+        file_ids: &[i64],
+    ) -> Result<Vec<(i64, f32)>> {
         let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-        self.for_each_document(&worktree_ids, |id, embedding| {
+        self.for_each_document(file_ids, |id, embedding| {
             let similarity = dot(&embedding, &query_embedding);
             let ix = match results
                 .binary_search_by(|(_, s)| similarity.partial_cmp(&s).unwrap_or(Ordering::Equal))
@@ -218,29 +283,57 @@ impl VectorDatabase {
             results.truncate(limit);
         })?;
 
-        let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
-        self.get_documents_by_ids(&ids)
+        Ok(results)
     }
 
-    fn for_each_document(
+    pub fn retrieve_included_file_ids(
         &self,
         worktree_ids: &[i64],
-        mut f: impl FnMut(i64, Vec<f32>),
-    ) -> Result<()> {
+        includes: &[PathMatcher],
+        excludes: &[PathMatcher],
+    ) -> Result<Vec<i64>> {
+        let mut file_query = self.db.prepare(
+            "
+            SELECT
+                id, relative_path
+            FROM
+                files
+            WHERE
+                worktree_id IN rarray(?)
+            ",
+        )?;
+
+        let mut file_ids = Vec::<i64>::new();
+        let mut rows = file_query.query([ids_to_sql(worktree_ids)])?;
+
+        while let Some(row) = rows.next()? {
+            let file_id = row.get(0)?;
+            let relative_path = row.get_ref(1)?.as_str()?;
+            let included =
+                includes.is_empty() || includes.iter().any(|glob| glob.is_match(relative_path));
+            let excluded = excludes.iter().any(|glob| glob.is_match(relative_path));
+            if included && !excluded {
+                file_ids.push(file_id);
+            }
+        }
+
+        Ok(file_ids)
+    }
+
+    fn for_each_document(&self, file_ids: &[i64], mut f: impl FnMut(i64, Vec<f32>)) -> Result<()> {
         let mut query_statement = self.db.prepare(
             "
             SELECT
-                documents.id, documents.embedding
+                id, embedding
             FROM
-                documents, files
+                documents
             WHERE
-                documents.file_id = files.id AND
-                files.worktree_id IN rarray(?)
+                file_id IN rarray(?)
             ",
         )?;
 
         query_statement
-            .query_map(params![ids_to_sql(worktree_ids)], |row| {
+            .query_map(params![ids_to_sql(&file_ids)], |row| {
                 Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
             })?
             .filter_map(|row| row.ok())
@@ -248,11 +341,15 @@ impl VectorDatabase {
         Ok(())
     }
 
-    fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, usize, String)>> {
+    pub fn get_documents_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, PathBuf, Range<usize>)>> {
         let mut statement = self.db.prepare(
             "
                 SELECT
-                    documents.id, files.worktree_id, files.relative_path, documents.offset, documents.name
+                    documents.id,
+                    files.worktree_id,
+                    files.relative_path,
+                    documents.start_byte,
+                    documents.end_byte
                 FROM
                     documents, files
                 WHERE
@@ -266,15 +363,14 @@ impl VectorDatabase {
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?.into(),
-                row.get(3)?,
-                row.get(4)?,
+                row.get(3)?..row.get(4)?,
             ))
         })?;
 
-        let mut values_by_id = HashMap::<i64, (i64, PathBuf, usize, String)>::default();
+        let mut values_by_id = HashMap::<i64, (i64, PathBuf, Range<usize>)>::default();
         for row in result_iter {
-            let (id, worktree_id, path, offset, name) = row?;
-            values_by_id.insert(id, (worktree_id, path, offset, name));
+            let (id, worktree_id, path, range) = row?;
+            values_by_id.insert(id, (worktree_id, path, range));
         }
 
         let mut results = Vec::with_capacity(ids.len());

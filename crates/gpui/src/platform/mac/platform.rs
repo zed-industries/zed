@@ -231,7 +231,7 @@ impl MacForegroundPlatform {
             } => {
                 // TODO
                 let keystrokes = keystroke_matcher
-                    .bindings_for_action_type(action.as_any().type_id())
+                    .bindings_for_action(action.id())
                     .find(|binding| binding.action().eq(action.as_ref()))
                     .map(|binding| binding.keystrokes());
                 let selector = match os_action {
