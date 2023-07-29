@@ -22,7 +22,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Debug, Display},
     future::Future,
-    ops::Range,
+    ops::{Range, RangeBounds},
     path::Path,
     sync::{Arc, Weak},
 };
@@ -258,11 +258,11 @@ impl<E, N: ClientNetwork> Clone for Checkout<E, N> {
 
 impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
     fn new(client: &Arc<Client<E, N>>, repo: Repo, network_room: N::Room) -> Self {
-        let (operations_tx, operations_rx) = mpsc::unbounded();
+        let (local_operations_tx, local_operations_rx) = mpsc::unbounded();
         let this = Self {
             repo: repo.clone(),
             network_room: Arc::new(network_room),
-            operations_tx,
+            operations_tx: local_operations_tx,
             message_handlers: Default::default(),
         };
 
@@ -283,6 +283,11 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
             });
         }
 
+        let (remote_operations_tx, remote_operations_rx) = mpsc::unbounded();
+        this.handle_messages(move |_, _, operation: Operation| {
+            let _ = remote_operations_tx.unbounded_send(operation);
+        });
+
         client.executor.spawn({
             let this = this.clone();
             let client = Arc::downgrade(client);
@@ -291,23 +296,51 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                     this.sync(&client).await.expect("network is infallible");
                 }
 
-                let mut operations_rx = operations_rx.ready_chunks(CHUNK_SIZE);
-                while let Some(operations) = operations_rx.next().await {
-                    if let Some(client) = client.upgrade() {
-                        client
-                            .request(messages::PublishOperations {
-                                repo_id: this.repo.id,
-                                operations: operations.clone(),
-                            })
-                            .await
-                            .expect("network is infallible");
+                let mut local_operations_rx = local_operations_rx.ready_chunks(CHUNK_SIZE);
+                let mut remote_operations_rx = remote_operations_rx.ready_chunks(CHUNK_SIZE);
+                loop {
+                    futures::select_biased! {
+                        remote_operations = remote_operations_rx.next() => {
+                            if let Some(remote_operations) = remote_operations {
+                                if let Some(client) = client.upgrade() {
+                                    this.repo.update_async(|repo| {
+                                        let remote_operations = remote_operations.clone();
+                                        let client = client.clone();
+                                        async move {
+                                            repo.apply_operations(remote_operations, &*client.db.kv).await?;
+                                            Ok((None, ()))
+                                        }.boxed()
+                                    })
+                                    .await.expect("db is infallible");
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        },
+                        local_operations = local_operations_rx.next() => {
+                            if let Some(local_operations) = local_operations {
+                                if let Some(client) = client.upgrade() {
+                                    client
+                                        .request(messages::PublishOperations {
+                                            repo_id: this.repo.id,
+                                            operations: local_operations.clone(),
+                                        })
+                                        .await
+                                        .expect("network is infallible");
 
-                        for operation in operations {
-                            this.network_room
-                                .broadcast(MessageEnvelope::Operation(operation).to_bytes());
-                        }
-                    } else {
-                        break;
+                                    for operation in local_operations {
+                                        this.network_room
+                                            .broadcast(MessageEnvelope::Operation(operation).to_bytes());
+                                    }
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        },
                     }
                 }
             }
@@ -340,10 +373,18 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                 max_operation_ids: self.repo.read(|repo| (&repo.max_operation_ids).into()),
             })
             .await?;
-        self.repo.update(|repo| {
-            repo.apply_operations(response.operations);
-            (None, ())
-        });
+
+        self.repo
+            .update_async(|repo| {
+                let kv = client.db.kv.clone();
+                let operations = response.operations.clone();
+                async move {
+                    repo.apply_operations(operations, &*kv).await?;
+                    Ok((None, ()))
+                }
+                .boxed()
+            })
+            .await?;
 
         let operations = self
             .repo
@@ -420,7 +461,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
     pub fn create_repo(&self) -> Repo {
         let id = RepoId::new();
-        let snapshot = RepoSnapshot::default();
+        let snapshot = RepoSnapshot::new(id, ReplicaId(0));
         let repo = Repo {
             id,
             db: self.db.clone(),
@@ -446,12 +487,11 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 .snapshot
                 .lock()
                 .repos
-                .insert(repo_id, Default::default());
+                .insert(repo_id, RepoSnapshot::new(repo_id, response.replica_id));
 
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
             let checkout = Checkout::new(&this, repo.clone(), room);
-            checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo_id, checkout);
 
             Ok(repo)
@@ -473,7 +513,6 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
             let checkout = Checkout::new(&this, repo.clone(), room);
-            checkout.handle_messages(Self::handle_remote_operation);
             this.checkouts.lock().insert(repo.id, checkout);
 
             Ok(())
@@ -521,14 +560,6 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         if let Some(checkout) = self.checkouts.lock().get(&repo_id) {
             checkout.broadcast_operation(operation);
         }
-    }
-
-    fn handle_remote_operation(&self, repo_id: RepoId, operation: Operation) {
-        let repo = self.db.repo(repo_id).expect("repo must exist");
-        repo.update(|repo| {
-            repo.apply_operations([operation]);
-            (None, ())
-        });
     }
 
     fn request<R: Request>(&self, request: R) -> BoxFuture<Result<R::Response>> {
@@ -643,11 +674,10 @@ impl<N: ServerNetwork> Server<N> {
             .network
             .grant_room_access(&room_name, user.login.as_ref());
 
-        self.db
-            .snapshot
-            .lock()
-            .repos
-            .insert(request.id, Default::default());
+        self.db.snapshot.lock().repos.insert(
+            request.id,
+            RepoSnapshot::new(request.id, ReplicaId(u32::MAX)),
+        );
         self.next_replica_ids_by_repo_id
             .lock()
             .insert(request.id, ReplicaId(1));
@@ -713,10 +743,16 @@ impl<N: ServerNetwork> Server<N> {
             .db
             .repo(request.repo_id)
             .ok_or_else(|| anyhow!("repo not found"))?;
-        repo.update(|repo| {
-            repo.apply_operations(request.operations);
-            (None, ())
-        });
+        repo.update_async(|repo| {
+            let operations = request.operations.clone();
+            let kv = self.db.kv.clone();
+            async move {
+                repo.apply_operations(operations, &*kv).await?;
+                Ok((None, ()))
+            }
+            .boxed()
+        })
+        .await?;
         Ok(())
     }
 }
@@ -803,7 +839,7 @@ impl Repo {
                             .ok_or_else(|| anyhow!("branch not found"))?
                             .head
                             .clone();
-                        repo.load_revision(&head)?;
+                        repo.load_revision(&head, &*this.db.kv)?;
                         Ok((None, branch_id))
                     }
                     .boxed()
@@ -852,7 +888,7 @@ impl Repo {
             .update(&self.id, |repo| {
                 let (operation, result) = f(repo);
                 if let Some(operation) = operation {
-                    repo.save_operation(operation.clone());
+                    repo.save_local_operation(operation.clone());
                     if let Some(local_operation_created) = self.db.local_operation_created.as_ref()
                     {
                         local_operation_created(self.id, operation);
@@ -957,7 +993,9 @@ impl Branch {
                 .expect("branch must exist")
                 .head
                 .clone();
-            let mut revision = repo.load_revision(&head).expect("revision must exist");
+            let mut revision = repo
+                .cached_revision(&head)
+                .expect("head revision must exist");
             let operation_id = repo.last_operation_id.tick();
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
@@ -978,7 +1016,9 @@ impl Branch {
                 .expect("branch must exist")
                 .head
                 .clone();
-            let revision = repo.load_revision(&head).expect("revision must exist");
+            let revision = repo
+                .cached_revision(&head)
+                .expect("head revision must exist");
             f(&revision)
         })
     }
@@ -1634,6 +1674,7 @@ impl<'a> RopeBuilder<'a> {
 
 #[derive(Clone, Debug)]
 pub struct RepoSnapshot {
+    id: RepoId,
     last_operation_id: OperationId,
     branches: btree::Map<OperationId, BranchSnapshot>,
     // TODO: Change String to Arc<str> for branch_ids_by_name
@@ -1654,25 +1695,17 @@ struct SavedRepoSnapshot {
     deferred_operations: btree::SavedId,
 }
 
-impl Default for RepoSnapshot {
-    fn default() -> Self {
+impl RepoSnapshot {
+    fn new(id: RepoId, replica_id: ReplicaId) -> Self {
         Self {
-            last_operation_id: Default::default(),
+            id,
+            last_operation_id: OperationId::new(replica_id),
             branches: Default::default(),
             branch_ids_by_name: Default::default(),
             operations: Default::default(),
             revisions: Default::default(),
             max_operation_ids: Default::default(),
             deferred_operations: Default::default(),
-        }
-    }
-}
-
-impl RepoSnapshot {
-    fn new(replica_id: ReplicaId) -> Self {
-        Self {
-            last_operation_id: OperationId::new(replica_id),
-            ..Default::default()
         }
     }
 
@@ -1689,6 +1722,7 @@ impl RepoSnapshot {
         let repo_bytes = kv.load(id.to_be_bytes(), "root".into()).await?;
         let saved_repo = serde_bare::from_slice::<SavedRepoSnapshot>(&repo_bytes)?;
         Ok(Self {
+            id,
             last_operation_id: saved_repo.last_operation_id,
             branches: btree::Map::load_root(saved_repo.branches, kv).await?,
             branch_ids_by_name: btree::Map::load_root(saved_repo.branch_ids_by_name, kv).await?,
@@ -1765,95 +1799,120 @@ impl RepoSnapshot {
         new_operations
     }
 
+    fn save_local_operation(&mut self, operation: Operation) {
+        let replica_id = operation.id().replica_id;
+        let count = operation.id().operation_count;
+        self.max_operation_ids.insert(replica_id, count);
+        self.operations.insert(operation.id(), operation);
+    }
+
     /// Apply the given operations and any deferred operations that are now applicable.
-    fn apply_operations(&mut self, operations: impl Into<VecDeque<Operation>>) {
+    async fn apply_operations(
+        &mut self,
+        operations: impl Into<VecDeque<Operation>>,
+        kv: &dyn KvStore,
+    ) -> Result<()> {
         let mut operations = operations.into();
         while let Some(operation) = operations.pop_front() {
-            if self.operations.contains_key(&operation.id()) {
-                continue;
-            }
+            let flushed_operations = self.apply_operation(operation, kv).await?;
+            operations.extend(flushed_operations);
+        }
+        Ok(())
+    }
 
-            if operation
-                .parent()
-                .iter()
-                .all(|parent| self.operations.contains_key(&parent))
-            {
-                let operation_id = operation.id();
-                let mut new_head;
-                match &operation {
-                    Operation::CreateBranch(op) => {
-                        self.branches.insert(
-                            op.id,
-                            BranchSnapshot {
-                                name: op.name.clone(),
-                                head: op.id.into(),
-                            },
-                        );
-                        new_head = RevisionId::from(op.id);
-                    }
-                    Operation::CreateDocument(operations::CreateDocument {
-                        branch_id,
-                        parent,
-                        ..
-                    })
-                    | Operation::Edit(operations::Edit {
-                        branch_id, parent, ..
-                    }) => {
-                        if let Some(branch) = self.branches.get(branch_id).cloned() {
-                            new_head = branch.head;
-                            new_head.observe(operation_id, &parent);
-                            self.branches
-                                .update(&branch_id, |branch| branch.head = new_head.clone());
-                        } else {
-                            log::error!(
-                                "could not apply operation {:?}: branch {:?} does not exist",
-                                operation,
-                                branch_id
-                            );
-                            continue;
-                        }
-                    }
-                };
+    async fn apply_operation(
+        &mut self,
+        operation: Operation,
+        kv: &dyn KvStore,
+    ) -> Result<SmallVec<[Operation; 1]>> {
+        if self.operations.contains_key(&operation.id()) {
+            return Ok(Default::default());
+        }
 
-                self.save_operation(operation);
-                self.flush_deferred_operations(operation_id, &mut operations);
-
-                // The following ensures that a revision for the branch head is always present.
-                #[cfg(not(any(test, feature = "test-support")))]
-                if let Err(error) = self.load_revision(&new_head) {
-                    log::error!(
-                        "could not create revision for head {:?}: {:?}",
-                        new_head,
-                        error
-                    );
-                    continue;
-                }
-                #[cfg(any(test, feature = "test-support"))]
-                self.load_revision(&new_head).unwrap();
-            } else {
-                for parent in operation.parent().iter() {
-                    self.deferred_operations.insert_or_replace(
-                        DeferredOperation {
-                            parent: *parent,
-                            operation: operation.clone(),
+        if operation
+            .parent()
+            .iter()
+            .all(|parent| self.operations.contains_key(&parent))
+        {
+            let operation_id = operation.id();
+            let mut new_head;
+            match &operation {
+                Operation::CreateBranch(op) => {
+                    self.branches.insert(
+                        op.id,
+                        BranchSnapshot {
+                            name: op.name.clone(),
+                            head: op.id.into(),
                         },
-                        &(),
                     );
+                    new_head = RevisionId::from(op.id);
                 }
+                Operation::CreateDocument(operations::CreateDocument {
+                    branch_id, parent, ..
+                })
+                | Operation::Edit(operations::Edit {
+                    branch_id, parent, ..
+                }) => {
+                    if let Some(branch) = self.branches.get(branch_id).cloned() {
+                        new_head = branch.head;
+                        new_head.observe(operation_id, &parent);
+                        self.branches
+                            .update(&branch_id, |branch| branch.head = new_head.clone());
+                    } else {
+                        log::error!(
+                            "could not apply operation {:?}: branch {:?} does not exist",
+                            operation,
+                            branch_id
+                        );
+                        return Ok(Default::default());
+                    }
+                }
+            };
+
+            self.save_remote_operation(operation, kv).await?;
+            let flushed_operations = self.flush_deferred_operations(operation_id, kv).await?;
+
+            // The following ensures that a revision for the branch head is always present.
+            #[cfg(not(any(test, feature = "test-support")))]
+            self.load_revision(&new_head, kv)?;
+            #[cfg(any(test, feature = "test-support"))]
+            self.load_revision(&new_head, kv).unwrap();
+
+            Ok(flushed_operations)
+        } else {
+            for parent in operation.parent().iter() {
+                self.deferred_operations.insert_or_replace(
+                    DeferredOperation {
+                        parent: *parent,
+                        operation: operation.clone(),
+                    },
+                    &(),
+                );
             }
+            Ok(Default::default())
         }
     }
 
     /// Remove any operations deferred on the given parent and add them to the
     /// provided operation queue. This is called in `apply_operations`.
-    fn flush_deferred_operations(
+    async fn flush_deferred_operations(
         &mut self,
         parent_id: OperationId,
-        operations: &mut VecDeque<Operation>,
-    ) {
+        kv: &dyn KvStore,
+    ) -> Result<SmallVec<[Operation; 1]>> {
+        self.deferred_operations
+            .load(kv, &(), |probe| {
+                let key_range = (
+                    Bound::Excluded(*probe.start),
+                    Bound::Included(*probe.summary),
+                );
+                key_range.contains(&parent_id)
+            })
+            .await?;
         let mut cursor = self.deferred_operations.cursor::<OperationId>();
         let mut remaining = cursor.slice(&parent_id, Bias::Left, &());
-        operations.extend(
+        let mut flushed = SmallVec::new();
+        flushed.extend(
             cursor
                 .slice(&parent_id, Bias::Right, &())
                 .iter()
@@ -1862,23 +1921,38 @@ impl RepoSnapshot {
         remaining.append(cursor.suffix(&()), &());
         drop(cursor);
         self.deferred_operations = remaining;
+        Ok(flushed)
     }
 
-    fn save_operation(&mut self, operation: Operation) {
+    async fn save_remote_operation(
+        &mut self,
+        operation: Operation,
+        kv: &dyn KvStore,
+    ) -> Result<()> {
         let replica_id = operation.id().replica_id;
         let count = operation.id().operation_count;
-        if self.max_operation_ids.get(&replica_id).copied() < Some(count) {
+        if self.max_operation_ids.load(&replica_id, kv).await?.copied() < Some(count) {
             self.max_operation_ids.insert(replica_id, count);
         }
         self.last_operation_id.observe(operation.id());
-        self.operations.insert(operation.id(), operation);
+        self.operations.store(operation.id(), operation, kv).await?;
+        Ok(())
     }
 
     fn operation(&self, operation_id: OperationId) -> Option<&Operation> {
         self.operations.get(&operation_id)
     }
 
-    fn load_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
+    fn cached_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
+        Ok(self
+            .revisions
+            .lock()
+            .get(revision_id)
+            .ok_or_else(|| anyhow!("cached revision not found"))?
+            .clone())
+    }
+
+    fn load_revision(&self, revision_id: &RevisionId, kv: &dyn KvStore) -> Result<Revision> {
         // First, check if we have a revision cached for this revision id.
         // If not, we'll need to reconstruct it from a previous revision.
         // We need to find a cached revision that is an ancestor of the given revision id.
@@ -1964,7 +2038,7 @@ impl RepoSnapshot {
                         op.apply(&mut common_ancestor_revision);
                     }
                     Operation::Edit(op) => {
-                        let parent_revision = self.load_revision(&op.parent)?;
+                        let parent_revision = self.load_revision(&op.parent, kv)?;
                         op.apply(&parent_revision, &mut common_ancestor_revision)?;
                     }
                     Operation::CreateBranch(_) => {
@@ -2051,7 +2125,7 @@ pub struct SavedRevision {
 }
 
 impl Revision {
-    async fn load(repo_id: RepoId, id: RevisionId, kv: &dyn KvStore) -> Result<Self> {
+    async fn load(repo_id: RepoId, id: &RevisionId, kv: &dyn KvStore) -> Result<Self> {
         let revision_bytes = kv.load(repo_id.to_be_bytes(), id.db_key()).await?;
         let saved_revision = serde_bare::from_slice::<SavedRevision>(&revision_bytes)?;
         Ok(Self {
@@ -2065,7 +2139,7 @@ impl Revision {
         })
     }
 
-    async fn save(&self, repo_id: RepoId, id: RevisionId, kv: &dyn KvStore) -> Result<()> {
+    async fn save(&self, repo_id: RepoId, id: &RevisionId, kv: &dyn KvStore) -> Result<()> {
         let saved_revision = SavedRevision {
             document_metadata: self.document_metadata.save(kv).await?,
             document_fragments: self.document_fragments.save(kv).await?,

@@ -77,6 +77,24 @@ where
         Ok(self.get(key))
     }
 
+    pub async fn store(&mut self, key: K, value: V, kv: &dyn KvStore) -> Result<()>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        self.0
+            .load(kv, &(), |probe| {
+                let key_range = (
+                    Bound::Excluded(&probe.start.0),
+                    Bound::Included(&probe.summary.0),
+                );
+                key_range.contains(&key)
+            })
+            .await?;
+        self.insert(key, value);
+        Ok(())
+    }
+
     pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId>
     where
         K: Serialize + for<'de> Deserialize<'de>,
