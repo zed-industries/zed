@@ -2726,7 +2726,7 @@ mod tests {
             &["v project_root", "    > dir_1", "    > dir_2",]
         );
 
-        // Open dir_1 and make sure nested_dir was collapsed during
+        // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
         toggle_expand_dir(&panel, "project_root/dir_1", cx);
         cx.foreground().run_until_parked();
         assert_eq!(
