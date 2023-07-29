@@ -894,18 +894,21 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed").await.unwrap();
-    let crdb_id = db.create_channel("crdb", Some(zed_id)).await.unwrap();
+    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
+    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(zed_id))
+        .create_channel("livestreaming", Some(zed_id), a_id)
         .await
         .unwrap();
-    let replace_id = db.create_channel("replace", Some(zed_id)).await.unwrap();
-    let rust_id = db.create_root_channel("rust").await.unwrap();
-    let cargo_id = db.create_channel("cargo", Some(rust_id)).await.unwrap();
-
-    db.add_channel_member(zed_id, a_id).await.unwrap();
-    db.add_channel_member(rust_id, a_id).await.unwrap();
+    let replace_id = db
+        .create_channel("replace", Some(zed_id), a_id)
+        .await
+        .unwrap();
+    let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
+    let cargo_id = db
+        .create_channel("cargo", Some(rust_id), a_id)
+        .await
+        .unwrap();
 
     let channels = db.get_channels(a_id).await.unwrap();
 

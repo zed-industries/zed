@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{self, ChannelId, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -239,6 +239,10 @@ impl Server {
             .add_request_handler(request_contact)
             .add_request_handler(remove_contact)
             .add_request_handler(respond_to_contact_request)
+            .add_request_handler(create_channel)
+            .add_request_handler(invite_channel_member)
+            .add_request_handler(remove_channel_member)
+            .add_request_handler(respond_to_channel_invite)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -2081,6 +2085,100 @@ async fn remove_contact(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn create_channel(
+    request: proto::CreateChannel,
+    response: Response<proto::CreateChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let id = db
+        .create_channel(
+            &request.name,
+            request.parent_id.map(|id| ChannelId::from_proto(id)),
+            session.user_id,
+        )
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(proto::Channel {
+        id: id.to_proto(),
+        name: request.name,
+        parent_id: request.parent_id,
+    });
+    session.peer.send(session.connection_id, update)?;
+    response.send(proto::CreateChannelResponse {
+        channel_id: id.to_proto(),
+    })?;
+
+    Ok(())
+}
+
+async fn invite_channel_member(
+    request: proto::InviteChannelMember,
+    response: Response<proto::InviteChannelMember>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let channel = db.get_channel(channel_id).await?;
+    let invitee_id = UserId::from_proto(request.user_id);
+    db.invite_channel_member(channel_id, invitee_id, session.user_id, false)
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channel_invitations.push(proto::Channel {
+        id: channel.id.to_proto(),
+        name: channel.name,
+        parent_id: None,
+    });
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(invitee_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn remove_channel_member(
+    request: proto::RemoveChannelMember,
+    response: Response<proto::RemoveChannelMember>,
+    session: Session,
+) -> Result<()> {
+    Ok(())
+}
+
+async fn respond_to_channel_invite(
+    request: proto::RespondToChannelInvite,
+    response: Response<proto::RespondToChannelInvite>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let channel = db.get_channel(channel_id).await?;
+    db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update
+        .remove_channel_invitations
+        .push(channel_id.to_proto());
+    if request.accept {
+        update.channels.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+        });
+    }
+    session.peer.send(session.connection_id, update)?;
+    response.send(proto::Ack {})?;
+
     Ok(())
 }
 

@@ -22,6 +22,7 @@ CREATE TABLE "channel_members" (
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "admin" BOOLEAN NOT NULL DEFAULT false,
+    "accepted" BOOLEAN NOT NULL DEFAULT false,
     "updated_at" TIMESTAMP NOT NULL DEFAULT now()
 );
 

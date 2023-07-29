@@ -3032,11 +3032,16 @@ impl Database {
 
     // channels
 
-    pub async fn create_root_channel(&self, name: &str) -> Result<ChannelId> {
-        self.create_channel(name, None).await
+    pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
+        self.create_channel(name, None, creator_id).await
     }
 
-    pub async fn create_channel(&self, name: &str, parent: Option<ChannelId>) -> Result<ChannelId> {
+    pub async fn create_channel(
+        &self,
+        name: &str,
+        parent: Option<ChannelId>,
+        creator_id: UserId,
+    ) -> Result<ChannelId> {
         self.transaction(move |tx| async move {
             let tx = tx;
 
@@ -3056,23 +3061,98 @@ impl Database {
                 .await?;
             }
 
+            channel_member::ActiveModel {
+                channel_id: ActiveValue::Set(channel.id),
+                user_id: ActiveValue::Set(creator_id),
+                accepted: ActiveValue::Set(true),
+                admin: ActiveValue::Set(true),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+
             Ok(channel.id)
         })
         .await
     }
 
-    // Property: Members are only
-    pub async fn add_channel_member(&self, channel_id: ChannelId, user_id: UserId) -> Result<()> {
+    pub async fn invite_channel_member(
+        &self,
+        channel_id: ChannelId,
+        invitee_id: UserId,
+        inviter_id: UserId,
+        is_admin: bool,
+    ) -> Result<()> {
         self.transaction(move |tx| async move {
             let tx = tx;
 
+            // Check if inviter is a member
+            channel_member::Entity::find()
+                .filter(
+                    channel_member::Column::ChannelId
+                        .eq(channel_id)
+                        .and(channel_member::Column::UserId.eq(inviter_id))
+                        .and(channel_member::Column::Admin.eq(true)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| {
+                    anyhow!("Inviter does not have permissions to invite the invitee")
+                })?;
+
             let channel_membership = channel_member::ActiveModel {
                 channel_id: ActiveValue::Set(channel_id),
-                user_id: ActiveValue::Set(user_id),
+                user_id: ActiveValue::Set(invitee_id),
+                accepted: ActiveValue::Set(false),
+                admin: ActiveValue::Set(is_admin),
                 ..Default::default()
             };
 
             channel_membership.insert(&*tx).await?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn respond_to_channel_invite(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        accept: bool,
+    ) -> Result<()> {
+        self.transaction(move |tx| async move {
+            let tx = tx;
+
+            let rows_affected = if accept {
+                channel_member::Entity::update_many()
+                    .set(channel_member::ActiveModel {
+                        accepted: ActiveValue::Set(accept),
+                        ..Default::default()
+                    })
+                    .filter(
+                        channel_member::Column::ChannelId
+                            .eq(channel_id)
+                            .and(channel_member::Column::UserId.eq(user_id))
+                            .and(channel_member::Column::Accepted.eq(false)),
+                    )
+                    .exec(&*tx)
+                    .await?
+                    .rows_affected
+            } else {
+                channel_member::ActiveModel {
+                    channel_id: ActiveValue::Unchanged(channel_id),
+                    user_id: ActiveValue::Unchanged(user_id),
+                    ..Default::default()
+                }
+                .delete(&*tx)
+                .await?
+                .rows_affected
+            };
+
+            if rows_affected == 0 {
+                Err(anyhow!("no such invitation"))?;
+            }
 
             Ok(())
         })
@@ -3087,7 +3167,7 @@ impl Database {
             WITH RECURSIVE channel_tree(child_id, parent_id, depth) AS (
                     SELECT channel_id as child_id, CAST(NULL as INTEGER) as parent_id, 0
                     FROM channel_members
-                    WHERE user_id = $1
+                    WHERE user_id = $1 AND accepted
                 UNION
                     SELECT channel_parents.child_id, channel_parents.parent_id, channel_tree.depth + 1
                     FROM channel_parents, channel_tree
@@ -3110,6 +3190,22 @@ impl Database {
                 .into_model::<Channel>()
                 .all(&*tx)
                 .await?)
+        })
+        .await
+    }
+
+    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<Channel> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+            let channel = channel::Entity::find_by_id(channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+            Ok(Channel {
+                id: channel.id,
+                name: channel.name,
+                parent_id: None,
+            })
         })
         .await
     }

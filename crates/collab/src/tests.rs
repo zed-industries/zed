@@ -7,7 +7,8 @@ use crate::{
 use anyhow::anyhow;
 use call::ActiveCall;
 use client::{
-    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
+    self, proto::PeerId, ChannelStore, Client, Connection, Credentials, EstablishConnectionError,
+    UserStore,
 };
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -33,9 +34,9 @@ use std::{
 use util::http::FakeHttpClient;
 use workspace::Workspace;
 
+mod channel_tests;
 mod integration_tests;
 mod randomized_integration_tests;
-mod channel_tests;
 
 struct TestServer {
     app_state: Arc<AppState>,
@@ -187,6 +188,8 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -218,6 +221,7 @@ impl TestServer {
             username: name.to_string(),
             state: Default::default(),
             user_store,
+            channel_store,
             fs,
             language_registry: Arc::new(LanguageRegistry::test()),
         };
@@ -320,6 +324,7 @@ struct TestClient {
     username: String,
     state: RefCell<TestClientState>,
     pub user_store: ModelHandle<UserStore>,
+    pub channel_store: ModelHandle<ChannelStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
 }

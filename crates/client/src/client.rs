@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub mod channel_store;
 pub mod telemetry;
 pub mod user;
 
@@ -44,6 +45,7 @@ use util::channel::ReleaseChannel;
 use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
+pub use channel_store::*;
 pub use rpc::*;
 pub use telemetry::ClickhouseEvent;
 pub use user::*;

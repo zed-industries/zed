@@ -10,6 +10,8 @@ pub struct Model {
     pub id: ChannelMemberId,
     pub channel_id: ChannelId,
     pub user_id: UserId,
+    pub accepted: bool,
+    pub admin: bool,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
