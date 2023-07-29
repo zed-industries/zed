@@ -115,6 +115,7 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
+        CollapseAllEntries,
         NewDirectory,
         NewFile,
         Copy,
@@ -140,6 +141,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     file_associations::init(assets, cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
+    cx.add_action(ProjectPanel::collapse_all_entries);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::new_file);
@@ -512,6 +514,12 @@ impl ProjectPanel {
                 }
             }
         }
+    }
+
+    pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
+        self.expanded_dir_ids.clear();
+        self.update_visible_entries(None, cx);
+        cx.notify();
     }
 
     fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
@@ -2678,6 +2686,73 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                },
+                "dir_2": {
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        let new_search_events_count = Arc::new(AtomicUsize::new(0));
+        let _subscription = panel.update(cx, |_, cx| {
+            let subcription_count = Arc::clone(&new_search_events_count);
+            cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                if matches!(event, Event::NewSearchInDirectory { .. }) {
+                    subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+            })
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, cx)
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v project_root", "    > dir_1", "    > dir_2",]
+        );
+
+        // Open dir_1 and make sure nested_dir was collapsed during
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1  <== selected",
+                "        > nested_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+            ]
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &ViewHandle<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -2878,3 +2953,4 @@ mod tests {
         });
     }
 }
+// TODO - a workspace command?
