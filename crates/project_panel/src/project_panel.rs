@@ -2717,16 +2717,6 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
-        let new_search_events_count = Arc::new(AtomicUsize::new(0));
-        let _subscription = panel.update(cx, |_, cx| {
-            let subcription_count = Arc::clone(&new_search_events_count);
-            cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                if matches!(event, Event::NewSearchInDirectory { .. }) {
-                    subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
-                }
-            })
-        });
-
         panel.update(cx, |panel, cx| {
             panel.collapse_all_entries(&CollapseAllEntries, cx)
         });
