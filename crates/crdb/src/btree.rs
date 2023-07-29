@@ -201,6 +201,10 @@ impl<T: Item> Sequence<T> {
         }))
     }
 
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
         let mut tree = Self::new();
         tree.push(item, cx);

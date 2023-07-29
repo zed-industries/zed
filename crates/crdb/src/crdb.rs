@@ -781,33 +781,38 @@ impl Repo {
     }
 
     fn load_branch(&self, name: &str) -> impl Future<Output = Result<Branch>> {
-        let mut snapshot = self.read(|repo| repo.clone());
         let this = self.clone();
+        // TODO: Turn this into an Arc<str>.
         let name = name.to_string();
 
         async move {
-            let branch_id = *snapshot
-                .branch_ids_by_name
-                .load(&name, &*this.db.kv)
-                .await?
-                .ok_or_else(|| anyhow!("branch not found"))?;
-
-            loop {
-                let latest_snapshot = this.read(|repo| repo.clone());
-                let operations = latest_snapshot.operations_since(&snapshot.max_operation_ids);
-                if operations.is_empty() {
-                    break;
-                }
-                snapshot.apply_operations(operations);
-            }
-            this.update(|latest_snapshot| {
-                *latest_snapshot = snapshot;
-                (None, ())
-            });
+            let branch_id = this
+                .update_async(|repo| {
+                    let this = this.clone();
+                    let name = name.clone();
+                    async move {
+                        let branch_id = *repo
+                            .branch_ids_by_name
+                            .load(&name, &*this.db.kv)
+                            .await?
+                            .ok_or_else(|| anyhow!("branch not found"))?;
+                        let head = repo
+                            .branches
+                            .load(&branch_id, &*this.db.kv)
+                            .await?
+                            .ok_or_else(|| anyhow!("branch not found"))?
+                            .head
+                            .clone();
+                        repo.load_revision(&head)?;
+                        Ok((None, branch_id))
+                    }
+                    .boxed()
+                })
+                .await?;
 
             Ok(Branch {
                 id: branch_id,
-                repo: this,
+                repo: this.clone(),
             })
         }
     }
@@ -861,6 +866,28 @@ impl Repo {
                 result
             })
             .expect("repo must exist")
+    }
+
+    async fn update_async<F, T>(&self, mut f: F) -> Result<T>
+    where
+        F: FnMut(&mut RepoSnapshot) -> BoxFuture<'_, Result<(Option<Operation>, T)>>,
+    {
+        loop {
+            let prev_snapshot = self.read(|repo| repo.clone());
+            let mut new_snapshot = prev_snapshot.clone();
+            let (operation, value) = f(&mut new_snapshot).await?;
+            let updated = self.update(|latest_snapshot| {
+                if RepoSnapshot::ptr_eq(&prev_snapshot, &latest_snapshot) {
+                    *latest_snapshot = new_snapshot;
+                    (operation, true)
+                } else {
+                    (None, false)
+                }
+            });
+            if updated {
+                return Ok(value);
+            }
+        }
     }
 }
 
@@ -1647,6 +1674,15 @@ impl RepoSnapshot {
             last_operation_id: OperationId::new(replica_id),
             ..Default::default()
         }
+    }
+
+    fn ptr_eq(this: &Self, other: &Self) -> bool {
+        btree::Map::ptr_eq(&this.branches, &other.branches)
+            && btree::Map::ptr_eq(&this.branches, &other.branches)
+            && btree::Map::ptr_eq(&this.branch_ids_by_name, &other.branch_ids_by_name)
+            && btree::Map::ptr_eq(&this.operations, &other.operations)
+            && btree::Map::ptr_eq(&this.max_operation_ids, &other.max_operation_ids)
+            && this.last_operation_id == other.last_operation_id
     }
 
     async fn load(id: RepoId, kv: &dyn KvStore) -> Result<Self> {

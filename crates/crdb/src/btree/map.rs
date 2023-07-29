@@ -38,6 +38,10 @@ where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug,
 {
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Sequence::ptr_eq(&this.0, &other.0)
+    }
+
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = (K, V)>) -> Self {
         let tree = Sequence::from_iter(
             entries
