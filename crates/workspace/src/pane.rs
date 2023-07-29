@@ -1150,7 +1150,7 @@ impl Pane {
     }
 
     fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Flex::row();
         }
 
@@ -1353,7 +1353,7 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Empty::new().into_any();
         }
 
@@ -1370,7 +1370,7 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Empty::new().into_any();
         }
 
@@ -1387,7 +1387,7 @@ impl Pane {
         tab_style: &theme::Tab,
         cx: &mut ViewContext<T>,
     ) -> AnyElement<T> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Empty::new().into_any();
         }
 
@@ -1499,7 +1499,7 @@ impl Pane {
         on_down: F2,
         context_menu: Option<ViewHandle<ContextMenu>>,
     ) -> AnyElement<Pane> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Empty::new().into_any();
         }
 
@@ -1538,7 +1538,7 @@ impl Pane {
     }
 
     fn render_blank_pane(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if !settings::get::<ItemSettings>(cx).visibility.visible() {
+        if !settings::get::<ItemSettings>(cx).visible {
             return Empty::new().into_any();
         }
 
@@ -1597,7 +1597,7 @@ impl View for Pane {
                         );
 
                         let mut height: f32 = 0.0;
-                        if settings::get::<ItemSettings>(cx).visibility.visible() {
+                        if settings::get::<ItemSettings>(cx).visible {
                             let mut tab_row = Flex::row().with_child(
                                 self.render_tabs(cx).flex(1., true).into_any_named("tabs"),
                             );

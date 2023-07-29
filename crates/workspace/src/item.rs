@@ -35,7 +35,7 @@ use theme::Theme;
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
-    pub visibility: TabVisibility,
+    pub visible: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -56,27 +56,10 @@ impl ClosePosition {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum TabVisibility {
-    #[default]
-    Visible,
-    Hidden,
-}
-
-impl TabVisibility {
-    pub fn visible(&self) -> bool {
-        match self {
-            TabVisibility::Visible => true,
-            TabVisibility::Hidden => false,
-        }
-    }
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
     git_status: Option<bool>,
     close_position: Option<ClosePosition>,
-    visibility: Option<TabVisibility>,
+    visible: Option<bool>,
 }
 
 impl Setting for ItemSettings {

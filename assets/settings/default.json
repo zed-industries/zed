@@ -153,7 +153,7 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Wether the tab bar is visible or not.
-    "visibility": "visible"
+    "visible": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
