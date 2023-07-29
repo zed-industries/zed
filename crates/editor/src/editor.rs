@@ -543,6 +543,7 @@ pub struct Editor {
     show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
+    show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -1375,6 +1376,7 @@ impl Editor {
             show_local_selections: true,
             mode,
             show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -7187,6 +7189,10 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
+
         let settings = self.buffer.read(cx).settings_at(0, cx);
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
@@ -7241,6 +7247,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_gutter);
         cx.notify();
     }
 
