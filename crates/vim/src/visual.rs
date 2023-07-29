@@ -49,7 +49,14 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                     // our motions assume the current character is after the cursor,
                     // but in (forward) visual mode the current character is just
                     // before the end of the selection.
-                    if !selection.reversed {
+
+                    // If the file ends with a newline (which is common) we don't do this.
+                    // so that if you go to the end of such a file you can use "up" to go
+                    // to the previous line and have it work somewhat as expected.
+                    if !selection.reversed
+                        && !selection.is_empty()
+                        && !(selection.end.column() == 0 && selection.end == map.max_point())
+                    {
                         current_head = movement::left(map, selection.end)
                     }
 
@@ -60,7 +67,10 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
                     // ensure the current character is included in the selection.
                     if !selection.reversed {
-                        selection.end = movement::right(map, selection.end)
+                        let next_point = movement::right(map, selection.end);
+                        if !(next_point.column() == 0 && next_point == map.max_point()) {
+                            selection.end = movement::right(map, selection.end)
+                        }
                     }
 
                     // vim always ensures the anchor character stays selected.
@@ -491,6 +501,27 @@ mod test {
             .await;
         cx.simulate_shared_keystrokes(["x"]).await;
         cx.assert_shared_state(indoc! { "
+            a
+            ˇb"})
+            .await;
+
+        // it should work at the end of the document
+        cx.set_shared_state(indoc! {"
+            a
+            b
+            ˇ"})
+            .await;
+        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        cx.simulate_shared_keystrokes(["shift-v"]).await;
+        cx.assert_shared_state(indoc! {"
+            a
+            b
+            ˇ"})
+            .await;
+        assert_eq!(cx.mode(), cx.neovim_mode().await);
+        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.simulate_shared_keystrokes(["x"]).await;
+        cx.assert_shared_state(indoc! {"
             a
             ˇb"})
             .await;

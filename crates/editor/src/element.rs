@@ -850,13 +850,16 @@ impl EditorElement {
                     let mut cursor_column = cursor_position.column() as usize;
                     let mut cursor_row = cursor_position.row();
 
+                    // highlight the last character in a selection
                     if CursorShape::Block == selection.cursor_shape
                         && !selection.range.is_empty()
                         && !selection.reversed
                     {
                         if cursor_column > 0 {
                             cursor_column -= 1;
-                        } else if cursor_row > 0 {
+                        } else if cursor_row > 0
+                            && cursor_position != layout.position_map.snapshot.max_point()
+                        {
                             cursor_row -= 1;
                             cursor_column =
                                 layout.position_map.snapshot.line_len(cursor_row) as usize;
@@ -2186,7 +2189,19 @@ impl Element<Editor> for EditorElement {
             for selection in &local_selections {
                 let is_empty = selection.start == selection.end;
                 let selection_start = snapshot.prev_line_boundary(selection.start).1;
-                let selection_end = snapshot.next_line_boundary(selection.end).1;
+                let mut selection_end = snapshot.next_line_boundary(selection.end).1;
+
+                // in vim visual mode the newline is considered at the end of the previous line
+                // instead of at the start of the current line
+                if editor.cursor_shape == CursorShape::Block
+                    && !is_empty
+                    && !selection.reversed
+                    && selection.end.column == 0
+                    && selection_end.row() > 0
+                    && selection_end.row() < snapshot.max_buffer_row()
+                {
+                    selection_end = DisplayPoint::new(selection_end.row() - 1, 0);
+                }
                 for row in cmp::max(selection_start.row(), start_row)
                     ..=cmp::min(selection_end.row(), end_row)
                 {
