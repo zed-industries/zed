@@ -19,8 +19,8 @@ const TREE_BASE: usize = 2;
 const TREE_BASE: usize = 6;
 
 pub trait KvStore: 'static + Send + Sync {
-    fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>>;
-    fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>>;
+    fn load(&self, namespace: [u8; 16], key: Vec<u8>) -> BoxFuture<Result<Vec<u8>>>;
+    fn store(&self, namespace: [u8; 16], key: Vec<u8>, value: Vec<u8>) -> BoxFuture<Result<()>>;
 }
 
 pub trait Item: Clone {
@@ -96,8 +96,8 @@ impl Clone for SavedId {
 }
 
 impl SavedId {
-    fn as_u128(&self) -> u128 {
-        self.0.load(SeqCst)
+    fn to_bytes(&self) -> [u8; 16] {
+        self.0.load(SeqCst).to_be_bytes()
     }
 
     fn is_saved(&self) -> bool {
@@ -679,7 +679,9 @@ where
     T::Summary: Serialize + for<'a> Deserialize<'a>,
 {
     pub async fn load_root(root_id: SavedId, kv: &dyn KvStore) -> Result<Self> {
-        let root = kv.load(namespace_bytes("node"), root_id.as_u128()).await?;
+        let root = kv
+            .load(namespace_bytes("node"), root_id.to_bytes().into())
+            .await?;
         let root = serde_bare::from_slice(&root)?;
         let node = match root {
             SavedNode::Internal {
@@ -803,7 +805,7 @@ where
                         saved_id.save();
                         kv.store(
                             namespace_bytes("node"),
-                            saved_id.as_u128(),
+                            saved_id.to_bytes().into(),
                             serde_bare::to_vec(&SavedNode::<T>::Internal {
                                 height: *height,
                                 summary: summary.clone(),
@@ -845,7 +847,7 @@ where
                     saved_id.save();
                     kv.store(
                         namespace_bytes("node"),
-                        saved_id.as_u128(),
+                        saved_id.to_bytes().into(),
                         serde_bare::to_vec(&SavedNode::Leaf {
                             summary: summary.clone(),
                             items: items.clone(),
@@ -1850,11 +1852,11 @@ pub mod tests {
 
     #[derive(Default)]
     pub struct InMemoryKv {
-        namespaces: Mutex<BTreeMap<[u8; 16], BTreeMap<u128, Vec<u8>>>>,
+        namespaces: Mutex<BTreeMap<[u8; 16], BTreeMap<Vec<u8>, Vec<u8>>>>,
     }
 
     impl KvStore for InMemoryKv {
-        fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>> {
+        fn load(&self, namespace: [u8; 16], key: Vec<u8>) -> BoxFuture<Result<Vec<u8>>> {
             let value = self
                 .namespaces
                 .lock()
@@ -1869,7 +1871,12 @@ pub mod tests {
             async move { value }.boxed()
         }
 
-        fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>> {
+        fn store(
+            &self,
+            namespace: [u8; 16],
+            key: Vec<u8>,
+            value: Vec<u8>,
+        ) -> BoxFuture<Result<()>> {
             self.namespaces
                 .lock()
                 .entry(namespace)

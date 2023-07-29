@@ -46,6 +46,10 @@ impl RepoId {
             RepoId(Uuid::from_u128(NEXT_REPO_ID.fetch_add(1, SeqCst) as u128))
         }
     }
+
+    fn to_be_bytes(&self) -> [u8; 16] {
+        self.0.as_u128().to_be_bytes()
+    }
 }
 
 impl Display for RepoId {
@@ -93,6 +97,15 @@ impl RevisionId {
     fn iter(&self) -> impl Iterator<Item = &OperationId> {
         self.0.iter()
     }
+
+    fn db_key(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend("revision/".bytes());
+        for operation in &self.0 {
+            bytes.extend(operation.to_be_bytes());
+        }
+        bytes
+    }
 }
 
 #[derive(
@@ -133,6 +146,13 @@ impl OperationId {
     pub fn is_causally_after(&self, id: Self) -> bool {
         self.operation_count > id.operation_count
             || (self.operation_count == id.operation_count && self.replica_id > id.replica_id)
+    }
+
+    fn to_be_bytes(&self) -> [u8; 12] {
+        let mut bytes = [0; 12];
+        bytes[..4].copy_from_slice(&self.replica_id.0.to_be_bytes());
+        bytes[4..].copy_from_slice(&self.operation_count.0.to_be_bytes());
+        bytes
     }
 }
 
@@ -915,7 +935,7 @@ impl Branch {
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
                 .update(&self.id, |branch| branch.head = operation_id.into());
-            repo.revisions.insert(operation_id.into(), revision);
+            repo.revisions.lock().insert(operation_id.into(), revision);
             (Some(operation), result)
         })
     }
@@ -942,13 +962,13 @@ struct DbSnapshot {
     repos: btree::Map<RepoId, RepoSnapshot>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct DocumentMetadata {
     path: Option<Arc<Path>>,
     last_change: OperationId,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct DocumentFragment {
     document_id: OperationId,
     location: DenseId,
@@ -1025,7 +1045,7 @@ impl btree::Item for DocumentFragment {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, Default)]
+#[derive(Eq, PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DocumentFragmentSummary {
     visible_len: usize,
     hidden_len: usize,
@@ -1087,13 +1107,13 @@ impl<'a> btree::SeekTarget<'a, DocumentFragmentSummary, DocumentFragmentSummary>
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Tombstone {
     id: OperationId,
     undo_count: u16,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct InsertionFragment {
     insertion_id: OperationId,
     offset_in_insertion: usize,
@@ -1129,7 +1149,7 @@ impl btree::KeyedItem for InsertionFragment {
     }
 }
 
-#[derive(Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 struct InsertionFragmentSummary {
     max_insertion_id: OperationId,
     max_offset_in_insertion: usize,
@@ -1592,7 +1612,7 @@ pub struct RepoSnapshot {
     // TODO: Change String to Arc<str> for branch_ids_by_name
     branch_ids_by_name: btree::Map<String, OperationId>,
     operations: btree::Map<OperationId, Operation>,
-    revisions: btree::Map<RevisionId, Revision>,
+    revisions: Arc<Mutex<HashMap<RevisionId, Revision>>>,
     max_operation_ids: btree::Map<ReplicaId, OperationCount>,
     deferred_operations: btree::Sequence<DeferredOperation>,
 }
@@ -1614,10 +1634,7 @@ impl Default for RepoSnapshot {
             branches: Default::default(),
             branch_ids_by_name: Default::default(),
             operations: Default::default(),
-            revisions: btree::Map::from_ordered_entries([(
-                RevisionId::default(),
-                Revision::default(),
-            )]),
+            revisions: Default::default(),
             max_operation_ids: Default::default(),
             deferred_operations: Default::default(),
         }
@@ -1633,9 +1650,7 @@ impl RepoSnapshot {
     }
 
     async fn load(id: RepoId, kv: &dyn KvStore) -> Result<Self> {
-        let repo_bytes = kv
-            .load(btree::namespace_bytes("repo"), id.0.as_u128())
-            .await?;
+        let repo_bytes = kv.load(id.to_be_bytes(), "root".into()).await?;
         let saved_repo = serde_bare::from_slice::<SavedRepoSnapshot>(&repo_bytes)?;
         Ok(Self {
             last_operation_id: saved_repo.last_operation_id,
@@ -1659,7 +1674,7 @@ impl RepoSnapshot {
             deferred_operations: self.deferred_operations.save(kv).await?,
         };
         let repo_bytes = serde_bare::to_vec(&saved_repo)?;
-        kv.store(btree::namespace_bytes("repo"), id.0.as_u128(), repo_bytes)
+        kv.store(id.to_be_bytes(), "root".into(), repo_bytes)
             .await?;
         Ok(())
     }
@@ -1827,12 +1842,12 @@ impl RepoSnapshot {
         self.operations.get(&operation_id)
     }
 
-    fn load_revision(&mut self, revision_id: &RevisionId) -> Result<Revision> {
+    fn load_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
         // First, check if we have a revision cached for this revision id.
         // If not, we'll need to reconstruct it from a previous revision.
         // We need to find a cached revision that is an ancestor of the given revision id.
         // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
-        if let Some(revision) = self.revisions.get(revision_id) {
+        if let Some(revision) = self.revisions.lock().get(revision_id) {
             Ok(revision.clone())
         } else {
             struct Search<'a> {
@@ -1863,7 +1878,7 @@ impl RepoSnapshot {
                 // If the current revision is reachable from every operation in the original
                 // revision id, it's a common ancestor.
                 if reachable_from.len() == revision_id.len() {
-                    if let Some(revision) = self.revisions.get(search.ancestor) {
+                    if let Some(revision) = self.revisions.lock().get(search.ancestor) {
                         // We've found a cached revision for a common ancestor. For it to
                         // be a common ancestor means that all its downstream operations must
                         // have causally happened after it. Therefore, we should be able to
@@ -1924,6 +1939,7 @@ impl RepoSnapshot {
             }
 
             self.revisions
+                .lock()
                 .insert(revision_id.clone(), common_ancestor_revision.clone());
             Ok(common_ancestor_revision)
         }
@@ -1999,6 +2015,34 @@ pub struct SavedRevision {
 }
 
 impl Revision {
+    async fn load(repo_id: RepoId, id: RevisionId, kv: &dyn KvStore) -> Result<Self> {
+        let revision_bytes = kv.load(repo_id.to_be_bytes(), id.db_key()).await?;
+        let saved_revision = serde_bare::from_slice::<SavedRevision>(&revision_bytes)?;
+        Ok(Self {
+            document_metadata: btree::Map::load_root(saved_revision.document_metadata, kv).await?,
+            document_fragments: btree::Sequence::load_root(saved_revision.document_fragments, kv)
+                .await?,
+            insertion_fragments: btree::Sequence::load_root(saved_revision.insertion_fragments, kv)
+                .await?,
+            visible_text: Rope::load_root(saved_revision.visible_text, kv).await?,
+            hidden_text: Rope::load_root(saved_revision.hidden_text, kv).await?,
+        })
+    }
+
+    async fn save(&self, repo_id: RepoId, id: RevisionId, kv: &dyn KvStore) -> Result<()> {
+        let saved_revision = SavedRevision {
+            document_metadata: self.document_metadata.save(kv).await?,
+            document_fragments: self.document_fragments.save(kv).await?,
+            insertion_fragments: self.insertion_fragments.save(kv).await?,
+            visible_text: self.visible_text.save(kv).await?,
+            hidden_text: self.hidden_text.save(kv).await?,
+        };
+        let revision_bytes = serde_bare::to_vec(&saved_revision)?;
+        kv.store(repo_id.to_be_bytes(), id.db_key(), revision_bytes)
+            .await?;
+        Ok(())
+    }
+
     /// Return the locations of all document fragments for a given insertion and
     /// subrange of that insertion.
     fn fragment_locations(
@@ -2139,7 +2183,7 @@ mod tests {
     }
 
     impl KvStore for TestKv {
-        fn load(&self, namespace: [u8; 16], key: u128) -> BoxFuture<Result<Vec<u8>>> {
+        fn load(&self, namespace: [u8; 16], key: Vec<u8>) -> BoxFuture<Result<Vec<u8>>> {
             let kv = self.kv.clone();
             let executor = self.executor.clone();
             async move {
@@ -2149,7 +2193,12 @@ mod tests {
             .boxed()
         }
 
-        fn store(&self, namespace: [u8; 16], key: u128, value: Vec<u8>) -> BoxFuture<Result<()>> {
+        fn store(
+            &self,
+            namespace: [u8; 16],
+            key: Vec<u8>,
+            value: Vec<u8>,
+        ) -> BoxFuture<Result<()>> {
             let kv = self.kv.clone();
             let executor = self.executor.clone();
             async move {

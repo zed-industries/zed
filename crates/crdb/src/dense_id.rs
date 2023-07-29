@@ -1,5 +1,6 @@
 use crate::btree;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::iter;
 
@@ -8,7 +9,7 @@ lazy_static! {
     static ref MAX: DenseId = DenseId::max();
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DenseId(SmallVec<[u64; 4]>);
 
 impl DenseId {
