@@ -22,7 +22,7 @@ staff_mode = { path = "../staff_mode" }
 sum_tree = { path = "../sum_tree" }
 
 anyhow.workspace = true
-async-recursion = "0.3"
+async-recursion.workspace = true
 async-tungstenite = { version = "0.16", features = ["async-tls"] }
 futures.workspace = true
 image = "0.23"

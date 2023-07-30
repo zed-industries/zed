@@ -36,7 +36,7 @@ terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 
-async-recursion = "1.0.0"
+async-recursion.workspace = true
 itertools = "0.10"
 bincode = "1.2.1"
 anyhow.workspace = true

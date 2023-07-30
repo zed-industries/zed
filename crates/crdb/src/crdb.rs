@@ -1,5 +1,6 @@
 mod btree;
 mod dense_id;
+mod history;
 mod messages;
 mod operations;
 mod rope;
@@ -8,6 +9,7 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
+use async_recursion::async_recursion;
 use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
@@ -78,6 +80,12 @@ pub struct RevisionId(SmallVec<[OperationId; 2]>);
 impl From<OperationId> for RevisionId {
     fn from(id: OperationId) -> Self {
         RevisionId(smallvec![id])
+    }
+}
+
+impl<'a> From<&'a [OperationId]> for RevisionId {
+    fn from(ids: &'a [OperationId]) -> Self {
+        RevisionId(ids.iter().copied().collect())
     }
 }
 
@@ -839,7 +847,7 @@ impl Repo {
                             .ok_or_else(|| anyhow!("branch not found"))?
                             .head
                             .clone();
-                        repo.load_revision(&head, &*this.db.kv)?;
+                        repo.load_revision(&head, &*this.db.kv).await?;
                         Ok((None, branch_id))
                     }
                     .boxed()
@@ -1874,9 +1882,9 @@ impl RepoSnapshot {
 
             // The following ensures that a revision for the branch head is always present.
             #[cfg(not(any(test, feature = "test-support")))]
-            self.load_revision(&new_head, kv)?;
+            self.load_revision(&new_head, kv).await?;
             #[cfg(any(test, feature = "test-support"))]
-            self.load_revision(&new_head, kv).unwrap();
+            self.load_revision(&new_head, kv).await.unwrap();
 
             Ok(flushed_operations)
         } else {
@@ -1939,8 +1947,12 @@ impl RepoSnapshot {
         Ok(())
     }
 
-    fn operation(&self, operation_id: OperationId) -> Option<&Operation> {
-        self.operations.get(&operation_id)
+    async fn operation(
+        &mut self,
+        operation_id: OperationId,
+        kv: &dyn KvStore,
+    ) -> Result<Option<&Operation>> {
+        self.operations.load(&operation_id, kv).await
     }
 
     fn cached_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
@@ -1952,20 +1964,36 @@ impl RepoSnapshot {
             .clone())
     }
 
-    fn load_revision(&self, revision_id: &RevisionId, kv: &dyn KvStore) -> Result<Revision> {
+    #[async_recursion]
+    async fn load_revision(
+        &mut self,
+        revision_id: &RevisionId,
+        kv: &dyn KvStore,
+    ) -> Result<Revision> {
         // First, check if we have a revision cached for this revision id.
         // If not, we'll need to reconstruct it from a previous revision.
         // We need to find a cached revision that is an ancestor of the given revision id.
         // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
-        if let Some(revision) = self.revisions.lock().get(revision_id) {
-            Ok(revision.clone())
+        let mut revision = self.revisions.lock().get(revision_id).cloned();
+        if revision.is_none() {
+            revision = Revision::load(self.id, revision_id, kv).await.ok();
+            if let Some(revision) = revision.as_ref() {
+                self.revisions
+                    .lock()
+                    .entry(revision_id.clone())
+                    .or_insert_with(|| revision.clone());
+            }
+        }
+
+        if let Some(revision) = revision {
+            Ok(revision)
         } else {
-            struct Search<'a> {
+            struct Search {
                 start: OperationId,
-                ancestor: &'a RevisionId,
+                ancestor: RevisionId,
             }
 
-            let mut ancestors = HashMap::<&RevisionId, HashSet<OperationId>>::default();
+            let mut ancestors = HashMap::<RevisionId, HashSet<OperationId>>::default();
             let mut searches = VecDeque::new();
             let mut operations = BTreeSet::new();
             for operation_id in revision_id.iter() {
@@ -1973,42 +2001,44 @@ impl RepoSnapshot {
                 searches.push_back(Search {
                     start: *operation_id,
                     ancestor: self
-                        .operation(*operation_id)
+                        .operation(*operation_id, kv)
+                        .await?
                         .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
-                        .parent(),
+                        .parent()
+                        .clone(),
                 });
             }
 
             let mut common_ancestor_revision = Revision::default();
             let mut missing_operations_start = (OperationCount::default(), ReplicaId::default());
             while let Some(search) = searches.pop_front() {
-                let reachable_from = ancestors.entry(search.ancestor).or_default();
+                let reachable_from = ancestors.entry(search.ancestor.clone()).or_default();
                 reachable_from.insert(search.start);
 
                 // If the current revision is reachable from every operation in the original
                 // revision id, it's a common ancestor.
                 if reachable_from.len() == revision_id.len() {
-                    if let Some(revision) = self.revisions.lock().get(search.ancestor) {
-                        // We've found a cached revision for a common ancestor. For it to
-                        // be a common ancestor means that all its downstream operations must
-                        // have causally happened after it. Therefore, we should be able to
-                        // use the maximum lamport timestamp in the common ancestor's revision
-                        // and select only those operations we've found in the backwards search
-                        // which have a higher lamport timestamp.
-                        common_ancestor_revision = revision.clone();
-                        if let Some(max_operation_count) = search
-                            .ancestor
-                            .iter()
-                            .map(|operation_id| operation_id.operation_count)
-                            .max()
-                        {
-                            missing_operations_start = (
-                                OperationCount(max_operation_count.0 + 1),
-                                ReplicaId::default(),
-                            );
-                        }
-                        break;
+                    // We've found a common ancestor, now we load a revision for it. For it to
+                    // be a common ancestor means that all its downstream operations must
+                    // have causally happened after it. Therefore, we should be able to
+                    // use the maximum lamport timestamp in the common ancestor's revision
+                    // and select only those operations we've found in the backwards search
+                    // which have a higher lamport timestamp.
+                    let revision = self.load_revision(&search.ancestor, kv).await?;
+                    common_ancestor_revision = revision.clone();
+                    if let Some(max_operation_count) = search
+                        .ancestor
+                        .iter()
+                        .map(|operation_id| operation_id.operation_count)
+                        .max()
+                    {
+                        missing_operations_start = (
+                            OperationCount(max_operation_count.0 + 1),
+                            ReplicaId::default(),
+                        );
                     }
+
+                    break;
                 }
 
                 for operation_id in search.ancestor.iter() {
@@ -2016,9 +2046,11 @@ impl RepoSnapshot {
                     searches.push_back(Search {
                         start: search.start,
                         ancestor: self
-                            .operation(*operation_id)
+                            .operation(*operation_id, kv)
+                            .await?
                             .expect("operation must exist")
-                            .parent(),
+                            .parent()
+                            .clone(),
                     });
                 }
             }
@@ -2030,7 +2062,8 @@ impl RepoSnapshot {
                     operation_count: *operation_count,
                 };
                 match self
-                    .operation(missing_operation_id)
+                    .operation(missing_operation_id, kv)
+                    .await?
                     .expect("operation must exist")
                     .clone()
                 {
@@ -2038,7 +2071,7 @@ impl RepoSnapshot {
                         op.apply(&mut common_ancestor_revision);
                     }
                     Operation::Edit(op) => {
-                        let parent_revision = self.load_revision(&op.parent, kv)?;
+                        let parent_revision = self.load_revision(&op.parent, kv).await?;
                         op.apply(&parent_revision, &mut common_ancestor_revision)?;
                     }
                     Operation::CreateBranch(_) => {
@@ -2050,7 +2083,8 @@ impl RepoSnapshot {
 
             self.revisions
                 .lock()
-                .insert(revision_id.clone(), common_ancestor_revision.clone());
+                .entry(revision_id.clone())
+                .or_insert_with(|| common_ancestor_revision.clone());
             Ok(common_ancestor_revision)
         }
     }

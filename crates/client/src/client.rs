@@ -748,7 +748,7 @@ impl Client {
 
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
-        self: &Arc<Self>,
+        self: &'async_recursion Arc<Self>,
         try_keychain: bool,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {

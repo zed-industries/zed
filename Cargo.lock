@@ -470,17 +470,6 @@ dependencies = [
 
 [[package]]
 name = "async-recursion"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "async-recursion"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e97ce7de6cf12de5d7226c73f5ba9811622f4db3a5b91b55c53e987e5f91cba"
@@ -1342,7 +1331,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 0.3.2",
+ "async-recursion",
  "async-tungstenite",
  "collections",
  "db",
@@ -1888,6 +1877,7 @@ dependencies = [
  "anyhow",
  "arrayvec 0.7.4",
  "async-broadcast",
+ "async-recursion",
  "bromberg_sl2",
  "collections",
  "ctor",
@@ -9476,7 +9466,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 1.0.4",
+ "async-recursion",
  "bincode",
  "call",
  "client",
@@ -9596,7 +9586,7 @@ dependencies = [
  "ai",
  "anyhow",
  "async-compression",
- "async-recursion 0.3.2",
+ "async-recursion",
  "async-tar",
  "async-trait",
  "audio",

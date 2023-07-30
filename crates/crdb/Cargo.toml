@@ -14,6 +14,7 @@ test-support = ["collections/test-support", "util/test-support"]
 collections = { path = "../collections" }
 util = { path = "../util" }
 
+async-recursion.workspace = true
 anyhow.workspace = true
 arrayvec = { version = "0.7.1", features = ["serde"] }
 bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "6faf816bd5b4b7b2b6ea77495686634732ded095" }

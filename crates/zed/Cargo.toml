@@ -72,7 +72,7 @@ zed-actions = {path = "../zed-actions"}
 anyhow.workspace = true
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"
-async-recursion = "0.3"
+async-recursion.workspace = true
 async-trait.workspace = true
 backtrace = "0.3"
 chrono = "0.4"
