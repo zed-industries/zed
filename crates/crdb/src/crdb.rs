@@ -14,6 +14,7 @@ use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
+use history::{History, SavedHistory};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
 use parking_lot::{Mutex, RwLock};
 use rope::Rope;
@@ -138,7 +139,7 @@ impl OperationId {
     pub fn new(replica_id: ReplicaId) -> Self {
         Self {
             replica_id,
-            operation_count: OperationCount::default(),
+            operation_count: OperationCount(1),
         }
     }
 
@@ -381,25 +382,28 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
         let response = client
             .request(messages::SyncRepo {
                 id: self.repo.id,
-                max_operation_ids: self.repo.read(|repo| (&repo.max_operation_ids).into()),
-            })
-            .await?;
-
-        self.repo
-            .update_async(|repo| {
-                let kv = client.db.kv.clone();
-                let operations = response.operations.clone();
-                async move {
-                    repo.apply_operations(operations, &*kv).await?;
-                    Ok((None, ()))
-                }
-                .boxed()
+                max_operation_ids: self
+                    .repo
+                    .read(|repo| repo.history.max_operation_ids().into()),
             })
             .await?;
 
         let operations = self
             .repo
-            .read(|snapshot| snapshot.operations_since(&(&response.max_operation_ids).into()));
+            .update_async(|repo| {
+                let kv = client.db.kv.clone();
+                let response = response.clone();
+                async move {
+                    repo.apply_operations(response.operations, &*kv).await?;
+                    let operations = repo
+                        .history
+                        .operations_since(&(&response.max_operation_ids).into(), &*kv)
+                        .await?;
+                    Ok((None, operations))
+                }
+                .boxed()
+            })
+            .await?;
 
         for chunk in operations.chunks(CHUNK_SIZE) {
             client
@@ -737,12 +741,25 @@ impl<N: ServerNetwork> Server<N> {
             .repo(request.id)
             .ok_or_else(|| anyhow!("repo not found"))?;
 
-        repo.read(|snapshot| {
-            Ok(messages::SyncRepoResponse {
-                operations: snapshot.operations_since(&(&request.max_operation_ids).into()),
-                max_operation_ids: (&snapshot.max_operation_ids).into(),
-            })
+        repo.update_async(|snapshot| {
+            let request = request.clone();
+            let kv = self.db.kv.clone();
+            async move {
+                let operations = snapshot
+                    .history
+                    .operations_since(&(&request.max_operation_ids).into(), &*kv)
+                    .await?;
+                Ok((
+                    None,
+                    messages::SyncRepoResponse {
+                        operations,
+                        max_operation_ids: snapshot.history.max_operation_ids().into(),
+                    },
+                ))
+            }
+            .boxed()
         })
+        .await
     }
 
     async fn handle_publish_operations(
@@ -899,7 +916,7 @@ impl Repo {
             .update(&self.id, |repo| {
                 let (operation, result) = f(repo);
                 if let Some(operation) = operation {
-                    repo.save_local_operation(operation.clone());
+                    repo.history.insert_local(operation.clone());
                     if let Some(local_operation_created) = self.db.local_operation_created.as_ref()
                     {
                         local_operation_created(self.id, operation);
@@ -1007,7 +1024,7 @@ impl Branch {
             let mut revision = repo
                 .cached_revision(&head)
                 .expect("head revision must exist");
-            let operation_id = repo.last_operation_id.tick();
+            let operation_id = repo.history.next_operation_id();
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
                 .update(&self.id, |branch| branch.head = operation_id.into());
@@ -1686,47 +1703,36 @@ impl<'a> RopeBuilder<'a> {
 #[derive(Clone, Debug)]
 pub struct RepoSnapshot {
     id: RepoId,
-    last_operation_id: OperationId,
+    history: History,
     branches: btree::Map<OperationId, BranchSnapshot>,
     // TODO: Change String to Arc<str> for branch_ids_by_name
     branch_ids_by_name: btree::Map<String, OperationId>,
-    operations: btree::Map<OperationId, Operation>,
     revisions: Arc<Mutex<HashMap<RevisionId, Revision>>>,
-    max_operation_ids: btree::Map<ReplicaId, OperationCount>,
-    deferred_operations: btree::Sequence<DeferredOperation>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct SavedRepoSnapshot {
-    last_operation_id: OperationId,
+    history: SavedHistory,
     branches: btree::SavedId,
     branch_ids_by_name: btree::SavedId,
-    operations: btree::SavedId,
-    max_operation_ids: btree::SavedId,
-    deferred_operations: btree::SavedId,
 }
 
 impl RepoSnapshot {
     fn new(id: RepoId, replica_id: ReplicaId) -> Self {
         Self {
             id,
-            last_operation_id: OperationId::new(replica_id),
+            history: History::new(replica_id),
             branches: Default::default(),
             branch_ids_by_name: Default::default(),
-            operations: Default::default(),
             revisions: Default::default(),
-            max_operation_ids: Default::default(),
-            deferred_operations: Default::default(),
         }
     }
 
     fn ptr_eq(this: &Self, other: &Self) -> bool {
-        btree::Map::ptr_eq(&this.branches, &other.branches)
+        this.id == other.id
             && btree::Map::ptr_eq(&this.branches, &other.branches)
             && btree::Map::ptr_eq(&this.branch_ids_by_name, &other.branch_ids_by_name)
-            && btree::Map::ptr_eq(&this.operations, &other.operations)
-            && btree::Map::ptr_eq(&this.max_operation_ids, &other.max_operation_ids)
-            && this.last_operation_id == other.last_operation_id
+            && History::ptr_eq(&this.history, &other.history)
     }
 
     async fn load(id: RepoId, kv: &dyn KvStore) -> Result<Self> {
@@ -1734,25 +1740,18 @@ impl RepoSnapshot {
         let saved_repo = serde_bare::from_slice::<SavedRepoSnapshot>(&repo_bytes)?;
         Ok(Self {
             id,
-            last_operation_id: saved_repo.last_operation_id,
+            history: History::load(saved_repo.history, kv).await?,
             branches: btree::Map::load_root(saved_repo.branches, kv).await?,
             branch_ids_by_name: btree::Map::load_root(saved_repo.branch_ids_by_name, kv).await?,
-            operations: btree::Map::load_root(saved_repo.operations, kv).await?,
             revisions: Default::default(),
-            max_operation_ids: btree::Map::load_root(saved_repo.max_operation_ids, kv).await?,
-            deferred_operations: btree::Sequence::load_root(saved_repo.deferred_operations, kv)
-                .await?,
         })
     }
 
     async fn save(&self, id: RepoId, kv: &dyn KvStore) -> Result<()> {
         let saved_repo = SavedRepoSnapshot {
-            last_operation_id: self.last_operation_id,
+            history: self.history.save(kv).await?,
             branches: self.branches.save(kv).await?,
             branch_ids_by_name: self.branch_ids_by_name.save(kv).await?,
-            operations: self.operations.save(kv).await?,
-            max_operation_ids: self.max_operation_ids.save(kv).await?,
-            deferred_operations: self.deferred_operations.save(kv).await?,
         };
         let repo_bytes = serde_bare::to_vec(&saved_repo)?;
         kv.store(id.to_be_bytes(), "root".into(), repo_bytes)
@@ -1762,7 +1761,7 @@ impl RepoSnapshot {
 
     fn create_empty_branch(&mut self, name: impl Into<Arc<str>>) -> (Operation, OperationId) {
         let name = name.into();
-        let branch_id = self.last_operation_id.tick();
+        let branch_id = self.history.next_operation_id();
         self.branches.insert(
             branch_id,
             BranchSnapshot {
@@ -1779,42 +1778,6 @@ impl RepoSnapshot {
             }),
             branch_id,
         )
-    }
-
-    fn operations_since(&self, version: &btree::Map<ReplicaId, OperationCount>) -> Vec<Operation> {
-        let mut new_operations = Vec::new();
-        for (replica_id, end_op_count) in self.max_operation_ids.iter() {
-            let end_op = OperationId {
-                replica_id: *replica_id,
-                operation_count: *end_op_count,
-            };
-            if let Some(start_op_count) = version.get(&replica_id) {
-                let start_op = OperationId {
-                    replica_id: *replica_id,
-                    operation_count: *start_op_count,
-                };
-                new_operations.extend(
-                    self.operations
-                        .range((Bound::Excluded(&start_op), Bound::Included(&end_op)))
-                        .map(|(_, op)| op.clone()),
-                );
-            } else {
-                let start_op = OperationId::new(*replica_id);
-                new_operations.extend(
-                    self.operations
-                        .range((Bound::Included(&start_op), Bound::Included(&end_op)))
-                        .map(|(_, op)| op.clone()),
-                );
-            }
-        }
-        new_operations
-    }
-
-    fn save_local_operation(&mut self, operation: Operation) {
-        let replica_id = operation.id().replica_id;
-        let count = operation.id().operation_count;
-        self.max_operation_ids.insert(replica_id, count);
-        self.operations.insert(operation.id(), operation);
     }
 
     /// Apply the given operations and any deferred operations that are now applicable.
@@ -1836,15 +1799,11 @@ impl RepoSnapshot {
         operation: Operation,
         kv: &dyn KvStore,
     ) -> Result<SmallVec<[Operation; 1]>> {
-        if self.operations.contains_key(&operation.id()) {
+        if self.history.has_applied(&operation, kv).await? {
             return Ok(Default::default());
         }
 
-        if operation
-            .parent()
-            .iter()
-            .all(|parent| self.operations.contains_key(&parent))
-        {
+        if self.history.can_apply(&operation, kv).await? {
             let operation_id = operation.id();
             let mut new_head;
             match &operation {
@@ -1864,7 +1823,7 @@ impl RepoSnapshot {
                 | Operation::Edit(operations::Edit {
                     branch_id, parent, ..
                 }) => {
-                    if let Some(branch) = self.branches.get(branch_id).cloned() {
+                    if let Some(branch) = self.branches.load(branch_id, kv).await?.cloned() {
                         new_head = branch.head;
                         new_head.observe(operation_id, &parent);
                         self.branches
@@ -1880,8 +1839,7 @@ impl RepoSnapshot {
                 }
             };
 
-            self.save_remote_operation(operation, kv).await?;
-            let flushed_operations = self.flush_deferred_operations(operation_id, kv).await?;
+            let flushed_operations = self.history.insert(operation, kv).await?;
 
             // The following ensures that a revision for the branch head is always present.
             #[cfg(not(any(test, feature = "test-support")))]
@@ -1891,71 +1849,9 @@ impl RepoSnapshot {
 
             Ok(flushed_operations)
         } else {
-            for parent in operation.parent().iter() {
-                self.deferred_operations.insert_or_replace(
-                    DeferredOperation {
-                        parent: *parent,
-                        operation: operation.clone(),
-                    },
-                    &(),
-                );
-            }
+            self.history.defer(operation, kv).await?;
             Ok(Default::default())
         }
-    }
-
-    /// Remove any operations deferred on the given parent and add them to the
-    /// provided operation queue. This is called in `apply_operations`.
-    async fn flush_deferred_operations(
-        &mut self,
-        parent_id: OperationId,
-        kv: &dyn KvStore,
-    ) -> Result<SmallVec<[Operation; 1]>> {
-        self.deferred_operations
-            .load(kv, &(), |probe| {
-                let key_range = (
-                    Bound::Excluded(*probe.start),
-                    Bound::Included(*probe.summary),
-                );
-                key_range.contains(&parent_id)
-            })
-            .await?;
-        let mut cursor = self.deferred_operations.cursor::<OperationId>();
-        let mut remaining = cursor.slice(&parent_id, Bias::Left, &());
-        let mut flushed = SmallVec::new();
-        flushed.extend(
-            cursor
-                .slice(&parent_id, Bias::Right, &())
-                .iter()
-                .map(|deferred| deferred.operation.clone()),
-        );
-        remaining.append(cursor.suffix(&()), &());
-        drop(cursor);
-        self.deferred_operations = remaining;
-        Ok(flushed)
-    }
-
-    async fn save_remote_operation(
-        &mut self,
-        operation: Operation,
-        kv: &dyn KvStore,
-    ) -> Result<()> {
-        let replica_id = operation.id().replica_id;
-        let count = operation.id().operation_count;
-        if self.max_operation_ids.load(&replica_id, kv).await?.copied() < Some(count) {
-            self.max_operation_ids.insert(replica_id, count);
-        }
-        self.last_operation_id.observe(operation.id());
-        self.operations.store(operation.id(), operation, kv).await?;
-        Ok(())
-    }
-
-    async fn operation(
-        &mut self,
-        operation_id: OperationId,
-        kv: &dyn KvStore,
-    ) -> Result<Option<&Operation>> {
-        self.operations.load(&operation_id, kv).await
     }
 
     fn cached_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
@@ -1973,123 +1869,124 @@ impl RepoSnapshot {
         revision_id: &RevisionId,
         kv: &dyn KvStore,
     ) -> Result<Revision> {
-        // First, check if we have a revision cached for this revision id.
-        // If not, we'll need to reconstruct it from a previous revision.
-        // We need to find a cached revision that is an ancestor of the given revision id.
-        // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
-        let mut revision = self.revisions.lock().get(revision_id).cloned();
-        if revision.is_none() {
-            revision = Revision::load(self.id, revision_id, kv).await.ok();
-            if let Some(revision) = revision.as_ref() {
-                self.revisions
-                    .lock()
-                    .entry(revision_id.clone())
-                    .or_insert_with(|| revision.clone());
-            }
-        }
+        todo!()
+        // // First, check if we have a revision cached for this revision id.
+        // // If not, we'll need to reconstruct it from a previous revision.
+        // // We need to find a cached revision that is an ancestor of the given revision id.
+        // // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
+        // let mut revision = self.revisions.lock().get(revision_id).cloned();
+        // if revision.is_none() {
+        //     revision = Revision::load(self.id, revision_id, kv).await.ok();
+        //     if let Some(revision) = revision.as_ref() {
+        //         self.revisions
+        //             .lock()
+        //             .entry(revision_id.clone())
+        //             .or_insert_with(|| revision.clone());
+        //     }
+        // }
 
-        if let Some(revision) = revision {
-            Ok(revision)
-        } else {
-            struct Search {
-                start: OperationId,
-                ancestor: RevisionId,
-            }
+        // if let Some(revision) = revision {
+        //     Ok(revision)
+        // } else {
+        //     struct Search {
+        //         start: OperationId,
+        //         ancestor: RevisionId,
+        //     }
 
-            let mut ancestors = HashMap::<RevisionId, HashSet<OperationId>>::default();
-            let mut searches = VecDeque::new();
-            let mut operations = BTreeSet::new();
-            for operation_id in revision_id.iter() {
-                operations.insert((operation_id.operation_count, operation_id.replica_id));
-                searches.push_back(Search {
-                    start: *operation_id,
-                    ancestor: self
-                        .operation(*operation_id, kv)
-                        .await?
-                        .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
-                        .parent()
-                        .clone(),
-                });
-            }
+        //     let mut ancestors = HashMap::<RevisionId, HashSet<OperationId>>::default();
+        //     let mut searches = VecDeque::new();
+        //     let mut operations = BTreeSet::new();
+        //     for operation_id in revision_id.iter() {
+        //         operations.insert((operation_id.operation_count, operation_id.replica_id));
+        //         searches.push_back(Search {
+        //             start: *operation_id,
+        //             ancestor: self
+        //                 .operation(*operation_id, kv)
+        //                 .await?
+        //                 .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
+        //                 .parent()
+        //                 .clone(),
+        //         });
+        //     }
 
-            let mut common_ancestor_revision = Revision::default();
-            let mut missing_operations_start = (OperationCount::default(), ReplicaId::default());
-            while let Some(search) = searches.pop_front() {
-                let reachable_from = ancestors.entry(search.ancestor.clone()).or_default();
-                reachable_from.insert(search.start);
+        //     let mut common_ancestor_revision = Revision::default();
+        //     let mut missing_operations_start = (OperationCount::default(), ReplicaId::default());
+        //     while let Some(search) = searches.pop_front() {
+        //         let reachable_from = ancestors.entry(search.ancestor.clone()).or_default();
+        //         reachable_from.insert(search.start);
 
-                // If the current revision is reachable from every operation in the original
-                // revision id, it's a common ancestor.
-                if reachable_from.len() == revision_id.len() {
-                    // We've found a common ancestor, now we load a revision for it. For it to
-                    // be a common ancestor means that all its downstream operations must
-                    // have causally happened after it. Therefore, we should be able to
-                    // use the maximum lamport timestamp in the common ancestor's revision
-                    // and select only those operations we've found in the backwards search
-                    // which have a higher lamport timestamp.
-                    let revision = self.load_revision(&search.ancestor, kv).await?;
-                    common_ancestor_revision = revision.clone();
-                    if let Some(max_operation_count) = search
-                        .ancestor
-                        .iter()
-                        .map(|operation_id| operation_id.operation_count)
-                        .max()
-                    {
-                        missing_operations_start = (
-                            OperationCount(max_operation_count.0 + 1),
-                            ReplicaId::default(),
-                        );
-                    }
+        //         // If the current revision is reachable from every operation in the original
+        //         // revision id, it's a common ancestor.
+        //         if reachable_from.len() == revision_id.len() {
+        //             // We've found a common ancestor, now we load a revision for it. For it to
+        //             // be a common ancestor means that all its downstream operations must
+        //             // have causally happened after it. Therefore, we should be able to
+        //             // use the maximum lamport timestamp in the common ancestor's revision
+        //             // and select only those operations we've found in the backwards search
+        //             // which have a higher lamport timestamp.
+        //             let revision = self.load_revision(&search.ancestor, kv).await?;
+        //             common_ancestor_revision = revision.clone();
+        //             if let Some(max_operation_count) = search
+        //                 .ancestor
+        //                 .iter()
+        //                 .map(|operation_id| operation_id.operation_count)
+        //                 .max()
+        //             {
+        //                 missing_operations_start = (
+        //                     OperationCount(max_operation_count.0 + 1),
+        //                     ReplicaId::default(),
+        //                 );
+        //             }
 
-                    break;
-                }
+        //             break;
+        //         }
 
-                for operation_id in search.ancestor.iter() {
-                    operations.insert((operation_id.operation_count, operation_id.replica_id));
-                    searches.push_back(Search {
-                        start: search.start,
-                        ancestor: self
-                            .operation(*operation_id, kv)
-                            .await?
-                            .expect("operation must exist")
-                            .parent()
-                            .clone(),
-                    });
-                }
-            }
+        //         for operation_id in search.ancestor.iter() {
+        //             operations.insert((operation_id.operation_count, operation_id.replica_id));
+        //             searches.push_back(Search {
+        //                 start: search.start,
+        //                 ancestor: self
+        //                     .operation(*operation_id, kv)
+        //                     .await?
+        //                     .expect("operation must exist")
+        //                     .parent()
+        //                     .clone(),
+        //             });
+        //         }
+        //     }
 
-            // Apply all the missing operations to the found revision.
-            for (operation_count, replica_id) in operations.range(missing_operations_start..) {
-                let missing_operation_id = OperationId {
-                    replica_id: *replica_id,
-                    operation_count: *operation_count,
-                };
-                match self
-                    .operation(missing_operation_id, kv)
-                    .await?
-                    .expect("operation must exist")
-                    .clone()
-                {
-                    Operation::CreateDocument(op) => {
-                        op.apply(&mut common_ancestor_revision);
-                    }
-                    Operation::Edit(op) => {
-                        let parent_revision = self.load_revision(&op.parent, kv).await?;
-                        op.apply(&parent_revision, &mut common_ancestor_revision)?;
-                    }
-                    Operation::CreateBranch(_) => {
-                        // Creating a branch doesn't have an impact on the revision, so we
-                        // can ignore it.
-                    }
-                }
-            }
+        //     // Apply all the missing operations to the found revision.
+        //     for (operation_count, replica_id) in operations.range(missing_operations_start..) {
+        //         let missing_operation_id = OperationId {
+        //             replica_id: *replica_id,
+        //             operation_count: *operation_count,
+        //         };
+        //         match self
+        //             .operation(missing_operation_id, kv)
+        //             .await?
+        //             .expect("operation must exist")
+        //             .clone()
+        //         {
+        //             Operation::CreateDocument(op) => {
+        //                 op.apply(&mut common_ancestor_revision);
+        //             }
+        //             Operation::Edit(op) => {
+        //                 let parent_revision = self.load_revision(&op.parent, kv).await?;
+        //                 op.apply(&parent_revision, &mut common_ancestor_revision)?;
+        //             }
+        //             Operation::CreateBranch(_) => {
+        //                 // Creating a branch doesn't have an impact on the revision, so we
+        //                 // can ignore it.
+        //             }
+        //         }
+        //     }
 
-            self.revisions
-                .lock()
-                .entry(revision_id.clone())
-                .or_insert_with(|| common_ancestor_revision.clone());
-            Ok(common_ancestor_revision)
-        }
+        //     self.revisions
+        //         .lock()
+        //         .entry(revision_id.clone())
+        //         .or_insert_with(|| common_ancestor_revision.clone());
+        //     Ok(common_ancestor_revision)
+        // }
     }
 }
 

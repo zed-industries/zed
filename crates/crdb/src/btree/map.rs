@@ -60,6 +60,16 @@ where
         Ok(Self(Sequence::load_root(id, kv).await?))
     }
 
+    pub async fn load_all(id: SavedId, kv: &dyn KvStore) -> Result<Self>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        let mut sequence = Sequence::load_root(id, kv).await?;
+        sequence.load(kv, &(), |_| true).await?;
+        Ok(Self(sequence))
+    }
+
     pub async fn load(&mut self, key: &K, kv: &dyn KvStore) -> Result<Option<&V>>
     where
         K: Serialize + for<'de> Deserialize<'de>,
@@ -75,6 +85,21 @@ where
             })
             .await?;
         Ok(self.get(key))
+    }
+
+    pub async fn load_from(
+        &mut self,
+        start: &K,
+        kv: &dyn KvStore,
+    ) -> Result<impl Iterator<Item = (&K, &V)>>
+    where
+        K: Serialize + for<'de> Deserialize<'de>,
+        V: Serialize + for<'de> Deserialize<'de>,
+    {
+        self.0
+            .load(kv, &(), |probe| probe.start.0 >= *start)
+            .await?;
+        Ok(self.iter_from(start))
     }
 
     pub async fn store(&mut self, key: K, value: V, kv: &dyn KvStore) -> Result<()>
@@ -164,33 +189,7 @@ where
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn range<'a, R>(&self, range: R) -> impl Iterator<Item = (&K, &V)>
-    where
-        K: 'a,
-        R: RangeBounds<&'a K>,
-    {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
-        match range.start_bound() {
-            Bound::Included(start) => {
-                let start = MapKeyRef(Some(*start));
-                cursor.seek(&start, Bias::Left, &());
-            }
-            Bound::Excluded(start) => {
-                let start = MapKeyRef(Some(*start));
-                cursor.seek(&start, Bias::Right, &());
-            }
-            Bound::Unbounded => cursor.next(&()),
-        }
-        cursor
-            .map(|entry| (&entry.key, &entry.value))
-            .take_while(move |(key, _)| match range.end_bound() {
-                Bound::Included(end) => key <= end,
-                Bound::Excluded(end) => key < end,
-                Bound::Unbounded => true,
-            })
-    }
-
-    pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&K, &V)> + '_ {
+    pub fn iter_from<'a>(&self, from: &'a K) -> impl Iterator<Item = (&K, &V)> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
