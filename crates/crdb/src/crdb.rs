@@ -143,12 +143,15 @@ impl OperationId {
     }
 
     pub fn tick(&mut self) -> OperationId {
+        let op = *self;
         self.operation_count.0 += 1;
-        *self
+        op
     }
 
     pub fn observe(&mut self, other: Self) {
-        self.operation_count.0 = cmp::max(self.operation_count.0, other.operation_count.0) + 1;
+        if other.operation_count >= self.operation_count {
+            self.operation_count = OperationCount(other.operation_count.0 + 1);
+        }
     }
 
     pub fn is_causally_after(&self, id: Self) -> bool {

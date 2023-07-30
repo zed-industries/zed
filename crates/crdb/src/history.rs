@@ -20,9 +20,7 @@ impl History {
     }
 
     fn next_operation_id(&mut self) -> OperationId {
-        let next_operation_id = self.next_operation_id.tick();
-        self.next_operation_id = next_operation_id;
-        next_operation_id
+        self.next_operation_id.tick()
     }
 
     async fn insert(&mut self, operation: Operation, kv: &dyn KvStore) -> Result<()> {
@@ -158,69 +156,49 @@ mod tests {
     async fn test_traversal() {
         let kv = InMemoryKv::default();
         let mut history = History::new(ReplicaId(0));
-        let op1 = insert_operation(&[], &mut history, &kv).await;
-        let op2 = insert_operation(&[op1.id()], &mut history, &kv).await;
-        let op3 = insert_operation(&[op1.id()], &mut history, &kv).await;
-        let op4 = insert_operation(&[op2.id(), op3.id()], &mut history, &kv).await;
-        let op5 = insert_operation(&[op4.id()], &mut history, &kv).await;
-        let op6 = insert_operation(&[op4.id()], &mut history, &kv).await;
+        let op0 = insert_operation(&[], &mut history, &kv).await;
+        let op1 = insert_operation(&[op0.id()], &mut history, &kv).await;
+        let op2 = insert_operation(&[op0.id()], &mut history, &kv).await;
+        let op3 = insert_operation(&[op1.id(), op2.id()], &mut history, &kv).await;
+        let op4 = insert_operation(&[op3.id()], &mut history, &kv).await;
+        let op5 = insert_operation(&[op3.id()], &mut history, &kv).await;
+        let op6 = insert_operation(&[op3.id(), op2.id()], &mut history, &kv).await;
 
         assert_eq!(
-            traversal(&[op4.id()], &mut history, &kv).await,
+            traversal(&[op3.id()], &mut history, &kv).await,
             &[
                 TraversalResult {
-                    revision: RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op4.id()]),
+                    revision: RevisionId::from([op1.id(), op2.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op3.id()]),
                 },
                 TraversalResult {
-                    revision: RevisionId::from([op1.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op2.id(), op3.id()]),
+                    revision: RevisionId::from([op0.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op1.id(), op2.id()]),
                 },
                 TraversalResult {
                     revision: RevisionId::from([].as_slice()),
-                    operations: BTreeSet::from_iter([op1.id()]),
+                    operations: BTreeSet::from_iter([op0.id()]),
                 }
             ]
         );
         assert_eq!(
-            traversal(&[op6.id()], &mut history, &kv).await,
+            traversal(&[op5.id()], &mut history, &kv).await,
             &[
                 TraversalResult {
-                    revision: RevisionId::from([op4.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op6.id()]),
+                    revision: RevisionId::from([op3.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op5.id()]),
                 },
                 TraversalResult {
-                    revision: RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op4.id()]),
+                    revision: RevisionId::from([op1.id(), op2.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op3.id()]),
                 },
                 TraversalResult {
-                    revision: RevisionId::from([op1.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op2.id(), op3.id()]),
+                    revision: RevisionId::from([op0.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op1.id(), op2.id()]),
                 },
                 TraversalResult {
                     revision: RevisionId::from([].as_slice()),
-                    operations: BTreeSet::from_iter([op1.id()]),
-                }
-            ]
-        );
-        assert_eq!(
-            traversal(&[op5.id(), op6.id()], &mut history, &kv).await,
-            &[
-                TraversalResult {
-                    revision: RevisionId::from([op4.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op5.id(), op6.id()]),
-                },
-                TraversalResult {
-                    revision: RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op4.id()]),
-                },
-                TraversalResult {
-                    revision: RevisionId::from([op1.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op2.id(), op3.id()]),
-                },
-                TraversalResult {
-                    revision: RevisionId::from([].as_slice()),
-                    operations: BTreeSet::from_iter([op1.id()]),
+                    operations: BTreeSet::from_iter([op0.id()]),
                 }
             ]
         );
@@ -228,16 +206,54 @@ mod tests {
             traversal(&[op4.id(), op5.id()], &mut history, &kv).await,
             &[
                 TraversalResult {
-                    revision: RevisionId::from([op2.id(), op3.id()].as_slice()),
+                    revision: RevisionId::from([op3.id()].as_slice()),
                     operations: BTreeSet::from_iter([op4.id(), op5.id()]),
                 },
                 TraversalResult {
-                    revision: RevisionId::from([op1.id()].as_slice()),
-                    operations: BTreeSet::from_iter([op2.id(), op3.id()]),
+                    revision: RevisionId::from([op1.id(), op2.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op3.id()]),
+                },
+                TraversalResult {
+                    revision: RevisionId::from([op0.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op1.id(), op2.id()]),
                 },
                 TraversalResult {
                     revision: RevisionId::from([].as_slice()),
-                    operations: BTreeSet::from_iter([op1.id()]),
+                    operations: BTreeSet::from_iter([op0.id()]),
+                }
+            ]
+        );
+        assert_eq!(
+            traversal(&[op3.id(), op4.id()], &mut history, &kv).await,
+            &[
+                TraversalResult {
+                    revision: RevisionId::from([op1.id(), op2.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op3.id(), op4.id()]),
+                },
+                TraversalResult {
+                    revision: RevisionId::from([op0.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op1.id(), op2.id()]),
+                },
+                TraversalResult {
+                    revision: RevisionId::from([].as_slice()),
+                    operations: BTreeSet::from_iter([op0.id()]),
+                }
+            ]
+        );
+        assert_eq!(
+            traversal(&[op6.id()], &mut history, &kv).await,
+            &[
+                TraversalResult {
+                    revision: RevisionId::from([op3.id(), op2.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op6.id()]),
+                },
+                TraversalResult {
+                    revision: RevisionId::from([op0.id()].as_slice()),
+                    operations: BTreeSet::from_iter([op1.id(), op2.id(), op3.id()]),
+                },
+                TraversalResult {
+                    revision: RevisionId::from([].as_slice()),
+                    operations: BTreeSet::from_iter([op0.id()]),
                 }
             ]
         );
