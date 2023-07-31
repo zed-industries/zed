@@ -9,9 +9,8 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
-use async_recursion::async_recursion;
 use btree::{Bias, KvStore, SavedId};
-use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use history::{History, SavedHistory};
@@ -25,7 +24,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Debug, Display},
     future::Future,
-    ops::{Range, RangeBounds},
+    ops::Range,
     path::Path,
     sync::{Arc, Weak},
 };
@@ -1728,7 +1727,10 @@ impl RepoSnapshot {
             history: History::new(replica_id),
             branches: Default::default(),
             branch_ids_by_name: Default::default(),
-            revisions: Default::default(),
+            revisions: Arc::new(Mutex::new(HashMap::from_iter([(
+                RevisionId::default(),
+                Revision::default(),
+            )]))),
         }
     }
 
@@ -1747,7 +1749,10 @@ impl RepoSnapshot {
             history: History::load(saved_repo.history, kv).await?,
             branches: btree::Map::load_root(saved_repo.branches, kv).await?,
             branch_ids_by_name: btree::Map::load_root(saved_repo.branch_ids_by_name, kv).await?,
-            revisions: Default::default(),
+            revisions: Arc::new(Mutex::new(HashMap::from_iter([(
+                RevisionId::default(),
+                Revision::default(),
+            )]))),
         })
     }
 
@@ -1773,6 +1778,10 @@ impl RepoSnapshot {
                 head: branch_id.into(),
             },
         );
+        self.branch_ids_by_name.insert(name.to_string(), branch_id);
+        self.revisions
+            .lock()
+            .insert(branch_id.into(), Default::default());
 
         (
             Operation::CreateBranch(operations::CreateBranch {
@@ -1819,6 +1828,7 @@ impl RepoSnapshot {
                             head: op.id.into(),
                         },
                     );
+                    self.branch_ids_by_name.insert(op.name.to_string(), op.id);
                     new_head = RevisionId::from(op.id);
                 }
                 Operation::CreateDocument(operations::CreateDocument {
@@ -1866,7 +1876,7 @@ impl RepoSnapshot {
                 .revisions
                 .lock()
                 .get(revision_id)
-                .ok_or_else(|| anyhow!("cached revision not found"))?
+                .ok_or_else(|| anyhow!("cached revision for {:?} not found", revision_id))?
                 .clone())
         }
     }
