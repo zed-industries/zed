@@ -14,7 +14,7 @@ use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
-use history::{History, SavedHistory};
+use history::{History, SavedHistory, TraversalPath};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
 use parking_lot::{Mutex, RwLock};
 use rope::Rope;
@@ -1855,12 +1855,16 @@ impl RepoSnapshot {
     }
 
     fn cached_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
-        Ok(self
-            .revisions
-            .lock()
-            .get(revision_id)
-            .ok_or_else(|| anyhow!("cached revision not found"))?
-            .clone())
+        if revision_id.len() == 0 {
+            return Ok(Revision::default());
+        } else {
+            Ok(self
+                .revisions
+                .lock()
+                .get(revision_id)
+                .ok_or_else(|| anyhow!("cached revision not found"))?
+                .clone())
+        }
     }
 
     #[async_recursion]
@@ -1869,7 +1873,43 @@ impl RepoSnapshot {
         revision_id: &RevisionId,
         kv: &dyn KvStore,
     ) -> Result<Revision> {
-        todo!()
+        if let Some(revision) = self.cached_revision(revision_id).ok() {
+            Ok(revision)
+        } else {
+            struct StackEntry {
+                revision_id: RevisionId,
+                ancestor: TraversalPath,
+            }
+            let mut traversal = self.history.traverse(revision_id, kv).await?;
+            let mut stack = vec![StackEntry {
+                revision_id: revision_id.clone(),
+                ancestor: traversal.next(kv).await?.unwrap(),
+            }];
+
+            // while let Some(entry) = stack.last() {
+            //     let revision = self.revisions.lock().get(&entry.revision_id).cloned();
+            //     if revision.is_some() {
+            //         stack.pop();
+            //     } else {
+            //         let ancestor_revision =
+            //             self.revisions.lock().get(&entry.ancestor.ancestor).cloned();
+            //         if let Some(mut ancestor_revision) = ancestor_revision {
+            //             let mut operations_stack = vec![];
+            //             for child in entry.ancestor.traversed[&entry.ancestor.ancestor] {
+            //                 operations_stack.push((child, ancestor_revision.clone()));
+            //             }
+
+            //             while let Some((revision_id, parent_revision)) = operations_stack.pop() {}
+            //         } else {
+            //             stack.push(StackEntry {
+            //                 revision_id: entry.ancestor.ancestor.clone(),
+            //                 ancestor: traversal.next(&*kv).await?.unwrap(),
+            //             });
+            //         }
+            //     }
+            // }
+            Ok(self.cached_revision(revision_id).unwrap())
+        }
         // // First, check if we have a revision cached for this revision id.
         // // If not, we'll need to reconstruct it from a previous revision.
         // // We need to find a cached revision that is an ancestor of the given revision id.
