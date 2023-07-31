@@ -71,7 +71,7 @@ impl SearchOptions {
 
 const SEARCH_HISTORY_LIMIT: usize = 20;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct SearchHistory {
     history: SmallVec<[String; SEARCH_HISTORY_LIMIT]>,
     selected: Option<usize>,

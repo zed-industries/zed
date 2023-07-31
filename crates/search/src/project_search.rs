@@ -1,6 +1,6 @@
 use crate::{
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
+    SelectPrevMatch, ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
 };
 use anyhow::Context;
 use collections::HashMap;
@@ -56,6 +56,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
+    cx.add_action(ProjectSearchBar::next_history_query);
+    cx.add_action(ProjectSearchBar::previous_history_query);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
@@ -83,6 +85,7 @@ struct ProjectSearch {
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     search_id: usize,
+    search_history: SearchHistory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,6 +134,7 @@ impl ProjectSearch {
             match_ranges: Default::default(),
             active_query: None,
             search_id: 0,
+            search_history: SearchHistory::default(),
         }
     }
 
@@ -144,6 +148,7 @@ impl ProjectSearch {
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
             search_id: self.search_id,
+            search_history: self.search_history.clone(),
         })
     }
 
@@ -152,6 +157,7 @@ impl ProjectSearch {
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
         self.search_id += 1;
+        self.search_history.add(query.as_str().to_string());
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
@@ -202,6 +208,7 @@ impl ProjectSearch {
         });
         self.search_id += 1;
         self.match_ranges.clear();
+        self.search_history.add(query.as_str().to_string());
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
 
@@ -277,6 +284,49 @@ impl View for ProjectSearchView {
             } else {
                 Cow::Borrowed("No results")
             };
+
+            let previous_query_keystrokes =
+                cx.binding_for_action(&PreviousHistoryQuery {})
+                    .map(|binding| {
+                        binding
+                            .keystrokes()
+                            .iter()
+                            .map(|k| k.to_string())
+                            .collect::<Vec<_>>()
+                    });
+            let next_query_keystrokes =
+                cx.binding_for_action(&NextHistoryQuery {}).map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                });
+            let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
+                (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
+                    format!(
+                        "Search ({}/{} for previous/next query)",
+                        previous_query_keystrokes.join(" "),
+                        next_query_keystrokes.join(" ")
+                    )
+                }
+                (None, Some(next_query_keystrokes)) => {
+                    format!(
+                        "Search ({} for next query)",
+                        next_query_keystrokes.join(" ")
+                    )
+                }
+                (Some(previous_query_keystrokes), None) => {
+                    format!(
+                        "Search ({} for previous query)",
+                        previous_query_keystrokes.join(" ")
+                    )
+                }
+                (None, None) => String::new(),
+            };
+            self.query_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(new_placeholder_text, cx);
+            });
 
             MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
                 Label::new(text, theme.search.results_status.clone())
@@ -1152,6 +1202,47 @@ impl ProjectSearchBar {
             false
         }
     }
+
+    fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                let new_query = search_view.model.update(cx, |model, _| {
+                    if let Some(new_query) = model.search_history.next().map(str::to_string) {
+                        new_query
+                    } else {
+                        model.search_history.reset_selection();
+                        String::new()
+                    }
+                });
+                search_view.set_query(&new_query, cx);
+            });
+        }
+    }
+
+    fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                if search_view.query_editor.read(cx).text(cx).is_empty() {
+                    if let Some(new_query) = search_view
+                        .model
+                        .read(cx)
+                        .search_history
+                        .current()
+                        .map(str::to_string)
+                    {
+                        search_view.set_query(&new_query, cx);
+                        return;
+                    }
+                }
+
+                if let Some(new_query) = search_view.model.update(cx, |model, _| {
+                    model.search_history.previous().map(str::to_string)
+                }) {
+                    search_view.set_query(&new_query, cx);
+                }
+            });
+        }
+    }
 }
 
 impl Entity for ProjectSearchBar {
@@ -1333,6 +1424,7 @@ pub mod tests {
     use editor::DisplayPoint;
     use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
+    use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::SettingsStore;
     use std::sync::Arc;
@@ -1758,6 +1850,192 @@ pub mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_search_query_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+        });
+
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        let search_bar = cx.add_view(window_id, |cx| {
+            let mut search_bar = ProjectSearchBar::new();
+            search_bar.set_active_pane_item(Some(&search_view), cx);
+            // search_bar.show(cx);
+            search_bar
+        });
+
+        // Add 3 search items into the history + another unsubmitted one.
+        search_view.update(cx, |search_view, cx| {
+            search_view.search_options = SearchOptions::CASE_SENSITIVE;
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view.query_editor.update(cx, |query_editor, cx| {
+                query_editor.set_text("JUST_TEXT_INPUT", cx)
+            });
+        });
+        cx.foreground().run_until_parked();
+
+        // Ensure that the latest input with search settings is active.
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view.query_editor.read(cx).text(cx),
+                "JUST_TEXT_INPUT"
+            );
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next history query after the latest should set the query to the empty string.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // First previous query for empty current query should set the query to the latest submitted one.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Further previous items should go over the history in reverse order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Previous items should never go behind the first history item.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next items should go over the history in the original order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // New search input should add another entry to history and move the selection to the end of the history.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+    }
+
     pub fn init_test(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
         let fonts = cx.font_cache();
@@ -1767,6 +2045,7 @@ pub mod tests {
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
             cx.set_global(ActiveSearches::default());
+            settings::register::<SemanticIndexSettings>(cx);
 
             theme::init((), cx);
             cx.update_global::<SettingsStore, _, _>(|store, _| {

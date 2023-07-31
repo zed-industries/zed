@@ -241,6 +241,13 @@
     }
   },
   {
+    "context": "ProjectSearchBar > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
+    }
+  },
+  {
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus"
