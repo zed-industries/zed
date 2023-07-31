@@ -1877,7 +1877,6 @@ dependencies = [
  "anyhow",
  "arrayvec 0.7.4",
  "async-broadcast",
- "async-recursion",
  "bromberg_sl2",
  "collections",
  "ctor",

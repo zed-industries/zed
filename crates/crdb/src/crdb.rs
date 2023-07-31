@@ -2248,6 +2248,8 @@ mod tests {
             kv_a,
         );
         let repo_a2 = client_a2.repo(repo_b.id).await.unwrap();
+        let branch_a2 = repo_a2.load_branch("main").await.unwrap();
+        let doc1_a2 = branch_a2.load_document(doc1_a.id).unwrap();
     }
 
     #[derive(Clone)]
