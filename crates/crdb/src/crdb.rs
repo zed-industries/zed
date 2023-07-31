@@ -3,6 +3,7 @@ mod dense_id;
 mod history;
 mod messages;
 mod operations;
+mod revision_cache;
 mod rope;
 mod sync;
 #[cfg(test)]
@@ -16,6 +17,7 @@ use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use history::{History, SavedHistory};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
 use parking_lot::{Mutex, RwLock};
+use revision_cache::RevisionCache;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
@@ -479,7 +481,8 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
     pub fn create_repo(&self) -> Repo {
         let id = RepoId::new();
-        let snapshot = RepoSnapshot::new(id, ReplicaId(0));
+        let revision_cache = RevisionCache::new(id, &*self.executor, self.db.kv.clone());
+        let snapshot = RepoSnapshot::new(id, ReplicaId(0), revision_cache);
         let repo = Repo {
             id,
             db: self.db.clone(),
@@ -501,11 +504,11 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 id: repo_id,
                 db: this.db.clone(),
             };
-            this.db
-                .snapshot
-                .lock()
-                .repos
-                .insert(repo_id, RepoSnapshot::new(repo_id, response.replica_id));
+            let revision_cache = RevisionCache::new(repo_id, &*this.executor, this.db.kv.clone());
+            this.db.snapshot.lock().repos.insert(
+                repo_id,
+                RepoSnapshot::new(repo_id, response.replica_id, revision_cache),
+            );
 
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
@@ -548,7 +551,8 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 return Ok(repo);
             }
 
-            let repo = RepoSnapshot::load(id, &*this.db.kv).await?;
+            let revision_cache = RevisionCache::new(id, &*this.executor, this.db.kv.clone());
+            let repo = RepoSnapshot::load(id, revision_cache, &*this.db.kv).await?;
             let mut db = this.db.snapshot.lock();
             if !db.repos.contains_key(&id) {
                 db.repos.insert(id, repo);
@@ -587,8 +591,9 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
     }
 }
 
-struct Server<N> {
+struct Server<E, N> {
     db: Db,
+    executor: Arc<E>,
     network: Arc<N>,
     request_handlers: Arc<
         RwLock<
@@ -604,10 +609,11 @@ struct Server<N> {
     next_replica_ids_by_repo_id: Arc<Mutex<BTreeMap<RepoId, ReplicaId>>>,
 }
 
-impl<N: ServerNetwork> Clone for Server<N> {
+impl<E, N> Clone for Server<E, N> {
     fn clone(&self) -> Self {
         Self {
             db: self.db.clone(),
+            executor: self.executor.clone(),
             network: self.network.clone(),
             repo_ids_by_name: self.repo_ids_by_name.clone(),
             request_handlers: self.request_handlers.clone(),
@@ -616,11 +622,12 @@ impl<N: ServerNetwork> Clone for Server<N> {
     }
 }
 
-impl<N: ServerNetwork> Server<N> {
-    fn new(network: N, kv: Arc<dyn KvStore>) -> Self {
+impl<E: Executor, N: ServerNetwork> Server<E, N> {
+    fn new(executor: E, network: N, kv: Arc<dyn KvStore>) -> Self {
         let network = Arc::new(network);
         let this = Self {
             db: Db::new(kv),
+            executor: Arc::new(executor),
             network: network.clone(),
             request_handlers: Default::default(),
             repo_ids_by_name: Default::default(),
@@ -692,9 +699,10 @@ impl<N: ServerNetwork> Server<N> {
             .network
             .grant_room_access(&room_name, user.login.as_ref());
 
+        let revision_cache = RevisionCache::new(request.id, &*self.executor, self.db.kv.clone());
         self.db.snapshot.lock().repos.insert(
             request.id,
-            RepoSnapshot::new(request.id, ReplicaId(u32::MAX)),
+            RepoSnapshot::new(request.id, ReplicaId(u32::MAX), revision_cache),
         );
         self.next_replica_ids_by_repo_id
             .lock()
@@ -869,7 +877,7 @@ impl Repo {
                             .ok_or_else(|| anyhow!("branch not found"))?
                             .head
                             .clone();
-                        repo.load_revision(&head, &*this.db.kv).await?;
+                        repo.build_revision(&head, &*this.db.kv).await?;
                         Ok((None, branch_id))
                     }
                     .boxed()
@@ -1023,14 +1031,12 @@ impl Branch {
                 .expect("branch must exist")
                 .head
                 .clone();
-            let mut revision = repo
-                .cached_revision(&head)
-                .expect("head revision must exist");
+            let mut revision = repo.revisions.get(&head).expect("head revision must exist");
             let operation_id = repo.history.next_operation_id();
             let (operation, result) = f(operation_id, head.clone(), &mut revision);
             repo.branches
                 .update(&self.id, |branch| branch.head = operation_id.into());
-            repo.revisions.lock().insert(operation_id.into(), revision);
+            repo.revisions.save(&operation_id.into(), revision);
             (Some(operation), result)
         })
     }
@@ -1046,9 +1052,7 @@ impl Branch {
                 .expect("branch must exist")
                 .head
                 .clone();
-            let revision = repo
-                .cached_revision(&head)
-                .expect("head revision must exist");
+            let revision = repo.revisions.get(&head).expect("head revision must exist");
             f(&revision)
         })
     }
@@ -1708,7 +1712,7 @@ pub struct RepoSnapshot {
     history: History,
     branches: btree::Map<OperationId, BranchSnapshot>,
     branch_ids_by_name: btree::Map<Arc<str>, OperationId>,
-    revisions: Arc<Mutex<HashMap<RevisionId, Revision>>>,
+    revisions: RevisionCache,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1719,16 +1723,13 @@ struct SavedRepoSnapshot {
 }
 
 impl RepoSnapshot {
-    fn new(id: RepoId, replica_id: ReplicaId) -> Self {
+    fn new(id: RepoId, replica_id: ReplicaId, revisions: RevisionCache) -> Self {
         Self {
             id,
             history: History::new(replica_id),
             branches: Default::default(),
             branch_ids_by_name: Default::default(),
-            revisions: Arc::new(Mutex::new(HashMap::from_iter([(
-                RevisionId::default(),
-                Revision::default(),
-            )]))),
+            revisions,
         }
     }
 
@@ -1739,7 +1740,7 @@ impl RepoSnapshot {
             && History::ptr_eq(&this.history, &other.history)
     }
 
-    async fn load(id: RepoId, kv: &dyn KvStore) -> Result<Self> {
+    async fn load(id: RepoId, revisions: RevisionCache, kv: &dyn KvStore) -> Result<Self> {
         let repo_bytes = kv.load(id.to_be_bytes(), "root".into()).await?;
         let saved_repo = serde_bare::from_slice::<SavedRepoSnapshot>(&repo_bytes)?;
         Ok(Self {
@@ -1747,10 +1748,7 @@ impl RepoSnapshot {
             history: History::load(saved_repo.history, kv).await?,
             branches: btree::Map::load_root(saved_repo.branches, kv).await?,
             branch_ids_by_name: btree::Map::load_root(saved_repo.branch_ids_by_name, kv).await?,
-            revisions: Arc::new(Mutex::new(HashMap::from_iter([(
-                RevisionId::default(),
-                Revision::default(),
-            )]))),
+            revisions,
         })
     }
 
@@ -1777,9 +1775,7 @@ impl RepoSnapshot {
             },
         );
         self.branch_ids_by_name.insert(name.clone(), branch_id);
-        self.revisions
-            .lock()
-            .insert(branch_id.into(), Default::default());
+        self.revisions.save(&branch_id.into(), Default::default());
 
         (
             Operation::CreateBranch(operations::CreateBranch {
@@ -1855,9 +1851,9 @@ impl RepoSnapshot {
 
             // The following ensures that a revision for the branch head is always present.
             #[cfg(not(any(test, feature = "test-support")))]
-            self.load_revision(&new_head, kv).await?;
+            self.build_revision(&new_head, kv).await?;
             #[cfg(any(test, feature = "test-support"))]
-            self.load_revision(&new_head, kv).await.unwrap();
+            self.build_revision(&new_head, kv).await.unwrap();
 
             Ok(flushed_operations)
         } else {
@@ -1866,32 +1862,18 @@ impl RepoSnapshot {
         }
     }
 
-    fn cached_revision(&self, revision_id: &RevisionId) -> Result<Revision> {
-        if revision_id.len() == 0 {
-            return Ok(Revision::default());
-        } else {
-            Ok(self
-                .revisions
-                .lock()
-                .get(revision_id)
-                .ok_or_else(|| anyhow!("cached revision for {:?} not found", revision_id))?
-                .clone())
-        }
-    }
-
-    async fn load_revision(
+    async fn build_revision(
         &mut self,
         revision_id: &RevisionId,
         kv: &dyn KvStore,
     ) -> Result<Revision> {
-        if let Some(revision) = self.cached_revision(revision_id).ok() {
+        if let Some(revision) = self.revisions.load(revision_id, kv).await {
             Ok(revision)
         } else {
             let mut new_revisions = HashMap::default();
             let mut rewind = self.history.rewind(revision_id, kv).await?;
             while let Some(ancestor_id) = rewind.next(kv).await? {
-                let ancestor_revision = self.revisions.lock().get(&ancestor_id).cloned();
-                if let Some(ancestor_revision) = ancestor_revision {
+                if let Some(ancestor_revision) = self.revisions.load(&ancestor_id, kv).await {
                     new_revisions.insert(ancestor_id, ancestor_revision);
                     for replay_op in rewind.replay() {
                         let parent_revision = new_revisions[&replay_op.parent_revision_id].clone();
@@ -1920,10 +1902,10 @@ impl RepoSnapshot {
             }
 
             for (revision_id, revision) in new_revisions.drain() {
-                self.revisions.lock().entry(revision_id).or_insert(revision);
+                self.revisions.save(&revision_id, revision);
             }
 
-            Ok(self.cached_revision(revision_id).unwrap())
+            Ok(self.revisions.get(revision_id).unwrap())
         }
     }
 }
@@ -1997,6 +1979,10 @@ pub struct SavedRevision {
 }
 
 impl Revision {
+    async fn exists(repo_id: RepoId, id: &RevisionId, kv: &dyn KvStore) -> bool {
+        kv.load(repo_id.to_be_bytes(), id.db_key()).await.is_ok()
+    }
+
     async fn load(repo_id: RepoId, id: &RevisionId, kv: &dyn KvStore) -> Result<Self> {
         let revision_bytes = kv.load(repo_id.to_be_bytes(), id.db_key()).await?;
         let saved_revision = serde_bare::from_slice::<SavedRevision>(&revision_bytes)?;
@@ -2196,7 +2182,11 @@ mod tests {
     async fn test_basic_collaboration(deterministic: Arc<Deterministic>) {
         let network = TestNetwork::new(deterministic.build_background());
         let server_kv = Arc::new(TestKv::new(deterministic.build_background()));
-        let server = Server::new(network.server(), server_kv);
+        let server = Server::new(
+            deterministic.build_background(),
+            network.server(),
+            server_kv,
+        );
 
         let kv_a = Arc::new(TestKv::new(deterministic.build_background()));
         let client_a = Client::new(
@@ -2250,6 +2240,7 @@ mod tests {
         let repo_a2 = client_a2.repo(repo_b.id).await.unwrap();
         let branch_a2 = repo_a2.load_branch("main").await.unwrap();
         let doc1_a2 = branch_a2.load_document(doc1_a.id).unwrap();
+        assert_eq!(doc1_a2.text().to_string(), "aghic");
     }
 
     #[derive(Clone)]
@@ -2322,7 +2313,11 @@ mod tests {
 
         let kv = Arc::new(TestKv::new(deterministic.build_background()));
         let network = TestNetwork::new(deterministic.build_background());
-        let server = Server::new(network.server(), kv.clone());
+        let server = Server::new(
+            deterministic.build_background(),
+            network.server(),
+            kv.clone(),
+        );
         let mut clients: Vec<TestClient> = Vec::new();
         let mut next_client_id = 0;
         let mut next_branch_name = 0;
@@ -2447,7 +2442,7 @@ mod tests {
         fn generate(
             max_peers: usize,
             rng: &mut StdRng,
-            server: &Server<TestServerNetwork>,
+            server: &Server<Arc<Background>, TestServerNetwork>,
             clients: &[TestClient],
             next_client_id: &mut usize,
             next_branch_name: &mut usize,
