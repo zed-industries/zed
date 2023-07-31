@@ -6689,6 +6689,7 @@ dependencies = [
  "tree-sitter-elixir 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tree-sitter-json 0.19.0",
  "tree-sitter-lua",
+ "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-toml 0.20.0",
  "tree-sitter-typescript 0.20.2 (registry+https://github.com/rust-lang/crates.io-index)",

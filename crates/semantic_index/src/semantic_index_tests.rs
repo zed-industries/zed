@@ -828,6 +828,196 @@ async fn test_code_context_retrieval_cpp() {
 }
 
 #[gpui::test]
+async fn test_code_context_retrieval_ruby() {
+    let language = ruby_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        # This concern is inspired by "sudo mode" on GitHub. It
+        # is a way to re-authenticate a user before allowing them
+        # to see or perform an action.
+        #
+        # Add `before_action :require_challenge!` to actions you
+        # want to protect.
+        #
+        # The user will be shown a page to enter the challenge (which
+        # is either the password, or just the username when no
+        # password exists). Upon passing, there is a grace period
+        # during which no challenge will be asked from the user.
+        #
+        # Accessing challenge-protected resources during the grace
+        # period will refresh the grace period.
+        module ChallengableConcern
+            extend ActiveSupport::Concern
+
+            CHALLENGE_TIMEOUT = 1.hour.freeze
+
+            def require_challenge!
+                return if skip_challenge?
+
+                if challenge_passed_recently?
+                    session[:challenge_passed_at] = Time.now.utc
+                    return
+                end
+
+                @challenge = Form::Challenge.new(return_to: request.url)
+
+                if params.key?(:form_challenge)
+                    if challenge_passed?
+                        session[:challenge_passed_at] = Time.now.utc
+                    else
+                        flash.now[:alert] = I18n.t('challenge.invalid_password')
+                        render_challenge
+                    end
+                else
+                    render_challenge
+                end
+            end
+
+            def challenge_passed?
+                current_user.valid_password?(challenge_params[:current_password])
+            end
+        end
+
+        class Animal
+            include Comparable
+
+            attr_reader :legs
+
+            def initialize(name, legs)
+                @name, @legs = name, legs
+            end
+
+            def <=>(other)
+                legs <=> other.legs
+            end
+        end
+
+        # Singleton method for car object
+        def car.wheels
+            puts "There are four wheels"
+        end"#
+        .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                r#"
+        # This concern is inspired by "sudo mode" on GitHub. It
+        # is a way to re-authenticate a user before allowing them
+        # to see or perform an action.
+        #
+        # Add `before_action :require_challenge!` to actions you
+        # want to protect.
+        #
+        # The user will be shown a page to enter the challenge (which
+        # is either the password, or just the username when no
+        # password exists). Upon passing, there is a grace period
+        # during which no challenge will be asked from the user.
+        #
+        # Accessing challenge-protected resources during the grace
+        # period will refresh the grace period.
+        module ChallengableConcern
+            extend ActiveSupport::Concern
+
+            CHALLENGE_TIMEOUT = 1.hour.freeze
+
+            def require_challenge!
+                # ...
+            end
+
+            def challenge_passed?
+                # ...
+            end
+        end"#
+                    .unindent(),
+                558,
+            ),
+            (
+                r#"
+            def require_challenge!
+                return if skip_challenge?
+
+                if challenge_passed_recently?
+                    session[:challenge_passed_at] = Time.now.utc
+                    return
+                end
+
+                @challenge = Form::Challenge.new(return_to: request.url)
+
+                if params.key?(:form_challenge)
+                    if challenge_passed?
+                        session[:challenge_passed_at] = Time.now.utc
+                    else
+                        flash.now[:alert] = I18n.t('challenge.invalid_password')
+                        render_challenge
+                    end
+                else
+                    render_challenge
+                end
+            end"#
+                    .unindent(),
+                663,
+            ),
+            (
+                r#"
+                def challenge_passed?
+                    current_user.valid_password?(challenge_params[:current_password])
+                end"#
+                    .unindent(),
+                1254,
+            ),
+            (
+                r#"
+                class Animal
+                    include Comparable
+
+                    attr_reader :legs
+
+                    def initialize(name, legs)
+                        # ...
+                    end
+
+                    def <=>(other)
+                        # ...
+                    end
+                end"#
+                    .unindent(),
+                1363,
+            ),
+            (
+                r#"
+                def initialize(name, legs)
+                    @name, @legs = name, legs
+                end"#
+                    .unindent(),
+                1427,
+            ),
+            (
+                r#"
+                def <=>(other)
+                    legs <=> other.legs
+                end"#
+                    .unindent(),
+                1501,
+            ),
+            (
+                r#"
+                # Singleton method for car object
+                def car.wheels
+                    puts "There are four wheels"
+                end"#
+                    .unindent(),
+                1591,
+            ),
+        ],
+    );
+}
+
+#[gpui::test]
 fn test_dot_product(mut rng: StdRng) {
     assert_eq!(dot(&[1., 0., 0., 0., 0.], &[0., 1., 0., 0., 0.]), 0.);
     assert_eq!(dot(&[2., 0., 0., 0., 0.], &[3., 1., 0., 0., 0.]), 6.);
@@ -1181,6 +1371,47 @@ fn lua_lang() -> Arc<Language> {
                 ) @item
             )
         "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn ruby_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Ruby".into(),
+                path_suffixes: vec!["rb".into()],
+                collapsed_placeholder: "# ...".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_ruby::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                [
+                (module
+                    "module" @name
+                    name: (_) @name)
+                (method
+                    "def" @name
+                    name: (_) @name
+                    body: (body_statement) @collapse)
+                (class
+                    "class" @name
+                    name: (_) @name)
+                (singleton_method
+                    "def" @name
+                    object: (_) @name
+                    "." @name
+                    name: (_) @name
+                    body: (body_statement) @collapse)
+                ] @item
+            )
+            "#,
         )
         .unwrap(),
     )
