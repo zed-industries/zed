@@ -271,7 +271,7 @@ impl Traversal<'_> {
                 }
 
                 return Ok(Some(TraversalPath {
-                    start: frontier.revision,
+                    revision_id: frontier.revision,
                     traversed,
                 }));
             } else {
@@ -302,17 +302,17 @@ impl Traversal<'_> {
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct TraversalPath {
-    pub start: RevisionId,
+    pub revision_id: RevisionId,
     pub traversed: HashMap<RevisionId, HashSet<(RevisionId, OperationId)>>,
 }
 
 impl TraversalPath {
-    fn replay(mut self) -> impl Iterator<Item = TraversalPathOperation> {
+    pub fn replay(mut self) -> impl Iterator<Item = TraversalPathOperation> {
         let mut stack = VecDeque::new();
-        if let Some(children) = self.traversed.remove(&self.start) {
+        if let Some(children) = self.traversed.remove(&self.revision_id) {
             for (child_revision_id, operation_id) in children {
                 stack.push_back(TraversalPathOperation {
-                    parent_revision_id: self.start.clone(),
+                    parent_revision_id: self.revision_id.clone(),
                     target_revision_id: child_revision_id,
                     operation_id,
                 });
@@ -340,10 +340,10 @@ impl TraversalPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct TraversalPathOperation {
-    parent_revision_id: RevisionId,
-    target_revision_id: RevisionId,
-    operation_id: OperationId,
+pub struct TraversalPathOperation {
+    pub parent_revision_id: RevisionId,
+    pub target_revision_id: RevisionId,
+    pub operation_id: OperationId,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -655,7 +655,6 @@ mod tests {
                         operation_id: op1.id(),
                     }]
                 ),
-                //
             ]
         );
     }
@@ -682,7 +681,7 @@ mod tests {
         let mut traversal = history.traverse(&revision_id.into(), kv).await.unwrap();
         let mut results = Vec::new();
         while let Some(result) = traversal.next(kv).await.unwrap() {
-            results.push((result.start.clone(), result.replay().collect()));
+            results.push((result.revision_id.clone(), result.replay().collect()));
         }
         results
     }

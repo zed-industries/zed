@@ -1867,7 +1867,6 @@ impl RepoSnapshot {
         }
     }
 
-    #[async_recursion]
     async fn load_revision(
         &mut self,
         revision_id: &RevisionId,
@@ -1885,148 +1884,57 @@ impl RepoSnapshot {
                 revision_id: revision_id.clone(),
                 ancestor: traversal.next(kv).await?.unwrap(),
             }];
+            let mut new_revisions = HashMap::default();
 
-            // while let Some(entry) = stack.last() {
-            //     let revision = self.revisions.lock().get(&entry.revision_id).cloned();
-            //     if revision.is_some() {
-            //         stack.pop();
-            //     } else {
-            //         let ancestor_revision =
-            //             self.revisions.lock().get(&entry.ancestor.ancestor).cloned();
-            //         if let Some(mut ancestor_revision) = ancestor_revision {
-            //             let mut operations_stack = vec![];
-            //             for child in entry.ancestor.traversed[&entry.ancestor.ancestor] {
-            //                 operations_stack.push((child, ancestor_revision.clone()));
-            //             }
+            while let Some(entry) = stack.last() {
+                let revision = self.revisions.lock().get(&entry.revision_id).cloned();
+                if revision.is_some() {
+                    stack.pop();
+                } else {
+                    let ancestor_revision = self
+                        .revisions
+                        .lock()
+                        .get(&entry.ancestor.revision_id)
+                        .cloned();
+                    if let Some(ancestor_revision) = ancestor_revision {
+                        new_revisions.insert(entry.ancestor.revision_id.clone(), ancestor_revision);
+                        let entry = stack.pop().unwrap();
+                        for replay_op in entry.ancestor.replay() {
+                            let parent_revision =
+                                new_revisions[&replay_op.parent_revision_id].clone();
+                            let target_revision = new_revisions
+                                .entry(replay_op.target_revision_id)
+                                .or_insert_with(|| parent_revision.clone());
+                            let operation = traversal
+                                .history
+                                .operation(replay_op.operation_id, &*kv)
+                                .await?
+                                .ok_or_else(|| anyhow!("operation not found"))?
+                                .clone();
+                            match operation {
+                                Operation::CreateDocument(op) => {
+                                    op.apply(target_revision);
+                                }
+                                Operation::Edit(op) => {
+                                    op.apply(&parent_revision, target_revision)?;
+                                }
+                                Operation::CreateBranch(_) => {}
+                            }
+                        }
 
-            //             while let Some((revision_id, parent_revision)) = operations_stack.pop() {}
-            //         } else {
-            //             stack.push(StackEntry {
-            //                 revision_id: entry.ancestor.ancestor.clone(),
-            //                 ancestor: traversal.next(&*kv).await?.unwrap(),
-            //             });
-            //         }
-            //     }
-            // }
+                        for (revision_id, revision) in new_revisions.drain() {
+                            self.revisions.lock().entry(revision_id).or_insert(revision);
+                        }
+                    } else {
+                        stack.push(StackEntry {
+                            revision_id: entry.ancestor.revision_id.clone(),
+                            ancestor: traversal.next(&*kv).await?.unwrap(),
+                        });
+                    }
+                }
+            }
             Ok(self.cached_revision(revision_id).unwrap())
         }
-        // // First, check if we have a revision cached for this revision id.
-        // // If not, we'll need to reconstruct it from a previous revision.
-        // // We need to find a cached revision that is an ancestor of the given revision id.
-        // // Once we find it, we must apply all ancestors of the given revision id that are not contained in the cached revision.
-        // let mut revision = self.revisions.lock().get(revision_id).cloned();
-        // if revision.is_none() {
-        //     revision = Revision::load(self.id, revision_id, kv).await.ok();
-        //     if let Some(revision) = revision.as_ref() {
-        //         self.revisions
-        //             .lock()
-        //             .entry(revision_id.clone())
-        //             .or_insert_with(|| revision.clone());
-        //     }
-        // }
-
-        // if let Some(revision) = revision {
-        //     Ok(revision)
-        // } else {
-        //     struct Search {
-        //         start: OperationId,
-        //         ancestor: RevisionId,
-        //     }
-
-        //     let mut ancestors = HashMap::<RevisionId, HashSet<OperationId>>::default();
-        //     let mut searches = VecDeque::new();
-        //     let mut operations = BTreeSet::new();
-        //     for operation_id in revision_id.iter() {
-        //         operations.insert((operation_id.operation_count, operation_id.replica_id));
-        //         searches.push_back(Search {
-        //             start: *operation_id,
-        //             ancestor: self
-        //                 .operation(*operation_id, kv)
-        //                 .await?
-        //                 .ok_or_else(|| anyhow!("operation {:?} not found", operation_id))?
-        //                 .parent()
-        //                 .clone(),
-        //         });
-        //     }
-
-        //     let mut common_ancestor_revision = Revision::default();
-        //     let mut missing_operations_start = (OperationCount::default(), ReplicaId::default());
-        //     while let Some(search) = searches.pop_front() {
-        //         let reachable_from = ancestors.entry(search.ancestor.clone()).or_default();
-        //         reachable_from.insert(search.start);
-
-        //         // If the current revision is reachable from every operation in the original
-        //         // revision id, it's a common ancestor.
-        //         if reachable_from.len() == revision_id.len() {
-        //             // We've found a common ancestor, now we load a revision for it. For it to
-        //             // be a common ancestor means that all its downstream operations must
-        //             // have causally happened after it. Therefore, we should be able to
-        //             // use the maximum lamport timestamp in the common ancestor's revision
-        //             // and select only those operations we've found in the backwards search
-        //             // which have a higher lamport timestamp.
-        //             let revision = self.load_revision(&search.ancestor, kv).await?;
-        //             common_ancestor_revision = revision.clone();
-        //             if let Some(max_operation_count) = search
-        //                 .ancestor
-        //                 .iter()
-        //                 .map(|operation_id| operation_id.operation_count)
-        //                 .max()
-        //             {
-        //                 missing_operations_start = (
-        //                     OperationCount(max_operation_count.0 + 1),
-        //                     ReplicaId::default(),
-        //                 );
-        //             }
-
-        //             break;
-        //         }
-
-        //         for operation_id in search.ancestor.iter() {
-        //             operations.insert((operation_id.operation_count, operation_id.replica_id));
-        //             searches.push_back(Search {
-        //                 start: search.start,
-        //                 ancestor: self
-        //                     .operation(*operation_id, kv)
-        //                     .await?
-        //                     .expect("operation must exist")
-        //                     .parent()
-        //                     .clone(),
-        //             });
-        //         }
-        //     }
-
-        //     // Apply all the missing operations to the found revision.
-        //     for (operation_count, replica_id) in operations.range(missing_operations_start..) {
-        //         let missing_operation_id = OperationId {
-        //             replica_id: *replica_id,
-        //             operation_count: *operation_count,
-        //         };
-        //         match self
-        //             .operation(missing_operation_id, kv)
-        //             .await?
-        //             .expect("operation must exist")
-        //             .clone()
-        //         {
-        //             Operation::CreateDocument(op) => {
-        //                 op.apply(&mut common_ancestor_revision);
-        //             }
-        //             Operation::Edit(op) => {
-        //                 let parent_revision = self.load_revision(&op.parent, kv).await?;
-        //                 op.apply(&parent_revision, &mut common_ancestor_revision)?;
-        //             }
-        //             Operation::CreateBranch(_) => {
-        //                 // Creating a branch doesn't have an impact on the revision, so we
-        //                 // can ignore it.
-        //             }
-        //         }
-        //     }
-
-        //     self.revisions
-        //         .lock()
-        //         .entry(revision_id.clone())
-        //         .or_insert_with(|| common_ancestor_revision.clone());
-        //     Ok(common_ancestor_revision)
-        // }
     }
 }
 
