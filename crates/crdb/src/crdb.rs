@@ -14,7 +14,7 @@ use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
-use history::{History, SavedHistory, TraversalPath};
+use history::{History, SavedHistory};
 use messages::{MessageEnvelope, Operation, RequestEnvelope};
 use parking_lot::{Mutex, RwLock};
 use rope::Rope;
@@ -127,12 +127,16 @@ pub struct ReplicaId(u32);
 )]
 pub struct OperationCount(usize);
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
-)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct OperationId {
     pub replica_id: ReplicaId,
     pub operation_count: OperationCount,
+}
+
+impl Debug for OperationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.replica_id.0, self.operation_count.0)
+    }
 }
 
 impl OperationId {
@@ -1875,64 +1879,42 @@ impl RepoSnapshot {
         if let Some(revision) = self.cached_revision(revision_id).ok() {
             Ok(revision)
         } else {
-            struct StackEntry {
-                revision_id: RevisionId,
-                ancestor: TraversalPath,
-            }
-            let mut traversal = self.history.traverse(revision_id, kv).await?;
-            let mut stack = vec![StackEntry {
-                revision_id: revision_id.clone(),
-                ancestor: traversal.next(kv).await?.unwrap(),
-            }];
             let mut new_revisions = HashMap::default();
-
-            while let Some(entry) = stack.last() {
-                let revision = self.revisions.lock().get(&entry.revision_id).cloned();
-                if revision.is_some() {
-                    stack.pop();
-                } else {
-                    let ancestor_revision = self
-                        .revisions
-                        .lock()
-                        .get(&entry.ancestor.revision_id)
-                        .cloned();
-                    if let Some(ancestor_revision) = ancestor_revision {
-                        new_revisions.insert(entry.ancestor.revision_id.clone(), ancestor_revision);
-                        let entry = stack.pop().unwrap();
-                        for replay_op in entry.ancestor.replay() {
-                            let parent_revision =
-                                new_revisions[&replay_op.parent_revision_id].clone();
-                            let target_revision = new_revisions
-                                .entry(replay_op.target_revision_id)
-                                .or_insert_with(|| parent_revision.clone());
-                            let operation = traversal
-                                .history
-                                .operation(replay_op.operation_id, &*kv)
-                                .await?
-                                .ok_or_else(|| anyhow!("operation not found"))?
-                                .clone();
-                            match operation {
-                                Operation::CreateDocument(op) => {
-                                    op.apply(target_revision);
-                                }
-                                Operation::Edit(op) => {
-                                    op.apply(&parent_revision, target_revision)?;
-                                }
-                                Operation::CreateBranch(_) => {}
+            let mut traversal = self.history.traverse(revision_id, kv).await?;
+            while let Some(ancestor_id) = traversal.next(kv).await? {
+                let ancestor_revision = self.revisions.lock().get(&ancestor_id).cloned();
+                if let Some(ancestor_revision) = ancestor_revision {
+                    new_revisions.insert(ancestor_id, ancestor_revision);
+                    for replay_op in traversal.replay() {
+                        let parent_revision = new_revisions[&replay_op.parent_revision_id].clone();
+                        let target_revision = new_revisions
+                            .entry(replay_op.target_revision_id)
+                            .or_insert_with(|| parent_revision.clone());
+                        let operation = self
+                            .history
+                            .operation(replay_op.operation_id, &*kv)
+                            .await?
+                            .ok_or_else(|| anyhow!("operation not found"))?
+                            .clone();
+                        match operation {
+                            Operation::CreateDocument(op) => {
+                                op.apply(target_revision);
                             }
+                            Operation::Edit(op) => {
+                                op.apply(&parent_revision, target_revision)?;
+                            }
+                            Operation::CreateBranch(_) => {}
                         }
-
-                        for (revision_id, revision) in new_revisions.drain() {
-                            self.revisions.lock().entry(revision_id).or_insert(revision);
-                        }
-                    } else {
-                        stack.push(StackEntry {
-                            revision_id: entry.ancestor.revision_id.clone(),
-                            ancestor: traversal.next(&*kv).await?.unwrap(),
-                        });
                     }
+
+                    break;
                 }
             }
+
+            for (revision_id, revision) in new_revisions.drain() {
+                self.revisions.lock().entry(revision_id).or_insert(revision);
+            }
+
             Ok(self.cached_revision(revision_id).unwrap())
         }
     }

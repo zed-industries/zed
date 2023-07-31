@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, iter, mem, ops::RangeBounds};
+use std::{cmp::Ordering, iter, ops::RangeBounds};
 
 use crate::{
     btree::{self, Bias, KvStore, SavedId},
@@ -210,7 +210,7 @@ impl History {
                 .clone();
             traversed
                 .entry(parent_revision.clone())
-                .or_insert(HashSet::default())
+                .or_insert(BTreeSet::default())
                 .insert((revision_id.clone(), *operation_id));
             frontier.push_back(Frontier {
                 source: *operation_id,
@@ -224,6 +224,7 @@ impl History {
             traversed,
             ancestors: Default::default(),
             reachable_len: revision_id.len(),
+            start: revision_id.clone(),
         })
     }
 }
@@ -234,15 +235,16 @@ struct Frontier {
 }
 
 pub struct Traversal<'a> {
-    pub history: &'a mut History,
+    history: &'a mut History,
     frontier: VecDeque<Frontier>,
-    traversed: HashMap<RevisionId, HashSet<(RevisionId, OperationId)>>,
+    traversed: HashMap<RevisionId, BTreeSet<(RevisionId, OperationId)>>,
     ancestors: HashMap<RevisionId, HashSet<OperationId>>,
     reachable_len: usize,
+    start: RevisionId,
 }
 
 impl Traversal<'_> {
-    pub async fn next(&mut self, kv: &dyn KvStore) -> Result<Option<TraversalPath>> {
+    pub async fn next(&mut self, kv: &dyn KvStore) -> Result<Option<RevisionId>> {
         while let Some(frontier) = self.frontier.pop_front() {
             let reachable_from = self.ancestors.entry(frontier.revision.clone()).or_default();
             reachable_from.insert(frontier.source);
@@ -251,7 +253,7 @@ impl Traversal<'_> {
                 self.reachable_len = frontier.revision.len();
                 self.frontier.clear();
                 self.ancestors.clear();
-                let traversed = mem::take(&mut self.traversed);
+                self.start = frontier.revision.clone();
                 for operation_id in frontier.revision.iter() {
                     let parent_revision = self
                         .history
@@ -270,10 +272,7 @@ impl Traversal<'_> {
                     });
                 }
 
-                return Ok(Some(TraversalPath {
-                    revision_id: frontier.revision,
-                    traversed,
-                }));
+                return Ok(Some(frontier.revision));
             } else {
                 for operation_id in frontier.revision.iter() {
                     let parent_revision = self
@@ -298,52 +297,51 @@ impl Traversal<'_> {
 
         Ok(None)
     }
-}
 
-#[derive(Eq, PartialEq, Debug)]
-pub struct TraversalPath {
-    pub revision_id: RevisionId,
-    pub traversed: HashMap<RevisionId, HashSet<(RevisionId, OperationId)>>,
-}
-
-impl TraversalPath {
-    pub fn replay(mut self) -> impl Iterator<Item = TraversalPathOperation> {
+    pub fn replay(mut self) -> impl Iterator<Item = TraversalOperation> {
         let mut stack = VecDeque::new();
-        if let Some(children) = self.traversed.remove(&self.revision_id) {
+        if let Some(children) = self.traversed.remove(&self.start) {
             for (child_revision_id, operation_id) in children {
-                stack.push_back(TraversalPathOperation {
-                    parent_revision_id: self.revision_id.clone(),
-                    target_revision_id: child_revision_id,
+                stack.push_back(TraversalOperation {
+                    parent_revision_id: self.start.clone(),
+                    target_revision_id: child_revision_id.clone(),
                     operation_id,
                 });
             }
         }
 
         iter::from_fn(move || {
-            while let Some(entry) = stack.pop_front() {
-                if let Some(children) = self.traversed.remove(&entry.target_revision_id) {
-                    for (child_revision, operation_id) in children {
-                        stack.push_back(TraversalPathOperation {
-                            parent_revision_id: entry.target_revision_id.clone(),
-                            target_revision_id: child_revision,
-                            operation_id,
-                        });
-                    }
+            let entry = stack.pop_front()?;
+            if let Some(children) = self.traversed.remove(&entry.target_revision_id) {
+                for (child_revision, operation_id) in children {
+                    stack.push_back(TraversalOperation {
+                        parent_revision_id: entry.target_revision_id.clone(),
+                        target_revision_id: child_revision.clone(),
+                        operation_id,
+                    });
                 }
-
-                return Some(entry);
             }
 
-            None
+            Some(entry)
         })
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TraversalPathOperation {
+#[derive(Clone, Eq, PartialEq)]
+pub struct TraversalOperation {
     pub parent_revision_id: RevisionId,
     pub target_revision_id: RevisionId,
     pub operation_id: OperationId,
+}
+
+impl std::fmt::Debug for TraversalOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} -> {:?} via {:?}",
+            self.parent_revision_id, self.target_revision_id, self.operation_id
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -416,7 +414,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -425,12 +423,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -439,7 +437,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -452,7 +450,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op4.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                         target_revision_id: RevisionId::from([op6.id()].as_slice()),
                         operation_id: op6.id(),
@@ -460,7 +458,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -469,12 +467,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -483,7 +481,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -497,21 +495,21 @@ mod tests {
                 (
                     RevisionId::from([op4.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
-                            parent_revision_id: RevisionId::from([op4.id()].as_slice()),
-                            target_revision_id: RevisionId::from([op5.id(), op6.id()].as_slice()),
-                            operation_id: op6.id(),
-                        },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                             target_revision_id: RevisionId::from([op5.id(), op6.id()].as_slice()),
                             operation_id: op5.id(),
+                        },
+                        TraversalOperation {
+                            parent_revision_id: RevisionId::from([op4.id()].as_slice()),
+                            target_revision_id: RevisionId::from([op5.id(), op6.id()].as_slice()),
+                            operation_id: op6.id(),
                         }
                     ]
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -520,12 +518,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -534,7 +532,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -548,36 +546,36 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
-                            parent_revision_id: RevisionId::from([op1.id()].as_slice()),
-                            target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
-                            operation_id: op2.id(),
-                        },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
+                            parent_revision_id: RevisionId::from([op1.id()].as_slice()),
+                            target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
+                            operation_id: op2.id(),
+                        },
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
+                            parent_revision_id: RevisionId::from([op2.id()].as_slice()),
+                            target_revision_id: RevisionId::from([op4.id(), op7.id()].as_slice()),
+                            operation_id: op7.id(),
+                        },
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             target_revision_id: RevisionId::from([op4.id(), op7.id()].as_slice()),
                             operation_id: op4.id(),
                         },
-                        TraversalPathOperation {
-                            parent_revision_id: RevisionId::from([op2.id()].as_slice()),
-                            target_revision_id: RevisionId::from([op4.id(), op7.id()].as_slice()),
-                            operation_id: op7.id(),
-                        }
                     ]
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -590,7 +588,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op9.id(), op10.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
                         target_revision_id: RevisionId::from([op11.id()].as_slice()),
                         operation_id: op11.id(),
@@ -599,17 +597,17 @@ mod tests {
                 (
                     RevisionId::from([op5.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
-                            parent_revision_id: RevisionId::from([op5.id()].as_slice()),
-                            target_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
-                            operation_id: op9.id(),
-                        },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op5.id()].as_slice()),
                             target_revision_id: RevisionId::from([op8.id()].as_slice()),
                             operation_id: op8.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
+                            parent_revision_id: RevisionId::from([op5.id()].as_slice()),
+                            target_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
+                            operation_id: op9.id(),
+                        },
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op8.id()].as_slice()),
                             target_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
                             operation_id: op10.id(),
@@ -618,7 +616,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op4.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                         target_revision_id: RevisionId::from([op5.id()].as_slice()),
                         operation_id: op5.id(),
@@ -626,7 +624,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -635,12 +633,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalPathOperation {
+                        TraversalOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -649,7 +647,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalPathOperation {
+                    vec![TraversalOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -677,11 +675,24 @@ mod tests {
         revision_id: &[OperationId],
         history: &mut History,
         kv: &dyn KvStore,
-    ) -> Vec<(RevisionId, Vec<TraversalPathOperation>)> {
+    ) -> Vec<(RevisionId, Vec<TraversalOperation>)> {
         let mut traversal = history.traverse(&revision_id.into(), kv).await.unwrap();
         let mut results = Vec::new();
-        while let Some(result) = traversal.next(kv).await.unwrap() {
-            results.push((result.revision_id.clone(), result.replay().collect()));
+        let mut prev_replay = Vec::new();
+        let mut ix = 0;
+        while let Some(ancestor_id) = traversal.next(kv).await.unwrap() {
+            let mut replay = traversal.replay().collect::<Vec<_>>();
+            let suffix_start = replay.len() - prev_replay.len();
+            assert_eq!(prev_replay, &replay[suffix_start..]);
+            prev_replay = replay.clone();
+            drop(replay.drain(suffix_start..));
+            results.push((ancestor_id, replay));
+
+            traversal = history.traverse(&revision_id.into(), kv).await.unwrap();
+            ix += 1;
+            for _ in 0..ix {
+                traversal.next(kv).await.unwrap();
+            }
         }
         results
     }
