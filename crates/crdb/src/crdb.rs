@@ -1880,12 +1880,12 @@ impl RepoSnapshot {
             Ok(revision)
         } else {
             let mut new_revisions = HashMap::default();
-            let mut traversal = self.history.traverse(revision_id, kv).await?;
-            while let Some(ancestor_id) = traversal.next(kv).await? {
+            let mut rewind = self.history.rewind(revision_id, kv).await?;
+            while let Some(ancestor_id) = rewind.next(kv).await? {
                 let ancestor_revision = self.revisions.lock().get(&ancestor_id).cloned();
                 if let Some(ancestor_revision) = ancestor_revision {
                     new_revisions.insert(ancestor_id, ancestor_revision);
-                    for replay_op in traversal.replay() {
+                    for replay_op in rewind.replay() {
                         let parent_revision = new_revisions[&replay_op.parent_revision_id].clone();
                         let target_revision = new_revisions
                             .entry(replay_op.target_revision_id)

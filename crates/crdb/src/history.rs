@@ -194,11 +194,7 @@ impl History {
         Ok(new_operations)
     }
 
-    pub async fn traverse(
-        &mut self,
-        revision_id: &RevisionId,
-        kv: &dyn KvStore,
-    ) -> Result<Traversal> {
+    pub async fn rewind(&mut self, revision_id: &RevisionId, kv: &dyn KvStore) -> Result<Rewind> {
         let mut frontier = VecDeque::new();
         let mut traversed = HashMap::default();
         for operation_id in revision_id.iter() {
@@ -218,7 +214,7 @@ impl History {
             });
         }
 
-        Ok(Traversal {
+        Ok(Rewind {
             history: self,
             frontier,
             traversed,
@@ -234,7 +230,7 @@ struct Frontier {
     revision: RevisionId,
 }
 
-pub struct Traversal<'a> {
+pub struct Rewind<'a> {
     history: &'a mut History,
     frontier: VecDeque<Frontier>,
     traversed: HashMap<RevisionId, BTreeSet<(RevisionId, OperationId)>>,
@@ -243,7 +239,7 @@ pub struct Traversal<'a> {
     start: RevisionId,
 }
 
-impl Traversal<'_> {
+impl Rewind<'_> {
     pub async fn next(&mut self, kv: &dyn KvStore) -> Result<Option<RevisionId>> {
         while let Some(frontier) = self.frontier.pop_front() {
             let reachable_from = self.ancestors.entry(frontier.revision.clone()).or_default();
@@ -298,11 +294,11 @@ impl Traversal<'_> {
         Ok(None)
     }
 
-    pub fn replay(mut self) -> impl Iterator<Item = TraversalOperation> {
+    pub fn replay(mut self) -> impl Iterator<Item = ReplayOperation> {
         let mut stack = VecDeque::new();
         if let Some(children) = self.traversed.remove(&self.start) {
             for (child_revision_id, operation_id) in children {
-                stack.push_back(TraversalOperation {
+                stack.push_back(ReplayOperation {
                     parent_revision_id: self.start.clone(),
                     target_revision_id: child_revision_id.clone(),
                     operation_id,
@@ -314,7 +310,7 @@ impl Traversal<'_> {
             let entry = stack.pop_front()?;
             if let Some(children) = self.traversed.remove(&entry.target_revision_id) {
                 for (child_revision, operation_id) in children {
-                    stack.push_back(TraversalOperation {
+                    stack.push_back(ReplayOperation {
                         parent_revision_id: entry.target_revision_id.clone(),
                         target_revision_id: child_revision.clone(),
                         operation_id,
@@ -328,13 +324,13 @@ impl Traversal<'_> {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct TraversalOperation {
+pub struct ReplayOperation {
     pub parent_revision_id: RevisionId,
     pub target_revision_id: RevisionId,
     pub operation_id: OperationId,
 }
 
-impl std::fmt::Debug for TraversalOperation {
+impl std::fmt::Debug for ReplayOperation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -414,7 +410,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -423,12 +419,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -437,7 +433,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -450,7 +446,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op4.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                         target_revision_id: RevisionId::from([op6.id()].as_slice()),
                         operation_id: op6.id(),
@@ -458,7 +454,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -467,12 +463,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -481,7 +477,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -495,12 +491,12 @@ mod tests {
                 (
                     RevisionId::from([op4.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                             target_revision_id: RevisionId::from([op5.id(), op6.id()].as_slice()),
                             operation_id: op5.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                             target_revision_id: RevisionId::from([op5.id(), op6.id()].as_slice()),
                             operation_id: op6.id(),
@@ -509,7 +505,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -518,12 +514,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -532,7 +528,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -546,27 +542,27 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op2.id()].as_slice()),
                             target_revision_id: RevisionId::from([op4.id(), op7.id()].as_slice()),
                             operation_id: op7.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             target_revision_id: RevisionId::from([op4.id(), op7.id()].as_slice()),
                             operation_id: op4.id(),
@@ -575,7 +571,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -588,7 +584,7 @@ mod tests {
             &[
                 (
                     RevisionId::from([op9.id(), op10.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
                         target_revision_id: RevisionId::from([op11.id()].as_slice()),
                         operation_id: op11.id(),
@@ -597,17 +593,17 @@ mod tests {
                 (
                     RevisionId::from([op5.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op5.id()].as_slice()),
                             target_revision_id: RevisionId::from([op8.id()].as_slice()),
                             operation_id: op8.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op5.id()].as_slice()),
                             target_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
                             operation_id: op9.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op8.id()].as_slice()),
                             target_revision_id: RevisionId::from([op9.id(), op10.id()].as_slice()),
                             operation_id: op10.id(),
@@ -616,7 +612,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op4.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op4.id()].as_slice()),
                         target_revision_id: RevisionId::from([op5.id()].as_slice()),
                         operation_id: op5.id(),
@@ -624,7 +620,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                         target_revision_id: RevisionId::from([op4.id()].as_slice()),
                         operation_id: op4.id(),
@@ -633,12 +629,12 @@ mod tests {
                 (
                     RevisionId::from([op1.id()].as_slice()),
                     vec![
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op2.id(),
                         },
-                        TraversalOperation {
+                        ReplayOperation {
                             parent_revision_id: RevisionId::from([op1.id()].as_slice()),
                             target_revision_id: RevisionId::from([op2.id(), op3.id()].as_slice()),
                             operation_id: op3.id(),
@@ -647,7 +643,7 @@ mod tests {
                 ),
                 (
                     RevisionId::from([].as_slice()),
-                    vec![TraversalOperation {
+                    vec![ReplayOperation {
                         parent_revision_id: RevisionId::from([].as_slice()),
                         target_revision_id: RevisionId::from([op1.id()].as_slice()),
                         operation_id: op1.id(),
@@ -675,23 +671,23 @@ mod tests {
         revision_id: &[OperationId],
         history: &mut History,
         kv: &dyn KvStore,
-    ) -> Vec<(RevisionId, Vec<TraversalOperation>)> {
-        let mut traversal = history.traverse(&revision_id.into(), kv).await.unwrap();
+    ) -> Vec<(RevisionId, Vec<ReplayOperation>)> {
+        let mut rewind = history.rewind(&revision_id.into(), kv).await.unwrap();
         let mut results = Vec::new();
         let mut prev_replay = Vec::new();
         let mut ix = 0;
-        while let Some(ancestor_id) = traversal.next(kv).await.unwrap() {
-            let mut replay = traversal.replay().collect::<Vec<_>>();
+        while let Some(ancestor_id) = rewind.next(kv).await.unwrap() {
+            let mut replay = rewind.replay().collect::<Vec<_>>();
             let suffix_start = replay.len() - prev_replay.len();
             assert_eq!(prev_replay, &replay[suffix_start..]);
             prev_replay = replay.clone();
             drop(replay.drain(suffix_start..));
             results.push((ancestor_id, replay));
 
-            traversal = history.traverse(&revision_id.into(), kv).await.unwrap();
+            rewind = history.rewind(&revision_id.into(), kv).await.unwrap();
             ix += 1;
             for _ in 0..ix {
-                traversal.next(kv).await.unwrap();
+                rewind.next(kv).await.unwrap();
             }
         }
         results
