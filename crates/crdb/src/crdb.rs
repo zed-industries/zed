@@ -2142,6 +2142,7 @@ fn init_logger() {
 mod tests {
     use super::*;
     use crate::test::{TestClientNetwork, TestNetwork, TestServerNetwork};
+    use collections::HashSet;
     use gpui::executor::{Background, Deterministic};
     use rand::prelude::*;
     use std::{

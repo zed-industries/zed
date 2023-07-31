@@ -13,7 +13,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Map<K, V>(Sequence<MapEntry<K, V>>)
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone + Debug;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,20 +22,32 @@ pub struct MapEntry<K, V> {
     value: V,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct MapKey<K>(K);
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MapKey<K>(Option<K>);
 
-#[derive(Clone, Debug, Default)]
+impl<K> Default for MapKey<K> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
+
+impl<K> Default for MapKeyRef<'_, K> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
 
 #[derive(Clone)]
 pub struct TreeSet<K>(Map<K, ()>)
 where
-    K: Clone + Debug + Default + Ord;
+    K: Clone + Debug + Ord;
 
 impl<K, V> Map<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone + Debug,
 {
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
@@ -78,10 +90,10 @@ where
         self.0
             .load(kv, &(), |probe| {
                 let key_range = (
-                    Bound::Excluded(&probe.start.0),
-                    Bound::Included(&probe.summary.0),
+                    Bound::Excluded(probe.start.0.as_ref()),
+                    Bound::Included(probe.summary.0.as_ref()),
                 );
-                key_range.contains(key)
+                key_range.contains(&Some(key))
             })
             .await?;
         Ok(self.get(key))
@@ -97,7 +109,9 @@ where
         V: Serialize + for<'de> Deserialize<'de>,
     {
         self.0
-            .load(kv, &(), |probe| probe.start.0 >= *start)
+            .load(kv, &(), |probe| {
+                probe.start.0.as_ref() >= Some(&start) || probe.summary.0.as_ref() >= Some(&start)
+            })
             .await?;
         Ok(self.iter_from(start))
     }
@@ -110,10 +124,10 @@ where
         self.0
             .load(kv, &(), |probe| {
                 let key_range = (
-                    Bound::Excluded(&probe.start.0),
-                    Bound::Included(&probe.summary.0),
+                    Bound::Excluded(probe.start.0.as_ref()),
+                    Bound::Included(probe.summary.0.as_ref()),
                 );
-                key_range.contains(&key)
+                key_range.contains(&Some(&key))
             })
             .await?;
         self.insert(key, value);
@@ -136,7 +150,7 @@ where
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());
         if let Some(item) = cursor.item() {
-            if *key == item.key().0 {
+            if key == &item.key {
                 Some(&item.value)
             } else {
                 None
@@ -260,7 +274,7 @@ where
 
 impl<K, V> Into<BTreeMap<K, V>> for &Map<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone + Debug,
 {
     fn into(self) -> BTreeMap<K, V> {
@@ -272,7 +286,7 @@ where
 
 impl<K, V> From<&BTreeMap<K, V>> for Map<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone + Debug,
 {
     fn from(value: &BTreeMap<K, V>) -> Self {
@@ -283,8 +297,8 @@ where
 #[derive(Debug)]
 struct MapSeekTargetAdaptor<'a, T>(&'a T);
 
-impl<'a, K: Debug + Clone + Default + Ord, T: MapSeekTarget<K>>
-    SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapSeekTargetAdaptor<'_, T>
+impl<'a, K: Debug + Clone + Ord, T: MapSeekTarget<K>> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>>
+    for MapSeekTargetAdaptor<'_, T>
 {
     fn seek_cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         if let Some(key) = &cursor_location.0 {
@@ -307,7 +321,7 @@ impl<K: Debug + Ord> MapSeekTarget<K> for K {
 
 impl<K, V> Default for Map<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone + Debug,
 {
     fn default() -> Self {
@@ -317,7 +331,7 @@ where
 
 impl<K, V> Item for MapEntry<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone,
 {
     type Summary = MapKey<K>;
@@ -329,19 +343,19 @@ where
 
 impl<K, V> KeyedItem for MapEntry<K, V>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
     V: Clone,
 {
     type Key = MapKey<K>;
 
     fn key(&self) -> Self::Key {
-        MapKey(self.key.clone())
+        MapKey(Some(self.key.clone()))
     }
 }
 
 impl<K> Summary for MapKey<K>
 where
-    K: Clone + Debug + Default,
+    K: Clone + Debug,
 {
     type Context = ();
 
@@ -352,16 +366,16 @@ where
 
 impl<'a, K> Dimension<'a, MapKey<K>> for MapKeyRef<'a, K>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
 {
     fn add_summary(&mut self, summary: &'a MapKey<K>, _: &()) {
-        self.0 = Some(&summary.0)
+        self.0 = summary.0.as_ref();
     }
 }
 
 impl<'a, K> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapKeyRef<'_, K>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
 {
     fn seek_cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         Ord::cmp(&self.0, &cursor_location.0)
@@ -370,7 +384,7 @@ where
 
 impl<K> Default for TreeSet<K>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
 {
     fn default() -> Self {
         Self(Default::default())
@@ -379,7 +393,7 @@ where
 
 impl<K> TreeSet<K>
 where
-    K: Clone + Debug + Default + Ord,
+    K: Clone + Debug + Ord,
 {
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = K>) -> Self {
         Self(Map::from_ordered_entries(
