@@ -295,7 +295,7 @@ request_messages!(
     (RemoveContact, Ack),
     (RespondToContactRequest, Ack),
     (RespondToChannelInvite, Ack),
-    (JoinChannel, CreateRoomResponse),
+    (JoinChannel, JoinRoomResponse),
     (RenameProjectEntry, ProjectEntryResponse),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),

@@ -899,19 +899,22 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
-    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
+    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+    let crdb_id = db
+        .create_channel("crdb", Some(zed_id), "2", a_id)
+        .await
+        .unwrap();
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(zed_id), a_id)
+        .create_channel("livestreaming", Some(zed_id), "3", a_id)
         .await
         .unwrap();
     let replace_id = db
-        .create_channel("replace", Some(zed_id), a_id)
+        .create_channel("replace", Some(zed_id), "4", a_id)
         .await
         .unwrap();
-    let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
+    let rust_id = db.create_root_channel("rust", "5", a_id).await.unwrap();
     let cargo_id = db
-        .create_channel("cargo", Some(rust_id), a_id)
+        .create_channel("cargo", Some(rust_id), "6", a_id)
         .await
         .unwrap();
 
@@ -988,7 +991,10 @@ test_both_dbs!(
             .unwrap()
             .user_id;
 
-        let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
+        let channel_1 = db
+            .create_root_channel("channel_1", "1", user_1)
+            .await
+            .unwrap();
         let room_1 = db.get_channel_room(channel_1).await.unwrap();
 
         // can join a room with membership to its channel

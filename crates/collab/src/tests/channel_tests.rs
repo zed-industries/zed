@@ -108,16 +108,51 @@ async fn test_channel_room(
         .await
         .unwrap();
 
+    active_call_b
+        .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .await
+        .unwrap();
+
     deterministic.run_until_parked();
 
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
     assert_eq!(
         room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![]
+        }
+    );
+
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    room_b.read_with(cx_b, |room, _| assert!(room.is_connected()));
+    assert_eq!(
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: vec![]
         }
     );
+
+    // Make sure that leaving and rejoining works
+
+    active_call_a
+        .update(cx_a, |active_call, cx| active_call.hang_up(cx))
+        .await
+        .unwrap();
+
+    active_call_b
+        .update(cx_b, |active_call, cx| active_call.hang_up(cx))
+        .await
+        .unwrap();
+
+    // Make sure room exists?
+
+    active_call_a
+        .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .await
+        .unwrap();
 
     active_call_b
         .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
@@ -126,42 +161,23 @@ async fn test_channel_room(
 
     deterministic.run_until_parked();
 
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![]
+        }
+    );
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    room_b.read_with(cx_b, |room, _| assert!(room.is_connected()));
     assert_eq!(
         room_participants(&room_b, cx_b),
         RoomParticipants {
-            remote: vec!["user_a".to_string(), "user_b".to_string()],
+            remote: vec!["user_a".to_string()],
             pending: vec![]
         }
     );
 }
-
-// TODO:
-// Invariants to test:
-// 1. Dag structure is maintained for all operations (can't make a cycle)
-// 2. Can't be a member of a super channel, and accept a membership of a sub channel (by definition, a noop)
-
-// #[gpui::test]
-// async fn test_block_cycle_creation(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//     // deterministic.forbid_parking();
-//     // let mut server = TestServer::start(&deterministic).await;
-//     // let client_a = server.create_client(cx, "user_a").await;
-//     // let a_id = crate::db::UserId(client_a.user_id().unwrap() as i32);
-//     // let db = server._test_db.db();
-
-//     // let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
-//     // let first_id = db.create_channel("first", Some(zed_id)).await.unwrap();
-//     // let second_id = db
-//     //     .create_channel("second_id", Some(first_id))
-//     //     .await
-//     //     .unwrap();
-// }
-
-/*
-Linear things:
-- A way of expressing progress to the team
-- A way for us to agree on a scope
-- A way to figure out what we're supposed to be doing
-
-*/

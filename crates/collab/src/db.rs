@@ -1833,14 +1833,21 @@ impl Database {
                     .await?;
 
                 let room = self.get_room(room_id, &tx).await?;
-                if room.participants.is_empty() {
-                    room::Entity::delete_by_id(room_id).exec(&*tx).await?;
-                }
+                let deleted = if room.participants.is_empty() {
+                    let result = room::Entity::delete_by_id(room_id)
+                        .filter(room::Column::ChannelId.is_null())
+                        .exec(&*tx)
+                        .await?;
+                    result.rows_affected > 0
+                } else {
+                    false
+                };
 
                 let left_room = LeftRoom {
                     room,
                     left_projects,
                     canceled_calls_to_user_ids,
+                    deleted,
                 };
 
                 if left_room.room.participants.is_empty() {
@@ -3065,14 +3072,21 @@ impl Database {
 
     // channels
 
-    pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
-        self.create_channel(name, None, creator_id).await
+    pub async fn create_root_channel(
+        &self,
+        name: &str,
+        live_kit_room: &str,
+        creator_id: UserId,
+    ) -> Result<ChannelId> {
+        self.create_channel(name, None, live_kit_room, creator_id)
+            .await
     }
 
     pub async fn create_channel(
         &self,
         name: &str,
         parent: Option<ChannelId>,
+        live_kit_room: &str,
         creator_id: UserId,
     ) -> Result<ChannelId> {
         self.transaction(move |tx| async move {
@@ -3106,7 +3120,7 @@ impl Database {
 
             room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel.id)),
-                live_kit_room: ActiveValue::Set(format!("channel-{}", channel.id)),
+                live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -3731,6 +3745,7 @@ pub struct LeftRoom {
     pub room: proto::Room,
     pub left_projects: HashMap<ProjectId, LeftProject>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
+    pub deleted: bool,
 }
 
 pub struct RefreshedRoom {

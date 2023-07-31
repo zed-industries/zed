@@ -49,6 +49,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
+    channel_id: Option<u64>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModelHandle<Project>>,
@@ -93,8 +94,25 @@ impl Entity for Room {
 }
 
 impl Room {
+    pub fn channel_id(&self) -> Option<u64> {
+        self.channel_id
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_connected(&self) -> bool {
+        if let Some(live_kit) = self.live_kit.as_ref() {
+            matches!(
+                *live_kit.room.status().borrow(),
+                live_kit_client::ConnectionState::Connected { .. }
+            )
+        } else {
+            false
+        }
+    }
+
     fn new(
         id: u64,
+        channel_id: Option<u64>,
         live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -185,6 +203,7 @@ impl Room {
 
         Self {
             id,
+            channel_id,
             live_kit: live_kit_room,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
@@ -204,15 +223,6 @@ impl Room {
         }
     }
 
-    pub(crate) fn create_from_channel(
-        channel_id: u64,
-        client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
-        cx: &mut AppContext,
-    ) -> Task<Result<ModelHandle<Self>>> {
-        todo!()
-    }
-
     pub(crate) fn create(
         called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,
@@ -226,6 +236,7 @@ impl Room {
             let room = cx.add_model(|cx| {
                 Self::new(
                     room_proto.id,
+                    None,
                     response.live_kit_connection_info,
                     client,
                     user_store,
@@ -257,6 +268,35 @@ impl Room {
         })
     }
 
+    pub(crate) fn join_channel(
+        channel_id: u64,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut AppContext,
+    ) -> Task<Result<ModelHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let response = client.request(proto::JoinChannel { channel_id }).await?;
+            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            let room = cx.add_model(|cx| {
+                Self::new(
+                    room_proto.id,
+                    Some(channel_id),
+                    response.live_kit_connection_info,
+                    client,
+                    user_store,
+                    cx,
+                )
+            });
+
+            room.update(&mut cx, |room, cx| {
+                room.apply_room_update(room_proto, cx)?;
+                anyhow::Ok(())
+            })?;
+
+            Ok(room)
+        })
+    }
+
     pub(crate) fn join(
         call: &IncomingCall,
         client: Arc<Client>,
@@ -270,6 +310,7 @@ impl Room {
             let room = cx.add_model(|cx| {
                 Self::new(
                     room_id,
+                    None,
                     response.live_kit_connection_info,
                     client,
                     user_store,
