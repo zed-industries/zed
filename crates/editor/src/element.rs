@@ -554,7 +554,9 @@ impl EditorElement {
                     (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
                         - scroll_left;
 
-                if x < text_bounds.origin_x() {
+                if x < text_bounds.origin_x()
+                    || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
+                {
                     continue;
                 }
 
@@ -1046,6 +1048,10 @@ impl EditorElement {
         scene.pop_layer();
     }
 
+    fn scrollbar_left(&self, bounds: &RectF) -> f32 {
+        bounds.max_x() - self.style.theme.scrollbar.width
+    }
+
     fn paint_scrollbar(
         &mut self,
         scene: &mut SceneBuilder,
@@ -1064,7 +1070,7 @@ impl EditorElement {
         let top = bounds.min_y();
         let bottom = bounds.max_y();
         let right = bounds.max_x();
-        let left = right - style.width;
+        let left = self.scrollbar_left(&bounds);
         let row_range = &layout.scrollbar_row_range;
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
