@@ -1,5 +1,16 @@
 {
   "suffixes": {
+    "db": "storage",
+    "sqlite": "storage",
+    "myi": "storage",
+    "myd": "storage",
+    "mdf": "storage",
+    "csv": "storage",
+    "bak": "backup",
+    "dat": "storage",
+    "dll": "storage",
+    "sav": "storage",
+    "tsv": "storage",
     "aac": "audio",
     "bash": "terminal",
     "bmp": "image",
