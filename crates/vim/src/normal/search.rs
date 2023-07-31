@@ -222,7 +222,7 @@ mod test {
         });
 
         search_bar.read_with(cx.cx, |bar, cx| {
-            assert_eq!(bar.query_editor.read(cx).text(cx), "cc");
+            assert_eq!(bar.query(cx), "cc");
         });
 
         deterministic.run_until_parked();
