@@ -7,7 +7,6 @@ DROP TABLE "channels";
 CREATE TABLE "channels" (
     "id" SERIAL PRIMARY KEY,
     "name" VARCHAR NOT NULL,
-    "room_id" INTEGER REFERENCES rooms (id) ON DELETE SET NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT now()
 );
 
@@ -27,3 +26,5 @@ CREATE TABLE "channel_members" (
 );
 
 CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channel_members" ("channel_id", "user_id");
+
+ALTER TABLE rooms ADD COLUMN "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE;

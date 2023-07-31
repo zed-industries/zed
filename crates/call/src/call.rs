@@ -209,6 +209,80 @@ impl ActiveCall {
         })
     }
 
+    pub fn join_channel(
+        &mut self,
+        channel_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let room = if let Some(room) = self.room().cloned() {
+            Some(Task::ready(Ok(room)).shared())
+        } else {
+            self.pending_room_creation.clone()
+        };
+
+        todo!()
+        // let invite = if let Some(room) = room {
+        //     cx.spawn_weak(|_, mut cx| async move {
+        //         let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
+
+        //         // TODO join_channel:
+        //         // let initial_project_id = if let Some(initial_project) = initial_project {
+        //         //     Some(
+        //         //         room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
+        //         //             .await?,
+        //         //     )
+        //         // } else {
+        //         //     None
+        //         // };
+
+        //         // room.update(&mut cx, |room, cx| {
+        //         //     room.call(called_user_id, initial_project_id, cx)
+        //         // })
+        //         // .await?;
+
+        //         anyhow::Ok(())
+        //     })
+        // } else {
+        //     let client = self.client.clone();
+        //     let user_store = self.user_store.clone();
+        //     let room = cx
+        //         .spawn(|this, mut cx| async move {
+        //             let create_room = async {
+        //                 let room = cx
+        //                     .update(|cx| {
+        //                         Room::create_from_channel(channel_id, client, user_store, cx)
+        //                     })
+        //                     .await?;
+
+        //                 this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+        //                     .await?;
+
+        //                 anyhow::Ok(room)
+        //             };
+
+        //             let room = create_room.await;
+        //             this.update(&mut cx, |this, _| this.pending_room_creation = None);
+        //             room.map_err(Arc::new)
+        //         })
+        //         .shared();
+        //     self.pending_room_creation = Some(room.clone());
+        //     cx.foreground().spawn(async move {
+        //         room.await.map_err(|err| anyhow!("{:?}", err))?;
+        //         anyhow::Ok(())
+        //     })
+        // };
+
+        // cx.spawn(|this, mut cx| async move {
+        //     let result = invite.await;
+        //     this.update(&mut cx, |this, cx| {
+        //         this.pending_invites.remove(&called_user_id);
+        //         this.report_call_event("invite", cx);
+        //         cx.notify();
+        //     });
+        //     result
+        // })
+    }
+
     pub fn cancel_invite(
         &mut self,
         called_user_id: u64,

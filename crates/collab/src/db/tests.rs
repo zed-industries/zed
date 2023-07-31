@@ -494,9 +494,14 @@ test_both_dbs!(
         )
         .await
         .unwrap();
-        db.join_room(room_id, user2.user_id, ConnectionId { owner_id, id: 1 })
-            .await
-            .unwrap();
+        db.join_room(
+            room_id,
+            user2.user_id,
+            None,
+            ConnectionId { owner_id, id: 1 },
+        )
+        .await
+        .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
         db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[])
@@ -921,11 +926,6 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 parent_id: None,
             },
             Channel {
-                id: rust_id,
-                name: "rust".to_string(),
-                parent_id: None,
-            },
-            Channel {
                 id: crdb_id,
                 name: "crdb".to_string(),
                 parent_id: Some(zed_id),
@@ -941,6 +941,11 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 parent_id: Some(zed_id),
             },
             Channel {
+                id: rust_id,
+                name: "rust".to_string(),
+                parent_id: None,
+            },
+            Channel {
                 id: cargo_id,
                 name: "cargo".to_string(),
                 parent_id: Some(rust_id),
@@ -948,6 +953,69 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         ]
     );
 });
+
+test_both_dbs!(
+    test_joining_channels_postgres,
+    test_joining_channels_sqlite,
+    db,
+    {
+        let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
+        let user_1 = db
+            .create_user(
+                "user1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user1".into(),
+                    github_user_id: 5,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+        let user_2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user2".into(),
+                    github_user_id: 6,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+
+        let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
+        let room_1 = db.get_channel_room(channel_1).await.unwrap();
+
+        // can join a room with membership to its channel
+        let room = db
+            .join_room(
+                room_1,
+                user_1,
+                Some(channel_1),
+                ConnectionId { owner_id, id: 1 },
+            )
+            .await
+            .unwrap();
+        assert_eq!(room.participants.len(), 1);
+
+        drop(room);
+        // cannot join a room without membership to its channel
+        assert!(db
+            .join_room(
+                room_1,
+                user_2,
+                Some(channel_1),
+                ConnectionId { owner_id, id: 1 }
+            )
+            .await
+            .is_err());
+    }
+);
 
 #[gpui::test]
 async fn test_multiple_signup_overwrite() {

@@ -10,7 +10,7 @@ pub struct ChannelStore {
     channel_invitations: Vec<Channel>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    rpc_subscription: Subscription,
+    _rpc_subscription: Subscription,
 }
 
 #[derive(Debug, PartialEq)]
@@ -37,7 +37,7 @@ impl ChannelStore {
             channel_invitations: vec![],
             client,
             user_store,
-            rpc_subscription,
+            _rpc_subscription: rpc_subscription,
         }
     }
 

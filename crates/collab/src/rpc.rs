@@ -34,7 +34,10 @@ use futures::{
 use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
-    proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
+    proto::{
+        self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
+        RequestMessage,
+    },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
 use serde::{Serialize, Serializer};
@@ -183,7 +186,7 @@ impl Server {
 
         server
             .add_request_handler(ping)
-            .add_request_handler(create_room)
+            .add_request_handler(create_room_request)
             .add_request_handler(join_room)
             .add_request_handler(rejoin_room)
             .add_request_handler(leave_room)
@@ -243,6 +246,7 @@ impl Server {
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
             .add_request_handler(respond_to_channel_invite)
+            .add_request_handler(join_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -855,48 +859,17 @@ async fn ping(_: proto::Ping, response: Response<proto::Ping>, _session: Session
     Ok(())
 }
 
-async fn create_room(
+async fn create_room_request(
     _request: proto::CreateRoom,
     response: Response<proto::CreateRoom>,
     session: Session,
 ) -> Result<()> {
-    let live_kit_room = nanoid::nanoid!(30);
-    let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
-        if let Some(_) = live_kit
-            .create_room(live_kit_room.clone())
-            .await
-            .trace_err()
-        {
-            if let Some(token) = live_kit
-                .room_token(&live_kit_room, &session.user_id.to_string())
-                .trace_err()
-            {
-                Some(proto::LiveKitConnectionInfo {
-                    server_url: live_kit.url().into(),
-                    token,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let (room, live_kit_connection_info) = create_room(&session).await?;
 
-    {
-        let room = session
-            .db()
-            .await
-            .create_room(session.user_id, session.connection_id, &live_kit_room)
-            .await?;
-
-        response.send(proto::CreateRoomResponse {
-            room: Some(room.clone()),
-            live_kit_connection_info,
-        })?;
-    }
+    response.send(proto::CreateRoomResponse {
+        room: Some(room.clone()),
+        live_kit_connection_info,
+    })?;
 
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
@@ -912,7 +885,7 @@ async fn join_room(
         let room = session
             .db()
             .await
-            .join_room(room_id, session.user_id, session.connection_id)
+            .join_room(room_id, session.user_id, None, session.connection_id)
             .await?;
         room_updated(&room, &session.peer);
         room.clone()
@@ -2182,6 +2155,32 @@ async fn respond_to_channel_invite(
     Ok(())
 }
 
+async fn join_channel(
+    request: proto::JoinChannel,
+    response: Response<proto::JoinChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+
+    todo!();
+    // db.check_channel_membership(session.user_id, channel_id)
+    //     .await?;
+
+    let (room, live_kit_connection_info) = create_room(&session).await?;
+
+    // db.set_channel_room(channel_id, room.id).await?;
+
+    response.send(proto::CreateRoomResponse {
+        room: Some(room.clone()),
+        live_kit_connection_info,
+    })?;
+
+    update_user_contacts(session.user_id, &session).await?;
+
+    Ok(())
+}
+
 async fn update_diff_base(request: proto::UpdateDiffBase, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
@@ -2434,6 +2433,42 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                 .trace_err();
         }
     }
+}
+
+async fn create_room(session: &Session) -> Result<(proto::Room, Option<LiveKitConnectionInfo>)> {
+    let live_kit_room = nanoid::nanoid!(30);
+
+    let live_kit_connection_info = {
+        let live_kit_room = live_kit_room.clone();
+        let live_kit = session.live_kit_client.as_ref();
+
+        util::async_iife!({
+            let live_kit = live_kit?;
+
+            live_kit
+                .create_room(live_kit_room.clone())
+                .await
+                .trace_err()?;
+
+            let token = live_kit
+                .room_token(&live_kit_room, &session.user_id.to_string())
+                .trace_err()?;
+
+            Some(proto::LiveKitConnectionInfo {
+                server_url: live_kit.url().into(),
+                token,
+            })
+        })
+    }
+    .await;
+
+    let room = session
+        .db()
+        .await
+        .create_room(session.user_id, session.connection_id, &live_kit_room)
+        .await?;
+
+    Ok((room, live_kit_connection_info))
 }
 
 pub trait ResultExt {

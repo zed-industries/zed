@@ -1337,32 +1337,65 @@ impl Database {
         &self,
         room_id: RoomId,
         user_id: UserId,
+        channel_id: Option<ChannelId>,
         connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
-            let result = room_participant::Entity::update_many()
-                .filter(
-                    Condition::all()
-                        .add(room_participant::Column::RoomId.eq(room_id))
-                        .add(room_participant::Column::UserId.eq(user_id))
-                        .add(room_participant::Column::AnsweringConnectionId.is_null()),
-                )
-                .set(room_participant::ActiveModel {
+            if let Some(channel_id) = channel_id {
+                channel_member::Entity::find()
+                    .filter(
+                        channel_member::Column::ChannelId
+                            .eq(channel_id)
+                            .and(channel_member::Column::UserId.eq(user_id))
+                            .and(channel_member::Column::Accepted.eq(true)),
+                    )
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no such channel membership"))?;
+
+                room_participant::ActiveModel {
+                    room_id: ActiveValue::set(room_id),
+                    user_id: ActiveValue::set(user_id),
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
                     answering_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
                     answering_connection_lost: ActiveValue::set(false),
+                    // Redundant for the channel join use case, used for channel and call invitations
+                    calling_user_id: ActiveValue::set(user_id),
+                    calling_connection_id: ActiveValue::set(connection.id as i32),
+                    calling_connection_server_id: ActiveValue::set(Some(ServerId(
+                        connection.owner_id as i32,
+                    ))),
                     ..Default::default()
-                })
-                .exec(&*tx)
+                }
+                .insert(&*tx)
                 .await?;
-            if result.rows_affected == 0 {
-                Err(anyhow!("room does not exist or was already joined"))?
             } else {
-                let room = self.get_room(room_id, &tx).await?;
-                Ok(room)
+                let result = room_participant::Entity::update_many()
+                    .filter(
+                        Condition::all()
+                            .add(room_participant::Column::RoomId.eq(room_id))
+                            .add(room_participant::Column::UserId.eq(user_id))
+                            .add(room_participant::Column::AnsweringConnectionId.is_null()),
+                    )
+                    .set(room_participant::ActiveModel {
+                        answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                        answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                            connection.owner_id as i32,
+                        ))),
+                        answering_connection_lost: ActiveValue::set(false),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+                if result.rows_affected == 0 {
+                    Err(anyhow!("room does not exist or was already joined"))?;
+                }
             }
+
+            let room = self.get_room(room_id, &tx).await?;
+            Ok(room)
         })
         .await
     }
@@ -3071,6 +3104,14 @@ impl Database {
             .insert(&*tx)
             .await?;
 
+            room::ActiveModel {
+                channel_id: ActiveValue::Set(Some(channel.id)),
+                live_kit_room: ActiveValue::Set(format!("channel-{}", channel.id)),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+
             Ok(channel.id)
         })
         .await
@@ -3163,6 +3204,7 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
+            // Breadth first list of all edges in this user's channels
             let sql = r#"
             WITH RECURSIVE channel_tree(child_id, parent_id, depth) AS (
                     SELECT channel_id as child_id, CAST(NULL as INTEGER) as parent_id, 0
@@ -3173,11 +3215,16 @@ impl Database {
                     FROM channel_parents, channel_tree
                     WHERE channel_parents.parent_id = channel_tree.child_id
             )
-            SELECT channel_tree.child_id as id, channels.name, channel_tree.parent_id
+            SELECT channel_tree.child_id, channel_tree.parent_id
             FROM channel_tree
-            JOIN channels ON channels.id = channel_tree.child_id
-            ORDER BY channel_tree.depth;
+            ORDER BY child_id, parent_id IS NOT NULL
             "#;
+
+            #[derive(FromQueryResult, Debug, PartialEq)]
+            pub struct ChannelParent {
+                pub child_id: ChannelId,
+                pub parent_id: Option<ChannelId>,
+            }
 
             let stmt = Statement::from_sql_and_values(
                 self.pool.get_database_backend(),
@@ -3185,11 +3232,35 @@ impl Database {
                 vec![user_id.into()],
             );
 
-            Ok(channel_parent::Entity::find()
+            let mut parents_by_child_id = HashMap::default();
+            let mut parents = channel_parent::Entity::find()
                 .from_raw_sql(stmt)
-                .into_model::<Channel>()
-                .all(&*tx)
-                .await?)
+                .into_model::<ChannelParent>()
+                .stream(&*tx).await?;
+            while let Some(parent) = parents.next().await {
+                let parent = parent?;
+                parents_by_child_id.insert(parent.child_id, parent.parent_id);
+            }
+
+            drop(parents);
+
+            let mut channels = Vec::with_capacity(parents_by_child_id.len());
+            let mut rows = channel::Entity::find()
+                .filter(channel::Column::Id.is_in(parents_by_child_id.keys().copied()))
+                .stream(&*tx).await?;
+
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                channels.push(Channel {
+                    id: row.id,
+                    name: row.name,
+                    parent_id: parents_by_child_id.get(&row.id).copied().flatten(),
+                });
+            }
+
+            drop(rows);
+
+            Ok(channels)
         })
         .await
     }
@@ -3206,6 +3277,22 @@ impl Database {
                 name: channel.name,
                 parent_id: None,
             })
+        })
+        .await
+    }
+
+    pub async fn get_channel_room(&self, channel_id: ChannelId) -> Result<RoomId> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+            let room = channel::Model {
+                id: channel_id,
+                ..Default::default()
+            }
+            .find_related(room::Entity)
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("invalid channel"))?;
+            Ok(room.id)
         })
         .await
     }

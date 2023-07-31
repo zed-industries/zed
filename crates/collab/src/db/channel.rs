@@ -1,4 +1,4 @@
-use super::{ChannelId, RoomId};
+use super::ChannelId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -7,7 +7,6 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ChannelId,
     pub name: String,
-    pub room_id: Option<RoomId>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

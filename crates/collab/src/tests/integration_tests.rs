@@ -1,6 +1,6 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{TestClient, TestServer},
+    tests::{room_participants, RoomParticipants, TestClient, TestServer},
 };
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
@@ -8317,30 +8317,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct RoomParticipants {
-    remote: Vec<String>,
-    pending: Vec<String>,
-}
-
-fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
-    room.read_with(cx, |room, _| {
-        let mut remote = room
-            .remote_participants()
-            .iter()
-            .map(|(_, participant)| participant.user.github_login.clone())
-            .collect::<Vec<_>>();
-        let mut pending = room
-            .pending_participants()
-            .iter()
-            .map(|user| user.github_login.clone())
-            .collect::<Vec<_>>();
-        remote.sort();
-        pending.sort();
-        RoomParticipants { remote, pending }
-    })
 }
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {

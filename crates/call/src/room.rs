@@ -204,6 +204,15 @@ impl Room {
         }
     }
 
+    pub(crate) fn create_from_channel(
+        channel_id: u64,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut AppContext,
+    ) -> Task<Result<ModelHandle<Self>>> {
+        todo!()
+    }
+
     pub(crate) fn create(
         called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,

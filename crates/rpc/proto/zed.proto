@@ -136,6 +136,7 @@ message Envelope {
         RemoveChannelMember remove_channel_member = 122;
         RespondToChannelInvite respond_to_channel_invite = 123;
         UpdateChannels update_channels = 124;
+        JoinChannel join_channel = 125;
     }
 }
 
@@ -868,6 +869,10 @@ message UpdateChannels {
     repeated uint64 remove_channels = 2;
     repeated Channel channel_invitations = 3;
     repeated uint64 remove_channel_invitations = 4;
+}
+
+message JoinChannel {
+    uint64 channel_id = 1;
 }
 
 message CreateChannel {

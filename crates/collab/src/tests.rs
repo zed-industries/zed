@@ -5,7 +5,7 @@ use crate::{
     AppState,
 };
 use anyhow::anyhow;
-use call::ActiveCall;
+use call::{ActiveCall, Room};
 use client::{
     self, proto::PeerId, ChannelStore, Client, Connection, Credentials, EstablishConnectionError,
     UserStore,
@@ -269,6 +269,44 @@ impl TestServer {
         }
     }
 
+    async fn make_channel(
+        &self,
+        channel: &str,
+        admin: (&TestClient, &mut TestAppContext),
+        members: &mut [(&TestClient, &mut TestAppContext)],
+    ) -> u64 {
+        let (admin_client, admin_cx) = admin;
+        let channel_id = admin_client
+            .channel_store
+            .update(admin_cx, |channel_store, _| {
+                channel_store.create_channel(channel, None)
+            })
+            .await
+            .unwrap();
+
+        for (member_client, member_cx) in members {
+            admin_client
+                .channel_store
+                .update(admin_cx, |channel_store, _| {
+                    channel_store.invite_member(channel_id, member_client.user_id().unwrap(), false)
+                })
+                .await
+                .unwrap();
+
+            admin_cx.foreground().run_until_parked();
+
+            member_client
+                .channel_store
+                .update(*member_cx, |channels, _| {
+                    channels.respond_to_channel_invite(channel_id, true)
+                })
+                .await
+                .unwrap();
+        }
+
+        channel_id
+    }
+
     async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
         self.make_contacts(clients).await;
 
@@ -515,4 +553,28 @@ impl Drop for TestClient {
     fn drop(&mut self) {
         self.client.teardown();
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RoomParticipants {
+    remote: Vec<String>,
+    pending: Vec<String>,
+}
+
+fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+    room.read_with(cx, |room, _| {
+        let mut remote = room
+            .remote_participants()
+            .iter()
+            .map(|(_, participant)| participant.user.github_login.clone())
+            .collect::<Vec<_>>();
+        let mut pending = room
+            .pending_participants()
+            .iter()
+            .map(|user| user.github_login.clone())
+            .collect::<Vec<_>>();
+        remote.sort();
+        pending.sort();
+        RoomParticipants { remote, pending }
+    })
 }
