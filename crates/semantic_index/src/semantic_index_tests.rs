@@ -487,6 +487,79 @@ async fn test_code_context_retrieval_javascript() {
 }
 
 #[gpui::test]
+async fn test_code_context_retrieval_lua() {
+    let language = lua_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        -- Creates a new class
+        -- @param baseclass The Baseclass of this class, or nil.
+        -- @return A new class reference.
+        function classes.class(baseclass)
+            -- Create the class definition and metatable.
+            local classdef = {}
+            -- Find the super class, either Object or user-defined.
+            baseclass = baseclass or classes.Object
+            -- If this class definition does not know of a function, it will 'look up' to the Baseclass via the __index of the metatable.
+            setmetatable(classdef, { __index = baseclass })
+            -- All class instances have a reference to the class object.
+            classdef.class = classdef
+            --- Recursivly allocates the inheritance tree of the instance.
+            -- @param mastertable The 'root' of the inheritance tree.
+            -- @return Returns the instance with the allocated inheritance tree.
+            function classdef.alloc(mastertable)
+                -- All class instances have a reference to a superclass object.
+                local instance = { super = baseclass.alloc(mastertable) }
+                -- Any functions this instance does not know of will 'look up' to the superclass definition.
+                setmetatable(instance, { __index = classdef, __newindex = mastertable })
+                return instance
+            end
+        end
+        "#.unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (r#"
+                -- Creates a new class
+                -- @param baseclass The Baseclass of this class, or nil.
+                -- @return A new class reference.
+                function classes.class(baseclass)
+                    -- Create the class definition and metatable.
+                    local classdef = {}
+                    -- Find the super class, either Object or user-defined.
+                    baseclass = baseclass or classes.Object
+                    -- If this class definition does not know of a function, it will 'look up' to the Baseclass via the __index of the metatable.
+                    setmetatable(classdef, { __index = baseclass })
+                    -- All class instances have a reference to the class object.
+                    classdef.class = classdef
+                    --- Recursivly allocates the inheritance tree of the instance.
+                    -- @param mastertable The 'root' of the inheritance tree.
+                    -- @return Returns the instance with the allocated inheritance tree.
+                    function classdef.alloc(mastertable)
+                        --[ ... ]--
+                        --[ ... ]--
+                    end
+                end"#.unindent(),
+            114),
+            (r#"
+            --- Recursivly allocates the inheritance tree of the instance.
+            -- @param mastertable The 'root' of the inheritance tree.
+            -- @return Returns the instance with the allocated inheritance tree.
+            function classdef.alloc(mastertable)
+                -- All class instances have a reference to a superclass object.
+                local instance = { super = baseclass.alloc(mastertable) }
+                -- Any functions this instance does not know of will 'look up' to the superclass definition.
+                setmetatable(instance, { __index = classdef, __newindex = mastertable })
+                return instance
+            end"#.unindent(), 809),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_code_context_retrieval_elixir() {
     let language = elixir_lang();
     let mut retriever = CodeContextRetriever::new();
@@ -1079,6 +1152,35 @@ fn cpp_lang() -> Arc<Language> {
             )
 
             "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn lua_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Lua".into(),
+                path_suffixes: vec!["lua".into()],
+                collapsed_placeholder: "--[ ... ]--".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_lua::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                (function_declaration
+                    "function" @name
+                    name: (_) @name
+                    (comment)* @collapse
+                    body: (block) @collapse
+                ) @item
+            )
+        "#,
         )
         .unwrap(),
     )
