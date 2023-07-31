@@ -200,7 +200,12 @@ impl CodeContextRetriever {
 
             let mut document_content = String::new();
             for context_range in &context_match.context_ranges {
-                document_content.push_str(&content[context_range.clone()]);
+                add_content_from_range(
+                    &mut document_content,
+                    content,
+                    context_range.clone(),
+                    context_match.start_col,
+                );
                 document_content.push_str("\n");
             }
 

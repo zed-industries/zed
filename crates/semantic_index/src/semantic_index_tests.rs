@@ -1018,6 +1018,156 @@ async fn test_code_context_retrieval_ruby() {
 }
 
 #[gpui::test]
+async fn test_code_context_retrieval_php() {
+    let language = php_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        <?php
+
+        namespace LevelUp\Experience\Concerns;
+
+        /*
+        This is a multiple-lines comment block
+        that spans over multiple
+        lines
+        */
+        function functionName() {
+            echo "Hello world!";
+        }
+
+        trait HasAchievements
+        {
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {
+                if ($progress > 100) {
+                    throw new Exception(message: 'Progress cannot be greater than 100');
+                }
+
+                if ($this->achievements()->find($achievement->id)) {
+                    throw new Exception(message: 'User already has this Achievement');
+                }
+
+                $this->achievements()->attach($achievement, [
+                    'progress' => $progress ?? null,
+                ]);
+
+                $this->when(value: ($progress === null) || ($progress === 100), callback: fn (): ?array => event(new AchievementAwarded(achievement: $achievement, user: $this)));
+            }
+
+            public function achievements(): BelongsToMany
+            {
+                return $this->belongsToMany(related: Achievement::class)
+                ->withPivot(columns: 'progress')
+                ->where('is_secret', false)
+                ->using(AchievementUser::class);
+            }
+        }
+
+        interface Multiplier
+        {
+            public function qualifies(array $data): bool;
+
+            public function setMultiplier(): int;
+        }
+
+        enum AuditType: string
+        {
+            case Add = 'add';
+            case Remove = 'remove';
+            case Reset = 'reset';
+            case LevelUp = 'level_up';
+        }
+
+        ?>"#
+    .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                r#"
+        /*
+        This is a multiple-lines comment block
+        that spans over multiple
+        lines
+        */
+        function functionName() {
+            echo "Hello world!";
+        }"#
+                .unindent(),
+                123,
+            ),
+            (
+                r#"
+        trait HasAchievements
+        {
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {/* ... */}
+
+            public function achievements(): BelongsToMany
+            {/* ... */}
+        }"#
+                .unindent(),
+                177,
+            ),
+            (r#"
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {
+                if ($progress > 100) {
+                    throw new Exception(message: 'Progress cannot be greater than 100');
+                }
+
+                if ($this->achievements()->find($achievement->id)) {
+                    throw new Exception(message: 'User already has this Achievement');
+                }
+
+                $this->achievements()->attach($achievement, [
+                    'progress' => $progress ?? null,
+                ]);
+
+                $this->when(value: ($progress === null) || ($progress === 100), callback: fn (): ?array => event(new AchievementAwarded(achievement: $achievement, user: $this)));
+            }"#.unindent(), 245),
+            (r#"
+                public function achievements(): BelongsToMany
+                {
+                    return $this->belongsToMany(related: Achievement::class)
+                    ->withPivot(columns: 'progress')
+                    ->where('is_secret', false)
+                    ->using(AchievementUser::class);
+                }"#.unindent(), 902),
+            (r#"
+                interface Multiplier
+                {
+                    public function qualifies(array $data): bool;
+
+                    public function setMultiplier(): int;
+                }"#.unindent(),
+                1146),
+            (r#"
+                enum AuditType: string
+                {
+                    case Add = 'add';
+                    case Remove = 'remove';
+                    case Reset = 'reset';
+                    case LevelUp = 'level_up';
+                }"#.unindent(), 1265)
+        ],
+    );
+}
+
+#[gpui::test]
 fn test_dot_product(mut rng: StdRng) {
     assert_eq!(dot(&[1., 0., 0., 0., 0.], &[0., 1., 0., 0., 0.]), 0.);
     assert_eq!(dot(&[2., 0., 0., 0., 0.], &[3., 1., 0., 0., 0.]), 6.);
@@ -1371,6 +1521,61 @@ fn lua_lang() -> Arc<Language> {
                 ) @item
             )
         "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn php_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "PHP".into(),
+                path_suffixes: vec!["php".into()],
+                collapsed_placeholder: "/* ... */".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_php::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                [
+                    (function_definition
+                        "function" @name
+                        name: (_) @name
+                        body: (_
+                            "{" @keep
+                            "}" @keep) @collapse
+                        )
+
+                    (trait_declaration
+                        "trait" @name
+                        name: (_) @name)
+
+                    (method_declaration
+                        "function" @name
+                        name: (_) @name
+                        body: (_
+                            "{" @keep
+                            "}" @keep) @collapse
+                        )
+
+                    (interface_declaration
+                        "interface" @name
+                        name: (_) @name
+                        )
+
+                    (enum_declaration
+                        "enum" @name
+                        name: (_) @name
+                        )
+
+                ] @item
+            )
+            "#,
         )
         .unwrap(),
     )
