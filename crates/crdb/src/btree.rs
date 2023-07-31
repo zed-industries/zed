@@ -439,6 +439,7 @@ impl<T: Item> Sequence<T> {
                             summary: other_summary,
                             child_summaries,
                             child_trees,
+                            contains_unloaded: true,
                         }));
                     } else {
                         let mut summary = self.0.summary().clone();
@@ -460,6 +461,7 @@ impl<T: Item> Sequence<T> {
                             summary,
                             child_summaries,
                             child_trees,
+                            contains_unloaded: true,
                         }));
                     }
                 } else if let Some(split_tree) =
@@ -485,9 +487,11 @@ impl<T: Item> Sequence<T> {
                 summary,
                 child_summaries,
                 child_trees,
+                contains_unloaded,
                 ..
             } => {
                 <T::Summary as Summary>::add_summary(summary, &other_summary, cx);
+                *contains_unloaded |= other.contains_unloaded();
 
                 let mut summaries_to_append = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
                 let mut trees_to_append = ArrayVec::<ChildTree<T>, { 2 * TREE_BASE }>::new();
@@ -531,8 +535,8 @@ impl<T: Item> Sequence<T> {
                 if child_count > 2 * TREE_BASE {
                     let left_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
                     let right_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
-                    let left_trees;
-                    let right_trees;
+                    let left_trees: ArrayVec<_, { 2 * TREE_BASE }>;
+                    let right_trees: ArrayVec<_, { 2 * TREE_BASE }>;
 
                     let midpoint = (child_count + child_count % 2) / 2;
                     {
@@ -548,6 +552,7 @@ impl<T: Item> Sequence<T> {
                         right_trees = all_trees.collect();
                     }
                     *summary = sum(left_summaries.iter(), cx);
+                    *contains_unloaded = left_trees.iter().any(|t| t.contains_unloaded());
                     *child_summaries = left_summaries;
                     *child_trees = left_trees;
 
@@ -555,6 +560,7 @@ impl<T: Item> Sequence<T> {
                         saved_id: Default::default(),
                         height: *height,
                         summary: sum(right_summaries.iter(), cx),
+                        contains_unloaded: right_trees.iter().any(|t| t.contains_unloaded()),
                         child_summaries: right_summaries,
                         child_trees: right_trees,
                     })))
@@ -626,14 +632,18 @@ impl<T: Item> Sequence<T> {
         child_summaries.push(left.0.summary().clone());
         child_summaries.push(right.0.summary().clone());
         let mut child_trees = ArrayVec::new();
-        child_trees.push(ChildTree::Loaded { tree: left });
-        child_trees.push(ChildTree::Loaded { tree: right });
+        let left_child = ChildTree::Loaded { tree: left };
+        let right_child = ChildTree::Loaded { tree: right };
+        let contains_unloaded = left_child.contains_unloaded() || right_child.contains_unloaded();
+        child_trees.push(left_child);
+        child_trees.push(right_child);
         Sequence(Arc::new(Node::Internal {
             saved_id: Default::default(),
             height,
             summary: sum(child_summaries.iter(), cx),
             child_summaries,
             child_trees,
+            contains_unloaded,
         }))
     }
 
@@ -697,6 +707,7 @@ where
                 saved_id: root_id,
                 height,
                 summary,
+                contains_unloaded: !child_trees.is_empty(),
                 child_summaries,
                 child_trees: child_trees
                     .into_iter()
@@ -742,8 +753,13 @@ where
                 Node::Internal {
                     child_summaries,
                     child_trees,
+                    contains_unloaded,
                     ..
                 } => {
+                    if !*contains_unloaded {
+                        continue;
+                    }
+
                     for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
                         let probe = Probe {
                             start: &summary,
@@ -751,10 +767,12 @@ where
                         };
                         if f(probe) {
                             match child_tree {
-                                ChildTree::Loaded { tree } => stack.push(Frame {
-                                    tree,
-                                    start_summary: summary.clone(),
-                                }),
+                                ChildTree::Loaded { tree } => {
+                                    stack.push(Frame {
+                                        tree,
+                                        start_summary: summary.clone(),
+                                    });
+                                }
                                 ChildTree::Unloaded { saved_id } => {
                                     let tree = Sequence::load_root(saved_id.clone(), kv).await?;
                                     *child_tree = ChildTree::Loaded { tree };
@@ -774,8 +792,44 @@ where
                 Node::Leaf { .. } => {}
             }
         }
+        self.finish_loading(Default::default(), cx, &mut f);
 
         Ok(())
+    }
+
+    fn finish_loading<F>(
+        &mut self,
+        mut start: T::Summary,
+        cx: &<T::Summary as Summary>::Context,
+        f: &mut F,
+    ) where
+        F: FnMut(Probe<T::Summary>) -> bool,
+    {
+        match Arc::make_mut(&mut self.0) {
+            Node::Internal {
+                contains_unloaded,
+                child_trees,
+                child_summaries,
+                ..
+            } => {
+                *contains_unloaded = false;
+                for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
+                    if let ChildTree::Loaded { tree } = child_tree {
+                        let probe = Probe {
+                            start: &start,
+                            summary: child_summary,
+                        };
+                        if f(probe) {
+                            tree.finish_loading(start.clone(), cx, f);
+                        }
+                        Summary::add_summary(&mut start, child_summary, cx);
+                    }
+
+                    *contains_unloaded |= child_tree.contains_unloaded();
+                }
+            }
+            Node::Leaf { .. } => {}
+        }
     }
 
     pub async fn save(&self, kv: &dyn KvStore) -> Result<SavedId> {
@@ -870,52 +924,50 @@ where
     where
         F: FnMut(Probe<T::Summary>) -> Prune,
     {
-        struct Frame<'a, T: Item> {
-            tree: &'a mut Sequence<T>,
-            start_summary: T::Summary,
-        }
+        self.prune_internal(Default::default(), cx, &mut f);
+    }
 
-        let mut stack = Vec::new();
-        stack.push(Frame {
-            tree: self,
-            start_summary: Default::default(),
-        });
-        while let Some(frame) = stack.pop() {
-            let mut summary = frame.start_summary;
-            match Arc::make_mut(&mut frame.tree.0) {
-                Node::Internal {
-                    child_summaries,
-                    child_trees,
-                    ..
-                } => {
-                    for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
-                        let probe = Probe {
-                            start: &summary,
-                            summary: child_summary,
-                        };
-                        match f(probe) {
-                            Prune::Descend => {
-                                if let ChildTree::Loaded { tree } = child_tree {
-                                    stack.push(Frame {
-                                        tree,
-                                        start_summary: summary.clone(),
-                                    });
-                                }
+    fn prune_internal<F>(
+        &mut self,
+        mut start: T::Summary,
+        cx: &<T::Summary as Summary>::Context,
+        f: &mut F,
+    ) where
+        F: FnMut(Probe<T::Summary>) -> Prune,
+    {
+        match Arc::make_mut(&mut self.0) {
+            Node::Internal {
+                child_summaries,
+                child_trees,
+                contains_unloaded,
+                ..
+            } => {
+                *contains_unloaded = false;
+                for (child_tree, child_summary) in child_trees.iter_mut().zip(child_summaries) {
+                    let probe = Probe {
+                        start: &start,
+                        summary: child_summary,
+                    };
+                    match f(probe) {
+                        Prune::Descend => {
+                            if let ChildTree::Loaded { tree } = child_tree {
+                                tree.prune_internal(start.clone(), cx, f);
                             }
-                            Prune::Unload => {
-                                if child_tree.saved_id().is_saved() {
-                                    *child_tree = ChildTree::Unloaded {
-                                        saved_id: child_tree.saved_id().clone(),
-                                    };
-                                }
-                            }
-                            Prune::Keep => {}
                         }
-                        Summary::add_summary(&mut summary, child_summary, cx);
+                        Prune::Unload => {
+                            if child_tree.saved_id().is_saved() {
+                                *child_tree = ChildTree::Unloaded {
+                                    saved_id: child_tree.saved_id().clone(),
+                                };
+                            }
+                        }
+                        Prune::Keep => {}
                     }
+                    Summary::add_summary(&mut start, child_summary, cx);
+                    *contains_unloaded |= child_tree.contains_unloaded();
                 }
-                Node::Leaf { .. } => {}
             }
+            Node::Leaf { .. } => {}
         }
     }
 }
@@ -1056,6 +1108,18 @@ impl<T: Item> ChildTree<T> {
     fn is_loaded(&self) -> bool {
         matches!(self, ChildTree::Loaded { .. })
     }
+
+    fn contains_unloaded(&self) -> bool {
+        match self {
+            ChildTree::Loaded { tree } => match tree.0.as_ref() {
+                Node::Internal {
+                    contains_unloaded, ..
+                } => *contains_unloaded,
+                Node::Leaf { .. } => false,
+            },
+            ChildTree::Unloaded { .. } => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1066,6 +1130,7 @@ pub enum Node<T: Item> {
         summary: T::Summary,
         child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
         child_trees: ArrayVec<ChildTree<T>, { 2 * TREE_BASE }>,
+        contains_unloaded: bool,
     },
     Leaf {
         saved_id: SavedId,
