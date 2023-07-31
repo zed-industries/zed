@@ -228,6 +228,13 @@
     }
   },
   {
+    "context": "BufferSearchBar > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
+    }
+  },
+  {
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus"
