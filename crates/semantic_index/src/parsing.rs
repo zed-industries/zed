@@ -59,7 +59,7 @@ impl CodeContextRetriever {
         let document_span = ENTIRE_FILE_TEMPLATE
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<language>", language_name.as_ref())
-            .replace("item", &content);
+            .replace("<item>", &content);
 
         Ok(vec![Document {
             range: 0..content.len(),
