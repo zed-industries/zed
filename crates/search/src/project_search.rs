@@ -1218,7 +1218,41 @@ impl ProjectSearchBar {
         )
         .into_any()
     }
+    fn render_text_search_button(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let is_active = if let Some(search) = self.active_project_search.as_ref() {
+            let search = search.read(cx);
+            search.semantic.is_none() && !self.is_option_enabled(SearchOptions::REGEX, cx)
+        } else {
+            false
+        };
 
+        let region_id = 4;
+        enum NormalSearchTag {}
+        MouseEventHandler::<NormalSearchTag, _>::new(region_id, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme
+                .search
+                .option_button
+                .in_state(is_active)
+                .style_for(state);
+            Label::new("Text", style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_semantic_search(cx);
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<NormalSearchTag>(
+            region_id,
+            format!("Toggle Normal Search"),
+            None,
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
     fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
             search.read(cx).search_options.contains(option)
@@ -1339,6 +1373,7 @@ impl View for ProjectSearchBar {
 
             let semantic_index =
                 SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
+            let normal_search = self.render_text_search_button(cx);
             Flex::row()
                 .with_child(
                     Flex::column()
@@ -1395,6 +1430,7 @@ impl View for ProjectSearchBar {
                 .with_child(
                     Flex::column().with_child(
                         Flex::row()
+                            .with_child(normal_search)
                             .with_children(semantic_index)
                             .with_child(regex_button)
                             .flex(1., true)
