@@ -847,10 +847,9 @@ impl Repo {
         }
     }
 
-    fn load_branch(&self, name: &str) -> impl Future<Output = Result<Branch>> {
+    fn load_branch(&self, name: impl Into<Arc<str>>) -> impl Future<Output = Result<Branch>> {
         let this = self.clone();
-        // TODO: Turn this into an Arc<str>.
-        let name = name.to_string();
+        let name = name.into();
 
         async move {
             let branch_id = this
@@ -1708,8 +1707,7 @@ pub struct RepoSnapshot {
     id: RepoId,
     history: History,
     branches: btree::Map<OperationId, BranchSnapshot>,
-    // TODO: Change String to Arc<str> for branch_ids_by_name
-    branch_ids_by_name: btree::Map<String, OperationId>,
+    branch_ids_by_name: btree::Map<Arc<str>, OperationId>,
     revisions: Arc<Mutex<HashMap<RevisionId, Revision>>>,
 }
 
@@ -1778,7 +1776,7 @@ impl RepoSnapshot {
                 head: branch_id.into(),
             },
         );
-        self.branch_ids_by_name.insert(name.to_string(), branch_id);
+        self.branch_ids_by_name.insert(name.clone(), branch_id);
         self.revisions
             .lock()
             .insert(branch_id.into(), Default::default());
@@ -1828,7 +1826,7 @@ impl RepoSnapshot {
                             head: op.id.into(),
                         },
                     );
-                    self.branch_ids_by_name.insert(op.name.to_string(), op.id);
+                    self.branch_ids_by_name.insert(op.name.clone(), op.id);
                     new_head = RevisionId::from(op.id);
                 }
                 Operation::CreateDocument(operations::CreateDocument {
@@ -2618,7 +2616,7 @@ mod tests {
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
                     let repo = client.repo(*repo_id).await?;
-                    let branch = repo.load_branch(branch_name).await?;
+                    let branch = repo.load_branch(branch_name.clone()).await?;
                     branch.create_document();
                 }
 
@@ -2634,7 +2632,7 @@ mod tests {
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
                     let repo = client.repo(*repo_id).await?;
-                    let branch = repo.load_branch(branch_name).await?;
+                    let branch = repo.load_branch(branch_name.clone()).await?;
                     let document = branch.load_document(*document_id)?;
                     document.edit(edits.iter().cloned());
                 }
