@@ -10,7 +10,7 @@ mod test;
 
 use anyhow::{anyhow, Result};
 use btree::{Bias, KvStore, SavedId};
-use collections::{btree_map, BTreeMap, HashMap, VecDeque};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use history::{History, SavedHistory};
@@ -938,19 +938,21 @@ impl Branch {
     }
 
     pub fn create_document(&self) -> Document {
-        self.update(|document_id, parent, revision| {
+        self.update(|document_id, parent, repo, revision| {
             let operation = operations::CreateDocument {
                 id: document_id,
                 branch_id: self.id,
                 parent,
             };
             operation.clone().apply(revision);
-            let document = Document {
-                id: document_id,
-                branch: self.clone(),
-            };
-
-            (Operation::CreateDocument(operation), document)
+            repo.document_ref_counts.insert((self.id, document_id), 1);
+            (
+                Operation::CreateDocument(operation),
+                Document {
+                    id: document_id,
+                    branch: self.clone(),
+                },
+            )
         })
     }
 
@@ -984,19 +986,7 @@ impl Branch {
                     },
                 ))
             })
-            .await?;
-
-        todo!()
-        // self.read(|revision| {
-        //     revision
-        //         .document_metadata
-        //         .get(&id)
-        //         .ok_or_else(|| anyhow!("document not found"))?;
-        //     Ok(Document {
-        //         branch: self.clone(),
-        //         id,
-        //     })
-        // })
+            .await
     }
 
     pub fn documents(&self) -> Vec<Document> {
@@ -1014,7 +1004,7 @@ impl Branch {
 
     fn update<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(OperationId, RevisionId, &mut Revision) -> (Operation, T),
+        F: FnOnce(OperationId, RevisionId, &mut RepoSnapshot, &mut Revision) -> (Operation, T),
     {
         self.repo.update(|repo| {
             let head = repo
@@ -1029,7 +1019,7 @@ impl Branch {
                 .expect("head revision must exist")
                 .clone();
             let operation_id = repo.history.next_operation_id();
-            let (operation, result) = f(operation_id, head.clone(), &mut new_revision);
+            let (operation, result) = f(operation_id, head.clone(), repo, &mut new_revision);
             repo.branches
                 .update(&self.id, |branch| branch.head = operation_id.into());
             repo.revisions.insert(operation_id.into(), new_revision);
@@ -1293,7 +1283,7 @@ impl Document {
         I: ExactSizeIterator<Item = (Range<usize>, T)>,
         T: Into<Arc<str>>,
     {
-        self.branch.update(|operation_id, parent, revision| {
+        self.branch.update(|operation_id, parent, _, revision| {
             let edits = edits.into_iter();
             let mut edit_op = operations::Edit {
                 id: operation_id,
@@ -2061,10 +2051,37 @@ impl Revision {
 
     async fn load_documents(
         &mut self,
-        documents: impl IntoIterator<Item = DocumentId>,
+        document_ids: impl IntoIterator<Item = DocumentId>,
         kv: &dyn KvStore,
     ) -> Result<()> {
-        todo!()
+        let document_ids = document_ids.into_iter().collect::<BTreeSet<_>>();
+        for document_id in &document_ids {
+            // TODO: Maybe add a `load_many` API to load multiple documents at once.
+            self.document_metadata
+                .load(&document_id, kv)
+                .await?
+                .ok_or_else(|| anyhow!("document not found"))?;
+        }
+
+        self.document_fragments
+            .load(kv, &(), |probe| {
+                let document_range = probe.start.max_document_id..=probe.summary.max_document_id;
+                probe.summary.visible_len > 0 && document_ids.range(document_range).next().is_some()
+            })
+            .await?;
+
+        let mut cursor = self.document_fragments.cursor::<LocalEditDimension>();
+        for document_id in document_ids {
+            cursor.seek(&document_id, Bias::Left, &());
+            let visible_start = cursor.start().visible_len;
+            cursor.seek(&document_id, Bias::Right, &());
+            let visible_end = cursor.start().visible_len;
+            self.visible_text
+                .load(visible_start..visible_end, kv)
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn save(&self, repo_id: RepoId, id: &RevisionId, kv: &dyn KvStore) -> Result<()> {
