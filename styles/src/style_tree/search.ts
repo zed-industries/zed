@@ -22,8 +22,8 @@ export default function search(): any {
         padding: {
             top: 3,
             bottom: 3,
-            left: 12,
-            right: 8,
+            left: 10,
+            right: 4,
         },
     }
 
@@ -47,7 +47,7 @@ export default function search(): any {
                     corner_radius: 2,
                     border: border(theme.highest, "on"),
                     margin: {
-                        right: 4,
+                        right: 2,
                     },
                     padding: {
                         bottom: 6,
@@ -177,7 +177,8 @@ export default function search(): any {
                 }
             },
             container: {
-                padding: { right: 6 }
+                margin: { right: 6 },
+                padding: { left: 4 }
             }
         }
     }
