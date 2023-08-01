@@ -10,7 +10,7 @@ mod test;
 
 use anyhow::{anyhow, Result};
 use btree::{Bias, KvStore, SavedId};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, VecDeque};
 use dense_id::DenseId;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, StreamExt};
 use history::{History, SavedHistory};
@@ -24,6 +24,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Debug, Display},
     future::Future,
+    mem,
     ops::Range,
     path::Path,
     sync::{Arc, Weak},
@@ -251,7 +252,7 @@ struct Client<E, N: ClientNetwork> {
     network: Arc<N>,
     checkouts: Mutex<HashMap<RepoId, Checkout<E, N>>>,
     executor: Arc<E>,
-    repo_snapshots: mpsc::UnboundedSender<(RepoId, RepoSnapshot)>,
+    repo_snapshots: mpsc::UnboundedSender<RepoSnapshot>,
 }
 
 struct Checkout<E, N: ClientNetwork> {
@@ -442,20 +443,18 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
             });
             this.db.on_repo_snapshot_changed({
                 let this = weak_self.clone();
-                move |repo_id, snapshot| {
+                move |repo| {
                     if let Some(this) = this.upgrade() {
-                        let _ = this
-                            .repo_snapshots
-                            .unbounded_send((repo_id, snapshot.clone()));
+                        let _ = this.repo_snapshots.unbounded_send(repo);
                     }
                 }
             });
             this.executor.spawn({
                 let this = weak_self.clone();
                 async move {
-                    while let Some((repo_id, snapshot)) = repo_snapshots_rx.next().await {
+                    while let Some(mut repo) = repo_snapshots_rx.next().await {
                         if let Some(this) = this.upgrade() {
-                            snapshot.save(repo_id, &*this.db.kv).await.log_err();
+                            repo.save(&*this.db.kv).await.log_err();
                         } else {
                             break;
                         }
@@ -765,7 +764,7 @@ pub struct Db {
     kv: Arc<dyn KvStore>,
     repos: Arc<RwLock<HashMap<RepoId, RepoSnapshot>>>,
     local_operation_created: Option<Arc<dyn Send + Sync + Fn(RepoId, Operation)>>,
-    repo_snapshot_changed: Option<Arc<dyn Send + Sync + Fn(RepoId, &RepoSnapshot)>>,
+    repo_snapshot_changed: Option<Arc<dyn Send + Sync + Fn(RepoSnapshot)>>,
 }
 
 impl Db {
@@ -784,7 +783,7 @@ impl Db {
 
     fn on_repo_snapshot_changed(
         &mut self,
-        callback: impl 'static + Send + Sync + Fn(RepoId, &RepoSnapshot),
+        callback: impl 'static + Send + Sync + Fn(RepoSnapshot),
     ) {
         self.repo_snapshot_changed = Some(Arc::new(callback));
     }
@@ -878,7 +877,8 @@ impl Repo {
         }
 
         if let Some(repo_snapshot_changed) = self.db.repo_snapshot_changed.as_ref() {
-            repo_snapshot_changed(self.id, repo);
+            repo_snapshot_changed(repo.clone());
+            mem::take(&mut repo.dirty_revisions);
         }
 
         result
@@ -1020,9 +1020,11 @@ impl Branch {
                 .clone();
             let operation_id = repo.history.next_operation_id();
             let (operation, result) = f(operation_id, head.clone(), repo, &mut new_revision);
+            let new_head = RevisionId::from(operation_id);
             repo.branches
-                .update(&self.id, |branch| branch.head = operation_id.into());
-            repo.revisions.insert(operation_id.into(), new_revision);
+                .update(&self.id, |branch| branch.head = new_head.clone());
+            repo.dirty_revisions.insert(new_head.clone());
+            repo.revisions.insert(new_head, new_revision);
             (Some(operation), result)
         })
     }
@@ -1718,6 +1720,7 @@ pub struct RepoSnapshot {
     branches: btree::Map<OperationId, BranchSnapshot>,
     branch_ids_by_name: btree::Map<Arc<str>, OperationId>,
     revisions: btree::Map<RevisionId, Revision>,
+    dirty_revisions: btree::Set<RevisionId>,
     document_ref_counts: btree::Map<(BranchId, DocumentId), usize>,
 }
 
@@ -1739,6 +1742,7 @@ impl RepoSnapshot {
                 RevisionId::default(),
                 Revision::default(),
             )]),
+            dirty_revisions: Default::default(),
             document_ref_counts: Default::default(),
         }
     }
@@ -1764,19 +1768,28 @@ impl RepoSnapshot {
                 RevisionId::default(),
                 Revision::default(),
             )]),
+            dirty_revisions: Default::default(),
             document_ref_counts: Default::default(),
         })
     }
 
-    async fn save(&self, id: RepoId, kv: &dyn KvStore) -> Result<()> {
+    async fn save(&mut self, kv: &dyn KvStore) -> Result<()> {
         let saved_repo = SavedRepoSnapshot {
             history: self.history.save(kv).await?,
             branches: self.branches.save(kv).await?,
             branch_ids_by_name: self.branch_ids_by_name.save(kv).await?,
         };
         let repo_bytes = serde_bare::to_vec(&saved_repo)?;
-        kv.store(id.to_be_bytes(), "root".into(), repo_bytes)
+        kv.store(self.id.to_be_bytes(), "root".into(), repo_bytes)
             .await?;
+
+        let dirty_revisions = mem::take(&mut self.dirty_revisions);
+        for dirty_revision_id in dirty_revisions.iter() {
+            if let Some(revision) = self.revisions.get(dirty_revision_id) {
+                revision.save(self.id, dirty_revision_id, kv).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1945,7 +1958,7 @@ impl RepoSnapshot {
                     continue;
                 }
 
-                revision.save(self.id, &new_revision_id, kv).await?;
+                self.dirty_revisions.insert(new_revision_id.clone());
                 self.revisions.insert(new_revision_id, revision);
             }
 
@@ -2076,6 +2089,7 @@ impl Revision {
             let visible_start = cursor.start().visible_len;
             cursor.seek(&document_id, Bias::Right, &());
             let visible_end = cursor.start().visible_len;
+            // TODO: Maybe add a `load_many` API to load multiple ranges at once from the Rope.
             self.visible_text
                 .load(visible_start..visible_end, kv)
                 .await?;
@@ -2318,6 +2332,7 @@ mod tests {
         assert_eq!(doc1_a.text().to_string(), "aghic");
         assert_eq!(doc1_b.text().to_string(), "aghic");
 
+        // Re-create the client with the same KvStore. We should restore the saved state.
         drop(client_a);
         let client_a2 = Client::new(
             deterministic.build_background(),
