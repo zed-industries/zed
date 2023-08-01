@@ -136,7 +136,7 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = NodeRuntime::instance(http.clone(), cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http.clone());
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -717,7 +717,7 @@ async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()>
 }
 
 #[cfg(not(debug_assertions))]
-fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {}
+fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
 
 fn connect_to_cli(
     server_name: &str,
