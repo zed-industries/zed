@@ -1405,7 +1405,7 @@ impl View for ProjectSearchBar {
 
             let case_sensitive = if is_semantic_disabled {
                 Some(self.render_option_button_icon(
-                    "icons/word_search_12.svg",
+                    "icons/case_insensitive_14.svg",
                     SearchOptions::CASE_SENSITIVE,
                     cx,
                 ))
