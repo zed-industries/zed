@@ -320,15 +320,7 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                         remote_operations = remote_operations_rx.next() => {
                             if let Some(remote_operations) = remote_operations {
                                 if let Some(client) = client.upgrade() {
-                                    this.repo.update_async(|repo| {
-                                        let remote_operations = remote_operations.clone();
-                                        let client = client.clone();
-                                        async move {
-                                            repo.apply_operations(remote_operations, &*client.db.kv).await?;
-                                            Ok((None, ()))
-                                        }.boxed()
-                                    })
-                                    .await.expect("db is infallible");
+                                    this.repo.apply_operations(remote_operations).await.expect("db is infallible");
                                 } else {
                                     break;
                                 }
@@ -393,16 +385,16 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
             })
             .await?;
 
+        self.repo.apply_operations(response.operations).await?;
         let operations = self
             .repo
             .update_async(|repo| {
-                let kv = client.db.kv.clone();
-                let response = response.clone();
+                let max_operation_ids = response.max_operation_ids.clone();
+                let kv = self.repo.db.kv.clone();
                 async move {
-                    repo.apply_operations(response.operations, &*kv).await?;
                     let operations = repo
                         .history
-                        .operations_since(&(&response.max_operation_ids).into(), &*kv)
+                        .operations_since(&(&max_operation_ids).into(), &*kv)
                         .await?;
                     Ok((None, operations))
                 }
@@ -782,16 +774,7 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             .db
             .repo(request.repo_id)
             .ok_or_else(|| anyhow!("repo not found"))?;
-        repo.update_async(|repo| {
-            let operations = request.operations.clone();
-            let kv = self.db.kv.clone();
-            async move {
-                repo.apply_operations(operations, &*kv).await?;
-                Ok((None, ()))
-            }
-            .boxed()
-        })
-        .await?;
+        repo.apply_operations(request.operations).await?;
         Ok(())
     }
 }
@@ -962,6 +945,26 @@ impl Repo {
                 return Ok(value);
             }
         }
+    }
+
+    /// Apply the given operations and any deferred operations that are now applicable.
+    async fn apply_operations(&self, operations: impl Into<VecDeque<Operation>>) -> Result<()> {
+        let mut operations = operations.into();
+        while let Some(operation) = operations.pop_front() {
+            let flushed_operations = self
+                .update_async(|repo| {
+                    let operation = operation.clone();
+                    let kv = self.db.kv.clone();
+                    async move {
+                        let flushed_operations = repo.apply_operation(operation, &*kv).await?;
+                        Ok((None, flushed_operations))
+                    }
+                    .boxed()
+                })
+                .await?;
+            operations.extend(flushed_operations);
+        }
+        Ok(())
     }
 }
 
@@ -1787,20 +1790,6 @@ impl RepoSnapshot {
         )
     }
 
-    /// Apply the given operations and any deferred operations that are now applicable.
-    async fn apply_operations(
-        &mut self,
-        operations: impl Into<VecDeque<Operation>>,
-        kv: &dyn KvStore,
-    ) -> Result<()> {
-        let mut operations = operations.into();
-        while let Some(operation) = operations.pop_front() {
-            let flushed_operations = self.apply_operation(operation, kv).await?;
-            operations.extend(flushed_operations);
-        }
-        Ok(())
-    }
-
     async fn apply_operation(
         &mut self,
         operation: Operation,
@@ -1808,58 +1797,58 @@ impl RepoSnapshot {
     ) -> Result<SmallVec<[Operation; 1]>> {
         if self.history.has_applied(&operation, kv).await? {
             return Ok(Default::default());
-        }
-
-        if self.history.can_apply(&operation, kv).await? {
-            let operation_id = operation.id();
-            let mut new_head;
-            match &operation {
-                Operation::CreateBranch(op) => {
-                    self.branches.insert(
-                        op.id,
-                        BranchSnapshot {
-                            name: op.name.clone(),
-                            head: op.id.into(),
-                        },
-                    );
-                    self.branch_ids_by_name.insert(op.name.clone(), op.id);
-                    new_head = RevisionId::from(op.id);
-                }
-                Operation::CreateDocument(operations::CreateDocument {
-                    branch_id, parent, ..
-                })
-                | Operation::Edit(operations::Edit {
-                    branch_id, parent, ..
-                }) => {
-                    if let Some(branch) = self.branches.load(branch_id, kv).await?.cloned() {
-                        new_head = branch.head;
-                        new_head.observe(operation_id, &parent);
-                        self.branches
-                            .update(&branch_id, |branch| branch.head = new_head.clone());
-                    } else {
-                        log::error!(
-                            "could not apply operation {:?}: branch {:?} does not exist",
-                            operation,
-                            branch_id
-                        );
-                        return Ok(Default::default());
-                    }
-                }
-            };
-
-            let flushed_operations = self.history.insert(operation, kv).await?;
-
-            // The following ensures that a revision for the branch head is always present.
-            #[cfg(not(any(test, feature = "test-support")))]
-            self.build_revision(&new_head, kv).await?;
-            #[cfg(any(test, feature = "test-support"))]
-            self.build_revision(&new_head, kv).await.unwrap();
-
-            Ok(flushed_operations)
-        } else {
+        } else if !self.history.can_apply(&operation, kv).await? {
             self.history.defer(operation, kv).await?;
-            Ok(Default::default())
+            return Ok(Default::default());
         }
+
+        let mut new_head;
+        match &operation {
+            Operation::CreateBranch(op) => {
+                self.branches.insert(
+                    op.id,
+                    BranchSnapshot {
+                        name: op.name.clone(),
+                        head: op.id.into(),
+                    },
+                );
+                self.branch_ids_by_name.insert(op.name.clone(), op.id);
+                new_head = RevisionId::from(op.id);
+            }
+            Operation::CreateDocument(operations::CreateDocument {
+                id,
+                branch_id,
+                parent,
+                ..
+            })
+            | Operation::Edit(operations::Edit {
+                id,
+                branch_id,
+                parent,
+                ..
+            }) => {
+                let branch = self
+                    .branches
+                    .load(branch_id, kv)
+                    .await?
+                    .cloned()
+                    .ok_or_else(|| anyhow!("branch {:?} does not exist", branch_id))?;
+                new_head = branch.head;
+                new_head.observe(*id, &parent);
+                self.branches
+                    .update(&branch_id, |branch| branch.head = new_head.clone());
+            }
+        };
+
+        let flushed_operations = self.history.insert(operation, kv).await?;
+
+        // The following ensures that a revision for the branch head is always present.
+        #[cfg(not(any(test, feature = "test-support")))]
+        self.build_revision(&new_head, kv).await?;
+        #[cfg(any(test, feature = "test-support"))]
+        self.build_revision(&new_head, kv).await.unwrap();
+
+        Ok(flushed_operations)
     }
 
     async fn build_revision(
