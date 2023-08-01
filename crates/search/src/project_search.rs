@@ -1149,6 +1149,38 @@ impl ProjectSearchBar {
         )
         .into_any()
     }
+    fn render_option_button_icon(
+        &self,
+        icon: &'static str,
+        option: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let is_active = self.is_option_enabled(option, cx);
+        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme
+                .search
+                .option_button
+                .in_state(is_active)
+                .style_for(state);
+            Svg::new(icon).with_color(style.text.color.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_search_option(option, cx);
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self>(
+            option.bits as usize,
+            format!("Toggle {}", option.label()),
+            Some(option.to_toggle_action()),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
 
     fn render_option_button(
         &self,
@@ -1272,8 +1304,8 @@ impl View for ProjectSearchBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
+        if let Some(_search) = self.active_project_search.as_ref() {
+            let search = _search.read(cx);
             let theme = theme::current(cx).clone();
             let query_container_style = if search.panels_with_errors.contains(&InputPanel::Query) {
                 theme.search.invalid_editor
@@ -1301,12 +1333,53 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .right()
                 .flex(1.0, true);
-
+            let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
-            let query = ChildView::new(&search.query_editor, cx)
+let search = _search.read(cx);
+            let filter_button = {
+                let tooltip_style = theme::current(cx).tooltip.clone();
+                let is_active = search.filters_enabled;
+                MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
+                    let theme = theme::current(cx);
+                    let style = theme
+                        .search
+                        .option_button
+                        .in_state(is_active)
+                        .style_for(state);
+                    Svg::new("icons/filter_12.svg")
+                        .with_color(style.text.color.clone())
+                        .contained()
+                        .with_style(style.container)
+                })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.toggle_filters(cx);
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<Self>(0, "Toggle filters".into(), None, tooltip_style, cx)
+                .into_any()
+            };            let search = _search.read(cx);
+            let query = Flex::row()
+                .with_child(
+                    ChildView::new(&search.query_editor, cx)
+                        .constrained()
+                        .flex(1., true)
+                        .into_any(),
+                )
+                .with_child(
+                    Flex::row()
+                        .with_children([
+                            filter_button,
+                            self.render_option_button("Case", SearchOptions::CASE_SENSITIVE, cx),
+                            self.render_option_button_icon("icons/word_search_14.svg", SearchOptions::WHOLE_WORD, cx),
+
+                        ])
+                        .flex(1., true)
+                        .contained(),
+                )
                 .aligned()
                 .left()
                 .flex(1., true);
+            let search = _search.read(cx);
             let matches = search.active_match_index.map(|match_ix| {
                 Label::new(
                     format!(
@@ -1321,6 +1394,7 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .left()
             });
+
             let filters = search.filters_enabled.then(|| {
                 Flex::row()
                     .with_child(
@@ -1346,30 +1420,6 @@ impl View for ProjectSearchBar {
                             .flex(1., false),
                     )
             });
-            let filter_button = {
-                let tooltip_style = theme::current(cx).tooltip.clone();
-                let is_active = search.filters_enabled;
-                MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
-                    let theme = theme::current(cx);
-                    let style = theme
-                        .search
-                        .option_button
-                        .in_state(is_active)
-                        .style_for(state);
-                    Label::new("Filter", style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                })
-                .on_click(MouseButton::Left, move |_, this, cx| {
-                    this.toggle_filters(cx);
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .with_tooltip::<Self>(0, "Toggle filters".into(), None, tooltip_style, cx)
-                .into_any()
-            };
-            let case_button = self.render_option_button("Case", SearchOptions::CASE_SENSITIVE, cx);
-            let word_button = self.render_option_button("Word", SearchOptions::WHOLE_WORD, cx);
-            let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
 
             let semantic_index =
                 SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
@@ -1408,16 +1458,6 @@ impl View for ProjectSearchBar {
                                             cx,
                                         ))
                                         .aligned(),
-                                )
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(case_button)
-                                        .with_child(word_button)
-                                        .with_child(filter_button)
-                                        .contained()
-                                        .with_style(theme.search.option_button_group)
-                                        .aligned()
-                                        .right(),
                                 )
                                 .contained()
                                 .with_margin_bottom(row_spacing),

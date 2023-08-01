@@ -44,17 +44,17 @@ export default function search(): any {
                 base: {
                     ...text(theme.highest, "mono", "on"),
                     background: background(theme.highest, "on"),
-                    corner_radius: 6,
+                    corner_radius: 2,
                     border: border(theme.highest, "on"),
                     margin: {
                         right: 4,
                     },
                     padding: {
-                        bottom: 2,
-                        left: 10,
-                        right: 10,
-                        top: 2,
-                    },
+                        bottom: 6,
+                        left: 6,
+                        right: 6,
+                        top: 6,
+                },
                 },
                 state: {
                     hovered: {
