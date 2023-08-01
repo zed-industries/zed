@@ -1361,12 +1361,36 @@ impl View for ProjectSearchBar {
                 .into_any()
             };
             let search = _search.read(cx);
+            let is_semantic_disabled = search.semantic.is_none();
+
+            let case_sensitive = if is_semantic_disabled {
+                Some(self.render_option_button_icon(
+                    "icons/word_search_12.svg",
+                    SearchOptions::CASE_SENSITIVE,
+                    cx,
+                ))
+            } else {
+                None
+            };
+
+            let whole_word = if is_semantic_disabled {
+                Some(self.render_option_button_icon(
+                    "icons/word_search_12.svg",
+                    SearchOptions::WHOLE_WORD,
+                    cx,
+                ))
+            } else {
+                None
+            };
+
+            let search = _search.read(cx);
             let query = Flex::row()
                 .with_child(
-                    Svg::new("icons/magnifying_glass_12.svg").with_color(gpui::color::Color::white())
+                    Svg::new("icons/magnifying_glass_12.svg")
+                        .with_color(gpui::color::Color::white())
                         //.with_color(tab_theme.label.text.color)
-                        .contained().constrained()
-                    //.with_margin_right(tab_theme.spacing),
+                        .contained()
+                        .constrained(), //.with_margin_right(tab_theme.spacing),
                 )
                 .with_child(
                     ChildView::new(&search.query_editor, cx)
@@ -1376,19 +1400,9 @@ impl View for ProjectSearchBar {
                 )
                 .with_child(
                     Flex::row()
-                        .with_children([
-                            filter_button,
-                            self.render_option_button_icon(
-                                "icons/word_search_12.svg",
-                                SearchOptions::CASE_SENSITIVE,
-                                cx,
-                            ),
-                            self.render_option_button_icon(
-                                "icons/word_search_12.svg",
-                                SearchOptions::WHOLE_WORD,
-                                cx,
-                            ),
-                        ])
+                        .with_child(filter_button)
+                        .with_children(whole_word)
+                        .with_children(case_sensitive)
                         .flex(1., true)
                         .contained(),
                 )
