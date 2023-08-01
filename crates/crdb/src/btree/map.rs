@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
-    fmt::Debug,
+    fmt::{self, Debug},
     ops::{Bound, RangeBounds},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Map<K, V>(Sequence<MapEntry<K, V>>)
 where
     K: Clone + Debug + Ord,
@@ -41,7 +41,7 @@ impl<K> Default for MapKeyRef<'_, K> {
 }
 
 #[derive(Clone)]
-pub struct TreeSet<K>(Map<K, ()>)
+pub struct Set<K>(Map<K, ()>)
 where
     K: Clone + Debug + Ord;
 
@@ -294,6 +294,16 @@ where
     }
 }
 
+impl<K, V> Debug for Map<K, V>
+where
+    K: Clone + Debug + Ord,
+    V: Clone + Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
 #[derive(Debug)]
 struct MapSeekTargetAdaptor<'a, T>(&'a T);
 
@@ -382,7 +392,7 @@ where
     }
 }
 
-impl<K> Default for TreeSet<K>
+impl<K> Default for Set<K>
 where
     K: Clone + Debug + Ord,
 {
@@ -391,7 +401,7 @@ where
     }
 }
 
-impl<K> TreeSet<K>
+impl<K> Set<K>
 where
     K: Clone + Debug + Ord,
 {

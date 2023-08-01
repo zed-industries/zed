@@ -43,6 +43,10 @@ impl Rope {
         Self::default()
     }
 
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Sequence::ptr_eq(&this.chunks, &other.chunks)
+    }
+
     pub async fn load_root(id: SavedId, kv: &dyn KvStore) -> Result<Self> {
         let chunks = Sequence::load_root(id, kv).await?;
         Ok(Self { chunks })

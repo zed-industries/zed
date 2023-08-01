@@ -1,6 +1,6 @@
 use crate::{
     operations::{CreateBranch, CreateDocument, Edit},
-    OperationCount, OperationId, ReplicaId, RepoId, Request, RevisionId, RoomCredentials,
+    BranchId, OperationCount, OperationId, ReplicaId, RepoId, Request, RevisionId, RoomCredentials,
 };
 use collections::BTreeMap;
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,14 @@ impl Operation {
             Operation::CreateDocument(op) => op.id,
             Operation::Edit(op) => op.id,
             Operation::CreateBranch(op) => op.id,
+        }
+    }
+
+    pub fn branch_id(&self) -> BranchId {
+        match self {
+            Operation::CreateBranch(op) => op.id,
+            Operation::CreateDocument(op) => op.branch_id,
+            Operation::Edit(op) => op.branch_id,
         }
     }
 

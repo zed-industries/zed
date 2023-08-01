@@ -1,8 +1,8 @@
 use crate::{
     btree::{self, Bias},
     dense_id::DenseId,
-    AnchorRange, DocumentFragment, DocumentFragmentSummary, DocumentMetadata, InsertionFragment,
-    OperationId, Revision, RevisionId, RopeBuilder, Tombstone,
+    AnchorRange, BranchId, DocumentFragment, DocumentFragmentSummary, DocumentId, DocumentMetadata,
+    InsertionFragment, OperationId, Revision, RevisionId, RopeBuilder, Tombstone,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -11,21 +11,21 @@ use std::{cmp, sync::Arc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateBranch {
-    pub id: OperationId,
+    pub id: BranchId,
     pub parent: RevisionId,
     pub name: Arc<str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateDocument {
-    pub id: OperationId,
-    pub branch_id: OperationId,
+    pub id: DocumentId,
+    pub branch_id: BranchId,
     pub parent: RevisionId,
 }
 
 impl CreateDocument {
     pub fn apply(self, revision: &mut Revision) {
-        let mut cursor = revision.document_fragments.cursor::<OperationId>();
+        let mut cursor = revision.document_fragments.cursor::<DocumentId>();
         let mut new_document_fragments = cursor.slice(&self.id, Bias::Right, &());
         new_document_fragments.push(
             DocumentFragment {
@@ -63,8 +63,8 @@ impl CreateDocument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Edit {
     pub id: OperationId,
-    pub document_id: OperationId,
-    pub branch_id: OperationId,
+    pub document_id: DocumentId,
+    pub branch_id: BranchId,
     pub parent: RevisionId,
     pub edits: SmallVec<[(AnchorRange, Arc<str>); 2]>,
 }
