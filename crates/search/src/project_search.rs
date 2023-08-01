@@ -1164,9 +1164,11 @@ impl ProjectSearchBar {
                 .option_button
                 .in_state(is_active)
                 .style_for(state);
-            Svg::new(icon).with_color(style.text.color.clone())
+            Svg::new(icon)
+                .with_color(style.text.color.clone())
                 .contained()
                 .with_style(style.container)
+                .constrained()
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.toggle_search_option(option, cx);
@@ -1335,7 +1337,7 @@ impl View for ProjectSearchBar {
                 .flex(1.0, true);
             let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
-let search = _search.read(cx);
+            let search = _search.read(cx);
             let filter_button = {
                 let tooltip_style = theme::current(cx).tooltip.clone();
                 let is_active = search.filters_enabled;
@@ -1357,8 +1359,15 @@ let search = _search.read(cx);
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_tooltip::<Self>(0, "Toggle filters".into(), None, tooltip_style, cx)
                 .into_any()
-            };            let search = _search.read(cx);
+            };
+            let search = _search.read(cx);
             let query = Flex::row()
+                .with_child(
+                    Svg::new("icons/magnifying_glass_12.svg").with_color(gpui::color::Color::white())
+                        //.with_color(tab_theme.label.text.color)
+                        .contained().constrained()
+                    //.with_margin_right(tab_theme.spacing),
+                )
                 .with_child(
                     ChildView::new(&search.query_editor, cx)
                         .constrained()
@@ -1369,13 +1378,21 @@ let search = _search.read(cx);
                     Flex::row()
                         .with_children([
                             filter_button,
-                            self.render_option_button("Case", SearchOptions::CASE_SENSITIVE, cx),
-                            self.render_option_button_icon("icons/word_search_14.svg", SearchOptions::WHOLE_WORD, cx),
-
+                            self.render_option_button_icon(
+                                "icons/word_search_12.svg",
+                                SearchOptions::CASE_SENSITIVE,
+                                cx,
+                            ),
+                            self.render_option_button_icon(
+                                "icons/word_search_12.svg",
+                                SearchOptions::WHOLE_WORD,
+                                cx,
+                            ),
                         ])
                         .flex(1., true)
                         .contained(),
                 )
+                .align_children_center()
                 .aligned()
                 .left()
                 .flex(1., true);
