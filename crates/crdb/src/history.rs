@@ -390,7 +390,7 @@ mod tests {
     use crate::btree::tests::InMemoryKv;
 
     #[gpui::test]
-    async fn test_traversal() {
+    async fn test_rewind() {
         let kv = InMemoryKv::default();
         let mut history = History::new(ReplicaId(0));
         let op1 = insert_operation(&[], &mut history, &kv).await;
@@ -406,7 +406,7 @@ mod tests {
         let op11 = insert_operation(&[op9.id(), op10.id()], &mut history, &kv).await;
 
         assert_eq!(
-            traversal(&[op4.id()], &mut history, &kv).await,
+            rewind(&[op4.id()], &mut history, &kv).await,
             &[
                 (
                     RevisionId::from([op2.id(), op3.id()].as_slice()),
@@ -442,7 +442,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            traversal(&[op6.id()], &mut history, &kv).await,
+            rewind(&[op6.id()], &mut history, &kv).await,
             &[
                 (
                     RevisionId::from([op4.id()].as_slice()),
@@ -486,7 +486,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            traversal(&[op5.id(), op6.id()], &mut history, &kv).await,
+            rewind(&[op5.id(), op6.id()], &mut history, &kv).await,
             &[
                 (
                     RevisionId::from([op4.id()].as_slice()),
@@ -537,7 +537,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            traversal(&[op4.id(), op7.id()], &mut history, &kv).await,
+            rewind(&[op4.id(), op7.id()], &mut history, &kv).await,
             &[
                 (
                     RevisionId::from([op1.id()].as_slice()),
@@ -580,7 +580,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            traversal(&[op11.id()], &mut history, &kv).await,
+            rewind(&[op11.id()], &mut history, &kv).await,
             &[
                 (
                     RevisionId::from([op9.id(), op10.id()].as_slice()),
@@ -667,7 +667,7 @@ mod tests {
         operation
     }
 
-    async fn traversal(
+    async fn rewind(
         revision_id: &[OperationId],
         history: &mut History,
         kv: &dyn KvStore,
