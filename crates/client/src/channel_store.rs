@@ -6,18 +6,19 @@ use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 
 pub struct ChannelStore {
-    channels: Vec<Channel>,
-    channel_invitations: Vec<Channel>,
+    channels: Vec<Arc<Channel>>,
+    channel_invitations: Vec<Arc<Channel>>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: u64,
     pub name: String,
     pub parent_id: Option<u64>,
+    pub depth: usize,
 }
 
 impl Entity for ChannelStore {
@@ -41,11 +42,11 @@ impl ChannelStore {
         }
     }
 
-    pub fn channels(&self) -> &[Channel] {
+    pub fn channels(&self) -> &[Arc<Channel>] {
         &self.channels
     }
 
-    pub fn channel_invitations(&self) -> &[Channel] {
+    pub fn channel_invitations(&self) -> &[Arc<Channel>] {
         &self.channel_invitations
     }
 
@@ -97,6 +98,10 @@ impl ChannelStore {
         }
     }
 
+    pub fn is_channel_invite_pending(&self, channel: &Arc<Channel>) -> bool {
+        false
+    }
+
     pub fn remove_member(
         &self,
         channel_id: u64,
@@ -124,66 +129,74 @@ impl ChannelStore {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let payload = message.payload;
         this.update(&mut cx, |this, cx| {
-            this.channels
-                .retain(|channel| !payload.remove_channels.contains(&channel.id));
-            this.channel_invitations
-                .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
+            this.update_channels(message.payload, cx);
+        });
+        Ok(())
+    }
 
-            for channel in payload.channel_invitations {
-                if let Some(existing_channel) = this
-                    .channel_invitations
-                    .iter_mut()
-                    .find(|c| c.id == channel.id)
-                {
-                    existing_channel.name = channel.name;
-                    continue;
+    pub(crate) fn update_channels(
+        &mut self,
+        payload: proto::UpdateChannels,
+        cx: &mut ModelContext<ChannelStore>,
+    ) {
+        self.channels
+            .retain(|channel| !payload.remove_channels.contains(&channel.id));
+        self.channel_invitations
+            .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
+
+        for channel in payload.channel_invitations {
+            if let Some(existing_channel) = self
+                .channel_invitations
+                .iter_mut()
+                .find(|c| c.id == channel.id)
+            {
+                Arc::make_mut(existing_channel).name = channel.name;
+                continue;
+            }
+
+            self.channel_invitations.insert(
+                0,
+                Arc::new(Channel {
+                    id: channel.id,
+                    name: channel.name,
+                    parent_id: None,
+                    depth: 0,
+                }),
+            );
+        }
+
+        for channel in payload.channels {
+            if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
+                Arc::make_mut(existing_channel).name = channel.name;
+                continue;
+            }
+
+            if let Some(parent_id) = channel.parent_id {
+                if let Some(ix) = self.channels.iter().position(|c| c.id == parent_id) {
+                    let depth = self.channels[ix].depth + 1;
+                    self.channels.insert(
+                        ix + 1,
+                        Arc::new(Channel {
+                            id: channel.id,
+                            name: channel.name,
+                            parent_id: Some(parent_id),
+                            depth,
+                        }),
+                    );
                 }
-
-                this.channel_invitations.insert(
+            } else {
+                self.channels.insert(
                     0,
-                    Channel {
+                    Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
                         parent_id: None,
-                    },
+                        depth: 0,
+                    }),
                 );
             }
-
-            for channel in payload.channels {
-                if let Some(existing_channel) =
-                    this.channels.iter_mut().find(|c| c.id == channel.id)
-                {
-                    existing_channel.name = channel.name;
-                    continue;
-                }
-
-                if let Some(parent_id) = channel.parent_id {
-                    if let Some(ix) = this.channels.iter().position(|c| c.id == parent_id) {
-                        this.channels.insert(
-                            ix + 1,
-                            Channel {
-                                id: channel.id,
-                                name: channel.name,
-                                parent_id: Some(parent_id),
-                            },
-                        );
-                    }
-                } else {
-                    this.channels.insert(
-                        0,
-                        Channel {
-                            id: channel.id,
-                            name: channel.name,
-                            parent_id: None,
-                        },
-                    );
-                }
-            }
-            cx.notify();
-        });
-
-        Ok(())
+        }
+        cx.notify();
     }
 }

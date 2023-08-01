@@ -29,11 +29,12 @@ async fn test_basic_channels(
     client_a.channel_store.read_with(cx_a, |channels, _| {
         assert_eq!(
             channels.channels(),
-            &[Channel {
+            &[Arc::new(Channel {
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-            }]
+                depth: 0,
+            })]
         )
     });
 
@@ -56,11 +57,12 @@ async fn test_basic_channels(
     client_b.channel_store.read_with(cx_b, |channels, _| {
         assert_eq!(
             channels.channel_invitations(),
-            &[Channel {
+            &[Arc::new(Channel {
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-            }]
+                depth: 0,
+            })]
         )
     });
 
@@ -76,11 +78,12 @@ async fn test_basic_channels(
         assert_eq!(channels.channel_invitations(), &[]);
         assert_eq!(
             channels.channels(),
-            &[Channel {
+            &[Arc::new(Channel {
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-            }]
+                depth: 0,
+            })]
         )
     });
 }

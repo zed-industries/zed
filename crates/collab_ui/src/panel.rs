@@ -4,7 +4,7 @@ mod panel_settings;
 
 use anyhow::Result;
 use call::ActiveCall;
-use client::{proto::PeerId, Client, Contact, User, UserStore};
+use client::{proto::PeerId, Channel, ChannelStore, Client, Contact, User, UserStore};
 use contact_finder::build_contact_finder;
 use context_menu::ContextMenu;
 use db::kvp::KEY_VALUE_STORE;
@@ -62,6 +62,7 @@ pub struct CollabPanel {
     entries: Vec<ContactEntry>,
     selection: Option<usize>,
     user_store: ModelHandle<UserStore>,
+    channel_store: ModelHandle<ChannelStore>,
     project: ModelHandle<Project>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState<Self>,
@@ -109,8 +110,10 @@ enum ContactEntry {
         peer_id: PeerId,
         is_last: bool,
     },
+    ChannelInvite(Arc<Channel>),
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
+    Channel(Arc<Channel>),
     Contact {
         contact: Arc<Contact>,
         calling: bool,
@@ -204,6 +207,16 @@ impl CollabPanel {
                                 cx,
                             )
                         }
+                        ContactEntry::Channel(channel) => {
+                            Self::render_channel(&*channel, &theme.collab_panel, is_selected, cx)
+                        }
+                        ContactEntry::ChannelInvite(channel) => Self::render_channel_invite(
+                            channel.clone(),
+                            this.channel_store.clone(),
+                            &theme.collab_panel,
+                            is_selected,
+                            cx,
+                        ),
                         ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                             user.clone(),
                             this.user_store.clone(),
@@ -241,6 +254,7 @@ impl CollabPanel {
                 entries: Vec::default(),
                 selection: None,
                 user_store: workspace.user_store().clone(),
+                channel_store: workspace.app_state().channel_store.clone(),
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
@@ -320,6 +334,7 @@ impl CollabPanel {
     }
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
         let executor = cx.background().clone();
@@ -445,10 +460,65 @@ impl CollabPanel {
         self.entries
             .push(ContactEntry::Header(Section::Channels, 0));
 
+        let channels = channel_store.channels();
+        if !channels.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    channels
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, channel)| StringMatchCandidate {
+                            id: ix,
+                            string: channel.name.clone(),
+                            char_bag: channel.name.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            self.entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ContactEntry::Channel(channels[mat.candidate_id].clone())),
+            );
+        }
+
         self.entries
             .push(ContactEntry::Header(Section::Contacts, 0));
 
         let mut request_entries = Vec::new();
+        let channel_invites = channel_store.channel_invitations();
+        if !channel_invites.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+                    StringMatchCandidate {
+                        id: ix,
+                        string: channel.name.clone(),
+                        char_bag: channel.name.chars().collect(),
+                    }
+                }));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches.iter().map(|mat| {
+                    ContactEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
+                }),
+            );
+        }
+
         let incoming = user_store.incoming_contact_requests();
         if !incoming.is_empty() {
             self.match_candidates.clear();
@@ -1112,6 +1182,121 @@ impl CollabPanel {
         event_handler.into_any()
     }
 
+    fn render_channel(
+        channel: &Channel,
+        theme: &theme::CollabPanel,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let channel_id = channel.id;
+        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
+            Flex::row()
+                .with_child({
+                    Svg::new("icons/hash")
+                        // .with_style(theme.contact_avatar)
+                        .aligned()
+                        .left()
+                })
+                .with_child(
+                    Label::new(channel.name.clone(), theme.contact_username.text.clone())
+                        .contained()
+                        .with_style(theme.contact_username.container)
+                        .aligned()
+                        .left()
+                        .flex(1., true),
+                )
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(*theme.contact_row.in_state(is_selected).style_for(state))
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.join_channel(channel_id, cx);
+        })
+        .into_any()
+    }
+
+    fn render_channel_invite(
+        channel: Arc<Channel>,
+        user_store: ModelHandle<ChannelStore>,
+        theme: &theme::CollabPanel,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        enum Decline {}
+        enum Accept {}
+
+        let channel_id = channel.id;
+        let is_invite_pending = user_store.read(cx).is_channel_invite_pending(&channel);
+        let button_spacing = theme.contact_button_spacing;
+
+        Flex::row()
+            .with_child({
+                Svg::new("icons/hash")
+                    // .with_style(theme.contact_avatar)
+                    .aligned()
+                    .left()
+            })
+            .with_child(
+                Label::new(channel.name.clone(), theme.contact_username.text.clone())
+                    .contained()
+                    .with_style(theme.contact_username.container)
+                    .aligned()
+                    .left()
+                    .flex(1., true),
+            )
+            .with_child(
+                MouseEventHandler::<Decline, Self>::new(
+                    channel.id as usize,
+                    cx,
+                    |mouse_state, _| {
+                        let button_style = if is_invite_pending {
+                            &theme.disabled_button
+                        } else {
+                            theme.contact_button.style_for(mouse_state)
+                        };
+                        render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
+                    },
+                )
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_channel_invite(channel_id, false, cx);
+                })
+                .contained()
+                .with_margin_right(button_spacing),
+            )
+            .with_child(
+                MouseEventHandler::<Accept, Self>::new(
+                    channel.id as usize,
+                    cx,
+                    |mouse_state, _| {
+                        let button_style = if is_invite_pending {
+                            &theme.disabled_button
+                        } else {
+                            theme.contact_button.style_for(mouse_state)
+                        };
+                        render_icon_button(button_style, "icons/check_8.svg")
+                            .aligned()
+                            .flex_float()
+                    },
+                )
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_channel_invite(channel_id, true, cx);
+                }),
+            )
+            .constrained()
+            .with_height(theme.row_height)
+            .contained()
+            .with_style(
+                *theme
+                    .contact_row
+                    .in_state(is_selected)
+                    .style_for(&mut Default::default()),
+            )
+            .into_any()
+    }
+
     fn render_contact_request(
         user: Arc<User>,
         user_store: ModelHandle<UserStore>,
@@ -1384,6 +1569,18 @@ impl CollabPanel {
             .detach();
     }
 
+    fn respond_to_channel_invite(
+        &mut self,
+        channel_id: u64,
+        accept: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let respond = self.channel_store.update(cx, |store, _| {
+            store.respond_to_channel_invite(channel_id, accept)
+        });
+        cx.foreground().spawn(respond).detach();
+    }
+
     fn call(
         &mut self,
         recipient_user_id: u64,
@@ -1394,6 +1591,12 @@ impl CollabPanel {
             .update(cx, |call, cx| {
                 call.invite(recipient_user_id, initial_project, cx)
             })
+            .detach_and_log_err(cx);
+    }
+
+    fn join_channel(&self, channel: u64, cx: &mut ViewContext<Self>) {
+        ActiveCall::global(cx)
+            .update(cx, |call, cx| call.join_channel(channel, cx))
             .detach_and_log_err(cx);
     }
 }
@@ -1555,6 +1758,16 @@ impl PartialEq for ContactEntry {
                 } = other
                 {
                     return peer_id_1 == peer_id_2;
+                }
+            }
+            ContactEntry::Channel(channel_1) => {
+                if let ContactEntry::Channel(channel_2) = other {
+                    return channel_1.id == channel_2.id;
+                }
+            }
+            ContactEntry::ChannelInvite(channel_1) => {
+                if let ContactEntry::ChannelInvite(channel_2) = other {
+                    return channel_1.id == channel_2.id;
                 }
             }
             ContactEntry::IncomingRequest(user_1) => {

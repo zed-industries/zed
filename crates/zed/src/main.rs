@@ -7,7 +7,9 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{
+    self, ChannelStore, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
+};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
@@ -140,6 +142,8 @@ fn main() {
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -181,6 +185,7 @@ fn main() {
             languages,
             client: client.clone(),
             user_store,
+            channel_store,
             fs,
             build_window_options,
             initialize_workspace,

@@ -193,6 +193,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            channel_store: channel_store.clone(),
             languages: Arc::new(LanguageRegistry::test()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
