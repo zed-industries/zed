@@ -1230,7 +1230,7 @@ impl ProjectSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = current_mode == SearchMode::Regex;
+        let is_active = current_mode == SearchMode::Regex; //self.is_option_enabled(option, cx);
         let option = SearchOptions::REGEX;
         MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
@@ -1405,7 +1405,7 @@ impl View for ProjectSearchBar {
 
             let case_sensitive = if is_semantic_disabled {
                 Some(self.render_option_button_icon(
-                    "icons/case_insensitive_14.svg",
+                    "icons/case_insensitive_12.svg",
                     SearchOptions::CASE_SENSITIVE,
                     cx,
                 ))
@@ -1424,13 +1424,14 @@ impl View for ProjectSearchBar {
             };
 
             let search = _search.read(cx);
+            let icon_style = theme.search.editor_icon.clone();
+            // "
             let query = Flex::row()
                 .with_child(
-                    Svg::new("icons/magnifying_glass_12.svg")
-                        .with_color(gpui::color::Color::white())
-                        //.with_color(tab_theme.label.text.color)
+                    Svg::for_style(icon_style.icon)
                         .contained()
-                        .constrained(), //.with_margin_right(tab_theme.spacing),
+                        .with_style(icon_style.container)
+                        .constrained(),
                 )
                 .with_child(
                     ChildView::new(&search.query_editor, cx)

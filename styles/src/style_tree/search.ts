@@ -54,7 +54,7 @@ export default function search(): any {
                         left: 6,
                         right: 6,
                         top: 6,
-                },
+                    },
                 },
                 state: {
                     hovered: {
@@ -163,5 +163,18 @@ export default function search(): any {
                 },
             },
         }),
+        editor_icon: {
+            icon: {
+                color: foreground(theme.highest, "variant"),
+                asset: "icons/magnifying_glass_12.svg",
+                dimensions: {
+                    width: 12,
+                    height: 12,
+                }
+            },
+            container: {
+                padding: { right: 6 }
+            }
+        }
     }
 }
