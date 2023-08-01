@@ -1023,6 +1023,96 @@ test_both_dbs!(
     }
 );
 
+test_both_dbs!(
+    test_channel_invites_postgres,
+    test_channel_invites_sqlite,
+    db,
+    {
+        let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
+        let user_1 = db
+            .create_user(
+                "user1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user1".into(),
+                    github_user_id: 5,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+        let user_2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user2".into(),
+                    github_user_id: 6,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+
+        let user_3 = db
+            .create_user(
+                "user3@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user3".into(),
+                    github_user_id: 7,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+
+        let channel_1_1 = db
+            .create_root_channel("channel_1", "1", user_1)
+            .await
+            .unwrap();
+
+        let channel_1_2 = db
+            .create_root_channel("channel_2", "2", user_1)
+            .await
+            .unwrap();
+
+        db.invite_channel_member(channel_1_1, user_2, user_1, false)
+            .await
+            .unwrap();
+        db.invite_channel_member(channel_1_2, user_2, user_1, false)
+            .await
+            .unwrap();
+        db.invite_channel_member(channel_1_1, user_3, user_1, false)
+            .await
+            .unwrap();
+
+        let user_2_invites = db
+            .get_channel_invites(user_2) // -> [channel_1_1, channel_1_2]
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|channel| channel.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_2_invites, &[channel_1_1, channel_1_2]);
+
+        let user_3_invites = db
+            .get_channel_invites(user_3) // -> [channel_1_1]
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|channel| channel.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_3_invites, &[channel_1_1])
+    }
+);
+
 #[gpui::test]
 async fn test_multiple_signup_overwrite() {
     let test_db = TestDb::postgres(build_background_executor());

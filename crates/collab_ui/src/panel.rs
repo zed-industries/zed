@@ -32,10 +32,9 @@ use theme::IconButton;
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
+    item::ItemHandle,
     Workspace,
 };
-
-use self::channel_modal::ChannelModal;
 
 actions!(collab_panel, [ToggleFocus]);
 
@@ -52,6 +51,11 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::confirm);
 }
 
+#[derive(Debug, Default)]
+pub struct ChannelEditingState {
+    root_channel: bool,
+}
+
 pub struct CollabPanel {
     width: Option<f32>,
     fs: Arc<dyn Fs>,
@@ -59,6 +63,8 @@ pub struct CollabPanel {
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
     filter_editor: ViewHandle<Editor>,
+    channel_name_editor: ViewHandle<Editor>,
+    channel_editing_state: Option<ChannelEditingState>,
     entries: Vec<ContactEntry>,
     selection: Option<usize>,
     user_store: ModelHandle<UserStore>,
@@ -93,7 +99,7 @@ enum Section {
     Offline,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum ContactEntry {
     Header(Section, usize),
     CallParticipant {
@@ -157,6 +163,23 @@ impl CollabPanel {
             })
             .detach();
 
+            let channel_name_editor = cx.add_view(|cx| {
+                Editor::single_line(
+                    Some(Arc::new(|theme| {
+                        theme.collab_panel.user_query_editor.clone()
+                    })),
+                    cx,
+                )
+            });
+
+            cx.subscribe(&channel_name_editor, |this, _, event, cx| {
+                if let editor::Event::Blurred = event {
+                    this.take_editing_state(cx);
+                    cx.notify();
+                }
+            })
+            .detach();
+
             let list_state =
                 ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
                     let theme = theme::current(cx).clone();
@@ -166,7 +189,7 @@ impl CollabPanel {
                     match &this.entries[ix] {
                         ContactEntry::Header(section, depth) => {
                             let is_collapsed = this.collapsed_sections.contains(section);
-                            Self::render_header(
+                            this.render_header(
                                 *section,
                                 &theme,
                                 *depth,
@@ -250,8 +273,10 @@ impl CollabPanel {
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
+                channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
+                channel_editing_state: None,
                 selection: None,
                 user_store: workspace.user_store().clone(),
                 channel_store: workspace.app_state().channel_store.clone(),
@@ -331,6 +356,13 @@ impl CollabPanel {
             }
             .log_err(),
         );
+    }
+
+    fn is_editing_root_channel(&self) -> bool {
+        self.channel_editing_state
+            .as_ref()
+            .map(|state| state.root_channel)
+            .unwrap_or(false)
     }
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
@@ -944,7 +976,23 @@ impl CollabPanel {
         .into_any()
     }
 
+    fn take_editing_state(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(ChannelEditingState, String)> {
+        let result = self
+            .channel_editing_state
+            .take()
+            .map(|state| (state, self.channel_name_editor.read(cx).text(cx)));
+
+        self.channel_name_editor
+            .update(cx, |editor, cx| editor.set_text("", cx));
+
+        result
+    }
+
     fn render_header(
+        &self,
         section: Section,
         theme: &theme::Theme,
         depth: usize,
@@ -1014,7 +1062,13 @@ impl CollabPanel {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, this, cx| {
-                    this.toggle_channel_finder(cx);
+                    if this.channel_editing_state.is_none() {
+                        this.channel_editing_state =
+                            Some(ChannelEditingState { root_channel: true });
+                    }
+
+                    cx.focus(this.channel_name_editor.as_any());
+                    cx.notify();
                 })
                 .with_tooltip::<AddChannel>(
                     0,
@@ -1024,6 +1078,13 @@ impl CollabPanel {
                     cx,
                 ),
             ),
+            _ => None,
+        };
+
+        let addition = match section {
+            Section::Channels if self.is_editing_root_channel() => {
+                Some(ChildView::new(self.channel_name_editor.as_any(), cx))
+            }
             _ => None,
         };
 
@@ -1040,40 +1101,44 @@ impl CollabPanel {
                 &theme.collab_panel.header_row
             };
 
-            Flex::row()
-                .with_children(if can_collapse {
-                    Some(
-                        Svg::new(if is_collapsed {
-                            "icons/chevron_right_8.svg"
-                        } else {
-                            "icons/chevron_down_8.svg"
-                        })
-                        .with_color(header_style.text.color)
-                        .constrained()
-                        .with_max_width(icon_size)
-                        .with_max_height(icon_size)
-                        .aligned()
-                        .constrained()
-                        .with_width(icon_size)
-                        .contained()
-                        .with_margin_right(
-                            theme.collab_panel.contact_username.container.margin.left,
-                        ),
-                    )
-                } else {
-                    None
-                })
+            Flex::column()
                 .with_child(
-                    Label::new(text, header_style.text.clone())
-                        .aligned()
-                        .left()
-                        .flex(1., true),
+                    Flex::row()
+                        .with_children(if can_collapse {
+                            Some(
+                                Svg::new(if is_collapsed {
+                                    "icons/chevron_right_8.svg"
+                                } else {
+                                    "icons/chevron_down_8.svg"
+                                })
+                                .with_color(header_style.text.color)
+                                .constrained()
+                                .with_max_width(icon_size)
+                                .with_max_height(icon_size)
+                                .aligned()
+                                .constrained()
+                                .with_width(icon_size)
+                                .contained()
+                                .with_margin_right(
+                                    theme.collab_panel.contact_username.container.margin.left,
+                                ),
+                            )
+                        } else {
+                            None
+                        })
+                        .with_child(
+                            Label::new(text, header_style.text.clone())
+                                .aligned()
+                                .left()
+                                .flex(1., true),
+                        )
+                        .with_children(button.map(|button| button.aligned().right()))
+                        .constrained()
+                        .with_height(theme.collab_panel.row_height)
+                        .contained()
+                        .with_style(header_style.container),
                 )
-                .with_children(button.map(|button| button.aligned().right()))
-                .constrained()
-                .with_height(theme.collab_panel.row_height)
-                .contained()
-                .with_style(header_style.container)
+                .with_children(addition)
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1189,7 +1254,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
-        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
+        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, _cx| {
             Flex::row()
                 .with_child({
                     Svg::new("icons/hash")
@@ -1218,7 +1283,7 @@ impl CollabPanel {
 
     fn render_channel_invite(
         channel: Arc<Channel>,
-        user_store: ModelHandle<ChannelStore>,
+        channel_store: ModelHandle<ChannelStore>,
         theme: &theme::CollabPanel,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
@@ -1227,7 +1292,7 @@ impl CollabPanel {
         enum Accept {}
 
         let channel_id = channel.id;
-        let is_invite_pending = user_store.read(cx).is_channel_invite_pending(&channel);
+        let is_invite_pending = channel_store.read(cx).is_channel_invite_pending(&channel);
         let button_spacing = theme.contact_button_spacing;
 
         Flex::row()
@@ -1401,7 +1466,7 @@ impl CollabPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        let did_clear = self.filter_editor.update(cx, |editor, cx| {
+        let mut did_clear = self.filter_editor.update(cx, |editor, cx| {
             if editor.buffer().read(cx).len(cx) > 0 {
                 editor.set_text("", cx);
                 true
@@ -1409,6 +1474,8 @@ impl CollabPanel {
                 false
             }
         });
+
+        did_clear |= self.take_editing_state(cx).is_some();
 
         if !did_clear {
             cx.emit(Event::Dismissed);
@@ -1496,6 +1563,17 @@ impl CollabPanel {
                     _ => {}
                 }
             }
+        } else if let Some((_editing_state, channel_name)) = self.take_editing_state(cx) {
+            dbg!(&channel_name);
+            let create_channel = self.channel_store.update(cx, |channel_store, cx| {
+                channel_store.create_channel(&channel_name, None)
+            });
+
+            cx.foreground()
+                .spawn(async move {
+                    dbg!(create_channel.await).ok();
+                })
+                .detach();
         }
     }
 
@@ -1518,14 +1596,6 @@ impl CollabPanel {
                         finder
                     })
                 });
-            });
-        }
-    }
-
-    fn toggle_channel_finder(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| ChannelModal::new(cx)));
             });
         }
     }

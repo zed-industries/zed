@@ -516,15 +516,19 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, invite_code) = future::try_join(
+            let (contacts, invite_code, channels, channel_invites) = future::try_join4(
                 this.app_state.db.get_contacts(user_id),
-                this.app_state.db.get_invite_code_for_user(user_id)
+                this.app_state.db.get_invite_code_for_user(user_id),
+                this.app_state.db.get_channels(user_id),
+                this.app_state.db.get_channel_invites(user_id)
             ).await?;
 
             {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
+                this.peer.send(connection_id, build_initial_channels_update(channels, channel_invites))?;
+
 
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
@@ -2097,6 +2101,7 @@ async fn create_channel(
     response: Response<proto::CreateChannel>,
     session: Session,
 ) -> Result<()> {
+    dbg!(&request);
     let db = session.db().await;
     let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
 
@@ -2305,6 +2310,31 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
             }))
         }
     }
+}
+
+fn build_initial_channels_update(
+    channels: Vec<db::Channel>,
+    channel_invites: Vec<db::Channel>,
+) -> proto::UpdateChannels {
+    let mut update = proto::UpdateChannels::default();
+
+    for channel in channels {
+        update.channels.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+        });
+    }
+
+    for channel in channel_invites {
+        update.channel_invitations.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+        });
+    }
+
+    update
 }
 
 fn build_initial_contacts_update(

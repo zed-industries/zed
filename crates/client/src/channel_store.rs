@@ -33,6 +33,7 @@ impl ChannelStore {
     ) -> Self {
         let rpc_subscription =
             client.add_message_handler(cx.handle(), Self::handle_update_channels);
+
         Self {
             channels: vec![],
             channel_invitations: vec![],

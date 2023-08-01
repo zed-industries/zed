@@ -3214,6 +3214,44 @@ impl Database {
         .await
     }
 
+    pub async fn get_channel_invites(&self, user_id: UserId) -> Result<Vec<Channel>> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+
+            let channel_invites = channel_member::Entity::find()
+                .filter(
+                    channel_member::Column::UserId
+                        .eq(user_id)
+                        .and(channel_member::Column::Accepted.eq(false)),
+                )
+                .all(&*tx)
+                .await?;
+
+            let channels = channel::Entity::find()
+                .filter(
+                    channel::Column::Id.is_in(
+                        channel_invites
+                            .into_iter()
+                            .map(|channel_member| channel_member.channel_id),
+                    ),
+                )
+                .all(&*tx)
+                .await?;
+
+            let channels = channels
+                .into_iter()
+                .map(|channel| Channel {
+                    id: channel.id,
+                    name: channel.name,
+                    parent_id: None,
+                })
+                .collect();
+
+            Ok(channels)
+        })
+        .await
+    }
+
     pub async fn get_channels(&self, user_id: UserId) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
             let tx = tx;
