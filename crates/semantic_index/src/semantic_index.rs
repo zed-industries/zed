@@ -612,6 +612,7 @@ impl SemanticIndex {
                                 .await
                             {
                                 if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())
+                                    && &language.name().as_ref() != &"Markdown"
                                     && language
                                         .grammar()
                                         .and_then(|grammar| grammar.embedding_config.as_ref())
