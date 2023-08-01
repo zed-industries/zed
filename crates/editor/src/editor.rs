@@ -4221,7 +4221,7 @@ impl Editor {
         _: &SortLinesCaseSensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort())
+        self.manipulate_lines(cx, |lines| lines.sort())
     }
 
     pub fn sort_lines_case_insensitive(
@@ -4229,7 +4229,7 @@ impl Editor {
         _: &SortLinesCaseInsensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+        self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
@@ -4267,19 +4267,19 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
-            let mut text = text.split("\n").collect_vec();
+            let mut lines = text.split("\n").collect_vec();
 
-            let text_len = text.len();
-            callback(&mut text);
+            let lines_len = lines.len();
+            callback(&mut lines);
 
             // This is a current limitation with selections.
             // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
             debug_assert!(
-                text.len() == text_len,
+                lines.len() == lines_len,
                 "callback should not change the number of lines"
             );
 
-            edits.push((start_point..end_point, text.join("\n")));
+            edits.push((start_point..end_point, lines.join("\n")));
             let start_anchor = buffer.anchor_after(start_point);
             let end_anchor = buffer.anchor_before(end_point);
 
