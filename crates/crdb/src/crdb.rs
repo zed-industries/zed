@@ -479,7 +479,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
             id,
             db: self.db.clone(),
         };
-        self.db.snapshot.lock().repos.insert(id, snapshot);
+        self.db.repos.write().insert(id, snapshot);
         repo
     }
 
@@ -497,7 +497,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 db: this.db.clone(),
             };
             let revision_cache = RevisionCache::new(repo_id, &*this.executor, this.db.kv.clone());
-            this.db.snapshot.lock().repos.insert(
+            this.db.repos.write().insert(
                 repo_id,
                 RepoSnapshot::new(repo_id, response.replica_id, revision_cache),
             );
@@ -545,10 +545,7 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
             let revision_cache = RevisionCache::new(id, &*this.executor, this.db.kv.clone());
             let repo = RepoSnapshot::load(id, revision_cache, &*this.db.kv).await?;
-            let mut db = this.db.snapshot.lock();
-            if !db.repos.contains_key(&id) {
-                db.repos.insert(id, repo);
-            }
+            this.db.repos.write().entry(id).or_insert(repo);
 
             Ok(Repo {
                 id,
@@ -559,11 +556,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
 
     pub fn repos(&self) -> Vec<Repo> {
         self.db
-            .snapshot
-            .lock()
             .repos
-            .iter()
-            .map(|(id, _)| Repo {
+            .read()
+            .keys()
+            .map(|id| Repo {
                 id: *id,
                 db: self.db.clone(),
             })
@@ -692,7 +688,7 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             .grant_room_access(&room_name, user.login.as_ref());
 
         let revision_cache = RevisionCache::new(request.id, &*self.executor, self.db.kv.clone());
-        self.db.snapshot.lock().repos.insert(
+        self.db.repos.write().insert(
             request.id,
             RepoSnapshot::new(request.id, ReplicaId(u32::MAX), revision_cache),
         );
@@ -782,7 +778,7 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
 #[derive(Clone)]
 pub struct Db {
     kv: Arc<dyn KvStore>,
-    snapshot: Arc<Mutex<DbSnapshot>>,
+    repos: Arc<RwLock<HashMap<RepoId, RepoSnapshot>>>,
     local_operation_created: Option<Arc<dyn Send + Sync + Fn(RepoId, Operation)>>,
     repo_snapshot_changed: Option<Arc<dyn Send + Sync + Fn(RepoId, &RepoSnapshot)>>,
 }
@@ -791,7 +787,7 @@ impl Db {
     fn new(kv: Arc<dyn KvStore>) -> Self {
         Self {
             kv,
-            snapshot: Default::default(),
+            repos: Default::default(),
             local_operation_created: None,
             repo_snapshot_changed: None,
         }
@@ -809,14 +805,10 @@ impl Db {
     }
 
     fn repo(&self, id: RepoId) -> Option<Repo> {
-        self.snapshot
-            .lock()
-            .repos
-            .contains_key(&id)
-            .then_some(Repo {
-                id,
-                db: self.clone(),
-            })
+        self.repos.read().contains_key(&id).then_some(Repo {
+            id,
+            db: self.clone(),
+        })
     }
 }
 
@@ -888,41 +880,32 @@ impl Repo {
 
     fn read<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut RepoSnapshot) -> T,
+        F: FnOnce(&RepoSnapshot) -> T,
     {
-        self.db
-            .snapshot
-            .lock()
-            .repos
-            .update(&self.id, |repo| f(repo))
-            .expect("repo must exist")
+        let repos = &self.db.repos.read();
+        let repo = repos.get(&self.id).expect("repo must exist");
+        f(repo)
     }
 
     fn update<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&mut RepoSnapshot) -> (Option<Operation>, T),
     {
-        self.db
-            .snapshot
-            .lock()
-            .repos
-            .update(&self.id, |repo| {
-                let (operation, result) = f(repo);
-                if let Some(operation) = operation {
-                    repo.history.insert_local(operation.clone());
-                    if let Some(local_operation_created) = self.db.local_operation_created.as_ref()
-                    {
-                        local_operation_created(self.id, operation);
-                    }
-                }
+        let repos = &mut self.db.repos.write();
+        let repo = repos.get_mut(&self.id).expect("repo must exist");
+        let (operation, result) = f(repo);
+        if let Some(operation) = operation {
+            repo.history.insert_local(operation.clone());
+            if let Some(local_operation_created) = self.db.local_operation_created.as_ref() {
+                local_operation_created(self.id, operation);
+            }
+        }
 
-                if let Some(repo_snapshot_changed) = self.db.repo_snapshot_changed.as_ref() {
-                    repo_snapshot_changed(self.id, repo);
-                }
+        if let Some(repo_snapshot_changed) = self.db.repo_snapshot_changed.as_ref() {
+            repo_snapshot_changed(self.id, repo);
+        }
 
-                result
-            })
-            .expect("repo must exist")
+        result
     }
 
     async fn update_async<F, T>(&self, mut f: F) -> Result<T>

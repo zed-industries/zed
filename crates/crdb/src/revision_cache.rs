@@ -1,7 +1,6 @@
 use crate::{btree::KvStore, Executor, RepoId, Revision, RevisionId};
-use anyhow::Result;
 use collections::HashMap;
-use futures::{channel::mpsc, future::BoxFuture, StreamExt};
+use futures::{channel::mpsc, StreamExt};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use util::ResultExt;
