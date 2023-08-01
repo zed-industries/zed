@@ -6,7 +6,7 @@ use anyhow::Result;
 use call::ActiveCall;
 use client::{proto::PeerId, Channel, ChannelStore, Client, Contact, User, UserStore};
 use contact_finder::build_contact_finder;
-use context_menu::ContextMenu;
+use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
 use futures::StreamExt;
@@ -18,6 +18,7 @@ use gpui::{
         MouseEventHandler, Orientation, Padding, ParentElement, Stack, Svg,
     },
     geometry::{rect::RectF, vector::vec2f},
+    impl_actions,
     platform::{CursorStyle, MouseButton, PromptLevel},
     serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -36,7 +37,14 @@ use workspace::{
     Workspace,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct RemoveChannel {
+    channel_id: u64,
+}
+
 actions!(collab_panel, [ToggleFocus]);
+
+impl_actions!(collab_panel, [RemoveChannel]);
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 
@@ -49,6 +57,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::select_next);
     cx.add_action(CollabPanel::select_prev);
     cx.add_action(CollabPanel::confirm);
+    cx.add_action(CollabPanel::remove_channel);
 }
 
 #[derive(Debug, Default)]
@@ -305,6 +314,8 @@ impl CollabPanel {
             let active_call = ActiveCall::global(cx);
             this.subscriptions
                 .push(cx.observe(&this.user_store, |this, _, cx| this.update_entries(cx)));
+            this.subscriptions
+                .push(cx.observe(&this.channel_store, |this, _, cx| this.update_entries(cx)));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
 
@@ -1278,6 +1289,19 @@ impl CollabPanel {
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.join_channel(channel_id, cx);
         })
+        .on_click(MouseButton::Right, move |e, this, cx| {
+            this.context_menu.update(cx, |context_menu, cx| {
+                context_menu.show(
+                    e.position,
+                    gpui::elements::AnchorCorner::BottomLeft,
+                    vec![ContextMenuItem::action(
+                        "Remove Channel",
+                        RemoveChannel { channel_id },
+                    )],
+                    cx,
+                );
+            });
+        })
         .into_any()
     }
 
@@ -1564,14 +1588,13 @@ impl CollabPanel {
                 }
             }
         } else if let Some((_editing_state, channel_name)) = self.take_editing_state(cx) {
-            dbg!(&channel_name);
             let create_channel = self.channel_store.update(cx, |channel_store, cx| {
                 channel_store.create_channel(&channel_name, None)
             });
 
             cx.foreground()
                 .spawn(async move {
-                    dbg!(create_channel.await).ok();
+                    create_channel.await.ok();
                 })
                 .detach();
         }
@@ -1597,6 +1620,36 @@ impl CollabPanel {
                     })
                 });
             });
+        }
+    }
+
+    fn remove_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
+        let channel_id = action.channel_id;
+        let channel_store = self.channel_store.clone();
+        if let Some(channel) = channel_store.read(cx).channel_for_id(channel_id) {
+            let prompt_message = format!(
+                "Are you sure you want to remove the channel \"{}\"?",
+                channel.name
+            );
+            let mut answer =
+                cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
+            let window_id = cx.window_id();
+            cx.spawn(|_, mut cx| async move {
+                if answer.next().await == Some(0) {
+                    if let Err(e) = channel_store
+                        .update(&mut cx, |channels, cx| channels.remove_channel(channel_id))
+                        .await
+                    {
+                        cx.prompt(
+                            window_id,
+                            PromptLevel::Info,
+                            &format!("Failed to remove channel: {}", e),
+                            &["Ok"],
+                        );
+                    }
+                }
+            })
+            .detach();
         }
     }
 

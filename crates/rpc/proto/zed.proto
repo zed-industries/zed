@@ -137,6 +137,7 @@ message Envelope {
         RespondToChannelInvite respond_to_channel_invite = 123;
         UpdateChannels update_channels = 124;
         JoinChannel join_channel = 125;
+        RemoveChannel remove_channel = 126;
     }
 }
 
@@ -874,6 +875,11 @@ message UpdateChannels {
 message JoinChannel {
     uint64 channel_id = 1;
 }
+
+message RemoveChannel {
+    uint64 channel_id = 1;
+}
+
 
 message CreateChannel {
     string name = 1;

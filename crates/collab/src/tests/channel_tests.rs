@@ -19,14 +19,14 @@ async fn test_basic_channels(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_a_id = client_a
-        .channel_store
+        .channel_store()
         .update(cx_a, |channel_store, _| {
             channel_store.create_channel("channel-a", None)
         })
         .await
         .unwrap();
 
-    client_a.channel_store.read_with(cx_a, |channels, _| {
+    client_a.channel_store().read_with(cx_a, |channels, _| {
         assert_eq!(
             channels.channels(),
             &[Arc::new(Channel {
@@ -39,12 +39,12 @@ async fn test_basic_channels(
     });
 
     client_b
-        .channel_store
+        .channel_store()
         .read_with(cx_b, |channels, _| assert_eq!(channels.channels(), &[]));
 
     // Invite client B to channel A as client A.
     client_a
-        .channel_store
+        .channel_store()
         .update(cx_a, |channel_store, _| {
             channel_store.invite_member(channel_a_id, client_b.user_id().unwrap(), false)
         })
@@ -54,7 +54,7 @@ async fn test_basic_channels(
     // Wait for client b to see the invitation
     deterministic.run_until_parked();
 
-    client_b.channel_store.read_with(cx_b, |channels, _| {
+    client_b.channel_store().read_with(cx_b, |channels, _| {
         assert_eq!(
             channels.channel_invitations(),
             &[Arc::new(Channel {
@@ -68,13 +68,13 @@ async fn test_basic_channels(
 
     // Client B now sees that they are in channel A.
     client_b
-        .channel_store
+        .channel_store()
         .update(cx_b, |channels, _| {
             channels.respond_to_channel_invite(channel_a_id, true)
         })
         .await
         .unwrap();
-    client_b.channel_store.read_with(cx_b, |channels, _| {
+    client_b.channel_store().read_with(cx_b, |channels, _| {
         assert_eq!(channels.channel_invitations(), &[]);
         assert_eq!(
             channels.channels(),
@@ -86,6 +86,23 @@ async fn test_basic_channels(
             })]
         )
     });
+
+    // Client A deletes the channel
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, _| {
+            channel_store.remove_channel(channel_a_id)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    client_a
+        .channel_store()
+        .read_with(cx_a, |channels, _| assert_eq!(channels.channels(), &[]));
+    client_b
+        .channel_store()
+        .read_with(cx_b, |channels, _| assert_eq!(channels.channels(), &[]));
 }
 
 #[gpui::test]

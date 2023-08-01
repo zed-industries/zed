@@ -918,6 +918,11 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .await
         .unwrap();
 
+    let cargo_ra_id = db
+        .create_channel("cargo-ra", Some(cargo_id), "7", a_id)
+        .await
+        .unwrap();
+
     let channels = db.get_channels(a_id).await.unwrap();
 
     assert_eq!(
@@ -952,9 +957,28 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 id: cargo_id,
                 name: "cargo".to_string(),
                 parent_id: Some(rust_id),
+            },
+            Channel {
+                id: cargo_ra_id,
+                name: "cargo-ra".to_string(),
+                parent_id: Some(cargo_id),
             }
         ]
     );
+
+    // Remove a single channel
+    db.remove_channel(crdb_id, a_id).await.unwrap();
+    assert!(db.get_channel(crdb_id).await.unwrap().is_none());
+
+    // Remove a channel tree
+    let (mut channel_ids, user_ids) = db.remove_channel(rust_id, a_id).await.unwrap();
+    channel_ids.sort();
+    assert_eq!(channel_ids, &[rust_id, cargo_id, cargo_ra_id]);
+    assert_eq!(user_ids, &[a_id]);
+
+    assert!(db.get_channel(rust_id).await.unwrap().is_none());
+    assert!(db.get_channel(cargo_id).await.unwrap().is_none());
+    assert!(db.get_channel(cargo_ra_id).await.unwrap().is_none());
 });
 
 test_both_dbs!(

@@ -3412,6 +3412,7 @@ impl Workspace {
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
+
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let app_state = Arc::new(AppState {

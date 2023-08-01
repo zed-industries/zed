@@ -243,6 +243,7 @@ impl Server {
             .add_request_handler(remove_contact)
             .add_request_handler(respond_to_contact_request)
             .add_request_handler(create_channel)
+            .add_request_handler(remove_channel)
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
             .add_request_handler(respond_to_channel_invite)
@@ -528,7 +529,6 @@ impl Server {
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_initial_channels_update(channels, channel_invites))?;
-
 
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
@@ -2101,7 +2101,6 @@ async fn create_channel(
     response: Response<proto::CreateChannel>,
     session: Session,
 ) -> Result<()> {
-    dbg!(&request);
     let db = session.db().await;
     let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
 
@@ -2132,6 +2131,35 @@ async fn create_channel(
     Ok(())
 }
 
+async fn remove_channel(
+    request: proto::RemoveChannel,
+    response: Response<proto::RemoveChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+
+    let channel_id = request.channel_id;
+    let (removed_channels, member_ids) = db
+        .remove_channel(ChannelId::from_proto(channel_id), session.user_id)
+        .await?;
+    response.send(proto::Ack {})?;
+
+    // Notify members of removed channels
+    let mut update = proto::UpdateChannels::default();
+    update
+        .remove_channels
+        .extend(removed_channels.into_iter().map(|id| id.to_proto()));
+
+    let connection_pool = session.connection_pool().await;
+    for member_id in member_ids {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    Ok(())
+}
+
 async fn invite_channel_member(
     request: proto::InviteChannelMember,
     response: Response<proto::InviteChannelMember>,
@@ -2139,7 +2167,10 @@ async fn invite_channel_member(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let channel = db.get_channel(channel_id).await?;
+    let channel = db
+        .get_channel(channel_id)
+        .await?
+        .ok_or_else(|| anyhow!("channel not found"))?;
     let invitee_id = UserId::from_proto(request.user_id);
     db.invite_channel_member(channel_id, invitee_id, session.user_id, false)
         .await?;
@@ -2177,7 +2208,10 @@ async fn respond_to_channel_invite(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let channel = db.get_channel(channel_id).await?;
+    let channel = db
+        .get_channel(channel_id)
+        .await?
+        .ok_or_else(|| anyhow!("no such channel"))?;
     db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
 

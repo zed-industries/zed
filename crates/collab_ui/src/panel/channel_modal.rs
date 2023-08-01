@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{elements::*, AnyViewHandle, Entity, View, ViewContext, ViewHandle, AppContext};
+use gpui::{elements::*, AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
 use menu::Cancel;
 use workspace::{item::ItemHandle, Modal};
 
@@ -62,12 +62,10 @@ impl View for ChannelModal {
                 .constrained()
                 .with_max_width(540.)
                 .with_max_height(420.)
-
         })
         .on_click(gpui::platform::MouseButton::Left, |_, _, _| {}) // Capture click and down events
-        .on_down_out(gpui::platform::MouseButton::Left, |_, v, cx| {
-            v.dismiss(cx)
-        }).into_any_named("channel modal")
+        .on_down_out(gpui::platform::MouseButton::Left, |_, v, cx| v.dismiss(cx))
+        .into_any_named("channel modal")
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

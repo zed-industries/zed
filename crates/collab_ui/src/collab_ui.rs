@@ -3,9 +3,9 @@ mod contact_notification;
 mod face_pile;
 mod incoming_call_notification;
 mod notifications;
+pub mod panel;
 mod project_shared_notification;
 mod sharing_status_indicator;
-pub mod panel;
 
 use call::{ActiveCall, Room};
 pub use collab_titlebar_item::CollabTitlebarItem;

@@ -51,6 +51,10 @@ impl ChannelStore {
         &self.channel_invitations
     }
 
+    pub fn channel_for_id(&self, channel_id: u64) -> Option<Arc<Channel>> {
+        self.channels.iter().find(|c| c.id == channel_id).cloned()
+    }
+
     pub fn create_channel(
         &self,
         name: &str,
@@ -101,6 +105,14 @@ impl ChannelStore {
 
     pub fn is_channel_invite_pending(&self, channel: &Arc<Channel>) -> bool {
         false
+    }
+
+    pub fn remove_channel(&self, channel_id: u64) -> impl Future<Output = Result<()>> {
+        let client = self.client.clone();
+        async move {
+            client.request(proto::RemoveChannel { channel_id }).await?;
+            Ok(())
+        }
     }
 
     pub fn remove_member(

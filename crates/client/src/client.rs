@@ -575,7 +575,10 @@ impl Client {
             }),
         );
         if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
+            panic!(
+                "registered handler for the same message {} twice",
+                std::any::type_name::<M>()
+            );
         }
 
         Subscription::Message {

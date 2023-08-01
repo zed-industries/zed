@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 pub use signup::{Invite, NewSignup, WaitlistSummary};
 use sqlx::migrate::{Migrate, Migration, MigrationSource};
 use sqlx::Connection;
+use std::fmt::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::time::Duration;
@@ -3131,6 +3132,74 @@ impl Database {
         .await
     }
 
+    pub async fn remove_channel(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+    ) -> Result<(Vec<ChannelId>, Vec<UserId>)> {
+        self.transaction(move |tx| async move {
+            let tx = tx;
+
+            // Check if user is an admin
+            channel_member::Entity::find()
+                .filter(
+                    channel_member::Column::ChannelId
+                        .eq(channel_id)
+                        .and(channel_member::Column::UserId.eq(user_id))
+                        .and(channel_member::Column::Admin.eq(true)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("user is not allowed to remove this channel"))?;
+
+            let mut descendants = self.get_channel_descendants([channel_id], &*tx).await?;
+
+            // Keep channels which have another active
+            let mut channels_to_keep = channel_parent::Entity::find()
+                .filter(
+                    channel_parent::Column::ChildId
+                        .is_in(descendants.keys().copied().filter(|&id| id != channel_id))
+                        .and(
+                            channel_parent::Column::ParentId.is_not_in(descendants.keys().copied()),
+                        ),
+                )
+                .stream(&*tx)
+                .await?;
+
+            while let Some(row) = channels_to_keep.next().await {
+                let row = row?;
+                descendants.remove(&row.child_id);
+            }
+
+            drop(channels_to_keep);
+
+            let channels_to_remove = descendants.keys().copied().collect::<Vec<_>>();
+
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryUserIds {
+                UserId,
+            }
+
+            let members_to_notify: Vec<UserId> = channel_member::Entity::find()
+                .filter(channel_member::Column::ChannelId.is_in(channels_to_remove.iter().copied()))
+                .select_only()
+                .column(channel_member::Column::UserId)
+                .distinct()
+                .into_values::<_, QueryUserIds>()
+                .all(&*tx)
+                .await?;
+
+            // Channel members and parents should delete via cascade
+            channel::Entity::delete_many()
+                .filter(channel::Column::Id.is_in(channels_to_remove.iter().copied()))
+                .exec(&*tx)
+                .await?;
+
+            Ok((channels_to_remove, members_to_notify))
+        })
+        .await
+    }
+
     pub async fn invite_channel_member(
         &self,
         channel_id: ChannelId,
@@ -3256,50 +3325,32 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            // Breadth first list of all edges in this user's channels
-            let sql = r#"
-            WITH RECURSIVE channel_tree(child_id, parent_id, depth) AS (
-                    SELECT channel_id as child_id, CAST(NULL as INTEGER) as parent_id, 0
-                    FROM channel_members
-                    WHERE user_id = $1 AND accepted
-                UNION
-                    SELECT channel_parents.child_id, channel_parents.parent_id, channel_tree.depth + 1
-                    FROM channel_parents, channel_tree
-                    WHERE channel_parents.parent_id = channel_tree.child_id
-            )
-            SELECT channel_tree.child_id, channel_tree.parent_id
-            FROM channel_tree
-            ORDER BY child_id, parent_id IS NOT NULL
-            "#;
-
-            #[derive(FromQueryResult, Debug, PartialEq)]
-            pub struct ChannelParent {
-                pub child_id: ChannelId,
-                pub parent_id: Option<ChannelId>,
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryChannelIds {
+                ChannelId,
             }
 
-            let stmt = Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                vec![user_id.into()],
-            );
+            let starting_channel_ids: Vec<ChannelId> = channel_member::Entity::find()
+                .filter(
+                    channel_member::Column::UserId
+                        .eq(user_id)
+                        .and(channel_member::Column::Accepted.eq(true)),
+                )
+                .select_only()
+                .column(channel_member::Column::ChannelId)
+                .into_values::<_, QueryChannelIds>()
+                .all(&*tx)
+                .await?;
 
-            let mut parents_by_child_id = HashMap::default();
-            let mut parents = channel_parent::Entity::find()
-                .from_raw_sql(stmt)
-                .into_model::<ChannelParent>()
-                .stream(&*tx).await?;
-            while let Some(parent) = parents.next().await {
-                let parent = parent?;
-                parents_by_child_id.insert(parent.child_id, parent.parent_id);
-            }
-
-            drop(parents);
+            let parents_by_child_id = self
+                .get_channel_descendants(starting_channel_ids, &*tx)
+                .await?;
 
             let mut channels = Vec::with_capacity(parents_by_child_id.len());
             let mut rows = channel::Entity::find()
                 .filter(channel::Column::Id.is_in(parents_by_child_id.keys().copied()))
-                .stream(&*tx).await?;
+                .stream(&*tx)
+                .await?;
 
             while let Some(row) = rows.next().await {
                 let row = row?;
@@ -3317,18 +3368,73 @@ impl Database {
         .await
     }
 
-    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<Channel> {
+    async fn get_channel_descendants(
+        &self,
+        channel_ids: impl IntoIterator<Item = ChannelId>,
+        tx: &DatabaseTransaction,
+    ) -> Result<HashMap<ChannelId, Option<ChannelId>>> {
+        let mut values = String::new();
+        for id in channel_ids {
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
+            write!(&mut values, "({})", id).unwrap();
+        }
+
+        if values.is_empty() {
+            return Ok(HashMap::default());
+        }
+
+        let sql = format!(
+            r#"
+            WITH RECURSIVE channel_tree(child_id, parent_id) AS (
+                    SELECT root_ids.column1 as child_id, CAST(NULL as INTEGER) as parent_id
+                    FROM (VALUES {}) as root_ids
+                UNION
+                    SELECT channel_parents.child_id, channel_parents.parent_id
+                    FROM channel_parents, channel_tree
+                    WHERE channel_parents.parent_id = channel_tree.child_id
+            )
+            SELECT channel_tree.child_id, channel_tree.parent_id
+            FROM channel_tree
+            ORDER BY child_id, parent_id IS NOT NULL
+            "#,
+            values
+        );
+
+        #[derive(FromQueryResult, Debug, PartialEq)]
+        pub struct ChannelParent {
+            pub child_id: ChannelId,
+            pub parent_id: Option<ChannelId>,
+        }
+
+        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+
+        let mut parents_by_child_id = HashMap::default();
+        let mut parents = channel_parent::Entity::find()
+            .from_raw_sql(stmt)
+            .into_model::<ChannelParent>()
+            .stream(tx)
+            .await?;
+
+        while let Some(parent) = parents.next().await {
+            let parent = parent?;
+            parents_by_child_id.insert(parent.child_id, parent.parent_id);
+        }
+
+        Ok(parents_by_child_id)
+    }
+
+    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<Option<Channel>> {
         self.transaction(|tx| async move {
             let tx = tx;
-            let channel = channel::Entity::find_by_id(channel_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such channel"))?;
-            Ok(Channel {
+            let channel = channel::Entity::find_by_id(channel_id).one(&*tx).await?;
+
+            Ok(channel.map(|channel| Channel {
                 id: channel.id,
                 name: channel.name,
                 parent_id: None,
-            })
+            }))
         })
         .await
     }

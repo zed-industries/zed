@@ -396,9 +396,9 @@ async fn apply_client_operation(
             );
 
             let root_path = Path::new("/").join(&first_root_name);
-            client.fs.create_dir(&root_path).await.unwrap();
+            client.fs().create_dir(&root_path).await.unwrap();
             client
-                .fs
+                .fs()
                 .create_file(&root_path.join("main.rs"), Default::default())
                 .await
                 .unwrap();
@@ -422,8 +422,8 @@ async fn apply_client_operation(
             );
 
             ensure_project_shared(&project, client, cx).await;
-            if !client.fs.paths(false).contains(&new_root_path) {
-                client.fs.create_dir(&new_root_path).await.unwrap();
+            if !client.fs().paths(false).contains(&new_root_path) {
+                client.fs().create_dir(&new_root_path).await.unwrap();
             }
             project
                 .update(cx, |project, cx| {
@@ -475,7 +475,7 @@ async fn apply_client_operation(
                     Some(room.update(cx, |room, cx| {
                         room.join_project(
                             project_id,
-                            client.language_registry.clone(),
+                            client.language_registry().clone(),
                             FakeFs::new(cx.background().clone()),
                             cx,
                         )
@@ -743,7 +743,7 @@ async fn apply_client_operation(
             content,
         } => {
             if !client
-                .fs
+                .fs()
                 .directories(false)
                 .contains(&path.parent().unwrap().to_owned())
             {
@@ -752,14 +752,14 @@ async fn apply_client_operation(
 
             if is_dir {
                 log::info!("{}: creating dir at {:?}", client.username, path);
-                client.fs.create_dir(&path).await.unwrap();
+                client.fs().create_dir(&path).await.unwrap();
             } else {
-                let exists = client.fs.metadata(&path).await?.is_some();
+                let exists = client.fs().metadata(&path).await?.is_some();
                 let verb = if exists { "updating" } else { "creating" };
                 log::info!("{}: {} file at {:?}", verb, client.username, path);
 
                 client
-                    .fs
+                    .fs()
                     .save(&path, &content.as_str().into(), fs::LineEnding::Unix)
                     .await
                     .unwrap();
@@ -771,12 +771,12 @@ async fn apply_client_operation(
                 repo_path,
                 contents,
             } => {
-                if !client.fs.directories(false).contains(&repo_path) {
+                if !client.fs().directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
                 }
 
                 for (path, _) in contents.iter() {
-                    if !client.fs.files().contains(&repo_path.join(path)) {
+                    if !client.fs().files().contains(&repo_path.join(path)) {
                         return Err(TestError::Inapplicable);
                     }
                 }
@@ -793,16 +793,16 @@ async fn apply_client_operation(
                     .iter()
                     .map(|(path, contents)| (path.as_path(), contents.clone()))
                     .collect::<Vec<_>>();
-                if client.fs.metadata(&dot_git_dir).await?.is_none() {
-                    client.fs.create_dir(&dot_git_dir).await?;
+                if client.fs().metadata(&dot_git_dir).await?.is_none() {
+                    client.fs().create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_index_for_repo(&dot_git_dir, &contents);
+                client.fs().set_index_for_repo(&dot_git_dir, &contents);
             }
             GitOperation::WriteGitBranch {
                 repo_path,
                 new_branch,
             } => {
-                if !client.fs.directories(false).contains(&repo_path) {
+                if !client.fs().directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
                 }
 
@@ -814,21 +814,21 @@ async fn apply_client_operation(
                 );
 
                 let dot_git_dir = repo_path.join(".git");
-                if client.fs.metadata(&dot_git_dir).await?.is_none() {
-                    client.fs.create_dir(&dot_git_dir).await?;
+                if client.fs().metadata(&dot_git_dir).await?.is_none() {
+                    client.fs().create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_branch_name(&dot_git_dir, new_branch);
+                client.fs().set_branch_name(&dot_git_dir, new_branch);
             }
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
                 git_operation,
             } => {
-                if !client.fs.directories(false).contains(&repo_path) {
+                if !client.fs().directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
                 }
                 for (path, _) in statuses.iter() {
-                    if !client.fs.files().contains(&repo_path.join(path)) {
+                    if !client.fs().files().contains(&repo_path.join(path)) {
                         return Err(TestError::Inapplicable);
                     }
                 }
@@ -847,16 +847,16 @@ async fn apply_client_operation(
                     .map(|(path, val)| (path.as_path(), val.clone()))
                     .collect::<Vec<_>>();
 
-                if client.fs.metadata(&dot_git_dir).await?.is_none() {
-                    client.fs.create_dir(&dot_git_dir).await?;
+                if client.fs().metadata(&dot_git_dir).await?.is_none() {
+                    client.fs().create_dir(&dot_git_dir).await?;
                 }
 
                 if git_operation {
                     client
-                        .fs
+                        .fs()
                         .set_status_for_repo_via_git_operation(&dot_git_dir, statuses.as_slice());
                 } else {
-                    client.fs.set_status_for_repo_via_working_copy_change(
+                    client.fs().set_status_for_repo_via_working_copy_change(
                         &dot_git_dir,
                         statuses.as_slice(),
                     );
@@ -1499,7 +1499,7 @@ impl TestPlan {
                         // Invite a contact to the current call
                         0..=70 => {
                             let available_contacts =
-                                client.user_store.read_with(cx, |user_store, _| {
+                                client.user_store().read_with(cx, |user_store, _| {
                                     user_store
                                         .contacts()
                                         .iter()
@@ -1596,7 +1596,7 @@ impl TestPlan {
                                 .choose(&mut self.rng)
                                 .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let mut paths = client.fs.paths(false);
+                            let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
                                 Path::new("/").join(&self.next_root_dir_name(user_id))
@@ -1776,7 +1776,7 @@ impl TestPlan {
                     let is_dir = self.rng.gen::<bool>();
                     let content;
                     let mut path;
-                    let dir_paths = client.fs.directories(false);
+                    let dir_paths = client.fs().directories(false);
 
                     if is_dir {
                         content = String::new();
@@ -1786,7 +1786,7 @@ impl TestPlan {
                         content = Alphanumeric.sample_string(&mut self.rng, 16);
 
                         // Create a new file or overwrite an existing file
-                        let file_paths = client.fs.files();
+                        let file_paths = client.fs().files();
                         if file_paths.is_empty() || self.rng.gen_bool(0.5) {
                             path = dir_paths.choose(&mut self.rng).unwrap().clone();
                             path.push(gen_file_name(&mut self.rng));
@@ -1812,7 +1812,7 @@ impl TestPlan {
             client: &TestClient,
         ) -> Vec<PathBuf> {
             let mut paths = client
-                .fs
+                .fs()
                 .files()
                 .into_iter()
                 .filter(|path| path.starts_with(repo_path))
@@ -1829,7 +1829,7 @@ impl TestPlan {
         }
 
         let repo_path = client
-            .fs
+            .fs()
             .directories(false)
             .choose(&mut self.rng)
             .unwrap()
@@ -1928,7 +1928,7 @@ async fn simulate_client(
             name: "the-fake-language-server",
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: Some(Box::new({
-                let fs = client.fs.clone();
+                let fs = client.app_state.fs.clone();
                 move |fake_server: &mut FakeLanguageServer| {
                     fake_server.handle_request::<lsp::request::Completion, _, _>(
                         |_, _| async move {
@@ -1973,7 +1973,7 @@ async fn simulate_client(
                             let background = cx.background();
                             let mut rng = background.rng();
                             let count = rng.gen_range::<usize, _>(1..3);
-                            let files = fs.files();
+                            let files = fs.as_fake().files();
                             let files = (0..count)
                                 .map(|_| files.choose(&mut *rng).unwrap().clone())
                                 .collect::<Vec<_>>();
@@ -2023,7 +2023,7 @@ async fn simulate_client(
             ..Default::default()
         }))
         .await;
-    client.language_registry.add(Arc::new(language));
+    client.app_state.languages.add(Arc::new(language));
 
     while let Some(batch_id) = operation_rx.next().await {
         let Some((operation, applied)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
