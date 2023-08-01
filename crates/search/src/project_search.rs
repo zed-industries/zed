@@ -40,7 +40,13 @@ use workspace::{
 
 actions!(
     project_search,
-    [SearchInNew, ToggleFocus, NextField, ToggleSemanticSearch]
+    [
+        SearchInNew,
+        ToggleFocus,
+        NextField,
+        ToggleSemanticSearch,
+        CycleMode
+    ]
 );
 
 #[derive(Default)]
@@ -54,6 +60,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
+    cx.add_action(ProjectSearchBar::cycle_mode);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
@@ -103,12 +110,22 @@ pub struct ProjectSearchView {
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
     filters_enabled: bool,
+    current_mode: SearchMode,
 }
 
 struct SemanticSearchState {
     file_count: usize,
     outstanding_file_count: usize,
     _progress_task: Task<()>,
+}
+
+// TODO: Update the default search mode to get from config
+#[derive(Clone, Default, PartialEq)]
+enum SearchMode {
+    #[default]
+    Text,
+    Semantic,
+    Regex,
 }
 
 pub struct ProjectSearchBar {
@@ -596,6 +613,7 @@ impl ProjectSearchView {
             included_files_editor,
             excluded_files_editor,
             filters_enabled,
+            current_mode: Default::default(),
         };
         this.model_changed(cx);
         this
@@ -910,7 +928,28 @@ impl ProjectSearchBar {
             subscription: Default::default(),
         }
     }
+    fn cycle_mode(workspace: &mut Workspace, _: &CycleMode, cx: &mut ViewContext<Workspace>) {
+        if let Some(search_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |this, cx| {
+                let mode = &this.current_mode;
+                let next_text_state = if SemanticIndex::enabled(cx) {
+                    SearchMode::Semantic
+                } else {
+                    SearchMode::Regex
+                };
 
+                this.current_mode = match mode {
+                    &SearchMode::Text => next_text_state,
+                    &SearchMode::Semantic => SearchMode::Regex,
+                    SearchMode::Regex => SearchMode::Text,
+                };
+                cx.notify();
+            })
+        }
+    }
     fn search(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| search_view.search(cx));
@@ -1184,14 +1223,15 @@ impl ProjectSearchBar {
         .into_any()
     }
 
-    fn render_option_button(
+    fn render_regex_button(
         &self,
         icon: &'static str,
-        option: SearchOptions,
+        current_mode: SearchMode,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = self.is_option_enabled(option, cx);
+        let is_active = current_mode == SearchMode::Regex;
+        let option = SearchOptions::REGEX;
         MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
@@ -1221,7 +1261,7 @@ impl ProjectSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
-            search.semantic.is_some()
+            search.current_mode == SearchMode::Semantic
         } else {
             false
         };
@@ -1256,7 +1296,7 @@ impl ProjectSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
-            search.semantic.is_none() && !self.is_option_enabled(SearchOptions::REGEX, cx)
+            search.current_mode == SearchMode::Text
         } else {
             false
         };
@@ -1335,7 +1375,7 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .right()
                 .flex(1.0, true);
-            let regex_button = self.render_option_button("Regex", SearchOptions::REGEX, cx);
+            let regex_button = self.render_regex_button("Regex", search.current_mode.clone(), cx);
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
             let search = _search.read(cx);
             let filter_button = {
