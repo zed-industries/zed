@@ -383,7 +383,8 @@ pub struct Search {
     pub action_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
-    pub results_status: TextStyle,
+    pub major_results_status: TextStyle,
+    pub minor_results_status: TextStyle,
     pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
 }

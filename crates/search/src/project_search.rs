@@ -120,7 +120,7 @@ struct SemanticSearchState {
 }
 
 // TODO: Update the default search mode to get from config
-#[derive(Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq)]
 enum SearchMode {
     #[default]
     Text,
@@ -282,29 +282,67 @@ impl View for ProjectSearchView {
             enum Status {}
 
             let theme = theme::current(cx).clone();
-            let text = if model.pending_search.is_some() {
+
+            // If Search is Active -> Major: Searching..., Minor: None
+            // If Semantic -> Major: "Search using Natural Language", Minor: {Status}/n{ex...}/n{ex...}
+            // If Regex -> Major: "Search using Regex", Minor: {ex...}
+            // If Text -> Major: "Text search all files and folders", Minor: {...}
+
+            let current_mode = self.current_mode;
+            let major_text = if model.pending_search.is_some() {
                 Cow::Borrowed("Searching...")
-            } else if let Some(semantic) = &self.semantic {
+            } else {
+                match current_mode {
+                    SearchMode::Text => Cow::Borrowed("Text search all files and folders"),
+                    SearchMode::Semantic => {
+                        Cow::Borrowed("Search all files and folders using Natural Language")
+                    }
+                    SearchMode::Regex => Cow::Borrowed("Regex search all files and folders"),
+                }
+            };
+
+            let semantic_status = if let Some(semantic) = &self.semantic {
                 if semantic.outstanding_file_count > 0 {
-                    Cow::Owned(format!(
-                        "Indexing. {} of {}...",
+                    let dots_count = semantic.outstanding_file_count % 3 + 1;
+                    let dots: String = std::iter::repeat('.').take(dots_count).collect();
+                    format!(
+                        "Indexing. {} of {}{dots}",
                         semantic.file_count - semantic.outstanding_file_count,
                         semantic.file_count
-                    ))
+                    )
                 } else {
-                    Cow::Borrowed("Indexing complete")
+                    "Indexing complete".to_string()
                 }
-            } else if self.query_editor.read(cx).text(cx).is_empty() {
-                Cow::Borrowed("Text search all files and folders")
             } else {
-                Cow::Borrowed("No results")
+                "This is an invalid state".to_string()
+            };
+
+            let minor_text = match current_mode {
+                SearchMode::Semantic => [
+                    semantic_status,
+                    "ex. list all available languages".to_owned(),
+                ],
+                _ => [
+                    "Include/exclude specific paths with the filter option.".to_owned(),
+                    "Matching exact word and/or casing is available too.".to_owned(),
+                ],
             };
 
             MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
                 Flex::column()
                     .with_child(Flex::column().contained().flex(1., true))
                     .with_child(
-                        Label::new(text, theme.search.results_status.clone())
+                        Flex::column()
+                            .align_children_center()
+                            .with_child(Label::new(
+                                major_text,
+                                theme.search.major_results_status.clone(),
+                            ))
+                            .with_children(
+                                minor_text.into_iter().map(|x| {
+                                    Label::new(x, theme.search.minor_results_status.clone())
+                                }),
+                            )
                             .aligned()
                             .top()
                             .contained()
@@ -1060,6 +1098,9 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.search_options.toggle(option);
+                if option.contains(SearchOptions::REGEX) {
+                    search_view.current_mode = SearchMode::Regex;
+                }
                 search_view.semantic = None;
                 search_view.search(cx);
             });
@@ -1096,6 +1137,7 @@ impl ProjectSearchBar {
                 if search_view.semantic.is_some() {
                     search_view.semantic = None;
                 } else if let Some(semantic_index) = SemanticIndex::global(cx) {
+                    search_view.current_mode = SearchMode::Semantic;
                     // TODO: confirm that it's ok to send this project
                     search_view.search_options = SearchOptions::none();
 
@@ -1315,7 +1357,13 @@ impl ProjectSearchBar {
                 .with_style(style.container)
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            this.toggle_semantic_search(cx);
+            if let Some(search) = this.active_project_search.as_mut() {
+                search.update(cx, |this, cx| {
+                    this.semantic = None;
+                    this.current_mode = SearchMode::Text;
+                    cx.notify();
+                });
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NormalSearchTag>(
@@ -1425,7 +1473,6 @@ impl View for ProjectSearchBar {
 
             let search = _search.read(cx);
             let icon_style = theme.search.editor_icon.clone();
-            // "
             let query = Flex::row()
                 .with_child(
                     Svg::for_style(icon_style.icon)

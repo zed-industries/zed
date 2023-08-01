@@ -140,9 +140,13 @@ export default function search(): any {
                 right: 6,
             },
         },
-        results_status: {
+        major_results_status: {
             ...text(theme.highest, "mono", "on"),
-            size: 18,
+            size: 15,
+        },
+        minor_results_status: {
+            ...text(theme.highest, "mono", "variant"),
+            size: 13,
         },
         dismiss_button: interactive({
             base: {
