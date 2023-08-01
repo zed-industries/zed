@@ -1257,7 +1257,7 @@ impl CollabPanel {
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, _cx| {
             Flex::row()
                 .with_child({
-                    Svg::new("icons/hash")
+                    Svg::new("icons/file_icons/hash.svg")
                         // .with_style(theme.contact_avatar)
                         .aligned()
                         .left()
@@ -1297,7 +1297,7 @@ impl CollabPanel {
 
         Flex::row()
             .with_child({
-                Svg::new("icons/hash")
+                Svg::new("icons/file_icons/hash.svg")
                     // .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
