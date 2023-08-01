@@ -2108,14 +2108,14 @@ async fn create_channel(
         live_kit.create_room(live_kit_room.clone()).await?;
     }
 
+    let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
     let id = db
-        .create_channel(
-            &request.name,
-            request.parent_id.map(|id| ChannelId::from_proto(id)),
-            &live_kit_room,
-            session.user_id,
-        )
+        .create_channel(&request.name, parent_id, &live_kit_room, session.user_id)
         .await?;
+
+    response.send(proto::CreateChannelResponse {
+        channel_id: id.to_proto(),
+    })?;
 
     let mut update = proto::UpdateChannels::default();
     update.channels.push(proto::Channel {
@@ -2123,10 +2123,18 @@ async fn create_channel(
         name: request.name,
         parent_id: request.parent_id,
     });
-    session.peer.send(session.connection_id, update)?;
-    response.send(proto::CreateChannelResponse {
-        channel_id: id.to_proto(),
-    })?;
+
+    if let Some(parent_id) = parent_id {
+        let member_ids = db.get_channel_members(parent_id).await?;
+        let connection_pool = session.connection_pool().await;
+        for member_id in member_ids {
+            for connection_id in connection_pool.user_connection_ids(member_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+    } else {
+        session.peer.send(session.connection_id, update)?;
+    }
 
     Ok(())
 }

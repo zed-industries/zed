@@ -899,7 +899,30 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .unwrap()
         .user_id;
 
+    let b_id = db
+        .create_user(
+            "user2@example.com",
+            false,
+            NewUserParams {
+                github_login: "user2".into(),
+                github_user_id: 6,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
     let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+
+    db.invite_channel_member(zed_id, b_id, a_id, true)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(zed_id, b_id, true)
+        .await
+        .unwrap();
+
     let crdb_id = db
         .create_channel("crdb", Some(zed_id), "2", a_id)
         .await
@@ -912,6 +935,11 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .create_channel("replace", Some(zed_id), "4", a_id)
         .await
         .unwrap();
+
+    let mut members = db.get_channel_members(replace_id).await.unwrap();
+    members.sort();
+    assert_eq!(members, &[a_id, b_id]);
+
     let rust_id = db.create_root_channel("rust", "5", a_id).await.unwrap();
     let cargo_id = db
         .create_channel("cargo", Some(rust_id), "6", a_id)

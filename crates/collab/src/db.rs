@@ -3093,6 +3093,22 @@ impl Database {
         self.transaction(move |tx| async move {
             let tx = tx;
 
+            if let Some(parent) = parent {
+                let channels = self.get_channel_ancestors(parent, &*tx).await?;
+                channel_member::Entity::find()
+                    .filter(channel_member::Column::ChannelId.is_in(channels.iter().copied()))
+                    .filter(
+                        channel_member::Column::UserId
+                            .eq(creator_id)
+                            .and(channel_member::Column::Accepted.eq(true)),
+                    )
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow!("User does not have the permissions to create this channel")
+                    })?;
+            }
+
             let channel = channel::ActiveModel {
                 name: ActiveValue::Set(name.to_string()),
                 ..Default::default()
@@ -3174,11 +3190,6 @@ impl Database {
             drop(channels_to_keep);
 
             let channels_to_remove = descendants.keys().copied().collect::<Vec<_>>();
-
-            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryUserIds {
-                UserId,
-            }
 
             let members_to_notify: Vec<UserId> = channel_member::Entity::find()
                 .filter(channel_member::Column::ChannelId.is_in(channels_to_remove.iter().copied()))
@@ -3325,11 +3336,6 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelIds {
-                ChannelId,
-            }
-
             let starting_channel_ids: Vec<ChannelId> = channel_member::Entity::find()
                 .filter(
                     channel_member::Column::UserId
@@ -3366,6 +3372,65 @@ impl Database {
             Ok(channels)
         })
         .await
+    }
+
+    pub async fn get_channel_members(&self, id: ChannelId) -> Result<Vec<UserId>> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+            let ancestor_ids = self.get_channel_ancestors(id, &*tx).await?;
+            let user_ids = channel_member::Entity::find()
+                .distinct()
+                .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
+                .select_only()
+                .column(channel_member::Column::UserId)
+                .into_values::<_, QueryUserIds>()
+                .all(&*tx)
+                .await?;
+            Ok(user_ids)
+        })
+        .await
+    }
+
+    async fn get_channel_ancestors(
+        &self,
+        id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<ChannelId>> {
+        let sql = format!(
+            r#"
+            WITH RECURSIVE channel_tree(child_id, parent_id) AS (
+                    SELECT CAST(NULL as INTEGER) as child_id, root_ids.column1 as parent_id
+                    FROM (VALUES ({})) as root_ids
+                UNION
+                    SELECT channel_parents.child_id, channel_parents.parent_id
+                    FROM channel_parents, channel_tree
+                    WHERE channel_parents.child_id = channel_tree.parent_id
+            )
+            SELECT DISTINCT channel_tree.parent_id
+            FROM channel_tree
+            "#,
+            id
+        );
+
+        #[derive(FromQueryResult, Debug, PartialEq)]
+        pub struct ChannelParent {
+            pub parent_id: ChannelId,
+        }
+
+        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+
+        let mut channel_ids_stream = channel_parent::Entity::find()
+            .from_raw_sql(stmt)
+            .into_model::<ChannelParent>()
+            .stream(&*tx)
+            .await?;
+
+        let mut channel_ids = vec![];
+        while let Some(channel_id) = channel_ids_stream.next().await {
+            channel_ids.push(channel_id?.parent_id);
+        }
+
+        Ok(channel_ids)
     }
 
     async fn get_channel_descendants(
@@ -3946,6 +4011,16 @@ pub struct Worktree {
 pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+enum QueryChannelIds {
+    ChannelId,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+enum QueryUserIds {
+    UserId,
 }
 
 #[cfg(test)]
