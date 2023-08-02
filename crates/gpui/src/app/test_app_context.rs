@@ -60,7 +60,7 @@ impl TestAppContext {
             RefCounts::new(leak_detector),
             (),
         );
-        cx.next_entity_id = first_entity_id;
+        cx.next_id = first_entity_id;
         let cx = TestAppContext {
             cx: Rc::new(RefCell::new(cx)),
             foreground_platform,

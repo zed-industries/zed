@@ -23,7 +23,6 @@ struct ElementStateRefCount {
 
 #[derive(Default)]
 pub struct RefCounts {
-    window_counts: HashMap<usize, usize>,
     entity_counts: HashMap<usize, usize>,
     element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
     dropped_windows: HashSet<usize>,
@@ -46,7 +45,7 @@ impl RefCounts {
     }
 
     pub fn inc_window(&mut self, window_id: usize) {
-        match self.window_counts.entry(window_id) {
+        match self.entity_counts.entry(window_id) {
             Entry::Occupied(mut entry) => {
                 *entry.get_mut() += 1;
             }
@@ -100,7 +99,7 @@ impl RefCounts {
     }
 
     pub fn dec_window(&mut self, window_id: usize) {
-        let count = self.window_counts.get_mut(&window_id).unwrap();
+        let count = self.entity_counts.get_mut(&window_id).unwrap();
         *count -= 1;
         if *count == 0 {
             self.entity_counts.remove(&window_id);

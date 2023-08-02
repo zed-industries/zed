@@ -1176,7 +1176,7 @@ impl<'a> WindowContext<'a> {
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
         let window_id = self.window_id;
-        let view_id = post_inc(&mut self.next_entity_id);
+        let view_id = post_inc(&mut self.next_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
             let mut keymap_context = KeymapContext::default();

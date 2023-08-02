@@ -498,8 +498,8 @@ pub struct AppContext {
     // Action Types -> Action Handlers
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: KeymapMatcher,
-    next_entity_id: usize,
-    next_window_id: usize,
+    next_id: usize,
+    // next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
 
@@ -558,8 +558,7 @@ impl AppContext {
             actions: Default::default(),
             global_actions: Default::default(),
             keystroke_matcher: KeymapMatcher::default(),
-            next_entity_id: 0,
-            next_window_id: 0,
+            next_id: 0,
             next_subscription_id: 0,
             frame_count: 0,
             subscriptions: Default::default(),
@@ -1230,7 +1229,7 @@ impl AppContext {
         F: FnOnce(&mut ModelContext<T>) -> T,
     {
         self.update(|this| {
-            let model_id = post_inc(&mut this.next_entity_id);
+            let model_id = post_inc(&mut this.next_id);
             let handle = ModelHandle::new(model_id, &this.ref_counts);
             let mut cx = ModelContext::new(this, model_id);
             let model = build_model(&mut cx);
@@ -1310,7 +1309,7 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_window_id);
+            let window_id = post_inc(&mut this.next_id);
             let platform_window =
                 this.platform
                     .open_window(window_id, window_options, this.foreground.clone());
@@ -1326,7 +1325,7 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_window_id);
+            let window_id = post_inc(&mut this.next_id);
             let platform_window = this.platform.add_status_item(window_id);
             let window = this.build_window(window_id, platform_window, build_root_view);
             let root_view = window.root_view().clone().downcast::<V>().unwrap();
@@ -3810,6 +3809,7 @@ pub struct WindowHandle<T> {
     view_type: PhantomData<T>,
 }
 
+#[allow(dead_code)]
 impl<V: View> WindowHandle<V> {
     fn id(&self) -> usize {
         self.any_handle.id()
@@ -3921,6 +3921,17 @@ impl AnyWindowHandle {
 
     pub fn id(&self) -> usize {
         self.window_id
+    }
+
+    pub fn downcast<V: View>(self) -> Option<WindowHandle<V>> {
+        if TypeId::of::<V>() == self.root_view_type {
+            Some(WindowHandle {
+                any_handle: self,
+                view_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -5613,20 +5624,18 @@ mod tests {
             child: None,
         });
         let view_1 = window.root(cx);
-        let view_2 = window
-            .update(cx, |cx| {
-                let view_2 = cx.add_view(|_| View {
-                    events: view_events.clone(),
-                    name: "view 2".to_string(),
-                    child: None,
-                });
-                view_1.update(cx, |view_1, cx| {
-                    view_1.child = Some(view_2.clone().into_any());
-                    cx.notify();
-                });
-                view_2
-            })
-            .unwrap();
+        let view_2 = window.update(cx, |cx| {
+            let view_2 = cx.add_view(|_| View {
+                events: view_events.clone(),
+                name: "view 2".to_string(),
+                child: None,
+            });
+            view_1.update(cx, |view_1, cx| {
+                view_1.child = Some(view_2.clone().into_any());
+                cx.notify();
+            });
+            view_2
+        });
 
         let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
         view_1.update(cx, |_, cx| {
@@ -6071,26 +6080,26 @@ mod tests {
             }
         });
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_keystroke(&Keystroke::parse("a").unwrap())
         });
         assert_eq!(&*actions.borrow(), &["2 a"]);
         actions.borrow_mut().clear();
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_keystroke(&Keystroke::parse("b").unwrap());
         });
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
         actions.borrow_mut().clear();
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_keystroke(&Keystroke::parse("c").unwrap());
         });
         assert_eq!(&*actions.borrow(), &["3 c"]);
         actions.borrow_mut().clear();
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_keystroke(&Keystroke::parse("d").unwrap());
         });
         assert_eq!(&*actions.borrow(), &["2 d"]);
@@ -6201,7 +6210,7 @@ mod tests {
 
         // Check that global actions do not have a binding, even if a binding does exist in another view
         assert_eq!(
-            &available_actions(window_id, view_1.id(), cx),
+            &available_actions(window.id(), view_1.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::GlobalAction", vec![])
@@ -6210,7 +6219,7 @@ mod tests {
 
         // Check that view 1 actions and bindings are available even when called from view 2
         assert_eq!(
-            &available_actions(window_id, view_2.id(), cx),
+            &available_actions(window.id(), view_2.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
@@ -6273,7 +6282,7 @@ mod tests {
             ]);
         });
 
-        let actions = cx.available_actions(window_id, view.id());
+        let actions = cx.available_actions(window.id(), view.id());
         assert_eq!(
             actions[0].1.as_any().downcast_ref::<ActionWithArg>(),
             Some(&ActionWithArg { arg: false })
@@ -6559,25 +6568,25 @@ mod tests {
             [("window 2", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_2));
+        cx.simulate_window_activation(Some(window_2.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 3", false), ("window 2", true)]
         );
 
-        cx.simulate_window_activation(Some(window_1));
+        cx.simulate_window_activation(Some(window_1.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 2", false), ("window 1", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3));
+        cx.simulate_window_activation(Some(window_3.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 1", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3));
+        cx.simulate_window_activation(Some(window_3.id()));
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 
@@ -6633,12 +6642,13 @@ mod tests {
 
         let child_rendered = Rc::new(Cell::new(false));
         let child_dropped = Rc::new(Cell::new(false));
-        let (_, root_view) = cx.add_window(|cx| Parent {
+        let window = cx.add_window(|cx| Parent {
             child: Some(cx.add_view(|_| Child {
                 rendered: child_rendered.clone(),
                 dropped: child_dropped.clone(),
             })),
         });
+        let root_view = window.root(cx);
         assert!(child_rendered.take());
         assert!(!child_dropped.take());
 
