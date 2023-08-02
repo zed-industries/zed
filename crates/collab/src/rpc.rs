@@ -2364,7 +2364,7 @@ fn build_initial_channels_update(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            parent_id: None,
+            parent_id: channel.parent_id.map(|id| id.to_proto()),
         });
     }
 

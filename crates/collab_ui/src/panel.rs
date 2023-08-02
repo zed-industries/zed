@@ -511,7 +511,7 @@ impl CollabPanel {
         self.entries.push(ListEntry::Header(Section::Channels, 0));
 
         let channels = channel_store.channels();
-        if !channels.is_empty() {
+        if !(channels.is_empty() && self.channel_editing_state.is_none()) {
             self.match_candidates.clear();
             self.match_candidates
                 .extend(
@@ -1291,7 +1291,7 @@ impl CollabPanel {
                 .with_height(theme.row_height)
                 .contained()
                 .with_style(*theme.contact_row.in_state(is_selected).style_for(state))
-                .with_margin_left(10. * channel.depth as f32)
+                .with_margin_left(20. * channel.depth as f32)
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.join_channel(channel_id, cx);
