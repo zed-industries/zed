@@ -93,7 +93,7 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    let mut state = &mut vim.state.search;
+                    let state = &mut vim.state.search;
                     let mut count = state.count;
 
                     // in the case that the query has changed, the search bar

@@ -397,7 +397,7 @@ impl InlayMap {
         buffer_snapshot: MultiBufferSnapshot,
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        let mut snapshot = &mut self.snapshot;
+        let snapshot = &mut self.snapshot;
 
         if buffer_edits.is_empty() {
             if snapshot.buffer.trailing_excerpt_update_count()
@@ -572,7 +572,6 @@ impl InlayMap {
             })
             .collect();
         let buffer_snapshot = snapshot.buffer.clone();
-        drop(snapshot);
         let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
         (snapshot, edits)
     }
@@ -635,7 +634,6 @@ impl InlayMap {
         }
         log::info!("removing inlays: {:?}", to_remove);
 
-        drop(snapshot);
         let (snapshot, edits) = self.splice(to_remove, to_insert);
         (snapshot, edits)
     }

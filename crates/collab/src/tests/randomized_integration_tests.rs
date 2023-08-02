@@ -183,7 +183,7 @@ async fn apply_server_operation(
             let username;
             {
                 let mut plan = plan.lock();
-                let mut user = plan.user(user_id);
+                let user = plan.user(user_id);
                 if user.online {
                     return false;
                 }
