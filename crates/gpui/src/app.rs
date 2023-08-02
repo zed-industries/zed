@@ -3811,10 +3811,6 @@ pub struct WindowHandle<T> {
 
 #[allow(dead_code)]
 impl<V: View> WindowHandle<V> {
-    fn id(&self) -> usize {
-        self.any_handle.id()
-    }
-
     fn new(window_id: usize, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
         WindowHandle {
             any_handle: AnyWindowHandle::new::<V>(window_id, ref_counts),
@@ -3822,7 +3818,11 @@ impl<V: View> WindowHandle<V> {
         }
     }
 
-    fn root(&self, cx: &impl BorrowAppContext) -> ViewHandle<V> {
+    pub fn id(&self) -> usize {
+        self.any_handle.id()
+    }
+
+    pub fn root(&self, cx: &impl BorrowAppContext) -> ViewHandle<V> {
         self.read_with(cx, |cx| cx.root_view().clone().downcast().unwrap())
     }
 

@@ -4,7 +4,7 @@ use gpui::{
     geometry::rect::RectF,
     platform::{WindowBounds, WindowKind, WindowOptions},
     AnyElement, AnyViewHandle, AppContext, ClipboardItem, Element, Entity, View, ViewContext,
-    ViewHandle,
+    WindowHandle,
 };
 use theme::ui::modal;
 
@@ -18,14 +18,14 @@ const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
 pub fn init(cx: &mut AppContext) {
     if let Some(copilot) = Copilot::global(cx) {
-        let mut code_verification: Option<ViewHandle<CopilotCodeVerification>> = None;
+        let mut code_verification: Option<WindowHandle<CopilotCodeVerification>> = None;
         cx.observe(&copilot, move |copilot, cx| {
             let status = copilot.read(cx).status();
 
             match &status {
                 crate::Status::SigningIn { prompt } => {
                     if let Some(code_verification_handle) = code_verification.as_mut() {
-                        let window_id = code_verification_handle.window_id();
+                        let window_id = code_verification_handle.id();
                         let updated = cx.update_window(window_id, |cx| {
                             code_verification_handle.update(cx, |code_verification, cx| {
                                 code_verification.set_status(status.clone(), cx)
@@ -66,7 +66,7 @@ pub fn init(cx: &mut AppContext) {
 fn create_copilot_auth_window(
     cx: &mut AppContext,
     status: &Status,
-) -> ViewHandle<CopilotCodeVerification> {
+) -> WindowHandle<CopilotCodeVerification> {
     let window_size = theme::current(cx).copilot.modal.dimensions();
     let window_options = WindowOptions {
         bounds: WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
@@ -78,10 +78,9 @@ fn create_copilot_auth_window(
         is_movable: true,
         screen: None,
     };
-    let (_, view) = cx.add_window(window_options, |_cx| {
+    cx.add_window(window_options, |_cx| {
         CopilotCodeVerification::new(status.clone())
-    });
-    view
+    })
 }
 
 pub struct CopilotCodeVerification {
