@@ -1080,7 +1080,7 @@ test_both_dbs!(
     test_channel_invites_sqlite,
     db,
     {
-        let owner_id = db.create_server("test").await.unwrap().0 as u32;
+        db.create_server("test").await.unwrap();
 
         let user_1 = db
             .create_user(

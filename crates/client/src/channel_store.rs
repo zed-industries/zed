@@ -115,16 +115,16 @@ impl ChannelStore {
         }
     }
 
-    pub fn is_channel_invite_pending(&self, channel: &Arc<Channel>) -> bool {
-        false
-    }
-
     pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
         async move {
             client.request(proto::RemoveChannel { channel_id }).await?;
             Ok(())
         }
+    }
+
+    pub fn is_channel_invite_pending(&self, _: &Arc<Channel>) -> bool {
+        false
     }
 
     pub fn remove_member(
@@ -141,10 +141,6 @@ impl ChannelStore {
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
-        todo!()
-    }
-
-    pub fn add_guest_channel(&self, channel_id: ChannelId) -> Task<Result<()>> {
         todo!()
     }
 

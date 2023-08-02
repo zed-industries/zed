@@ -10,8 +10,6 @@ use gpui::{
     AnyElement, Axis, Element, LayoutContext, SceneBuilder, View, ViewContext,
 };
 
-use crate::CollabTitlebarItem;
-
 pub(crate) struct FacePile<V: View> {
     overlap: f32,
     faces: Vec<AnyElement<V>>,

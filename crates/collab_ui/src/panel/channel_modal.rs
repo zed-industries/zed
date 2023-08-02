@@ -9,7 +9,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct ChannelModal {
     has_focus: bool,
-    input_editor: ViewHandle<Editor>,
+    filter_editor: ViewHandle<Editor>,
 }
 
 pub enum Event {
@@ -30,7 +30,7 @@ impl ChannelModal {
 
         ChannelModal {
             has_focus: false,
-            input_editor,
+            filter_editor: input_editor,
         }
     }
 
@@ -55,7 +55,7 @@ impl View for ChannelModal {
         enum ChannelModal {}
         MouseEventHandler::<ChannelModal, _>::new(0, cx, |_, cx| {
             Flex::column()
-                .with_child(ChildView::new(self.input_editor.as_any(), cx))
+                .with_child(ChildView::new(self.filter_editor.as_any(), cx))
                 .with_child(Label::new("ADD OR BROWSE CHANNELS HERE", style))
                 .contained()
                 .with_style(modal_container)
@@ -71,7 +71,7 @@ impl View for ChannelModal {
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = true;
         if cx.is_self_focused() {
-            cx.focus(&self.input_editor);
+            cx.focus(&self.filter_editor);
         }
     }
 

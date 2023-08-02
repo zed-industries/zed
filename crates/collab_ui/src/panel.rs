@@ -1259,8 +1259,8 @@ impl CollabPanel {
 
     fn render_channel_editor(
         &self,
-        theme: &theme::CollabPanel,
-        depth: usize,
+        _theme: &theme::CollabPanel,
+        _depth: usize,
         cx: &AppContext,
     ) -> AnyElement<Self> {
         ChildView::new(&self.channel_name_editor, cx).into_any()
@@ -1276,7 +1276,7 @@ impl CollabPanel {
         let channel_id = channel.id;
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
-                .with_child({ Svg::new("icons/file_icons/hash.svg").aligned().left() })
+                .with_child(Svg::new("icons/file_icons/hash.svg").aligned().left())
                 .with_child(
                     Label::new(channel.name.clone(), theme.contact_username.text.clone())
                         .contained()
@@ -1329,12 +1329,7 @@ impl CollabPanel {
         let button_spacing = theme.contact_button_spacing;
 
         Flex::row()
-            .with_child({
-                Svg::new("icons/file_icons/hash.svg")
-                    // .with_style(theme.contact_avatar)
-                    .aligned()
-                    .left()
-            })
+            .with_child(Svg::new("icons/file_icons/hash.svg").aligned().left())
             .with_child(
                 Label::new(channel.name.clone(), theme.contact_username.text.clone())
                     .contained()
@@ -1616,7 +1611,7 @@ impl CollabPanel {
                 }
             }
         } else if let Some((editing_state, channel_name)) = self.take_editing_state(cx) {
-            let create_channel = self.channel_store.update(cx, |channel_store, cx| {
+            let create_channel = self.channel_store.update(cx, |channel_store, _| {
                 channel_store.create_channel(&channel_name, editing_state.parent_id)
             });
 
@@ -1687,7 +1682,7 @@ impl CollabPanel {
             cx.spawn(|_, mut cx| async move {
                 if answer.next().await == Some(0) {
                     if let Err(e) = channel_store
-                        .update(&mut cx, |channels, cx| channels.remove_channel(channel_id))
+                        .update(&mut cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                     {
                         cx.prompt(
