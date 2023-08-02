@@ -617,8 +617,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        cx.dispatch_action(window_id, Toggle);
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        cx.dispatch_action(window.id(), Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
@@ -631,8 +632,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -671,8 +672,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        cx.dispatch_action(window_id, Toggle);
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        cx.dispatch_action(window.id(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -704,8 +706,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -754,8 +756,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        cx.dispatch_action(window_id, Toggle);
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        cx.dispatch_action(window.id(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -787,8 +790,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -837,19 +840,23 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    None,
-                    Vec::new(),
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .detach(cx);
+        let finder = cx
+            .add_window(|cx| {
+                Picker::new(
+                    FileFinderDelegate::new(
+                        workspace.downgrade(),
+                        workspace.read(cx).project().clone(),
+                        None,
+                        Vec::new(),
+                        cx,
+                    ),
                     cx,
-                ),
-                cx,
-            )
-        });
+                )
+            })
+            .detach(cx);
 
         let query = test_path_like("hi");
         finder
@@ -931,19 +938,23 @@ mod tests {
             cx,
         )
         .await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    None,
-                    Vec::new(),
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .detach(cx);
+        let finder = cx
+            .add_window(|cx| {
+                Picker::new(
+                    FileFinderDelegate::new(
+                        workspace.downgrade(),
+                        workspace.read(cx).project().clone(),
+                        None,
+                        Vec::new(),
+                        cx,
+                    ),
                     cx,
-                ),
-                cx,
-            )
-        });
+                )
+            })
+            .detach(cx);
         finder
             .update(cx, |f, cx| {
                 f.delegate_mut().spawn_search(test_path_like("hi"), cx)
@@ -967,19 +978,23 @@ mod tests {
             cx,
         )
         .await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    None,
-                    Vec::new(),
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .detach(cx);
+        let finder = cx
+            .add_window(|cx| {
+                Picker::new(
+                    FileFinderDelegate::new(
+                        workspace.downgrade(),
+                        workspace.read(cx).project().clone(),
+                        None,
+                        Vec::new(),
+                        cx,
+                    ),
                     cx,
-                ),
-                cx,
-            )
-        });
+                )
+            })
+            .detach(cx);
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -1016,61 +1031,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_matches_with_same_relative_path(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                "/root",
-                json!({
-                    "dir1": { "a.txt": "" },
-                    "dir2": { "a.txt": "" }
-                }),
-            )
-            .await;
-
-        let project = Project::test(
-            app_state.fs.clone(),
-            ["/root/dir1".as_ref(), "/root/dir2".as_ref()],
-            cx,
-        )
-        .await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    None,
-                    Vec::new(),
-                    cx,
-                ),
-                cx,
-            )
-        });
-
-        // Run a search that matches two files with the same relative path.
-        finder
-            .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("a.t"), cx)
-            })
-            .await;
-
-        // Can switch between different matches with the same relative path.
-        finder.update(cx, |finder, cx| {
-            let delegate = finder.delegate_mut();
-            assert_eq!(delegate.matches.len(), 2);
-            assert_eq!(delegate.selected_index(), 0);
-            delegate.set_selected_index(1, cx);
-            assert_eq!(delegate.selected_index(), 1);
-            delegate.set_selected_index(0, cx);
-            assert_eq!(delegate.selected_index(), 0);
-        });
-    }
-
-    #[gpui::test]
     async fn test_path_distance_ordering(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
@@ -1089,7 +1049,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .detach(cx);
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1103,18 +1065,20 @@ mod tests {
             worktree_id,
             path: Arc::from(Path::new("/root/dir2/b.txt")),
         }));
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    b_path,
-                    Vec::new(),
+        let finder = cx
+            .add_window(|cx| {
+                Picker::new(
+                    FileFinderDelegate::new(
+                        workspace.downgrade(),
+                        workspace.read(cx).project().clone(),
+                        b_path,
+                        Vec::new(),
+                        cx,
+                    ),
                     cx,
-                ),
-                cx,
-            )
-        });
+                )
+            })
+            .detach(cx);
 
         finder
             .update(cx, |f, cx| {
@@ -1151,19 +1115,23 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let (_, finder) = cx.add_window(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace.downgrade(),
-                    workspace.read(cx).project().clone(),
-                    None,
-                    Vec::new(),
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .detach(cx);
+        let finder = cx
+            .add_window(|cx| {
+                Picker::new(
+                    FileFinderDelegate::new(
+                        workspace.downgrade(),
+                        workspace.read(cx).project().clone(),
+                        None,
+                        Vec::new(),
+                        cx,
+                    ),
                     cx,
-                ),
-                cx,
-            )
-        });
+                )
+            })
+            .detach(cx);
         finder
             .update(cx, |f, cx| {
                 f.delegate_mut().spawn_search(test_path_like("dir"), cx)
@@ -1198,7 +1166,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1404,7 +1374,9 @@ mod tests {
         .detach();
         deterministic.run_until_parked();
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);

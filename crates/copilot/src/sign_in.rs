@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
                     if let Some(code_verification_handle) = code_verification.as_mut() {
                         let window_id = code_verification_handle.id();
                         let updated = cx.update_window(window_id, |cx| {
-                            code_verification_handle.update(cx, |code_verification, cx| {
+                            code_verification_handle.update_root(cx, |code_verification, cx| {
                                 code_verification.set_status(status.clone(), cx)
                             });
                             cx.activate_window();
@@ -41,9 +41,9 @@ pub fn init(cx: &mut AppContext) {
                 }
                 Status::Authorized | Status::Unauthorized => {
                     if let Some(code_verification) = code_verification.as_ref() {
-                        let window_id = code_verification.window_id();
+                        let window_id = code_verification.id();
                         cx.update_window(window_id, |cx| {
-                            code_verification.update(cx, |code_verification, cx| {
+                            code_verification.update_root(cx, |code_verification, cx| {
                                 code_verification.set_status(status, cx)
                             });
 
@@ -54,7 +54,7 @@ pub fn init(cx: &mut AppContext) {
                 }
                 _ => {
                     if let Some(code_verification) = code_verification.take() {
-                        cx.update_window(code_verification.window_id(), |cx| cx.remove_window());
+                        code_verification.update(cx, |cx| cx.remove_window());
                     }
                 }
             }

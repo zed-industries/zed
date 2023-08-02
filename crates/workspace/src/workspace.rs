@@ -793,7 +793,7 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let workspace = requesting_window_id
+            let window = requesting_window_id
                 .and_then(|window_id| {
                     cx.update(|cx| {
                         cx.replace_root_view(window_id, |cx| {
@@ -852,9 +852,9 @@ impl Workspace {
                             )
                         },
                     )
-                    .1
                 });
 
+            let workspace = window.root(&cx);
             (app_state.initialize_workspace)(
                 workspace.downgrade(),
                 serialized_workspace.is_some(),
@@ -864,7 +864,7 @@ impl Workspace {
             .await
             .log_err();
 
-            cx.update_window(workspace.window_id(), |cx| cx.activate_window());
+            window.update(&mut cx, |cx| cx.activate_window());
 
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
@@ -3977,7 +3977,7 @@ pub fn join_remote_project(
                 .await?;
 
             let window_bounds_override = window_bounds_env_override(&cx);
-            let (_, workspace) = cx.add_window(
+            let window = cx.add_window(
                 (app_state.build_window_options)(
                     window_bounds_override,
                     None,
@@ -3985,6 +3985,7 @@ pub fn join_remote_project(
                 ),
                 |cx| Workspace::new(0, project, app_state.clone(), cx),
             );
+            let workspace = window.root(&cx);
             (app_state.initialize_workspace)(
                 workspace.downgrade(),
                 false,
@@ -4113,10 +4114,11 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = window.add_view(cx, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -4128,7 +4130,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = window.add_view(cx, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -4142,7 +4144,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = window.add_view(cx, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -4177,16 +4179,17 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(window_id, |cx| {
+        let item1 = window.add_view(cx, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.add_view(window_id, |cx| {
+        let item2 = window.add_view(cx, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
@@ -4201,14 +4204,14 @@ mod tests {
             );
         });
         assert_eq!(
-            cx.current_window_title(window_id).as_deref(),
+            cx.current_window_title(window.id()).as_deref(),
             Some("one.txt — root1")
         );
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
         assert_eq!(
-            cx.current_window_title(window_id).as_deref(),
+            cx.current_window_title(window.id()).as_deref(),
             Some("two.txt — root1")
         );
         project.read_with(cx, |project, cx| {
@@ -4227,7 +4230,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            cx.current_window_title(window_id).as_deref(),
+            cx.current_window_title(window.id()).as_deref(),
             Some("one.txt — root1")
         );
         project.read_with(cx, |project, cx| {
@@ -4247,14 +4250,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            cx.current_window_title(window_id).as_deref(),
+            cx.current_window_title(window.id()).as_deref(),
             Some("one.txt — root1, root2")
         );
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(
-            cx.current_window_title(window_id).as_deref(),
+            cx.current_window_title(window.id()).as_deref(),
             Some("one.txt — root2")
         );
     }
@@ -4267,18 +4270,19 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.add_view(window_id, |_| TestItem::new());
+        let item1 = window.add_view(cx, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.add_view(window_id, |_| TestItem::new().with_dirty(true));
-        let item3 = cx.add_view(window_id, |cx| {
+        let item2 = window.add_view(cx, |_| TestItem::new().with_dirty(true));
+        let item3 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -4289,9 +4293,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
+        cx.simulate_prompt_answer(window.id(), 2 /* cancel */);
         cx.foreground().run_until_parked();
-        assert!(!cx.has_pending_prompt(window_id));
+        assert!(!cx.has_pending_prompt(window.id()));
         assert!(!task.await.unwrap());
     }
 
@@ -4302,26 +4306,27 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
-        let item1 = cx.add_view(window_id, |cx| {
+        let item1 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        let item2 = cx.add_view(window_id, |cx| {
+        let item2 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
         });
-        let item3 = cx.add_view(window_id, |cx| {
+        let item3 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
-        let item4 = cx.add_view(window_id, |cx| {
+        let item4 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
@@ -4349,10 +4354,10 @@ mod tests {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(cx.has_pending_prompt(window_id));
+        assert!(cx.has_pending_prompt(window.id()));
 
         // Confirm saving item 1.
-        cx.simulate_prompt_answer(window_id, 0);
+        cx.simulate_prompt_answer(window.id(), 0);
         cx.foreground().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -4363,10 +4368,10 @@ mod tests {
             assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
-        assert!(cx.has_pending_prompt(window_id));
+        assert!(cx.has_pending_prompt(window.id()));
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(window_id, 1);
+        cx.simulate_prompt_answer(window.id(), 1);
         cx.foreground().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -4377,10 +4382,10 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
-        assert!(cx.has_pending_prompt(window_id));
+        assert!(cx.has_pending_prompt(window.id()));
 
         // Confirm saving item 4.
-        cx.simulate_prompt_answer(window_id, 0);
+        cx.simulate_prompt_answer(window.id(), 0);
         cx.foreground().run_until_parked();
 
         // There's a prompt for a path for item 4.
@@ -4404,13 +4409,14 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.add_view(window_id, |cx| {
+                window.add_view(cx, |cx| {
                     TestItem::new()
                         .with_dirty(true)
                         .with_project_items(&[TestProjectItem::new(
@@ -4421,7 +4427,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.add_view(window_id, |cx| {
+        let item_2_3 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -4430,7 +4436,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.add_view(window_id, |cx| {
+        let item_3_4 = window.add_view(cx, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -4482,7 +4488,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(0)]
             );
         });
-        cx.simulate_prompt_answer(window_id, 0);
+        cx.simulate_prompt_answer(window.id(), 0);
 
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
@@ -4491,7 +4497,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(2)]
             );
         });
-        cx.simulate_prompt_answer(window_id, 0);
+        cx.simulate_prompt_answer(window.id(), 0);
 
         cx.foreground().run_until_parked();
         close.await.unwrap();
@@ -4507,10 +4513,11 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        let item = cx.add_view(window_id, |cx| {
+        let item = window.add_view(cx, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.id();
@@ -4550,7 +4557,7 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_window_activation(Some(window_id));
+        cx.simulate_window_activation(Some(window.id()));
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
@@ -4592,7 +4599,7 @@ mod tests {
         pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
             .await
             .unwrap();
-        assert!(!cx.has_pending_prompt(window_id));
+        assert!(!cx.has_pending_prompt(window.id()));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
@@ -4613,7 +4620,7 @@ mod tests {
         let _close_items =
             pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
         deterministic.run_until_parked();
-        assert!(cx.has_pending_prompt(window_id));
+        assert!(cx.has_pending_prompt(window.id()));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 
@@ -4624,9 +4631,10 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
-        let item = cx.add_view(window_id, |cx| {
+        let item = window.add_view(cx, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
@@ -4677,7 +4685,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let panel = workspace.update(cx, |workspace, cx| {
             let panel = cx.add_view(|_| TestPanel::new(DockPosition::Right));
@@ -4824,7 +4833,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
             // Add panel_1 on the left, panel_2 on the right.
@@ -4979,7 +4989,7 @@ mod tests {
 
         // If focus is transferred to another view that's not a panel or another pane, we still show
         // the panel as zoomed.
-        let focus_receiver = cx.add_view(window_id, |_| EmptyView);
+        let focus_receiver = window.add_view(cx, |_| EmptyView);
         focus_receiver.update(cx, |_, cx| cx.focus_self());
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));

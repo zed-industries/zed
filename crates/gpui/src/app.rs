@@ -1424,7 +1424,7 @@ impl AppContext {
         &mut self,
         window_id: usize,
         build_root_view: F,
-    ) -> Option<ViewHandle<V>>
+    ) -> Option<WindowHandle<V>>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -3826,6 +3826,15 @@ impl<V: View> WindowHandle<V> {
         self.read_with(cx, |cx| cx.root_view().clone().downcast().unwrap())
     }
 
+    /// Keep this window open until it's explicitly closed.
+    //
+    // TODO: Implement window dropping behavior when we don't call this.
+    pub fn detach(mut self, cx: &impl BorrowAppContext) -> ViewHandle<V> {
+        let root = self.root(cx);
+        self.any_handle.ref_counts.take();
+        root
+    }
+
     pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> R
     where
         C: BorrowAppContext,
@@ -3893,7 +3902,7 @@ impl<V: View> WindowHandle<V> {
 pub struct AnyWindowHandle {
     window_id: usize,
     root_view_type: TypeId,
-    ref_counts: Arc<Mutex<RefCounts>>,
+    ref_counts: Option<Arc<Mutex<RefCounts>>>,
 
     #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
@@ -3913,7 +3922,7 @@ impl AnyWindowHandle {
         Self {
             window_id,
             root_view_type: TypeId::of::<V>(),
-            ref_counts,
+            ref_counts: Some(ref_counts),
             #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
@@ -3937,7 +3946,16 @@ impl AnyWindowHandle {
 
 impl Drop for AnyWindowHandle {
     fn drop(&mut self) {
-        self.ref_counts.lock().dec_window(self.window_id)
+        if let Some(ref_counts) = self.ref_counts.as_ref() {
+            ref_counts.lock().dec_window(self.window_id);
+
+            #[cfg(any(test, feature = "test-support"))]
+            ref_counts
+                .lock()
+                .leak_detector
+                .lock()
+                .handle_dropped(self.window_id, self.handle_id);
+        }
     }
 }
 

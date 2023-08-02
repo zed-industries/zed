@@ -15,7 +15,7 @@ use crate::{
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
     Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
-    View, ViewContext, ViewHandle, WindowInvalidation,
+    View, ViewContext, ViewHandle, WindowHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -1151,15 +1151,15 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         let root_view = self.add_view(|cx| build_root_view(cx));
-        self.window.root_view = Some(root_view.clone().into_any());
         self.window.focused_view_id = Some(root_view.id());
-        root_view
+        self.window.root_view = Some(root_view.into_any());
+        WindowHandle::new(self.window_id, self.ref_counts.clone())
     }
 
     pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>
