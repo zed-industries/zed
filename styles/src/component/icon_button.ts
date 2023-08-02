@@ -10,7 +10,10 @@ export type Margin = {
 }
 
 interface IconButtonOptions {
-    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
+    layer?:
+    | Theme["lowest"]
+    | Theme["middle"]
+    | Theme["highest"]
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
 }

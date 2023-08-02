@@ -46,7 +46,7 @@
     (property_name)
     (plain_value)
   ] @variable.special
-  (.match? @variable.special "^--")
+  (#match? @variable.special "^--")
 )
 
 [

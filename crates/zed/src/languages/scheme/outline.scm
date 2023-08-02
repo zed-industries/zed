@@ -6,5 +6,5 @@
         (symbol) @name
         (list . (symbol) @name)
     ]
-    (.match? @start-symbol "^define")
+    (#match? @start-symbol "^define")
 ) @item

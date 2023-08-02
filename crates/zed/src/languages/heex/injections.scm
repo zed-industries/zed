@@ -5,9 +5,9 @@
       (expression_value)
       (ending_expression_value)
     ] @content)
-  (.set! language "elixir")
-  (.set! combined)
+  (#set! language "elixir")
+  (#set! combined)
 )
 
 ((expression (expression_value) @content)
- (.set! language "elixir"))
+ (#set! language "elixir"))

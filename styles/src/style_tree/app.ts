@@ -57,6 +57,6 @@ export default function app(): any {
         tooltip: tooltip(),
         terminal: terminal(),
         assistant: assistant(),
-        feedback: feedback(),
+        feedback: feedback()
     }
 }

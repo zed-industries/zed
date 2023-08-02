@@ -9,7 +9,10 @@ import { useTheme, Theme } from "../theme"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
-    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
+    layer?:
+    | Theme["lowest"]
+    | Theme["middle"]
+    | Theme["highest"]
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
     text_properties?: TextProperties

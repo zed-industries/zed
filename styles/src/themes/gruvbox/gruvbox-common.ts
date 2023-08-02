@@ -4,8 +4,8 @@ import {
     ThemeAppearance,
     ThemeLicenseType,
     ThemeConfig,
+    ThemeSyntax,
     ThemeFamilyMeta,
-    ThemeConfigInputSyntax,
 } from "../../common"
 
 const meta: ThemeFamilyMeta = {
@@ -214,7 +214,7 @@ const build_variant = (variant: Variant): ThemeConfig => {
         magenta: color_ramp(chroma(variant.colors.gray)),
     }
 
-    const syntax: ThemeConfigInputSyntax = {
+    const syntax: ThemeSyntax = {
         primary: { color: neutral[is_light ? 0 : 8] },
         "text.literal": { color: colors.blue },
         comment: { color: colors.gray },
@@ -229,7 +229,7 @@ const build_variant = (variant: Variant): ThemeConfig => {
         "string.special.symbol": { color: colors.aqua },
         "string.regex": { color: colors.orange },
         type: { color: colors.yellow },
-        // enum: { color: colors.orange },
+        enum: { color: colors.orange },
         tag: { color: colors.aqua },
         constant: { color: colors.yellow },
         keyword: { color: colors.red },

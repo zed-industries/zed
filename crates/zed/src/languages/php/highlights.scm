@@ -43,15 +43,15 @@
 (relative_scope) @variable.builtin
 
 ((name) @constant
-    (.match? @constant "^_?[A-Z][A-Z\\d_]+$"))
+ (#match? @constant "^_?[A-Z][A-Z\\d_]+$"))
 ((name) @constant.builtin
- (.match? @constant.builtin "^__[A-Z][A-Z\d_]+__$"))
+ (#match? @constant.builtin "^__[A-Z][A-Z\d_]+__$"))
 
-((name) @method.constructor
-(.match? @method.constructor "^[A-Z]"))
+((name) @constructor
+ (#match? @constructor "^[A-Z]"))
 
 ((name) @variable.builtin
- (.eq? @variable.builtin "this"))
+ (#eq? @variable.builtin "this"))
 
 (variable_name) @variable
 

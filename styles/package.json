@@ -8,7 +8,6 @@
         "build-licenses": "ts-node ./src/build_licenses.ts",
         "build-tokens": "ts-node ./src/build_tokens.ts",
         "build-types": "ts-node ./src/build_types.ts",
-        "generate-syntax": "ts-node ./src/types/extract_syntax_types.ts",
         "test": "vitest"
     },
     "author": "Zed Industries (https://github.com/zed-industries/)",

@@ -38,11 +38,11 @@
 
 ; Assume uppercase names are types/enum-constructors
 ((identifier) @type
-    (.match? @type "^[A-Z]"))
+ (#match? @type "^[A-Z]"))
 
 ; Assume all-caps names are constants
 ((identifier) @constant
-    (.match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 [
   "("
