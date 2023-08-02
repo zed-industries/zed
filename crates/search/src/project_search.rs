@@ -1733,6 +1733,8 @@ impl View for ProjectSearchBar {
                         .with_children(filters)
                         .contained()
                         .with_style(theme.search.container)
+                        .aligned()
+                        .top()
                         .flex(2., true),
                 )
                 .with_child(
