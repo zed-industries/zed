@@ -49,7 +49,7 @@ export default function status_bar(): any {
             },
             state: {
                 hovered: {
-                    message: text(layer, "sans"),
+                    message: text(layer, "sans", { size: "xs" }),
                     icon_color: foreground(layer),
                     background: background(layer, "hovered"),
                 },
