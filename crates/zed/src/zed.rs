@@ -545,7 +545,6 @@ pub fn handle_keymap_file_changes(
                             reload_keymaps(cx, &keymap_content);
                         }
                     })
-                    .detach();
                 }));
             }
         }
