@@ -1928,6 +1928,8 @@ impl RepoSnapshot {
                 {
                     new_revisions.insert(ancestor_id, ancestor_revision);
                     for replay_op in rewind.replay() {
+                        // TODO: here we could avoid applying operations if we already have the
+                        // target revision.
                         let parent_revision = new_revisions[&replay_op.parent_revision_id].clone();
                         let target_revision = new_revisions
                             .entry(replay_op.target_revision_id)
