@@ -2412,6 +2412,15 @@ fn build_initial_channels_update(
         });
     }
 
+    for (channel_id, participants) in channel_participants {
+        update
+            .channel_participants
+            .push(proto::ChannelParticipants {
+                channel_id: channel_id.to_proto(),
+                participant_user_ids: participants.into_iter().map(|id| id.to_proto()).collect(),
+            });
+    }
+
     for channel in channel_invites {
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
@@ -2504,12 +2513,6 @@ fn channel_updated(
         None,
         channel_members
             .iter()
-            .filter(|user_id| {
-                !room
-                    .participants
-                    .iter()
-                    .any(|p| p.user_id == user_id.to_proto())
-            })
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             peer.send(

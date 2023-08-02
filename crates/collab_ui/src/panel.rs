@@ -40,6 +40,8 @@ use workspace::{
     Workspace,
 };
 
+use crate::face_pile::FacePile;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
     channel_id: u64,
@@ -253,7 +255,7 @@ impl CollabPanel {
                             )
                         }
                         ListEntry::Channel(channel) => {
-                            Self::render_channel(&*channel, &theme.collab_panel, is_selected, cx)
+                            this.render_channel(&*channel, &theme.collab_panel, is_selected, cx)
                         }
                         ListEntry::ChannelInvite(channel) => Self::render_channel_invite(
                             channel.clone(),
@@ -1265,20 +1267,16 @@ impl CollabPanel {
     }
 
     fn render_channel(
+        &self,
         channel: &Channel,
         theme: &theme::CollabPanel,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
-        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, _cx| {
+        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
-                .with_child({
-                    Svg::new("icons/file_icons/hash.svg")
-                        // .with_style(theme.contact_avatar)
-                        .aligned()
-                        .left()
-                })
+                .with_child({ Svg::new("icons/file_icons/hash.svg").aligned().left() })
                 .with_child(
                     Label::new(channel.name.clone(), theme.contact_username.text.clone())
                         .contained()
@@ -1286,6 +1284,20 @@ impl CollabPanel {
                         .aligned()
                         .left()
                         .flex(1., true),
+                )
+                .with_child(
+                    FacePile::new(theme.face_overlap).with_children(
+                        self.channel_store
+                            .read(cx)
+                            .channel_participants(channel_id)
+                            .iter()
+                            .filter_map(|user| {
+                                Some(
+                                    Image::from_data(user.avatar.clone()?)
+                                        .with_style(theme.contact_avatar),
+                                )
+                            }),
+                    ),
                 )
                 .constrained()
                 .with_height(theme.row_height)

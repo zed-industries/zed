@@ -275,5 +275,6 @@ export default function contacts_panel(): any {
                 },
             },
         }),
+        face_overlap: 8
     }
 }

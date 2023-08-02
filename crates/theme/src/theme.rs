@@ -241,6 +241,7 @@ pub struct CollabPanel {
     pub disabled_button: IconButton,
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
+    pub face_overlap: f32,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

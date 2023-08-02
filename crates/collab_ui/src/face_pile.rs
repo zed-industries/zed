@@ -7,34 +7,34 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, LayoutContext, SceneBuilder, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, SceneBuilder, View, ViewContext,
 };
 
 use crate::CollabTitlebarItem;
 
-pub(crate) struct FacePile {
+pub(crate) struct FacePile<V: View> {
     overlap: f32,
-    faces: Vec<AnyElement<CollabTitlebarItem>>,
+    faces: Vec<AnyElement<V>>,
 }
 
-impl FacePile {
-    pub fn new(overlap: f32) -> FacePile {
-        FacePile {
+impl<V: View> FacePile<V> {
+    pub fn new(overlap: f32) -> Self {
+        Self {
             overlap,
             faces: Vec::new(),
         }
     }
 }
 
-impl Element<CollabTitlebarItem> for FacePile {
+impl<V: View> Element<V> for FacePile<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        view: &mut CollabTitlebarItem,
-        cx: &mut LayoutContext<CollabTitlebarItem>,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
@@ -53,8 +53,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
-        view: &mut CollabTitlebarItem,
-        cx: &mut ViewContext<CollabTitlebarItem>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -80,8 +80,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &CollabTitlebarItem,
-        _: &ViewContext<CollabTitlebarItem>,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -91,8 +91,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &CollabTitlebarItem,
-        _: &ViewContext<CollabTitlebarItem>,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "FacePile",
@@ -101,8 +101,8 @@ impl Element<CollabTitlebarItem> for FacePile {
     }
 }
 
-impl Extend<AnyElement<CollabTitlebarItem>> for FacePile {
-    fn extend<T: IntoIterator<Item = AnyElement<CollabTitlebarItem>>>(&mut self, children: T) {
+impl<V: View> Extend<AnyElement<V>> for FacePile<V> {
+    fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

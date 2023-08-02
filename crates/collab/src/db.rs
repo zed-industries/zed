@@ -2200,26 +2200,6 @@ impl Database {
         ))
     }
 
-    async fn get_channel_members_for_room(
-        &self,
-        room_id: RoomId,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<UserId>> {
-        let db_room = room::Model {
-            id: room_id,
-            ..Default::default()
-        };
-
-        let channel_users =
-            if let Some(channel) = db_room.find_related(channel::Entity).one(tx).await? {
-                self.get_channel_members_internal(channel.id, tx).await?
-            } else {
-                Vec::new()
-            };
-
-        Ok(channel_users)
-    }
-
     // projects
 
     pub async fn project_count_excluding_admins(&self) -> Result<usize> {

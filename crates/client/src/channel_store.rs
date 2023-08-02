@@ -7,11 +7,12 @@ use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 
 type ChannelId = u64;
+type UserId = u64;
 
 pub struct ChannelStore {
     channels: Vec<Arc<Channel>>,
     channel_invitations: Vec<Arc<Channel>>,
-    channel_participants: HashMap<ChannelId, Vec<ChannelId>>,
+    channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -60,6 +61,12 @@ impl ChannelStore {
         self.channels.iter().find(|c| c.id == channel_id).cloned()
     }
 
+    pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
+        self.channel_participants
+            .get(&channel_id)
+            .map_or(&[], |v| v.as_slice())
+    }
+
     pub fn create_channel(
         &self,
         name: &str,
@@ -78,7 +85,7 @@ impl ChannelStore {
     pub fn invite_member(
         &self,
         channel_id: ChannelId,
-        user_id: u64,
+        user_id: UserId,
         admin: bool,
     ) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
@@ -162,6 +169,8 @@ impl ChannelStore {
             .retain(|channel| !payload.remove_channels.contains(&channel.id));
         self.channel_invitations
             .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
+        self.channel_participants
+            .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
 
         for channel in payload.channel_invitations {
             if let Some(existing_channel) = self
@@ -215,6 +224,49 @@ impl ChannelStore {
                 );
             }
         }
+
+        let mut all_user_ids = Vec::new();
+        let channel_participants = payload.channel_participants;
+        for entry in &channel_participants {
+            for user_id in entry.participant_user_ids.iter() {
+                if let Err(ix) = all_user_ids.binary_search(user_id) {
+                    all_user_ids.insert(ix, *user_id);
+                }
+            }
+        }
+
+        // TODO: Race condition if an update channels messages comes in while resolving avatars
+        let users = self
+            .user_store
+            .update(cx, |user_store, cx| user_store.get_users(all_user_ids, cx));
+        cx.spawn(|this, mut cx| async move {
+            let users = users.await?;
+
+            this.update(&mut cx, |this, cx| {
+                for entry in &channel_participants {
+                    let mut participants: Vec<_> = entry
+                        .participant_user_ids
+                        .iter()
+                        .filter_map(|user_id| {
+                            users
+                                .binary_search_by_key(&user_id, |user| &user.id)
+                                .ok()
+                                .map(|ix| users[ix].clone())
+                        })
+                        .collect();
+
+                    participants.sort_by_key(|u| u.id);
+
+                    this.channel_participants
+                        .insert(entry.channel_id, participants);
+                }
+
+                cx.notify();
+            });
+            anyhow::Ok(())
+        })
+        .detach();
+
         cx.notify();
     }
 }
