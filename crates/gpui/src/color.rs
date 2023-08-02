@@ -141,6 +141,12 @@ impl<'de> Deserialize<'de> for Color {
     }
 }
 
+impl From<u32> for Color {
+    fn from(value: u32) -> Self {
+        Self(ColorU::from_u32(value))
+    }
+}
+
 impl ToJson for Color {
     fn to_json(&self) -> serde_json::Value {
         json!(format!(

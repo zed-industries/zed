@@ -42,7 +42,7 @@ pub use test_app_context::{ContextHandle, TestAppContext};
 use window_input_handler::WindowInputHandler;
 
 use crate::{
-    elements::{AnyElement, AnyRootElement, RootElement},
+    elements::{AnyElement, AnyRootElement, Empty, RootElement},
     executor::{self, Task},
     fonts::TextStyle,
     json,
@@ -53,7 +53,7 @@ use crate::{
     },
     util::post_inc,
     window::{Window, WindowContext},
-    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId,
+    AssetCache, AssetSource, ClipboardItem, Element, FontCache, MouseRegionId,
 };
 
 use self::ref_counts::RefCounts;
@@ -71,10 +71,12 @@ pub trait Entity: 'static {
 }
 
 pub trait View: Entity + Sized {
-    fn ui_name() -> &'static str;
     fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self>;
     fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn ui_name() -> &'static str {
+        type_name::<Self>()
+    }
     fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
         false
     }
@@ -122,6 +124,16 @@ pub trait View: Entity + Sized {
         _: Option<Range<usize>>,
         _: &mut ViewContext<Self>,
     ) {
+    }
+}
+
+impl Entity for () {
+    type Event = ();
+}
+
+impl View for () {
+    fn render(&mut self, _: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self> {
+        Empty::new().into_any()
     }
 }
 
@@ -3364,7 +3376,7 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     }
 }
 
-pub struct LayoutContext<'a, 'b, 'c, V: View> {
+pub struct LayoutContext<'a, 'b, 'c, V> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,

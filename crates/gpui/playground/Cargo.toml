@@ -13,3 +13,6 @@ playground_ui = { path = "ui" }
 gpui = { path = ".." }
 log.workspace = true
 simplelog = "0.9"
+
+[dev-dependencies]
+gpui = { path = "..", features = ["test-support"] }

@@ -161,6 +161,19 @@ impl TestAppContext {
         (window_id, view)
     }
 
+    pub fn add_window2<T, F>(&mut self, build_root_view: F) -> WindowHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        let (window_id, view) = self
+            .cx
+            .borrow_mut()
+            .add_window(Default::default(), build_root_view);
+        self.simulate_window_activation(Some(window_id));
+        (window_id, view)
+    }
+
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
     where
         T: View,

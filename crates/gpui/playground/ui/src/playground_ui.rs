@@ -1,33 +1,21 @@
-use gpui::{color::Color, AnyElement, Element, LayoutContext, View, ViewContext};
-use node::{
-    length::{auto, rems},
-    *,
-};
+use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
+use node::{length::auto, *};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
 use tokens::{margin::m4, text::lg};
 
+mod color;
 mod node;
+mod themes;
 mod tokens;
 
 #[derive(Element, Clone, Default)]
 pub struct Playground<V: View>(PhantomData<V>);
 
+impl<V: View> Node<V> {}
+
 impl<V: View> Playground<V> {
-    pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> AnyElement<V> {
-        row()
-            .id("green row")
-            .width(auto())
-            .height(rems(20.))
-            .fill(Color::green())
-        // .child(
-        //     row()
-        //         .id("blue box")
-        //         .width(rems(20.))
-        //         .height(auto())
-        //         .margin_left(auto())
-        //         .fill(Color::blue()),
-        // )
-        // .into_any()
+    pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
+        column()
     }
 }
 

@@ -1,5 +1,6 @@
-use derive_more::Add;
+use derive_more::{Add, Deref, DerefMut};
 use gpui::elements::layout_highlighted_chunks;
+use gpui::Entity;
 use gpui::{
     color::Color,
     fonts::HighlightStyle,
@@ -19,14 +20,12 @@ use log::warn;
 use optional_struct::*;
 use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
 
+use crate::color::Rgba;
+
 pub struct Node<V: View> {
     style: NodeStyle,
     children: Vec<AnyElement<V>>,
     id: Option<Cow<'static, str>>,
-}
-
-pub fn node<V: View>(child: impl Element<V>) -> Node<V> {
-    Node::default().child(child)
 }
 
 pub fn column<V: View>() -> Node<V> {
@@ -91,10 +90,22 @@ impl<V: View> Element<V> for Node<V> {
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
+        dbg!(self.id_string());
+        dbg!(bounds.origin(), bounds.size());
+
+        let bounds_center = dbg!(bounds.size()) / 2.;
+        let bounds_target = bounds_center + (bounds_center * self.style.align.0);
+        let layout_center = dbg!(layout.size) / 2.;
+        let layout_target = layout_center + layout_center * self.style.align.0;
+        let delta = bounds_target - layout_target;
+
+        let aligned_bounds = RectF::new(bounds.origin() + delta, layout.size);
+        dbg!(aligned_bounds.origin(), aligned_bounds.size());
         let margined_bounds = RectF::from_points(
-            bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
-            bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
+            aligned_bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
+            aligned_bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
         );
+        dbg!(margined_bounds.origin(), margined_bounds.size());
 
         // Paint drop shadow
         for shadow in &self.style.shadows {
@@ -118,17 +129,11 @@ impl<V: View> Element<V> for Node<V> {
 
         // Render the background and/or the border.
         let Fill::Color(fill_color) = self.style.fill;
-        let is_fill_visible = !fill_color.is_fully_transparent();
+        let is_fill_visible = fill_color.a > 0.;
         if is_fill_visible || self.style.borders.is_visible() {
-            eprintln!(
-                "{}: paint background: {:?}",
-                self.id.as_deref().unwrap_or(""),
-                margined_bounds
-            );
-
             scene.push_quad(Quad {
                 bounds: margined_bounds,
-                background: is_fill_visible.then_some(fill_color),
+                background: is_fill_visible.then_some(fill_color.into()),
                 border: scene::Border {
                     width: self.style.borders.width,
                     color: self.style.borders.color,
@@ -162,35 +167,7 @@ impl<V: View> Element<V> for Node<V> {
                 // let parent_size = padded_bounds.size();
                 let mut child_origin = padded_bounds.origin();
 
-                // Align all children together along the primary axis
-                // let mut align_horizontally = false;
-                // let mut align_vertically = false;
-                // match axis {
-                //     Axis2d::X => align_horizontally = true,
-                //     Axis2d::Y => align_vertically = true,
-                // }
-                // align_child(
-                //     &mut child_origin,
-                //     parent_size,
-                //     layout.content_size,
-                //     self.style.align.0,
-                //     align_horizontally,
-                //     align_vertically,
-                // );
-
                 for child in &mut self.children {
-                    // Align each child along the cross axis
-                    // align_horizontally = !align_horizontally;
-                    // align_vertically = !align_vertically;
-                    // align_child(
-                    //     &mut child_origin,
-                    //     parent_size,
-                    //     child.size(),
-                    //     self.style.align.0,
-                    //     align_horizontally,
-                    //     align_vertically,
-                    // );
-                    //
                     child.paint(scene, child_origin, visible_bounds, view, cx);
 
                     // Advance along the primary axis by the size of this child
@@ -284,6 +261,16 @@ impl<V: View> Node<V> {
         self
     }
 
+    pub fn margin_x(mut self, margin: impl Into<Length>) -> Self {
+        self.style.margins.set_x(margin.into());
+        self
+    }
+
+    pub fn margin_y(mut self, margin: impl Into<Length>) -> Self {
+        self.style.margins.set_y(margin.into());
+        self
+    }
+
     pub fn margin_top(mut self, top: Length) -> Self {
         self.style.margins.top = top;
         self
@@ -301,6 +288,23 @@ impl<V: View> Node<V> {
 
     pub fn margin_right(mut self, right: impl Into<Length>) -> Self {
         self.style.margins.right = right.into();
+        self
+    }
+
+    pub fn align(mut self, alignment: f32) -> Self {
+        let cross_axis = self
+            .style
+            .axis
+            .to_2d()
+            .map(Axis2d::rotate)
+            .unwrap_or(Axis2d::Y);
+        self.style.align.set(cross_axis, alignment);
+        self
+    }
+
+    pub fn justify(mut self, alignment: f32) -> Self {
+        let axis = self.style.axis.to_2d().unwrap_or(Axis2d::X);
+        self.style.align.set(axis, alignment);
         self
     }
 
@@ -458,7 +462,7 @@ impl<V: View> Node<V> {
                     let mut margin_flex = self.style.margins.flex().get(axis);
                     let mut max_margin_length = constraint.max.get(axis) - fixed_length;
                     layout.margins.compute_flex_edges(
-                        &self.style.padding,
+                        &self.style.margins,
                         axis,
                         &mut margin_flex,
                         &mut max_margin_length,
@@ -502,7 +506,8 @@ impl<V: View> Node<V> {
             }
         }
 
-        layout
+        dbg!(self.id_string());
+        dbg!(layout)
     }
 }
 
@@ -549,27 +554,6 @@ impl From<Length> for LeftRight {
     }
 }
 
-fn align_child(
-    child_origin: &mut Vector2F,
-    parent_size: Vector2F,
-    child_size: Vector2F,
-    alignment: Vector2F,
-    horizontal: bool,
-    vertical: bool,
-) {
-    let parent_center = parent_size / 2.;
-    let parent_target = parent_center + parent_center * alignment;
-    let child_center = child_size / 2.;
-    let child_target = child_center + child_center * alignment;
-
-    if horizontal {
-        child_origin.set_x(child_origin.x() + parent_target.x() - child_target.x())
-    }
-    if vertical {
-        child_origin.set_y(child_origin.y() + parent_target.y() - child_target.y());
-    }
-}
-
 struct Interactive<Style> {
     default: Style,
     hovered: Style,
@@ -581,7 +565,7 @@ struct Interactive<Style> {
 pub struct NodeStyle {
     axis: Axis3d,
     wrap: bool,
-    align: Align,
+    align: Alignment,
     overflow_x: Overflow,
     overflow_y: Overflow,
     gap_x: Gap,
@@ -694,6 +678,18 @@ impl<T> Edges<T> {
             Axis2d::X => &mut self.right,
             Axis2d::Y => &mut self.bottom,
         }
+    }
+}
+
+impl<T: Clone> Edges<T> {
+    pub fn set_x(&mut self, value: T) {
+        self.left = value.clone();
+        self.right = value
+    }
+
+    pub fn set_y(&mut self, value: T) {
+        self.top = value.clone();
+        self.bottom = value
     }
 }
 
@@ -838,18 +834,18 @@ struct CornerRadii {
 
 #[derive(Clone)]
 pub enum Fill {
-    Color(Color),
+    Color(Rgba),
 }
 
-impl From<Color> for Fill {
-    fn from(value: Color) -> Self {
-        Fill::Color(value)
+impl<C: Into<Rgba>> From<C> for Fill {
+    fn from(value: C) -> Self {
+        Fill::Color(value.into())
     }
 }
 
 impl Default for Fill {
     fn default() -> Self {
-        Fill::Color(Color::default())
+        Fill::Color(Rgba::default())
     }
 }
 
@@ -1028,10 +1024,10 @@ pub mod length {
     }
 }
 
-#[derive(Clone)]
-struct Align(Vector2F);
+#[derive(Clone, Deref, DerefMut)]
+struct Alignment(Vector2F);
 
-impl Default for Align {
+impl Default for Alignment {
     fn default() -> Self {
         Self(vec2f(-1., -1.))
     }
@@ -1251,8 +1247,6 @@ impl<V: View> Element<V> for Text {
         _: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        dbg!(bounds);
-
         let mut origin = bounds.origin();
         let empty = Vec::new();
         let mut callback = |_, _, _: &mut SceneBuilder, _: &mut AppContext| {};
@@ -1466,7 +1460,7 @@ trait ElementExt<V: View> {
     where
         Self: Element<V> + Sized,
     {
-        node(self).margin_left(margin_left)
+        column().child(self).margin_left(margin_left)
     }
 }
 
@@ -1479,6 +1473,76 @@ where
     where
         Self: Sized,
     {
-        node(self).margin_left(margin_left)
+        column().child(self).margin_left(margin_left)
+    }
+}
+
+pub fn view<F, E>(mut function: F) -> ViewFn
+where
+    F: 'static + FnMut(&mut ViewContext<ViewFn>) -> E,
+    E: Element<ViewFn>,
+{
+    ViewFn(Box::new(move |cx| (function)(cx).into_any()))
+}
+
+pub struct ViewFn(Box<dyn FnMut(&mut ViewContext<ViewFn>) -> AnyElement<ViewFn>>);
+
+impl Entity for ViewFn {
+    type Event = ();
+}
+
+impl View for ViewFn {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        (self.0)(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::themes::rose_pine::{self, RosePineThemes};
+
+    use super::{
+        length::{auto, rems},
+        *,
+    };
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn test_layout(cx: &mut TestAppContext) {
+        let view = cx
+            .add_window(|_| {
+                view(|_| {
+                    let theme = rose_pine::dawn();
+                    column()
+                        .width(auto())
+                        .height(auto())
+                        .justify(1.)
+                        .child(
+                            row()
+                                .width(auto())
+                                .height(rems(10.))
+                                .fill(theme.foam)
+                                .justify(1.)
+                                .child(row().width(rems(10.)).height(auto()).fill(theme.gold)),
+                        )
+                        .child(row())
+                });
+            })
+            .1;
+
+        // tree.layout(
+        //     SizeConstraint::strict(vec2f(100., 100.)),
+        //     &mut (),
+        //     LayoutContext::test(),
+        // );
+
+        // LayoutContext::new(
+        //     cx,
+        //     new_parents,
+        //     views_to_notify_if_ancestors_change,
+        //     refreshing,
+        // )
+
+        // tree.layout(SizeConstraint::strict(vec2f(100., 100.)), &mut (), cx)
     }
 }

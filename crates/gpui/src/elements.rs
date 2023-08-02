@@ -201,7 +201,7 @@ pub trait Element<V: View>: 'static {
     }
 }
 
-trait AnyElementState<V: View> {
+trait AnyElementState<V> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,

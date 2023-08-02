@@ -325,7 +325,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 view: &mut V,
                 cx: &mut gpui::LayoutContext<V>,
             ) -> (gpui::geometry::vector::Vector2F, gpui::elements::AnyElement<V>) {
-                let mut element = self.render(view, cx);
+                let mut element = self.render(view, cx).into_any();
                 let size = element.layout(constraint, view, cx);
                 (size, element)
             }
