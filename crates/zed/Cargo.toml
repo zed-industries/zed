@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.98.0"
+version = "0.99.0"
 publish = false
 
 [lib]
@@ -128,6 +128,7 @@ tree-sitter-svelte.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
+tree-sitter-nix.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

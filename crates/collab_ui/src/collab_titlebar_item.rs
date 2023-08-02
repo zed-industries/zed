@@ -374,7 +374,7 @@ impl CollabTitlebarItem {
                         "Share Feedback",
                         feedback::feedback_editor::GiveFeedback,
                     ),
-                    ContextMenuItem::action("Sign out", SignOut),
+                    ContextMenuItem::action("Sign Out", SignOut),
                 ]
             } else {
                 vec![

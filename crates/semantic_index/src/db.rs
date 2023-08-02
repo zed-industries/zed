@@ -1,7 +1,6 @@
 use crate::{parsing::Document, SEMANTIC_INDEX_VERSION};
 use anyhow::{anyhow, Context, Result};
-use globset::GlobMatcher;
-use project::Fs;
+use project::{search::PathMatcher, Fs};
 use rpc::proto::Timestamp;
 use rusqlite::{
     params,
@@ -290,8 +289,8 @@ impl VectorDatabase {
     pub fn retrieve_included_file_ids(
         &self,
         worktree_ids: &[i64],
-        include_globs: Vec<GlobMatcher>,
-        exclude_globs: Vec<GlobMatcher>,
+        includes: &[PathMatcher],
+        excludes: &[PathMatcher],
     ) -> Result<Vec<i64>> {
         let mut file_query = self.db.prepare(
             "
@@ -310,13 +309,9 @@ impl VectorDatabase {
         while let Some(row) = rows.next()? {
             let file_id = row.get(0)?;
             let relative_path = row.get_ref(1)?.as_str()?;
-            let included = include_globs.is_empty()
-                || include_globs
-                    .iter()
-                    .any(|glob| glob.is_match(relative_path));
-            let excluded = exclude_globs
-                .iter()
-                .any(|glob| glob.is_match(relative_path));
+            let included =
+                includes.is_empty() || includes.iter().any(|glob| glob.is_match(relative_path));
+            let excluded = excludes.iter().any(|glob| glob.is_match(relative_path));
             if included && !excluded {
                 file_ids.push(file_id);
             }

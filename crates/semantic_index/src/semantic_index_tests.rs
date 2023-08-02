@@ -7,11 +7,10 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use globset::Glob;
 use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use pretty_assertions::assert_eq;
-use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
+use project::{project_settings::ProjectSettings, search::PathMatcher, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
@@ -121,8 +120,8 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     );
 
     // Test Include Files Functonality
-    let include_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
-    let exclude_files = vec![Glob::new("*.rs").unwrap().compile_matcher()];
+    let include_files = vec![PathMatcher::new("*.rs").unwrap()];
+    let exclude_files = vec![PathMatcher::new("*.rs").unwrap()];
     let rust_only_search_results = store
         .update(cx, |store, cx| {
             store.search_project(
@@ -487,6 +486,79 @@ async fn test_code_context_retrieval_javascript() {
 }
 
 #[gpui::test]
+async fn test_code_context_retrieval_lua() {
+    let language = lua_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        -- Creates a new class
+        -- @param baseclass The Baseclass of this class, or nil.
+        -- @return A new class reference.
+        function classes.class(baseclass)
+            -- Create the class definition and metatable.
+            local classdef = {}
+            -- Find the super class, either Object or user-defined.
+            baseclass = baseclass or classes.Object
+            -- If this class definition does not know of a function, it will 'look up' to the Baseclass via the __index of the metatable.
+            setmetatable(classdef, { __index = baseclass })
+            -- All class instances have a reference to the class object.
+            classdef.class = classdef
+            --- Recursivly allocates the inheritance tree of the instance.
+            -- @param mastertable The 'root' of the inheritance tree.
+            -- @return Returns the instance with the allocated inheritance tree.
+            function classdef.alloc(mastertable)
+                -- All class instances have a reference to a superclass object.
+                local instance = { super = baseclass.alloc(mastertable) }
+                -- Any functions this instance does not know of will 'look up' to the superclass definition.
+                setmetatable(instance, { __index = classdef, __newindex = mastertable })
+                return instance
+            end
+        end
+        "#.unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (r#"
+                -- Creates a new class
+                -- @param baseclass The Baseclass of this class, or nil.
+                -- @return A new class reference.
+                function classes.class(baseclass)
+                    -- Create the class definition and metatable.
+                    local classdef = {}
+                    -- Find the super class, either Object or user-defined.
+                    baseclass = baseclass or classes.Object
+                    -- If this class definition does not know of a function, it will 'look up' to the Baseclass via the __index of the metatable.
+                    setmetatable(classdef, { __index = baseclass })
+                    -- All class instances have a reference to the class object.
+                    classdef.class = classdef
+                    --- Recursivly allocates the inheritance tree of the instance.
+                    -- @param mastertable The 'root' of the inheritance tree.
+                    -- @return Returns the instance with the allocated inheritance tree.
+                    function classdef.alloc(mastertable)
+                        --[ ... ]--
+                        --[ ... ]--
+                    end
+                end"#.unindent(),
+            114),
+            (r#"
+            --- Recursivly allocates the inheritance tree of the instance.
+            -- @param mastertable The 'root' of the inheritance tree.
+            -- @return Returns the instance with the allocated inheritance tree.
+            function classdef.alloc(mastertable)
+                -- All class instances have a reference to a superclass object.
+                local instance = { super = baseclass.alloc(mastertable) }
+                -- Any functions this instance does not know of will 'look up' to the superclass definition.
+                setmetatable(instance, { __index = classdef, __newindex = mastertable })
+                return instance
+            end"#.unindent(), 809),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_code_context_retrieval_elixir() {
     let language = elixir_lang();
     let mut retriever = CodeContextRetriever::new();
@@ -750,6 +822,346 @@ async fn test_code_context_retrieval_cpp() {
                 .unindent(),
                 1226,
             ),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_code_context_retrieval_ruby() {
+    let language = ruby_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        # This concern is inspired by "sudo mode" on GitHub. It
+        # is a way to re-authenticate a user before allowing them
+        # to see or perform an action.
+        #
+        # Add `before_action :require_challenge!` to actions you
+        # want to protect.
+        #
+        # The user will be shown a page to enter the challenge (which
+        # is either the password, or just the username when no
+        # password exists). Upon passing, there is a grace period
+        # during which no challenge will be asked from the user.
+        #
+        # Accessing challenge-protected resources during the grace
+        # period will refresh the grace period.
+        module ChallengableConcern
+            extend ActiveSupport::Concern
+
+            CHALLENGE_TIMEOUT = 1.hour.freeze
+
+            def require_challenge!
+                return if skip_challenge?
+
+                if challenge_passed_recently?
+                    session[:challenge_passed_at] = Time.now.utc
+                    return
+                end
+
+                @challenge = Form::Challenge.new(return_to: request.url)
+
+                if params.key?(:form_challenge)
+                    if challenge_passed?
+                        session[:challenge_passed_at] = Time.now.utc
+                    else
+                        flash.now[:alert] = I18n.t('challenge.invalid_password')
+                        render_challenge
+                    end
+                else
+                    render_challenge
+                end
+            end
+
+            def challenge_passed?
+                current_user.valid_password?(challenge_params[:current_password])
+            end
+        end
+
+        class Animal
+            include Comparable
+
+            attr_reader :legs
+
+            def initialize(name, legs)
+                @name, @legs = name, legs
+            end
+
+            def <=>(other)
+                legs <=> other.legs
+            end
+        end
+
+        # Singleton method for car object
+        def car.wheels
+            puts "There are four wheels"
+        end"#
+        .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                r#"
+        # This concern is inspired by "sudo mode" on GitHub. It
+        # is a way to re-authenticate a user before allowing them
+        # to see or perform an action.
+        #
+        # Add `before_action :require_challenge!` to actions you
+        # want to protect.
+        #
+        # The user will be shown a page to enter the challenge (which
+        # is either the password, or just the username when no
+        # password exists). Upon passing, there is a grace period
+        # during which no challenge will be asked from the user.
+        #
+        # Accessing challenge-protected resources during the grace
+        # period will refresh the grace period.
+        module ChallengableConcern
+            extend ActiveSupport::Concern
+
+            CHALLENGE_TIMEOUT = 1.hour.freeze
+
+            def require_challenge!
+                # ...
+            end
+
+            def challenge_passed?
+                # ...
+            end
+        end"#
+                    .unindent(),
+                558,
+            ),
+            (
+                r#"
+            def require_challenge!
+                return if skip_challenge?
+
+                if challenge_passed_recently?
+                    session[:challenge_passed_at] = Time.now.utc
+                    return
+                end
+
+                @challenge = Form::Challenge.new(return_to: request.url)
+
+                if params.key?(:form_challenge)
+                    if challenge_passed?
+                        session[:challenge_passed_at] = Time.now.utc
+                    else
+                        flash.now[:alert] = I18n.t('challenge.invalid_password')
+                        render_challenge
+                    end
+                else
+                    render_challenge
+                end
+            end"#
+                    .unindent(),
+                663,
+            ),
+            (
+                r#"
+                def challenge_passed?
+                    current_user.valid_password?(challenge_params[:current_password])
+                end"#
+                    .unindent(),
+                1254,
+            ),
+            (
+                r#"
+                class Animal
+                    include Comparable
+
+                    attr_reader :legs
+
+                    def initialize(name, legs)
+                        # ...
+                    end
+
+                    def <=>(other)
+                        # ...
+                    end
+                end"#
+                    .unindent(),
+                1363,
+            ),
+            (
+                r#"
+                def initialize(name, legs)
+                    @name, @legs = name, legs
+                end"#
+                    .unindent(),
+                1427,
+            ),
+            (
+                r#"
+                def <=>(other)
+                    legs <=> other.legs
+                end"#
+                    .unindent(),
+                1501,
+            ),
+            (
+                r#"
+                # Singleton method for car object
+                def car.wheels
+                    puts "There are four wheels"
+                end"#
+                    .unindent(),
+                1591,
+            ),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_code_context_retrieval_php() {
+    let language = php_lang();
+    let mut retriever = CodeContextRetriever::new();
+
+    let text = r#"
+        <?php
+
+        namespace LevelUp\Experience\Concerns;
+
+        /*
+        This is a multiple-lines comment block
+        that spans over multiple
+        lines
+        */
+        function functionName() {
+            echo "Hello world!";
+        }
+
+        trait HasAchievements
+        {
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {
+                if ($progress > 100) {
+                    throw new Exception(message: 'Progress cannot be greater than 100');
+                }
+
+                if ($this->achievements()->find($achievement->id)) {
+                    throw new Exception(message: 'User already has this Achievement');
+                }
+
+                $this->achievements()->attach($achievement, [
+                    'progress' => $progress ?? null,
+                ]);
+
+                $this->when(value: ($progress === null) || ($progress === 100), callback: fn (): ?array => event(new AchievementAwarded(achievement: $achievement, user: $this)));
+            }
+
+            public function achievements(): BelongsToMany
+            {
+                return $this->belongsToMany(related: Achievement::class)
+                ->withPivot(columns: 'progress')
+                ->where('is_secret', false)
+                ->using(AchievementUser::class);
+            }
+        }
+
+        interface Multiplier
+        {
+            public function qualifies(array $data): bool;
+
+            public function setMultiplier(): int;
+        }
+
+        enum AuditType: string
+        {
+            case Add = 'add';
+            case Remove = 'remove';
+            case Reset = 'reset';
+            case LevelUp = 'level_up';
+        }
+
+        ?>"#
+    .unindent();
+
+    let documents = retriever.parse_file(&text, language.clone()).unwrap();
+
+    assert_documents_eq(
+        &documents,
+        &[
+            (
+                r#"
+        /*
+        This is a multiple-lines comment block
+        that spans over multiple
+        lines
+        */
+        function functionName() {
+            echo "Hello world!";
+        }"#
+                .unindent(),
+                123,
+            ),
+            (
+                r#"
+        trait HasAchievements
+        {
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {/* ... */}
+
+            public function achievements(): BelongsToMany
+            {/* ... */}
+        }"#
+                .unindent(),
+                177,
+            ),
+            (r#"
+            /**
+            * @throws \Exception
+            */
+            public function grantAchievement(Achievement $achievement, $progress = null): void
+            {
+                if ($progress > 100) {
+                    throw new Exception(message: 'Progress cannot be greater than 100');
+                }
+
+                if ($this->achievements()->find($achievement->id)) {
+                    throw new Exception(message: 'User already has this Achievement');
+                }
+
+                $this->achievements()->attach($achievement, [
+                    'progress' => $progress ?? null,
+                ]);
+
+                $this->when(value: ($progress === null) || ($progress === 100), callback: fn (): ?array => event(new AchievementAwarded(achievement: $achievement, user: $this)));
+            }"#.unindent(), 245),
+            (r#"
+                public function achievements(): BelongsToMany
+                {
+                    return $this->belongsToMany(related: Achievement::class)
+                    ->withPivot(columns: 'progress')
+                    ->where('is_secret', false)
+                    ->using(AchievementUser::class);
+                }"#.unindent(), 902),
+            (r#"
+                interface Multiplier
+                {
+                    public function qualifies(array $data): bool;
+
+                    public function setMultiplier(): int;
+                }"#.unindent(),
+                1146),
+            (r#"
+                enum AuditType: string
+                {
+                    case Add = 'add';
+                    case Remove = 'remove';
+                    case Reset = 'reset';
+                    case LevelUp = 'level_up';
+                }"#.unindent(), 1265)
         ],
     );
 }
@@ -1078,6 +1490,131 @@ fn cpp_lang() -> Arc<Language> {
                     declarator: (_) @name) @item
             )
 
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn lua_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Lua".into(),
+                path_suffixes: vec!["lua".into()],
+                collapsed_placeholder: "--[ ... ]--".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_lua::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                (function_declaration
+                    "function" @name
+                    name: (_) @name
+                    (comment)* @collapse
+                    body: (block) @collapse
+                ) @item
+            )
+        "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn php_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "PHP".into(),
+                path_suffixes: vec!["php".into()],
+                collapsed_placeholder: "/* ... */".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_php::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                [
+                    (function_definition
+                        "function" @name
+                        name: (_) @name
+                        body: (_
+                            "{" @keep
+                            "}" @keep) @collapse
+                        )
+
+                    (trait_declaration
+                        "trait" @name
+                        name: (_) @name)
+
+                    (method_declaration
+                        "function" @name
+                        name: (_) @name
+                        body: (_
+                            "{" @keep
+                            "}" @keep) @collapse
+                        )
+
+                    (interface_declaration
+                        "interface" @name
+                        name: (_) @name
+                        )
+
+                    (enum_declaration
+                        "enum" @name
+                        name: (_) @name
+                        )
+
+                ] @item
+            )
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn ruby_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Ruby".into(),
+                path_suffixes: vec!["rb".into()],
+                collapsed_placeholder: "# ...".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_ruby::language()),
+        )
+        .with_embedding_query(
+            r#"
+            (
+                (comment)* @context
+                .
+                [
+                (module
+                    "module" @name
+                    name: (_) @name)
+                (method
+                    "def" @name
+                    name: (_) @name
+                    body: (body_statement) @collapse)
+                (class
+                    "class" @name
+                    name: (_) @name)
+                (singleton_method
+                    "def" @name
+                    object: (_) @name
+                    "." @name
+                    name: (_) @name
+                    body: (body_statement) @collapse)
+                ] @item
+            )
             "#,
         )
         .unwrap(),
