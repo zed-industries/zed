@@ -51,7 +51,10 @@ actions!(
         ToggleFocus,
         NextField,
         ToggleSemanticSearch,
-        CycleMode
+        CycleMode,
+        ActivateTextMode,
+        ActivateSemanticMode,
+        ActivateRegexMode
     ]
 );
 
@@ -132,6 +135,68 @@ enum SearchMode {
     Text,
     Semantic,
     Regex,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl SearchMode {
+    fn label(&self) -> &'static str {
+        match self {
+            SearchMode::Text => "Text",
+            SearchMode::Semantic => "Semantic",
+            SearchMode::Regex => "Regex",
+        }
+    }
+
+    fn region_id(&self) -> usize {
+        match self {
+            SearchMode::Text => 3,
+            SearchMode::Semantic => 4,
+            SearchMode::Regex => 5,
+        }
+    }
+
+    fn tooltip_text(&self) -> &'static str {
+        match self {
+            SearchMode::Text => "Activate Text Search",
+            SearchMode::Semantic => "Activate Semantic Search",
+            SearchMode::Regex => "Activate Regex Search",
+        }
+    }
+
+    fn activate_action(&self) -> Box<dyn Action> {
+        match self {
+            SearchMode::Text => Box::new(ActivateTextMode),
+            SearchMode::Semantic => Box::new(ActivateSemanticMode),
+            SearchMode::Regex => Box::new(ActivateRegexMode),
+        }
+    }
+
+    fn border_left(&self) -> bool {
+        match self {
+            SearchMode::Text => false,
+            _ => true,
+        }
+    }
+
+    fn border_right(&self) -> bool {
+        match self {
+            SearchMode::Regex => false,
+            _ => true,
+        }
+    }
+
+    fn button_side(&self) -> Option<Side> {
+        match self {
+            SearchMode::Text => Some(Side::Left),
+            SearchMode::Semantic => None,
+            SearchMode::Regex => Some(Side::Right),
+        }
+    }
 }
 
 pub struct ProjectSearchBar {
@@ -560,6 +625,68 @@ impl Item for ProjectSearchView {
 }
 
 impl ProjectSearchView {
+    fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        self.current_mode = mode;
+
+        match mode {
+            SearchMode::Semantic => {
+                if let Some(semantic_index) = SemanticIndex::global(cx) {
+                    // Semantic search uses no options
+                    self.search_options = SearchOptions::none();
+
+                    let project = self.model.read(cx).project.clone();
+                    let index_task = semantic_index.update(cx, |semantic_index, cx| {
+                        semantic_index.index_project(project, cx)
+                    });
+
+                    cx.spawn(|search_view, mut cx| async move {
+                        let (files_to_index, mut files_remaining_rx) = index_task.await?;
+
+                        search_view.update(&mut cx, |search_view, cx| {
+                            cx.notify();
+                            search_view.semantic = Some(SemanticSearchState {
+                                file_count: files_to_index,
+                                outstanding_file_count: files_to_index,
+                                _progress_task: cx.spawn(|search_view, mut cx| async move {
+                                    while let Some(count) = files_remaining_rx.recv().await {
+                                        search_view
+                                            .update(&mut cx, |search_view, cx| {
+                                                if let Some(semantic_search_state) =
+                                                    &mut search_view.semantic
+                                                {
+                                                    semantic_search_state.outstanding_file_count =
+                                                        count;
+                                                    cx.notify();
+                                                    if count == 0 {
+                                                        return;
+                                                    }
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                            });
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+            SearchMode::Regex => {
+                if !self.is_option_enabled(SearchOptions::REGEX) {
+                    self.toggle_search_option(SearchOptions::REGEX, cx);
+                }
+                self.semantic = None;
+            }
+            SearchMode::Text => {
+                if self.is_option_enabled(SearchOptions::REGEX) {
+                    self.toggle_search_option(SearchOptions::REGEX, cx);
+                }
+                self.semantic = None;
+            }
+        }
+        cx.notify();
+    }
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
         let project;
         let excerpts;
@@ -739,24 +866,29 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(semantic) = &mut self.semantic {
-            if semantic.outstanding_file_count > 0 {
-                return;
-            }
+        let mode = self.current_mode;
+        match mode {
+            SearchMode::Semantic => {
+                if let Some(semantic) = &mut self.semantic {
+                    if semantic.outstanding_file_count > 0 {
+                        return;
+                    }
 
-            let query = self.query_editor.read(cx).text(cx);
-            if let Some((included_files, exclude_files)) =
-                self.get_included_and_excluded_globsets(cx)
-            {
-                self.model.update(cx, |model, cx| {
-                    model.semantic_search(query, included_files, exclude_files, cx)
-                });
+                    let query = self.query_editor.read(cx).text(cx);
+                    if let Some((included_files, exclude_files)) =
+                        self.get_included_and_excluded_globsets(cx)
+                    {
+                        self.model.update(cx, |model, cx| {
+                            model.semantic_search(query, included_files, exclude_files, cx)
+                        });
+                    }
+                }
             }
-            return;
-        }
-
-        if let Some(query) = self.build_search_query(cx) {
-            self.model.update(cx, |model, cx| model.search(query, cx));
+            _ => {
+                if let Some(query) = self.build_search_query(cx) {
+                    self.model.update(cx, |model, cx| model.search(query, cx));
+                }
+            }
         }
     }
 
@@ -791,7 +923,10 @@ impl ProjectSearchView {
 
         Some((included_files, excluded_files))
     }
-
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) {
+        self.search_options.toggle(option);
+        self.semantic = None;
+    }
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
         let included_files =
@@ -957,6 +1092,9 @@ impl ProjectSearchView {
 
         cx.propagate_action();
     }
+    fn is_option_enabled(&self, option: SearchOptions) -> bool {
+        self.search_options.contains(option)
+    }
 }
 
 impl Default for ProjectSearchBar {
@@ -1117,12 +1255,12 @@ impl ProjectSearchBar {
                     SearchMode::Regex
                 };
 
-                this.current_mode = match mode {
+                let new_mode = match mode {
                     &SearchMode::Text => next_text_state,
                     &SearchMode::Semantic => SearchMode::Regex,
                     SearchMode::Regex => SearchMode::Text,
                 };
-                cx.notify();
+                this.activate_search_mode(new_mode, cx);
             })
         }
     }
@@ -1235,12 +1373,7 @@ impl ProjectSearchBar {
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.search_options.toggle(option);
-                if option.contains(SearchOptions::REGEX) {
-                    search_view.current_mode = SearchMode::Regex;
-                }
-                search_view.semantic = None;
-                search_view.search(cx);
+                search_view.toggle_search_option(option, cx);
             });
             cx.notify();
             true
@@ -1248,6 +1381,7 @@ impl ProjectSearchBar {
             false
         }
     }
+
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
@@ -1401,6 +1535,98 @@ impl ProjectSearchBar {
             cx,
         )
         .into_any()
+    }
+
+    fn render_search_mode_button(
+        &self,
+        mode: SearchMode,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let is_active = if let Some(search) = self.active_project_search.as_ref() {
+            let search = search.read(cx);
+            search.current_mode == mode
+        } else {
+            false
+        };
+
+        enum SearchModeButton {}
+        MouseEventHandler::<SearchModeButton, _>::new(mode.region_id(), cx, |state, cx| {
+            let theme = theme::current(cx);
+            let mut style = theme
+                .search
+                .mode_button
+                .in_state(is_active)
+                .style_for(state)
+                .clone();
+
+            let label = Label::new(mode.label(), style.text.clone())
+                .contained()
+                .with_style(style.container);
+
+            if let Some(button_side) = mode.button_side() {
+                style.container.border.left = mode.border_left();
+                style.container.border.right = mode.border_right();
+
+                if button_side == Side::Left {
+                    Flex::row()
+                        .with_child(
+                            ButtonSide::left(
+                                style
+                                    .container
+                                    .background_color
+                                    .unwrap_or_else(gpui::color::Color::transparent_black),
+                            )
+                            .with_border(style.container.border.width, style.container.border.color)
+                            .contained()
+                            .constrained()
+                            .with_max_width(theme.search.mode_filling_width),
+                        )
+                        .with_child(label)
+                        .into_any()
+                } else {
+                    Flex::row()
+                        .with_child(label)
+                        .with_child(
+                            ButtonSide::right(
+                                style
+                                    .container
+                                    .background_color
+                                    .unwrap_or_else(gpui::color::Color::transparent_black),
+                            )
+                            .with_border(style.container.border.width, style.container.border.color)
+                            .contained()
+                            .constrained()
+                            .with_max_width(theme.search.mode_filling_width),
+                        )
+                        .into_any()
+                }
+            } else {
+                label.into_any()
+            }
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.activate_search_mode(mode, cx);
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<SearchModeButton>(
+            mode.region_id(),
+            mode.tooltip_text().to_owned(),
+            Some(mode.activate_action()),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
+
+    fn activate_search_mode(&self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        // Update Current Mode
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.activate_search_mode(mode, cx);
+            });
+            cx.notify();
+        }
     }
 
     fn render_regex_button(
@@ -1561,6 +1787,7 @@ impl ProjectSearchBar {
         )
         .into_any()
     }
+
     fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
             search.read(cx).search_options.contains(option)
@@ -1609,7 +1836,6 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .right()
                 .flex(1.0, true);
-            let regex_button = self.render_regex_button("Regex", search.current_mode.clone(), cx);
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
             let search = _search.read(cx);
             let filter_button = {
@@ -1726,9 +1952,8 @@ impl View for ProjectSearchBar {
                     )
             });
 
-            let semantic_index =
-                SemanticIndex::enabled(cx).then(|| self.render_semantic_search_button(cx));
-            let normal_search = self.render_text_search_button(cx);
+            let semantic_index = SemanticIndex::enabled(cx)
+                .then(|| self.render_search_mode_button(SearchMode::Semantic, cx));
             Flex::row()
                 .with_child(
                     Flex::column()
@@ -1778,9 +2003,9 @@ impl View for ProjectSearchBar {
                     Flex::column().with_child(
                         Flex::row()
                             .align_children_center()
-                            .with_child(normal_search)
+                            .with_child(self.render_search_mode_button(SearchMode::Text, cx))
                             .with_children(semantic_index)
-                            .with_child(regex_button)
+                            .with_child(self.render_search_mode_button(SearchMode::Regex, cx))
                             .constrained()
                             .with_height(theme.workspace.toolbar.height)
                             .contained()
