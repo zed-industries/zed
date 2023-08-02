@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, ChannelId, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{self, ChannelId, ChannelRoom, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -2426,12 +2426,30 @@ fn contact_for_user(
     }
 }
 
-fn room_updated(room: &proto::Room, peer: &Peer) {
+fn room_updated(room: &ChannelRoom, peer: &Peer, pool: &ConnectionPool) {
+    let channel_ids = &room.channel_participants;
+    let room = &room.room;
+
     broadcast(
         None,
         room.participants
             .iter()
             .filter_map(|participant| Some(participant.peer_id?.into())),
+        |peer_id| {
+            peer.send(
+                peer_id.into(),
+                proto::RoomUpdated {
+                    room: Some(room.clone()),
+                },
+            )
+        },
+    );
+
+    broadcast(
+        None,
+        channel_ids
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             peer.send(
                 peer_id.into(),
@@ -2491,7 +2509,11 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             project_left(project, session);
         }
 
-        room_updated(&left_room.room, &session.peer);
+        {
+            let connection_pool = session.connection_pool().await;
+            room_updated(&left_room.room, &session.peer, &connection_pool);
+        }
+
         room_id = RoomId::from_proto(left_room.room.id);
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
