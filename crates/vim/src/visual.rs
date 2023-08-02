@@ -67,7 +67,9 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
                     // ensure the current character is included in the selection.
                     if !selection.reversed {
+                        // TODO: maybe try clipping left for multi-buffers
                         let next_point = movement::right(map, selection.end);
+
                         if !(next_point.column() == 0 && next_point == map.max_point()) {
                             selection.end = movement::right(map, selection.end)
                         }

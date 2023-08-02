@@ -865,6 +865,7 @@ impl EditorElement {
                                 layout.position_map.snapshot.line_len(cursor_row) as usize;
                         }
                     }
+                    dbg!(selection.head, cursor_row, cursor_column);
 
                     if layout.visible_display_row_range.contains(&cursor_row) {
                         let cursor_row_layout = &layout.position_map.line_layouts
