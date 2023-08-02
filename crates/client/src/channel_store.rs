@@ -1,13 +1,17 @@
 use crate::{Client, Subscription, User, UserStore};
 use anyhow::Result;
+use collections::HashMap;
 use futures::Future;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 
+type ChannelId = u64;
+
 pub struct ChannelStore {
     channels: Vec<Arc<Channel>>,
     channel_invitations: Vec<Arc<Channel>>,
+    channel_participants: HashMap<ChannelId, Vec<ChannelId>>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -15,9 +19,9 @@ pub struct ChannelStore {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
-    pub id: u64,
+    pub id: ChannelId,
     pub name: String,
-    pub parent_id: Option<u64>,
+    pub parent_id: Option<ChannelId>,
     pub depth: usize,
 }
 
@@ -37,6 +41,7 @@ impl ChannelStore {
         Self {
             channels: vec![],
             channel_invitations: vec![],
+            channel_participants: Default::default(),
             client,
             user_store,
             _rpc_subscription: rpc_subscription,
@@ -51,15 +56,15 @@ impl ChannelStore {
         &self.channel_invitations
     }
 
-    pub fn channel_for_id(&self, channel_id: u64) -> Option<Arc<Channel>> {
+    pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<Arc<Channel>> {
         self.channels.iter().find(|c| c.id == channel_id).cloned()
     }
 
     pub fn create_channel(
         &self,
         name: &str,
-        parent_id: Option<u64>,
-    ) -> impl Future<Output = Result<u64>> {
+        parent_id: Option<ChannelId>,
+    ) -> impl Future<Output = Result<ChannelId>> {
         let client = self.client.clone();
         let name = name.to_owned();
         async move {
@@ -72,7 +77,7 @@ impl ChannelStore {
 
     pub fn invite_member(
         &self,
-        channel_id: u64,
+        channel_id: ChannelId,
         user_id: u64,
         admin: bool,
     ) -> impl Future<Output = Result<()>> {
@@ -91,7 +96,7 @@ impl ChannelStore {
 
     pub fn respond_to_channel_invite(
         &mut self,
-        channel_id: u64,
+        channel_id: ChannelId,
         accept: bool,
     ) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
@@ -107,7 +112,7 @@ impl ChannelStore {
         false
     }
 
-    pub fn remove_channel(&self, channel_id: u64) -> impl Future<Output = Result<()>> {
+    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
         async move {
             client.request(proto::RemoveChannel { channel_id }).await?;
@@ -117,7 +122,7 @@ impl ChannelStore {
 
     pub fn remove_member(
         &self,
-        channel_id: u64,
+        channel_id: ChannelId,
         user_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -126,13 +131,13 @@ impl ChannelStore {
 
     pub fn channel_members(
         &self,
-        channel_id: u64,
+        channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         todo!()
     }
 
-    pub fn add_guest_channel(&self, channel_id: u64) -> Task<Result<()>> {
+    pub fn add_guest_channel(&self, channel_id: ChannelId) -> Task<Result<()>> {
         todo!()
     }
 

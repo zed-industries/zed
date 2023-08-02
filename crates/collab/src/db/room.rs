@@ -1,7 +1,7 @@
 use super::{ChannelId, RoomId};
 use sea_orm::entity::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "rooms")]
 pub struct Model {
     #[sea_orm(primary_key)]

@@ -66,7 +66,7 @@ async fn test_basic_channels(
         )
     });
 
-    // Client B now sees that they are in channel A.
+    // Client B now sees that they are a member channel A.
     client_b
         .channel_store()
         .update(cx_b, |channels, _| {
@@ -110,14 +110,20 @@ async fn test_channel_room(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_b, "user_c").await;
 
     let zed_id = server
-        .make_channel("zed", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel(
+            "zed",
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -128,10 +134,25 @@ async fn test_channel_room(
         .await
         .unwrap();
 
+    // TODO Test that B and C sees A in the channel room
+    client_b.channel_store().read_with(cx_b, |channels, _| {
+        assert_eq!(
+            channels.channels(),
+            &[Arc::new(Channel {
+                id: zed_id,
+                name: "zed".to_string(),
+                parent_id: None,
+                depth: 0,
+            })]
+        )
+    });
+
     active_call_b
         .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
         .await
         .unwrap();
+
+    // TODO Test that C sees A and B in the channel room
 
     deterministic.run_until_parked();
 
@@ -162,12 +183,14 @@ async fn test_channel_room(
         .await
         .unwrap();
 
+    // TODO Make sure that C sees A leave
+
     active_call_b
         .update(cx_b, |active_call, cx| active_call.hang_up(cx))
         .await
         .unwrap();
 
-    // Make sure room exists?
+    // TODO Make sure that C sees B leave
 
     active_call_a
         .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))

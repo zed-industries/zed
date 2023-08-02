@@ -244,7 +244,7 @@ messages!(
     (UpdateWorktreeSettings, Foreground),
     (UpdateDiffBase, Foreground),
     (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground),
+    (GetPrivateUserInfoResponse, Foreground)
 );
 
 request_messages!(

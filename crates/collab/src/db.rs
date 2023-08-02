@@ -212,7 +212,13 @@ impl Database {
                     .map(|participant| participant.user_id),
             );
 
-            let room = self.get_room(room_id, &tx).await?;
+            let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
+            let channel_members = if let Some(channel_id) = channel_id {
+                self.get_channel_members_internal(channel_id, &tx).await?
+            } else {
+                Vec::new()
+            };
+
             // Delete the room if it becomes empty.
             if room.participants.is_empty() {
                 project::Entity::delete_many()
@@ -224,6 +230,8 @@ impl Database {
 
             Ok(RefreshedRoom {
                 room,
+                channel_id,
+                channel_members,
                 stale_participant_user_ids,
                 canceled_calls_to_user_ids,
             })
@@ -1178,7 +1186,7 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
-    ) -> Result<ChannelRoom> {
+    ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
@@ -1217,7 +1225,7 @@ impl Database {
         calling_connection: ConnectionId,
         called_user_id: UserId,
         initial_project_id: Option<ProjectId>,
-    ) -> Result<RoomGuard<(ChannelRoom, proto::IncomingCall)>> {
+    ) -> Result<RoomGuard<(proto::Room, proto::IncomingCall)>> {
         self.room_transaction(room_id, |tx| async move {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
@@ -1246,7 +1254,7 @@ impl Database {
         &self,
         room_id: RoomId,
         called_user_id: UserId,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             room_participant::Entity::delete_many()
                 .filter(
@@ -1266,7 +1274,7 @@ impl Database {
         &self,
         expected_room_id: Option<RoomId>,
         user_id: UserId,
-    ) -> Result<Option<RoomGuard<ChannelRoom>>> {
+    ) -> Result<Option<RoomGuard<proto::Room>>> {
         self.optional_room_transaction(|tx| async move {
             let mut filter = Condition::all()
                 .add(room_participant::Column::UserId.eq(user_id))
@@ -1303,7 +1311,7 @@ impl Database {
         room_id: RoomId,
         calling_connection: ConnectionId,
         called_user_id: UserId,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(
@@ -1340,7 +1348,7 @@ impl Database {
         user_id: UserId,
         channel_id: Option<ChannelId>,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             if let Some(channel_id) = channel_id {
                 channel_member::Entity::find()
@@ -1396,7 +1404,16 @@ impl Database {
             }
 
             let room = self.get_room(room_id, &tx).await?;
-            Ok(room)
+            let channel_members = if let Some(channel_id) = channel_id {
+                self.get_channel_members_internal(channel_id, &tx).await?
+            } else {
+                Vec::new()
+            };
+            Ok(JoinRoom {
+                room,
+                channel_id,
+                channel_members,
+            })
         })
         .await
     }
@@ -1690,9 +1707,18 @@ impl Database {
                 });
             }
 
-            let room = self.get_room(room_id, &tx).await?;
+            let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
+
+            let channel_members = if let Some(channel_id) = channel_id {
+                self.get_channel_members_internal(channel_id, &tx).await?
+            } else {
+                Vec::new()
+            };
+
             Ok(RejoinedRoom {
                 room,
+                channel_id,
+                channel_members,
                 rejoined_projects,
                 reshared_projects,
             })
@@ -1833,7 +1859,7 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                let room = self.get_room(room_id, &tx).await?;
+                let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
                     let result = room::Entity::delete_by_id(room_id)
                         .filter(room::Column::ChannelId.is_null())
@@ -1844,8 +1870,15 @@ impl Database {
                     false
                 };
 
+                let channel_members = if let Some(channel_id) = channel_id {
+                    self.get_channel_members_internal(channel_id, &tx).await?
+                } else {
+                    Vec::new()
+                };
                 let left_room = LeftRoom {
                     room,
+                    channel_id,
+                    channel_members,
                     left_projects,
                     canceled_calls_to_user_ids,
                     deleted,
@@ -1868,7 +1901,7 @@ impl Database {
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<proto::Room>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             follower::ActiveModel {
@@ -1898,7 +1931,7 @@ impl Database {
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<proto::Room>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             follower::Entity::delete_many()
@@ -1930,7 +1963,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         location: proto::ParticipantLocation,
-    ) -> Result<RoomGuard<ChannelRoom>> {
+    ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async {
             let tx = tx;
             let location_kind;
@@ -2042,8 +2075,16 @@ impl Database {
             }),
         })
     }
+    async fn get_room(&self, room_id: RoomId, tx: &DatabaseTransaction) -> Result<proto::Room> {
+        let (_, room) = self.get_channel_room(room_id, tx).await?;
+        Ok(room)
+    }
 
-    async fn get_room(&self, room_id: RoomId, tx: &DatabaseTransaction) -> Result<ChannelRoom> {
+    async fn get_channel_room(
+        &self,
+        room_id: RoomId,
+        tx: &DatabaseTransaction,
+    ) -> Result<(Option<ChannelId>, proto::Room)> {
         let db_room = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
@@ -2147,6 +2188,28 @@ impl Database {
             });
         }
 
+        Ok((
+            db_room.channel_id,
+            proto::Room {
+                id: db_room.id.to_proto(),
+                live_kit_room: db_room.live_kit_room,
+                participants: participants.into_values().collect(),
+                pending_participants,
+                followers,
+            },
+        ))
+    }
+
+    async fn get_channel_members_for_room(
+        &self,
+        room_id: RoomId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<UserId>> {
+        let db_room = room::Model {
+            id: room_id,
+            ..Default::default()
+        };
+
         let channel_users =
             if let Some(channel) = db_room.find_related(channel::Entity).one(tx).await? {
                 self.get_channel_members_internal(channel.id, tx).await?
@@ -2154,16 +2217,7 @@ impl Database {
                 Vec::new()
             };
 
-        Ok(ChannelRoom {
-            room: proto::Room {
-                id: db_room.id.to_proto(),
-                live_kit_room: db_room.live_kit_room,
-                participants: participants.into_values().collect(),
-                pending_participants,
-                followers,
-            },
-            channel_participants: channel_users,
-        })
+        Ok(channel_users)
     }
 
     // projects
@@ -2193,7 +2247,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
-    ) -> Result<RoomGuard<(ProjectId, ChannelRoom)>> {
+    ) -> Result<RoomGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(
@@ -2264,7 +2318,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<(ChannelRoom, Vec<ConnectionId>)>> {
+    ) -> Result<RoomGuard<(proto::Room, Vec<ConnectionId>)>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
@@ -2291,7 +2345,7 @@ impl Database {
         project_id: ProjectId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
-    ) -> Result<RoomGuard<(ChannelRoom, Vec<ConnectionId>)>> {
+    ) -> Result<RoomGuard<(proto::Room, Vec<ConnectionId>)>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             let project = project::Entity::find_by_id(project_id)
@@ -2868,7 +2922,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<(ChannelRoom, LeftProject)>> {
+    ) -> Result<RoomGuard<(proto::Room, LeftProject)>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             let result = project_collaborator::Entity::delete_many()
@@ -3342,7 +3396,10 @@ impl Database {
         .await
     }
 
-    pub async fn get_channels(&self, user_id: UserId) -> Result<Vec<Channel>> {
+    pub async fn get_channels(
+        &self,
+        user_id: UserId,
+    ) -> Result<(Vec<Channel>, HashMap<ChannelId, Vec<UserId>>)> {
         self.transaction(|tx| async move {
             let tx = tx;
 
@@ -3379,7 +3436,31 @@ impl Database {
 
             drop(rows);
 
-            Ok(channels)
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryUserIdsAndChannelIds {
+                ChannelId,
+                UserId,
+            }
+
+            let mut participants = room_participant::Entity::find()
+                .inner_join(room::Entity)
+                .filter(room::Column::ChannelId.is_in(channels.iter().map(|c| c.id)))
+                .select_only()
+                .column(room::Column::ChannelId)
+                .column(room_participant::Column::UserId)
+                .into_values::<_, QueryUserIdsAndChannelIds>()
+                .stream(&*tx)
+                .await?;
+
+            let mut participant_map: HashMap<ChannelId, Vec<UserId>> = HashMap::default();
+            while let Some(row) = participants.next().await {
+                let row: (ChannelId, UserId) = row?;
+                participant_map.entry(row.0).or_default().push(row.1)
+            }
+
+            drop(participants);
+
+            Ok((channels, participant_map))
         })
         .await
     }
@@ -3523,7 +3604,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_channel_room(&self, channel_id: ChannelId) -> Result<RoomId> {
+    pub async fn room_id_for_channel(&self, channel_id: ChannelId) -> Result<RoomId> {
         self.transaction(|tx| async move {
             let tx = tx;
             let room = channel::Model {
@@ -3932,29 +4013,19 @@ id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
 
-pub struct ChannelRoom {
+#[derive(Clone)]
+pub struct JoinRoom {
     pub room: proto::Room,
-    pub channel_participants: Vec<UserId>,
-}
-
-impl Deref for ChannelRoom {
-    type Target = proto::Room;
-
-    fn deref(&self) -> &Self::Target {
-        &self.room
-    }
-}
-
-impl DerefMut for ChannelRoom {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.room
-    }
+    pub channel_id: Option<ChannelId>,
+    pub channel_members: Vec<UserId>,
 }
 
 pub struct RejoinedRoom {
-    pub room: ChannelRoom,
+    pub room: proto::Room,
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
+    pub channel_id: Option<ChannelId>,
+    pub channel_members: Vec<UserId>,
 }
 
 pub struct ResharedProject {
@@ -3989,14 +4060,18 @@ pub struct RejoinedWorktree {
 }
 
 pub struct LeftRoom {
-    pub room: ChannelRoom,
+    pub room: proto::Room,
+    pub channel_id: Option<ChannelId>,
+    pub channel_members: Vec<UserId>,
     pub left_projects: HashMap<ProjectId, LeftProject>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
     pub deleted: bool,
 }
 
 pub struct RefreshedRoom {
-    pub room: ChannelRoom,
+    pub room: proto::Room,
+    pub channel_id: Option<ChannelId>,
+    pub channel_members: Vec<UserId>,
     pub stale_participant_user_ids: Vec<UserId>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
 }

@@ -951,7 +951,7 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .await
         .unwrap();
 
-    let channels = db.get_channels(a_id).await.unwrap();
+    let (channels, _) = db.get_channels(a_id).await.unwrap();
 
     assert_eq!(
         channels,
@@ -1047,10 +1047,10 @@ test_both_dbs!(
             .create_root_channel("channel_1", "1", user_1)
             .await
             .unwrap();
-        let room_1 = db.get_channel_room(channel_1).await.unwrap();
+        let room_1 = db.room_id_for_channel(channel_1).await.unwrap();
 
         // can join a room with membership to its channel
-        let room = db
+        let joined_room = db
             .join_room(
                 room_1,
                 user_1,
@@ -1059,9 +1059,9 @@ test_both_dbs!(
             )
             .await
             .unwrap();
-        assert_eq!(room.participants.len(), 1);
+        assert_eq!(joined_room.room.participants.len(), 1);
 
-        drop(room);
+        drop(joined_room);
         // cannot join a room without membership to its channel
         assert!(db
             .join_room(
