@@ -1946,6 +1946,8 @@ impl RepoSnapshot {
         } else {
             self.load_revision(&new_head, kv).await?
         };
+        // TODO: we can optimize this by loading the parent revision instead and applying the operation.
+        // This should prevent the need to call `load_documents`.
         revision
             .load_documents(
                 self.document_ref_counts
