@@ -21,7 +21,9 @@ const CODE_CONTEXT_TEMPLATE: &str =
     "The below code snippet is from file '<path>'\n\n```<language>\n<item>\n```";
 const ENTIRE_FILE_TEMPLATE: &str =
     "The below snippet is from file '<path>'\n\n```<language>\n<item>\n```";
-pub const PARSEABLE_ENTIRE_FILE_TYPES: &[&str] = &["TOML", "YAML", "CSS"];
+const MARKDOWN_CONTEXT_TEMPLATE: &str = "The below file contents is from file '<path>'\n\n<item>";
+pub const PARSEABLE_ENTIRE_FILE_TYPES: &[&str] =
+    &["TOML", "YAML", "CSS", "HEEX", "ERB", "SVELTE", "HTML"];
 
 pub struct CodeContextRetriever {
     pub parser: Parser,
@@ -59,13 +61,26 @@ impl CodeContextRetriever {
         let document_span = ENTIRE_FILE_TEMPLATE
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<language>", language_name.as_ref())
-            .replace("item", &content);
+            .replace("<item>", &content);
 
         Ok(vec![Document {
             range: 0..content.len(),
             content: document_span,
             embedding: Vec::new(),
             name: language_name.to_string(),
+        }])
+    }
+
+    fn parse_markdown_file(&self, relative_path: &Path, content: &str) -> Result<Vec<Document>> {
+        let document_span = MARKDOWN_CONTEXT_TEMPLATE
+            .replace("<path>", relative_path.to_string_lossy().as_ref())
+            .replace("<item>", &content);
+
+        Ok(vec![Document {
+            range: 0..content.len(),
+            content: document_span,
+            embedding: Vec::new(),
+            name: "Markdown".to_string(),
         }])
     }
 
@@ -135,6 +150,8 @@ impl CodeContextRetriever {
 
         if PARSEABLE_ENTIRE_FILE_TYPES.contains(&language_name.as_ref()) {
             return self.parse_entire_file(relative_path, language_name, &content);
+        } else if &language_name.to_string() == &"Markdown".to_string() {
+            return self.parse_markdown_file(relative_path, &content);
         }
 
         let mut documents = self.parse_file(content, language)?;
@@ -200,7 +217,12 @@ impl CodeContextRetriever {
 
             let mut document_content = String::new();
             for context_range in &context_match.context_ranges {
-                document_content.push_str(&content[context_range.clone()]);
+                add_content_from_range(
+                    &mut document_content,
+                    content,
+                    context_range.clone(),
+                    context_match.start_col,
+                );
                 document_content.push_str("\n");
             }
 

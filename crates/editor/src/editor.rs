@@ -543,6 +543,7 @@ pub struct Editor {
     show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
+    show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -1375,6 +1376,7 @@ impl Editor {
             show_local_selections: true,
             mode,
             show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -4219,7 +4221,7 @@ impl Editor {
         _: &SortLinesCaseSensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort())
+        self.manipulate_lines(cx, |lines| lines.sort())
     }
 
     pub fn sort_lines_case_insensitive(
@@ -4227,7 +4229,7 @@ impl Editor {
         _: &SortLinesCaseInsensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+        self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
@@ -4265,19 +4267,19 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
-            let mut text = text.split("\n").collect_vec();
+            let mut lines = text.split("\n").collect_vec();
 
-            let text_len = text.len();
-            callback(&mut text);
+            let lines_len = lines.len();
+            callback(&mut lines);
 
             // This is a current limitation with selections.
             // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
             debug_assert!(
-                text.len() == text_len,
+                lines.len() == lines_len,
                 "callback should not change the number of lines"
             );
 
-            edits.push((start_point..end_point, text.join("\n")));
+            edits.push((start_point..end_point, lines.join("\n")));
             let start_anchor = buffer.anchor_after(start_point);
             let end_anchor = buffer.anchor_before(end_point);
 
@@ -7187,6 +7189,10 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
+
         let settings = self.buffer.read(cx).settings_at(0, cx);
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
@@ -7241,6 +7247,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_gutter);
         cx.notify();
     }
 
