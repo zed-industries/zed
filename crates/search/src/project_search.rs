@@ -1,6 +1,5 @@
 use crate::{
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -22,7 +21,7 @@ use gpui::{
     Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
-use gpui::{scene::Path, Border, LayoutContext};
+use gpui::{scene::Path, LayoutContext};
 use menu::Confirm;
 use postage::stream::Stream;
 use project::{search::SearchQuery, Entry, Project};
@@ -50,7 +49,6 @@ actions!(
         SearchInNew,
         ToggleFocus,
         NextField,
-        ToggleSemanticSearch,
         CycleMode,
         ActivateTextMode,
         ActivateSemanticMode,
@@ -74,7 +72,6 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
 fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
@@ -232,6 +229,12 @@ impl ProjectSearch {
             active_query: self.active_query.clone(),
             search_id: self.search_id,
         })
+    }
+
+    fn kill_search(&mut self) {
+        self.active_query = None;
+        self.match_ranges.clear();
+        self.pending_search = None;
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
@@ -626,6 +629,7 @@ impl Item for ProjectSearchView {
 
 impl ProjectSearchView {
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        self.model.update(cx, |model, _| model.kill_search());
         self.current_mode = mode;
 
         match mode {
@@ -674,13 +678,13 @@ impl ProjectSearchView {
             }
             SearchMode::Regex => {
                 if !self.is_option_enabled(SearchOptions::REGEX) {
-                    self.toggle_search_option(SearchOptions::REGEX, cx);
+                    self.toggle_search_option(SearchOptions::REGEX);
                 }
                 self.semantic = None;
             }
             SearchMode::Text => {
                 if self.is_option_enabled(SearchOptions::REGEX) {
-                    self.toggle_search_option(SearchOptions::REGEX, cx);
+                    self.toggle_search_option(SearchOptions::REGEX);
                 }
                 self.semantic = None;
             }
@@ -923,7 +927,7 @@ impl ProjectSearchView {
 
         Some((included_files, excluded_files))
     }
-    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) {
+    fn toggle_search_option(&mut self, option: SearchOptions) {
         self.search_options.toggle(option);
         self.semantic = None;
     }
@@ -1373,7 +1377,7 @@ impl ProjectSearchBar {
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.toggle_search_option(option, cx);
+                search_view.toggle_search_option(option);
             });
             cx.notify();
             true
@@ -1394,62 +1398,6 @@ impl ProjectSearchBar {
                     .update(cx, |_, cx| cx.notify());
                 search_view.semantic = None;
                 search_view.search(cx);
-                cx.notify();
-            });
-            cx.notify();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn toggle_semantic_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| {
-                if search_view.semantic.is_some() {
-                    search_view.semantic = None;
-                } else if let Some(semantic_index) = SemanticIndex::global(cx) {
-                    search_view.current_mode = SearchMode::Semantic;
-                    // TODO: confirm that it's ok to send this project
-                    search_view.search_options = SearchOptions::none();
-
-                    let project = search_view.model.read(cx).project.clone();
-                    let index_task = semantic_index.update(cx, |semantic_index, cx| {
-                        semantic_index.index_project(project, cx)
-                    });
-
-                    cx.spawn(|search_view, mut cx| async move {
-                        let (files_to_index, mut files_remaining_rx) = index_task.await?;
-
-                        search_view.update(&mut cx, |search_view, cx| {
-                            cx.notify();
-                            search_view.semantic = Some(SemanticSearchState {
-                                file_count: files_to_index,
-                                outstanding_file_count: files_to_index,
-                                _progress_task: cx.spawn(|search_view, mut cx| async move {
-                                    while let Some(count) = files_remaining_rx.recv().await {
-                                        search_view
-                                            .update(&mut cx, |search_view, cx| {
-                                                if let Some(semantic_search_state) =
-                                                    &mut search_view.semantic
-                                                {
-                                                    semantic_search_state.outstanding_file_count =
-                                                        count;
-                                                    cx.notify();
-                                                    if count == 0 {
-                                                        return;
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                }),
-                            });
-                        })?;
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                }
                 cx.notify();
             });
             cx.notify();
@@ -1627,165 +1575,6 @@ impl ProjectSearchBar {
             });
             cx.notify();
         }
-    }
-
-    fn render_regex_button(
-        &self,
-        icon: &'static str,
-        current_mode: SearchMode,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = current_mode == SearchMode::Regex; //self.is_option_enabled(option, cx);
-        let option = SearchOptions::REGEX;
-        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let mut style = theme
-                .search
-                .mode_button
-                .in_state(is_active)
-                .style_for(state)
-                .clone();
-            style.container.border.right = false;
-            style.container.padding.right -= theme.search.mode_filling_width;
-            style.container.corner_radius = 0.;
-            debug_assert!(style.container.padding.right >= 0.);
-            Flex::row()
-                .with_child(
-                    Label::new(icon, style.text.clone())
-                        .contained()
-                        .with_style(style.container),
-                )
-                .with_child(
-                    ButtonSide::right(
-                        style
-                            .container
-                            .background_color
-                            .unwrap_or_else(gpui::color::Color::transparent_black),
-                    )
-                    .with_border(style.container.border.width, style.container.border.color)
-                    .contained()
-                    .constrained()
-                    .with_max_width(theme.search.mode_filling_width)
-                    .aligned()
-                    .bottom(),
-                )
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.toggle_search_option(option, cx);
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self>(
-            option.bits as usize,
-            format!("Toggle {}", option.label()),
-            Some(option.to_toggle_action()),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
-    fn render_semantic_search_button(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
-            search.current_mode == SearchMode::Semantic
-        } else {
-            false
-        };
-
-        let region_id = 3;
-
-        MouseEventHandler::<Self, _>::new(region_id, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let mut style = theme
-                .search
-                .mode_button
-                .in_state(is_active)
-                .style_for(state)
-                .clone();
-
-            style.container.corner_radius = 0.;
-
-            Label::new("Semantic", style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.toggle_semantic_search(cx);
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self>(
-            region_id,
-            format!("Toggle Semantic Search"),
-            Some(Box::new(ToggleSemanticSearch)),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-    fn render_text_search_button(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
-            search.current_mode == SearchMode::Text
-        } else {
-            false
-        };
-
-        let region_id = 4;
-        enum NormalSearchTag {}
-        MouseEventHandler::<NormalSearchTag, _>::new(region_id, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let mut style = theme
-                .search
-                .mode_button
-                .in_state(is_active)
-                .style_for(state)
-                .clone();
-            style.container.border.left = false;
-            style.container.padding.left -= theme.search.mode_filling_width;
-            debug_assert!(style.container.padding.left >= 0.);
-            style.container.corner_radius = 0.;
-            Flex::row()
-                .with_child(
-                    ButtonSide::left(
-                        style
-                            .container
-                            .background_color
-                            .unwrap_or_else(gpui::color::Color::transparent_black),
-                    )
-                    .with_border(style.container.border.width, style.container.border.color)
-                    .contained()
-                    .constrained()
-                    .with_max_width(theme.search.mode_filling_width)
-                    .aligned()
-                    .bottom(),
-                )
-                .with_child(
-                    Label::new("Text", style.text.clone())
-                        .contained()
-                        .with_style(style.container),
-                )
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            if let Some(search) = this.active_project_search.as_mut() {
-                search.update(cx, |this, cx| {
-                    this.semantic = None;
-                    this.current_mode = SearchMode::Text;
-                    cx.notify();
-                });
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NormalSearchTag>(
-            region_id,
-            format!("Toggle Normal Search"),
-            None,
-            tooltip_style,
-            cx,
-        )
-        .into_any()
     }
 
     fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
