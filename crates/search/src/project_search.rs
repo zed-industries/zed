@@ -113,6 +113,7 @@ struct ProjectSearch {
     active_query: Option<SearchQuery>,
     search_id: usize,
     search_history: SearchHistory,
+    no_results: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,6 +236,7 @@ impl ProjectSearch {
             active_query: None,
             search_id: 0,
             search_history: SearchHistory::default(),
+            no_results: None,
         }
     }
 
@@ -249,6 +251,7 @@ impl ProjectSearch {
             active_query: self.active_query.clone(),
             search_id: self.search_id,
             search_history: self.search_history.clone(),
+            no_results: self.no_results.clone(),
         })
     }
 
@@ -256,6 +259,7 @@ impl ProjectSearch {
         self.active_query = None;
         self.match_ranges.clear();
         self.pending_search = None;
+        self.no_results = None;
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
@@ -272,6 +276,7 @@ impl ProjectSearch {
             let mut matches = matches.into_iter().collect::<Vec<_>>();
             let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
+                this.no_results = Some(true);
                 matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
@@ -285,6 +290,7 @@ impl ProjectSearch {
                     while let Ok(Some(match_range)) = match_ranges.try_next() {
                         this.match_ranges.push(match_range);
                     }
+                    this.no_results = Some(false);
                     cx.notify();
                 });
             }
@@ -315,6 +321,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.match_ranges.clear();
         self.search_history.add(query.as_str().to_string());
+        self.no_results = Some(true);
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
 
@@ -337,6 +344,7 @@ impl ProjectSearch {
                     while let Ok(Some(match_range)) = match_ranges.try_next() {
                         this.match_ranges.push(match_range);
                     }
+                    this.no_results = Some(false);
                     cx.notify();
                 });
             }
@@ -382,6 +390,8 @@ impl View for ProjectSearchView {
             let current_mode = self.current_mode;
             let major_text = if model.pending_search.is_some() {
                 Cow::Borrowed("Searching...")
+            } else if model.no_results.is_some_and(|v| v) {
+                Cow::Borrowed("No Results...")
             } else {
                 match current_mode {
                     SearchMode::Text => Cow::Borrowed("Text search all files and folders"),
@@ -408,15 +418,23 @@ impl View for ProjectSearchView {
                 "Indexing: ...".to_string()
             };
 
-            let minor_text = match current_mode {
-                SearchMode::Semantic => [
-                    semantic_status,
-                    "ex. 'list all available languages'".to_owned(),
-                ],
-                _ => [
-                    "Include/exclude specific paths with the filter option.".to_owned(),
-                    "Matching exact word and/or casing is available too.".to_owned(),
-                ],
+            let minor_text = if let Some(no_results) = model.no_results {
+                if no_results {
+                    vec!["No results found in this project for the provided query".to_owned()]
+                } else {
+                    vec![]
+                }
+            } else {
+                match current_mode {
+                    SearchMode::Semantic => vec![
+                        semantic_status,
+                        "ex. 'list all available languages'".to_owned(),
+                    ],
+                    _ => vec![
+                        "Include/exclude specific paths with the filter option.".to_owned(),
+                        "Matching exact word and/or casing is available too.".to_owned(),
+                    ],
+                }
             };
 
             let previous_query_keystrokes =
