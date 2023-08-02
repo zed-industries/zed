@@ -387,6 +387,8 @@ pub struct Search {
     pub minor_results_status: TextStyle,
     pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
+    pub mode_button: Toggleable<Interactive<ContainedText>>,
+    pub mode_filling_width: f32,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

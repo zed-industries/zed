@@ -178,6 +178,50 @@ export default function search(): any {
                 margin: { right: 6 },
                 padding: { left: 4 }
             }
-        }
+        },
+        mode_button: toggleable({
+            base: interactive({
+                base: {
+                    ...text(theme.highest, "mono", "on"),
+                    background: background(theme.highest, "on"),
+
+                    border: border(theme.highest, "on"),
+
+                    padding: {
+                        bottom: 6,
+                        left: 10,
+                        right: 10,
+                        top: 6,
+                    },
+                    corner_radius: 2,
+                },
+                state: {
+                    hovered: {
+                        ...text(theme.highest, "mono", "on", "hovered"),
+                        background: background(theme.highest, "on", "hovered"),
+                        border: border(theme.highest, "on", "hovered"),
+                    },
+                    clicked: {
+                        ...text(theme.highest, "mono", "on", "pressed"),
+                        background: background(theme.highest, "on", "pressed"),
+                        border: border(theme.highest, "on", "pressed"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        ...text(theme.highest, "mono", "accent"),
+                    },
+                    hovered: {
+                        ...text(theme.highest, "mono", "accent", "hovered"),
+                    },
+                    clicked: {
+                        ...text(theme.highest, "mono", "accent", "pressed"),
+                    },
+                },
+            },
+        }),
+        mode_filling_width: 4.0,
     }
 }
