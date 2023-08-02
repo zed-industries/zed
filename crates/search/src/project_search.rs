@@ -12,6 +12,7 @@ use futures::StreamExt;
 use globset::{Glob, GlobMatcher};
 use gpui::color::Color;
 use gpui::geometry::rect::RectF;
+use gpui::geometry::vector::IntoVector2F;
 use gpui::json::{self, ToJson};
 use gpui::SceneBuilder;
 use gpui::{
@@ -964,24 +965,46 @@ impl Default for ProjectSearchBar {
     }
 }
 type CreatePath = fn(RectF, Color) -> Path;
-
+type AdjustBorder = fn(RectF, f32) -> RectF;
 pub struct ButtonSide {
     color: Color,
     factory: CreatePath,
+    border_adjustment: AdjustBorder,
+    border: Option<(f32, Color)>,
 }
 
 impl ButtonSide {
-    fn new(color: Color, factory: CreatePath) -> Self {
-        Self { color, factory }
+    fn new(color: Color, factory: CreatePath, border_adjustment: AdjustBorder) -> Self {
+        Self {
+            color,
+            factory,
+            border_adjustment,
+            border: None,
+        }
+    }
+    pub fn with_border(mut self, width: f32, color: Color) -> Self {
+        self.border = Some((width, color));
+        self
     }
     pub fn left(color: Color) -> Self {
-        Self::new(color, left_button_side)
+        Self::new(color, left_button_side, left_button_border_adjust)
     }
     pub fn right(color: Color) -> Self {
-        Self::new(color, right_button_side)
+        Self::new(color, right_button_side, right_button_border_adjust)
     }
 }
-
+fn left_button_border_adjust(bounds: RectF, width: f32) -> RectF {
+    let width = width.into_vector_2f();
+    let mut lower_right = bounds.clone().lower_right();
+    lower_right.set_x(lower_right.x() + width.x());
+    RectF::from_points(bounds.origin() + width, lower_right)
+}
+fn right_button_border_adjust(bounds: RectF, width: f32) -> RectF {
+    let width = width.into_vector_2f();
+    let mut origin = bounds.clone().origin();
+    origin.set_x(origin.x() - width.x());
+    RectF::from_points(origin, bounds.lower_right() - width)
+}
 fn left_button_side(bounds: RectF, color: Color) -> Path {
     use gpui::geometry::PathBuilder;
     let mut path = PathBuilder::new();
@@ -994,7 +1017,6 @@ fn left_button_side(bounds: RectF, color: Color) -> Path {
     let mut target = bounds.lower_left();
     target.set_y(target.y() + distance_to_line);
     path.line_to(target);
-    //path.curve_to(bounds.lower_right(), bounds.upper_right());
     path.curve_to(bounds.lower_right(), bounds.lower_left());
     path.build(color, None)
 }
@@ -1011,7 +1033,6 @@ fn right_button_side(bounds: RectF, color: Color) -> Path {
     let mut target = bounds.lower_right();
     target.set_y(target.y() + distance_to_line);
     path.line_to(target);
-    //path.curve_to(bounds.lower_right(), bounds.upper_right());
     path.curve_to(bounds.lower_left(), bounds.lower_right());
     path.build(color, None)
 }
@@ -1039,6 +1060,11 @@ impl Element<ProjectSearchBar> for ButtonSide {
         _: &mut ProjectSearchBar,
         _: &mut ViewContext<ProjectSearchBar>,
     ) -> Self::PaintState {
+        let mut bounds = bounds;
+        if let Some((border_width, border_color)) = self.border.as_ref() {
+            scene.push_path((self.factory)(bounds, border_color.clone()));
+            bounds = (self.border_adjustment)(bounds, *border_width);
+        };
         scene.push_path((self.factory)(bounds, self.color));
     }
 
@@ -1409,9 +1435,10 @@ impl ProjectSearchBar {
                             .background_color
                             .unwrap_or_else(gpui::color::Color::transparent_black),
                     )
+                    .with_border(style.container.border.width, style.container.border.color)
                     .contained()
                     .constrained()
-                    .with_max_width(theme.titlebar.avatar_ribbon.width / 3.)
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
                     .aligned()
                     .bottom(),
                 )
@@ -1493,9 +1520,10 @@ impl ProjectSearchBar {
                             .background_color
                             .unwrap_or_else(gpui::color::Color::transparent_black),
                     )
+                    .with_border(style.container.border.width, style.container.border.color)
                     .contained()
                     .constrained()
-                    .with_max_width(theme.titlebar.avatar_ribbon.width / 3.)
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
                     .aligned()
                     .bottom(),
                 )
@@ -1747,7 +1775,8 @@ impl View for ProjectSearchBar {
                             .with_height(theme.workspace.toolbar.height)
                             .contained()
                             .aligned()
-                            .right(),
+                            .right()
+                            .flex(1., true),
                     ),
                 )
                 .contained()
