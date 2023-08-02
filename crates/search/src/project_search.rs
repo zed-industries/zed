@@ -10,6 +10,10 @@ use editor::{
 };
 use futures::StreamExt;
 use globset::{Glob, GlobMatcher};
+use gpui::color::Color;
+use gpui::geometry::rect::RectF;
+use gpui::json::{self, ToJson};
+use gpui::SceneBuilder;
 use gpui::{
     actions,
     elements::*,
@@ -17,6 +21,7 @@ use gpui::{
     Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
+use gpui::{scene::Path, Border, LayoutContext};
 use menu::Confirm;
 use postage::stream::Stream;
 use project::{search::SearchQuery, Entry, Project};
@@ -958,6 +963,113 @@ impl Default for ProjectSearchBar {
         Self::new()
     }
 }
+type CreatePath = fn(RectF, Color) -> Path;
+
+pub struct ButtonSide {
+    color: Color,
+    factory: CreatePath,
+}
+
+impl ButtonSide {
+    fn new(color: Color, factory: CreatePath) -> Self {
+        Self { color, factory }
+    }
+    pub fn left(color: Color) -> Self {
+        Self::new(color, left_button_side)
+    }
+    pub fn right(color: Color) -> Self {
+        Self::new(color, right_button_side)
+    }
+}
+
+fn left_button_side(bounds: RectF, color: Color) -> Path {
+    use gpui::geometry::PathBuilder;
+    let mut path = PathBuilder::new();
+    path.reset(bounds.lower_right());
+    path.line_to(bounds.upper_right());
+    let mut middle_point = bounds.origin();
+    let distance_to_line = (middle_point.y() - bounds.lower_left().y()) / 4.;
+    middle_point.set_y(middle_point.y() - distance_to_line);
+    path.curve_to(middle_point, bounds.origin());
+    let mut target = bounds.lower_left();
+    target.set_y(target.y() + distance_to_line);
+    path.line_to(target);
+    //path.curve_to(bounds.lower_right(), bounds.upper_right());
+    path.curve_to(bounds.lower_right(), bounds.lower_left());
+    path.build(color, None)
+}
+
+fn right_button_side(bounds: RectF, color: Color) -> Path {
+    use gpui::geometry::PathBuilder;
+    let mut path = PathBuilder::new();
+    path.reset(bounds.lower_left());
+    path.line_to(bounds.origin());
+    let mut middle_point = bounds.upper_right();
+    let distance_to_line = (middle_point.y() - bounds.lower_right().y()) / 4.;
+    middle_point.set_y(middle_point.y() - distance_to_line);
+    path.curve_to(middle_point, bounds.upper_right());
+    let mut target = bounds.lower_right();
+    target.set_y(target.y() + distance_to_line);
+    path.line_to(target);
+    //path.curve_to(bounds.lower_right(), bounds.upper_right());
+    path.curve_to(bounds.lower_left(), bounds.lower_right());
+    path.build(color, None)
+}
+
+impl Element<ProjectSearchBar> for ButtonSide {
+    type LayoutState = ();
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: gpui::SizeConstraint,
+        _: &mut ProjectSearchBar,
+        _: &mut LayoutContext<ProjectSearchBar>,
+    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
+        (constraint.max, ())
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        _: RectF,
+        _: &mut Self::LayoutState,
+        _: &mut ProjectSearchBar,
+        _: &mut ViewContext<ProjectSearchBar>,
+    ) -> Self::PaintState {
+        scene.push_path((self.factory)(bounds, self.color));
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &ProjectSearchBar,
+        _: &ViewContext<ProjectSearchBar>,
+    ) -> Option<RectF> {
+        None
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &ProjectSearchBar,
+        _: &ViewContext<ProjectSearchBar>,
+    ) -> gpui::json::Value {
+        json::json!({
+            "type": "ButtonSide",
+            "bounds": bounds.to_json(),
+            "color": self.color.to_json(),
+        })
+    }
+}
 
 impl ProjectSearchBar {
     pub fn new() -> Self {
@@ -1276,14 +1388,32 @@ impl ProjectSearchBar {
         let option = SearchOptions::REGEX;
         MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme
+            let mut style = theme
                 .search
                 .option_button
                 .in_state(is_active)
-                .style_for(state);
-            Label::new(icon, style.text.clone())
-                .contained()
-                .with_style(style.container)
+                .style_for(state)
+                .clone();
+            style.container.border.right = false;
+            Flex::row()
+                .with_child(
+                    Label::new(icon, style.text.clone())
+                        .contained()
+                        .with_style(style.container),
+                )
+                .with_child(
+                    ButtonSide::right(
+                        style
+                            .container
+                            .background_color
+                            .unwrap_or_else(gpui::color::Color::transparent_black),
+                    )
+                    .contained()
+                    .constrained()
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
+                    .aligned()
+                    .bottom(),
+                )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.toggle_search_option(option, cx);
@@ -1347,14 +1477,32 @@ impl ProjectSearchBar {
         enum NormalSearchTag {}
         MouseEventHandler::<NormalSearchTag, _>::new(region_id, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme
+            let mut style = theme
                 .search
                 .option_button
                 .in_state(is_active)
-                .style_for(state);
-            Label::new("Text", style.text.clone())
-                .contained()
-                .with_style(style.container)
+                .style_for(state)
+                .clone();
+            style.container.border.left = false;
+            Flex::row()
+                .with_child(
+                    ButtonSide::left(
+                        style
+                            .container
+                            .background_color
+                            .unwrap_or_else(gpui::color::Color::transparent_black),
+                    )
+                    .contained()
+                    .constrained()
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
+                    .aligned()
+                    .bottom(),
+                )
+                .with_child(
+                    Label::new("Text", style.text.clone())
+                        .contained()
+                        .with_style(style.container),
+                )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             if let Some(search) = this.active_project_search.as_mut() {
@@ -1592,7 +1740,9 @@ impl View for ProjectSearchBar {
                             .with_child(normal_search)
                             .with_children(semantic_index)
                             .with_child(regex_button)
-                            .flex(1., true)
+                            .constrained()
+                            .with_height(theme.workspace.toolbar.height)
+                            .contained()
                             .aligned()
                             .right(),
                     ),
