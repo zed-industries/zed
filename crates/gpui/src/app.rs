@@ -3831,7 +3831,14 @@ impl<V: View> WindowHandle<V> {
     // TODO: Implement window dropping behavior when we don't call this.
     pub fn detach(mut self, cx: &impl BorrowAppContext) -> ViewHandle<V> {
         let root = self.root(cx);
-        self.any_handle.ref_counts.take();
+        let ref_counts = self.any_handle.ref_counts.take();
+        #[cfg(any(test, feature = "test-support"))]
+        ref_counts
+            .unwrap()
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_dropped(self.id(), self.any_handle.handle_id);
         root
     }
 
