@@ -183,10 +183,10 @@ export function titlebar(): any {
         project_name_divider: text(theme.lowest, "sans", "variant"),
 
         project_menu_button: toggleable_text_button(theme, {
-            color: "base",
+            color: 'base',
         }),
         git_menu_button: toggleable_text_button(theme, {
-            color: "variant",
+            color: 'variant',
         }),
 
         // Collaborators

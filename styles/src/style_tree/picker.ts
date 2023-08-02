@@ -152,7 +152,7 @@ export default function picker(): any {
                         0.5
                     ),
                 },
-            },
+            }
         }),
     }
 }

@@ -1,7 +1,7 @@
 (call
   target: (identifier) @context
   (arguments (alias) @name)
-  (.match? @context "^(defmodule|defprotocol)$")) @item
+  (#match? @context "^(defmodule|defprotocol)$")) @item
 
 (call
   target: (identifier) @context
@@ -23,4 +23,4 @@
                 ")" @context.extra))
         operator: "when")
     ])
-  (.match? @context "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
+  (#match? @context "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item

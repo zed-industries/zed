@@ -9,9 +9,9 @@ import {
 } from "./components"
 import hover_popover from "./hover_popover"
 
+import { build_syntax } from "../theme/syntax"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
-import chroma from "chroma-js"
 
 export default function editor(): any {
     const theme = useTheme()
@@ -48,28 +48,16 @@ export default function editor(): any {
         }
     }
 
+    const syntax = build_syntax()
+
     return {
-        text_color: theme.syntax.primary.color,
+        text_color: syntax.primary.color,
         background: background(layer),
         active_line_background: with_opacity(background(layer, "on"), 0.75),
         highlighted_line_background: background(layer, "on"),
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
-        hint: chroma
-            .mix(
-                theme.ramps.neutral(0.6).hex(),
-                theme.ramps.blue(0.4).hex(),
-                0.45,
-                "lch"
-            )
-            .hex(),
-        suggestion: chroma
-            .mix(
-                theme.ramps.neutral(0.4).hex(),
-                theme.ramps.blue(0.4).hex(),
-                0.45,
-                "lch"
-            )
-            .hex(),
+        hint: syntax.hint,
+        suggestion: syntax.predictive,
         code_actions: {
             indicator: toggleable({
                 base: interactive({
@@ -267,8 +255,8 @@ export default function editor(): any {
         invalid_warning_diagnostic: diagnostic(theme.middle, "base"),
         hover_popover: hover_popover(),
         link_definition: {
-            color: theme.syntax.link_uri.color,
-            underline: theme.syntax.link_uri.underline,
+            color: syntax.link_uri.color,
+            underline: syntax.link_uri.underline,
         },
         jump_icon: interactive({
             base: {
@@ -318,7 +306,7 @@ export default function editor(): any {
                     ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
                     : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
-            selections: foreground(layer, "accent"),
+            selections: foreground(layer, "accent")
         },
         composition_mark: {
             underline: {
@@ -326,6 +314,6 @@ export default function editor(): any {
                 color: border_color(layer),
             },
         },
-        syntax: theme.syntax,
+        syntax,
     }
 }
