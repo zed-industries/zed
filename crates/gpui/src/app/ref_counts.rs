@@ -23,8 +23,10 @@ struct ElementStateRefCount {
 
 #[derive(Default)]
 pub struct RefCounts {
+    window_counts: HashMap<usize, usize>,
     entity_counts: HashMap<usize, usize>,
     element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
+    dropped_windows: HashSet<usize>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
     dropped_element_states: HashSet<ElementStateId>,
@@ -40,6 +42,18 @@ impl RefCounts {
             #[cfg(any(test, feature = "test-support"))]
             leak_detector,
             ..Default::default()
+        }
+    }
+
+    pub fn inc_window(&mut self, window_id: usize) {
+        match self.window_counts.entry(window_id) {
+            Entry::Occupied(mut entry) => {
+                *entry.get_mut() += 1;
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+                self.dropped_windows.remove(&window_id);
+            }
         }
     }
 
@@ -82,6 +96,15 @@ impl RefCounts {
                 });
                 self.dropped_element_states.remove(&id);
             }
+        }
+    }
+
+    pub fn dec_window(&mut self, window_id: usize) {
+        let count = self.window_counts.get_mut(&window_id).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.entity_counts.remove(&window_id);
+            self.dropped_windows.insert(window_id);
         }
     }
 

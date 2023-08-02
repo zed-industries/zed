@@ -6,7 +6,7 @@ use crate::{
     platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache, Handle,
     ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakHandle,
-    WindowContext,
+    WindowContext, WindowHandle,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -148,17 +148,18 @@ impl TestAppContext {
         self.cx.borrow_mut().add_model(build_model)
     }
 
-    pub fn add_window<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
+    pub fn add_window<T, F>(&mut self, build_root_view: F) -> WindowHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        let (window_id, view) = self
+        let window = self
             .cx
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window_id));
-        (window_id, view)
+        self.simulate_window_activation(Some(window.id()));
+
+        WindowHandle::new(window.id(), self.cx.borrow_mut().ref_counts.clone())
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>

@@ -130,8 +130,12 @@ pub trait BorrowAppContext {
 }
 
 pub trait BorrowWindowContext {
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T;
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T;
+    fn read_with<T, F>(&self, window_id: usize, f: F) -> T
+    where
+        F: FnOnce(&WindowContext) -> T;
+    fn update<T, F>(&mut self, window_id: usize, f: F) -> T
+    where
+        F: FnOnce(&mut WindowContext) -> T;
 }
 
 #[derive(Clone)]
@@ -402,7 +406,7 @@ impl AsyncAppContext {
         &mut self,
         window_options: WindowOptions,
         build_root_view: F,
-    ) -> (usize, ViewHandle<T>)
+    ) -> WindowHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
@@ -1300,7 +1304,7 @@ impl AppContext {
         &mut self,
         window_options: WindowOptions,
         build_root_view: F,
-    ) -> (usize, ViewHandle<V>)
+    ) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -1311,9 +1315,8 @@ impl AppContext {
                 this.platform
                     .open_window(window_id, window_options, this.foreground.clone());
             let window = this.build_window(window_id, platform_window, build_root_view);
-            let root_view = window.root_view().clone().downcast::<V>().unwrap();
             this.windows.insert(window_id, window);
-            (window_id, root_view)
+            WindowHandle::new(window_id, this.ref_counts.clone())
         })
     }
 
@@ -3802,6 +3805,131 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
+pub struct WindowHandle<T> {
+    any_handle: AnyWindowHandle,
+    view_type: PhantomData<T>,
+}
+
+impl<V: View> WindowHandle<V> {
+    fn id(&self) -> usize {
+        self.any_handle.id()
+    }
+
+    fn new(window_id: usize, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+        WindowHandle {
+            any_handle: AnyWindowHandle::new::<V>(window_id, ref_counts),
+            view_type: PhantomData,
+        }
+    }
+
+    fn root(&self, cx: &impl BorrowAppContext) -> ViewHandle<V> {
+        self.read_with(cx, |cx| cx.root_view().clone().downcast().unwrap())
+    }
+
+    pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&WindowContext) -> R,
+    {
+        cx.read_with(|cx| cx.read_window(self.id(), read).unwrap())
+    }
+
+    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut WindowContext) -> R,
+    {
+        cx.update(|cx| cx.update_window(self.id(), update).unwrap())
+    }
+
+    pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    {
+        let window_id = self.id();
+        cx.update(|cx| {
+            cx.update_window(window_id, |cx| {
+                cx.root_view()
+                    .clone()
+                    .downcast::<V>()
+                    .unwrap()
+                    .update(cx, update)
+            })
+            .unwrap()
+        })
+    }
+
+    pub fn read_root<'a>(&self, cx: &'a AppContext) -> &'a V {
+        let root_view = cx
+            .read_window(self.id(), |cx| cx.root_view().clone().downcast().unwrap())
+            .unwrap();
+        root_view.read(cx)
+    }
+
+    pub fn read_root_with<C, F, R>(&self, cx: &C, read: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&V, &ViewContext<V>) -> R,
+    {
+        self.read_with(cx, |cx| {
+            cx.root_view()
+                .downcast_ref::<V>()
+                .unwrap()
+                .read_with(cx, read)
+        })
+    }
+
+    pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> ViewHandle<U>
+    where
+        C: BorrowAppContext,
+        U: View,
+        F: FnOnce(&mut ViewContext<U>) -> U,
+    {
+        self.update(cx, |cx| cx.add_view(build_view))
+    }
+}
+
+pub struct AnyWindowHandle {
+    window_id: usize,
+    root_view_type: TypeId,
+    ref_counts: Arc<Mutex<RefCounts>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: usize,
+}
+
+impl AnyWindowHandle {
+    fn new<V: View>(window_id: usize, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_window(window_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(None, window_id);
+
+        Self {
+            window_id,
+            root_view_type: TypeId::of::<V>(),
+            ref_counts,
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id,
+        }
+    }
+
+    pub fn id(&self) -> usize {
+        self.window_id
+    }
+}
+
+impl Drop for AnyWindowHandle {
+    fn drop(&mut self) {
+        self.ref_counts.lock().dec_window(self.window_id)
+    }
+}
+
 #[repr(transparent)]
 pub struct ViewHandle<T> {
     any_handle: AnyViewHandle,
@@ -4684,11 +4812,11 @@ mod tests {
             }
         }
 
-        let (_, view) = cx.add_window(|_| View { render_count: 0 });
+        let window = cx.add_window(|_| View { render_count: 0 });
         let called_defer = Rc::new(AtomicBool::new(false));
         let called_after_window_update = Rc::new(AtomicBool::new(false));
 
-        view.update(cx, |this, cx| {
+        window.update_root(cx, |this, cx| {
             assert_eq!(this.render_count, 1);
             cx.defer({
                 let called_defer = called_defer.clone();
@@ -4712,7 +4840,7 @@ mod tests {
 
         assert!(called_defer.load(SeqCst));
         assert!(called_after_window_update.load(SeqCst));
-        assert_eq!(view.read_with(cx, |view, _| view.render_count), 3);
+        assert_eq!(window.read_root_with(cx, |view, _| view.render_count), 3);
     }
 
     #[crate::test(self)]
@@ -4751,9 +4879,9 @@ mod tests {
             }
         }
 
-        let (window_id, _root_view) = cx.add_window(|cx| View::new(None, cx));
-        let handle_1 = cx.add_view(window_id, |cx| View::new(None, cx));
-        let handle_2 = cx.add_view(window_id, |cx| View::new(Some(handle_1.clone()), cx));
+        let window = cx.add_window(|cx| View::new(None, cx));
+        let handle_1 = window.add_view(cx, |cx| View::new(None, cx));
+        let handle_2 = window.add_view(cx, |cx| View::new(Some(handle_1.clone()), cx));
         assert_eq!(cx.read(|cx| cx.views.len()), 3);
 
         handle_1.update(cx, |view, cx| {
@@ -4813,11 +4941,11 @@ mod tests {
         }
 
         let mouse_down_count = Arc::new(AtomicUsize::new(0));
-        let (window_id, _) = cx.add_window(Default::default(), |_| View {
+        let window = cx.add_window(Default::default(), |_| View {
             mouse_down_count: mouse_down_count.clone(),
         });
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             // Ensure window's root element is in a valid lifecycle state.
             cx.dispatch_event(
                 Event::MouseDown(MouseButtonEvent {
@@ -4876,9 +5004,11 @@ mod tests {
         let model = cx.add_model(|_| Model {
             released: model_released.clone(),
         });
-        let (window_id, view) = cx.add_window(Default::default(), |_| View {
+        let window = cx.add_window(Default::default(), |_| View {
             released: view_released.clone(),
         });
+        let view = window.root(cx);
+
         assert!(!model_released.get());
         assert!(!view_released.get());
 
@@ -4900,7 +5030,7 @@ mod tests {
         assert!(model_release_observed.get());
 
         drop(view);
-        cx.update_window(window_id, |cx| cx.remove_window());
+        window.update(cx, |cx| cx.remove_window());
         assert!(view_released.get());
         assert!(view_release_observed.get());
     }
@@ -4913,8 +5043,9 @@ mod tests {
             type Event = String;
         }
 
-        let (window_id, handle_1) = cx.add_window(|_| TestView::default());
-        let handle_2 = cx.add_view(window_id, |_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let handle_1 = window.root(cx);
+        let handle_2 = window.add_view(cx, |_| TestView::default());
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
@@ -5140,9 +5271,9 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(window_id, |_| TestView::default());
-        let emitting_view = cx.add_view(window_id, |_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let observing_view = window.add_view(cx, |_| TestView::default());
+        let emitting_view = window.add_view(cx, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5165,7 +5296,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
-        let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
+        let window = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.subscribe(&cx.handle(), {
                 move |this, _, _, _| this.events.push("dropped before flush".into())
             }));
@@ -5181,7 +5312,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(view.read(cx).events, ["before emit"]);
+        assert_eq!(window.read_root(cx).events, ["before emit"]);
     }
 
     #[crate::test(self)]
@@ -5195,7 +5326,8 @@ mod tests {
             type Event = ();
         }
 
-        let (_, view) = cx.add_window(|_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let view = window.root(cx);
         let model = cx.add_model(|_| Model {
             state: "old-state".into(),
         });
@@ -5216,7 +5348,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
-        let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
+        let window = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.observe(&cx.handle(), {
                 move |this, _, _| this.events.push("dropped before flush".into())
             }));
@@ -5232,7 +5364,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(view.read(cx).events, ["before notify"]);
+        assert_eq!(window.read_root(cx).events, ["before notify"]);
     }
 
     #[crate::test(self)]
@@ -5243,7 +5375,8 @@ mod tests {
         }
 
         let model = cx.add_model(|_| Model);
-        let (_, view) = cx.add_window(|_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let view = window.root(cx);
 
         view.update(cx, |_, cx| {
             model.update(cx, |_, cx| cx.notify());
@@ -5267,8 +5400,8 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(window_id, |_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let observing_view = window.add_view(cx, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5390,9 +5523,9 @@ mod tests {
             }
         }
 
-        let (window_id, _root_view) = cx.add_window(|_| View);
-        let observing_view = cx.add_view(window_id, |_| View);
-        let observed_view = cx.add_view(window_id, |_| View);
+        let window = cx.add_window(|_| View);
+        let observing_view = window.add_view(cx, |_| View);
+        let observed_view = window.add_view(cx, |_| View);
 
         let observation_count = Rc::new(RefCell::new(0));
         observing_view.update(cx, |_, cx| {
@@ -5474,13 +5607,14 @@ mod tests {
         }
 
         let view_events: Arc<Mutex<Vec<String>>> = Default::default();
-        let (window_id, view_1) = cx.add_window(|_| View {
+        let window = cx.add_window(|_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
             child: None,
         });
-        let view_2 = cx
-            .update_window(window_id, |cx| {
+        let view_1 = window.root(cx);
+        let view_2 = window
+            .update(cx, |cx| {
                 let view_2 = cx.add_view(|_| View {
                     events: view_events.clone(),
                     name: "view 2".to_string(),
@@ -5731,40 +5865,34 @@ mod tests {
         })
         .detach();
 
-        let (window_id, view_1) =
-            cx.add_window(Default::default(), |_| ViewA { id: 1, child: None });
-        let view_2 = cx
-            .update_window(window_id, |cx| {
-                let child = cx.add_view(|_| ViewB { id: 2, child: None });
-                view_1.update(cx, |view, cx| {
-                    view.child = Some(child.clone().into_any());
-                    cx.notify();
-                });
-                child
-            })
-            .unwrap();
-        let view_3 = cx
-            .update_window(window_id, |cx| {
-                let child = cx.add_view(|_| ViewA { id: 3, child: None });
-                view_2.update(cx, |view, cx| {
-                    view.child = Some(child.clone().into_any());
-                    cx.notify();
-                });
-                child
-            })
-            .unwrap();
-        let view_4 = cx
-            .update_window(window_id, |cx| {
-                let child = cx.add_view(|_| ViewB { id: 4, child: None });
-                view_3.update(cx, |view, cx| {
-                    view.child = Some(child.clone().into_any());
-                    cx.notify();
-                });
-                child
-            })
-            .unwrap();
+        let window = cx.add_window(Default::default(), |_| ViewA { id: 1, child: None });
+        let view_1 = window.root(cx);
+        let view_2 = window.update(cx, |cx| {
+            let child = cx.add_view(|_| ViewB { id: 2, child: None });
+            view_1.update(cx, |view, cx| {
+                view.child = Some(child.clone().into_any());
+                cx.notify();
+            });
+            child
+        });
+        let view_3 = window.update(cx, |cx| {
+            let child = cx.add_view(|_| ViewA { id: 3, child: None });
+            view_2.update(cx, |view, cx| {
+                view.child = Some(child.clone().into_any());
+                cx.notify();
+            });
+            child
+        });
+        let view_4 = window.update(cx, |cx| {
+            let child = cx.add_view(|_| ViewB { id: 4, child: None });
+            view_3.update(cx, |view, cx| {
+                view.child = Some(child.clone().into_any());
+                cx.notify();
+            });
+            child
+        });
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
@@ -5786,31 +5914,27 @@ mod tests {
 
         // Remove view_1, which doesn't propagate the action
 
-        let (window_id, view_2) =
-            cx.add_window(Default::default(), |_| ViewB { id: 2, child: None });
-        let view_3 = cx
-            .update_window(window_id, |cx| {
-                let child = cx.add_view(|_| ViewA { id: 3, child: None });
-                view_2.update(cx, |view, cx| {
-                    view.child = Some(child.clone().into_any());
-                    cx.notify();
-                });
-                child
-            })
-            .unwrap();
-        let view_4 = cx
-            .update_window(window_id, |cx| {
-                let child = cx.add_view(|_| ViewB { id: 4, child: None });
-                view_3.update(cx, |view, cx| {
-                    view.child = Some(child.clone().into_any());
-                    cx.notify();
-                });
-                child
-            })
-            .unwrap();
+        let window = cx.add_window(Default::default(), |_| ViewB { id: 2, child: None });
+        let view_2 = window.root(cx);
+        let view_3 = window.update(cx, |cx| {
+            let child = cx.add_view(|_| ViewA { id: 3, child: None });
+            view_2.update(cx, |view, cx| {
+                view.child = Some(child.clone().into_any());
+                cx.notify();
+            });
+            child
+        });
+        let view_4 = window.update(cx, |cx| {
+            let child = cx.add_view(|_| ViewB { id: 4, child: None });
+            view_3.update(cx, |view, cx| {
+                view.child = Some(child.clone().into_any());
+                cx.notify();
+            });
+            child
+        });
 
         actions.borrow_mut().clear();
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
@@ -5887,7 +6011,7 @@ mod tests {
         view_3.keymap_context.add_identifier("b");
         view_3.keymap_context.add_identifier("c");
 
-        let (window_id, _view_1) = cx.add_window(Default::default(), |cx| {
+        let window = cx.add_window(Default::default(), |cx| {
             let view_2 = cx.add_view(|cx| {
                 let view_3 = cx.add_view(|cx| {
                     cx.focus_self();
@@ -6006,13 +6130,14 @@ mod tests {
             }
         }
 
-        let (window_id, view_1) = cx.add_window(|cx| {
+        let window = cx.add_window(|cx| {
             let view_2 = cx.add_view(|cx| {
                 cx.focus_self();
                 View2 {}
             });
             View1 { child: view_2 }
         });
+        let view_1 = window.root(cx);
         let view_2 = view_1.read_with(cx, |view, _| view.child.clone());
 
         cx.update(|cx| {
@@ -6138,7 +6263,8 @@ mod tests {
 
         impl_actions!(test, [ActionWithArg]);
 
-        let (window_id, view) = cx.add_window(|_| View);
+        let window = cx.add_window(|_| View);
+        let view = window.root(cx);
         cx.update(|cx| {
             cx.add_global_action(|_: &ActionWithArg, _| {});
             cx.add_bindings(vec![
@@ -6250,7 +6376,8 @@ mod tests {
             }
         }
 
-        let (_, view) = cx.add_window(|_| Counter(0));
+        let window = cx.add_window(|_| Counter(0));
+        let view = window.root(cx);
 
         let condition1 = view.condition(cx, |view, _| view.0 == 2);
         let condition2 = view.condition(cx, |view, _| view.0 == 3);
@@ -6272,15 +6399,15 @@ mod tests {
     #[crate::test(self)]
     #[should_panic]
     async fn test_view_condition_timeout(cx: &mut TestAppContext) {
-        let (_, view) = cx.add_window(|_| TestView::default());
-        view.condition(cx, |_, _| false).await;
+        let window = cx.add_window(|_| TestView::default());
+        window.root(cx).condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
     async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
-        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
-        let view = cx.add_view(window_id, |_| TestView::default());
+        let window = cx.add_window(|_| TestView::default());
+        let view = window.add_view(cx, |_| TestView::default());
 
         let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
@@ -6305,22 +6432,21 @@ mod tests {
             }
         }
 
-        let (window_id, root_view) = cx.add_window(Default::default(), |_| View(0));
-        cx.update_window(window_id, |cx| {
+        let window = cx.add_window(Default::default(), |_| View(0));
+        let root_view = window.root(cx);
+        window.update(cx, |cx| {
             assert_eq!(
                 cx.window.rendered_views[&root_view.id()].name(),
                 Some("render count: 0")
             );
         });
 
-        let view = cx
-            .update_window(window_id, |cx| {
-                cx.refresh_windows();
-                cx.add_view(|_| View(0))
-            })
-            .unwrap();
+        let view = window.update(cx, |cx| {
+            cx.refresh_windows();
+            cx.add_view(|_| View(0))
+        });
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             assert_eq!(
                 cx.window.rendered_views[&root_view.id()].name(),
                 Some("render count: 1")
@@ -6333,7 +6459,7 @@ mod tests {
 
         cx.update(|cx| cx.refresh_windows());
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             assert_eq!(
                 cx.window.rendered_views[&root_view.id()].name(),
                 Some("render count: 2")
@@ -6349,7 +6475,7 @@ mod tests {
             drop(view);
         });
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             assert_eq!(
                 cx.window.rendered_views[&root_view.id()].name(),
                 Some("render count: 3")
@@ -6397,7 +6523,7 @@ mod tests {
         }
 
         let events = Rc::new(RefCell::new(Vec::new()));
-        let (window_1, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+        let window_1 = cx.add_window(|cx: &mut ViewContext<View>| {
             cx.observe_window_activation({
                 let events = events.clone();
                 move |this, active, _| events.borrow_mut().push((this.0, active))
@@ -6407,7 +6533,7 @@ mod tests {
         });
         assert_eq!(mem::take(&mut *events.borrow_mut()), [("window 1", true)]);
 
-        let (window_2, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+        let window_2 = cx.add_window(|cx: &mut ViewContext<View>| {
             cx.observe_window_activation({
                 let events = events.clone();
                 move |this, active, _| events.borrow_mut().push((this.0, active))
@@ -6420,7 +6546,7 @@ mod tests {
             [("window 1", false), ("window 2", true)]
         );
 
-        let (window_3, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+        let window_3 = cx.add_window(|cx: &mut ViewContext<View>| {
             cx.observe_window_activation({
                 let events = events.clone();
                 move |this, active, _| events.borrow_mut().push((this.0, active))
