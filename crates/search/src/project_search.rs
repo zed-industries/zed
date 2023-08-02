@@ -1395,6 +1395,7 @@ impl ProjectSearchBar {
                 .style_for(state)
                 .clone();
             style.container.border.right = false;
+
             Flex::row()
                 .with_child(
                     Label::new(icon, style.text.clone())
@@ -1410,7 +1411,7 @@ impl ProjectSearchBar {
                     )
                     .contained()
                     .constrained()
-                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 3.)
                     .aligned()
                     .bottom(),
                 )
@@ -1494,7 +1495,7 @@ impl ProjectSearchBar {
                     )
                     .contained()
                     .constrained()
-                    .with_max_width(theme.titlebar.avatar_ribbon.width / 2.)
+                    .with_max_width(theme.titlebar.avatar_ribbon.width / 3.)
                     .aligned()
                     .bottom(),
                 )
