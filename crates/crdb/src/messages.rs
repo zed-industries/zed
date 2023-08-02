@@ -10,6 +10,7 @@ use std::{any::Any, sync::Arc};
 pub enum RequestEnvelope {
     PublishRepo(PublishRepo),
     CloneRepo(CloneRepo),
+    ReconnectToRepo(ReconnectToRepo),
     SyncRepo(SyncRepo),
     PublishOperations(PublishOperations),
 }
@@ -19,6 +20,7 @@ impl RequestEnvelope {
         match self {
             RequestEnvelope::PublishRepo(request) => Box::new(request),
             RequestEnvelope::CloneRepo(request) => Box::new(request),
+            RequestEnvelope::ReconnectToRepo(request) => Box::new(request),
             RequestEnvelope::SyncRepo(request) => Box::new(request),
             RequestEnvelope::PublishOperations(request) => Box::new(request),
         }
@@ -71,6 +73,27 @@ impl Into<RequestEnvelope> for CloneRepo {
 pub struct CloneRepoResponse {
     pub repo_id: RepoId,
     pub replica_id: ReplicaId,
+    pub credentials: RoomCredentials,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReconnectToRepo {
+    pub id: RepoId,
+    pub replica_id: ReplicaId,
+}
+
+impl Request for ReconnectToRepo {
+    type Response = ReconnectToRepoResponse;
+}
+
+impl Into<RequestEnvelope> for ReconnectToRepo {
+    fn into(self) -> RequestEnvelope {
+        RequestEnvelope::ReconnectToRepo(self)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReconnectToRepoResponse {
     pub credentials: RoomCredentials,
 }
 

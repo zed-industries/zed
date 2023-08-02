@@ -122,6 +122,12 @@ impl RevisionId {
 )]
 pub struct ReplicaId(u32);
 
+impl Display for ReplicaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash,
 )]
@@ -321,13 +327,10 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                     futures::select_biased! {
                         remote_operations = remote_operations_rx.next() => {
                             if let Some(remote_operations) = remote_operations {
-                                if let Some(client) = client.upgrade() {
+                                if let Some(_client) = client.upgrade() {
                                     this.repo.apply_operations(remote_operations).await.expect("db is infallible");
-                                } else {
-                                    break;
+                                    continue;
                                 }
-                            } else {
-                                break;
                             }
                         },
                         local_operations = local_operations_rx.next() => {
@@ -345,15 +348,17 @@ impl<E: Executor, N: ClientNetwork> Checkout<E, N> {
                                         this.network_room
                                             .broadcast(MessageEnvelope::Operation(operation).to_bytes());
                                     }
-                                } else {
-                                    break;
+
+                                    continue;
                                 }
-                            } else {
-                                break;
                             }
                         },
                     }
+
+                    break;
                 }
+
+                log::info!("client dropped, dropping sync loop");
             }
         });
 
@@ -494,6 +499,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
                 .repos
                 .write()
                 .insert(repo_id, RepoSnapshot::new(repo_id, response.replica_id));
+            repo.update(|repo| {
+                repo.published = true;
+                (None, ())
+            });
 
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
@@ -516,6 +525,10 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
             let response = this
                 .request(messages::PublishRepo { id: repo.id, name })
                 .await?;
+            repo.update(|repo| {
+                repo.published = true;
+                (None, ())
+            });
             let mut room = this.network.room(response.credentials);
             room.connect().await?;
             let checkout = Checkout::new(&this, repo.clone(), room);
@@ -525,24 +538,40 @@ impl<E: Executor, N: ClientNetwork> Client<E, N> {
         }
     }
 
-    pub fn is_local_repo(&self, repo: &Repo) -> bool {
-        !self.checkouts.lock().contains_key(&repo.id)
-    }
-
-    pub fn repo(self: &Arc<Self>, id: RepoId) -> impl Future<Output = Result<Repo>> {
+    pub fn load_repo(self: &Arc<Self>, id: RepoId) -> impl Future<Output = Result<Repo>> {
         let this = self.clone();
         async move {
             if let Some(repo) = this.db.repo(id) {
                 return Ok(repo);
             }
 
-            let repo = RepoSnapshot::load(id, &*this.db.kv).await?;
-            this.db.repos.write().entry(id).or_insert(repo);
-
-            Ok(Repo {
+            let snapshot = RepoSnapshot::load(id, &*this.db.kv).await?;
+            let mut create_checkout = false;
+            let replica_id = snapshot.history.replica_id();
+            this.db.repos.write().entry(id).or_insert_with(|| {
+                create_checkout = snapshot.published;
+                snapshot
+            });
+            let repo = Repo {
                 id,
                 db: this.db.clone(),
-            })
+            };
+
+            if create_checkout {
+                // TODO: handle failure. There could be other repo handles that
+                // have been created concurrently. We should probably avoid creating
+                // such handles and instead share a future that waits on the checkout
+                // getting created.
+                let response = this
+                    .request(messages::ReconnectToRepo { id, replica_id })
+                    .await?;
+                let mut room = this.network.room(response.credentials);
+                room.connect().await?;
+                let checkout = Checkout::new(&this, repo.clone(), room);
+                this.checkouts.lock().insert(id, checkout);
+            }
+
+            Ok(repo)
         }
     }
 
@@ -616,6 +645,7 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
 
         this.handle_requests(Self::handle_publish_repo);
         this.handle_requests(Self::handle_clone_repo);
+        this.handle_requests(Self::handle_reconnect_to_repo);
         this.handle_requests(Self::handle_sync_repo);
         this.handle_requests(Self::handle_publish_operations);
         let request_handlers = this.request_handlers.clone();
@@ -664,20 +694,18 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
         user: User,
         request: messages::PublishRepo,
     ) -> Result<messages::PublishRepoResponse> {
-        let room_name = RoomName(request.id.to_string().into());
-        self.network.create_room(&room_name).await?;
-
         // TODO: handle repositories that had already been published.
+
+        self.create_repo_room(request.id).await?;
         match self.repo_ids_by_name.lock().entry(request.name.clone()) {
             btree_map::Entry::Occupied(_) => return Err(anyhow!("repo name taken")),
             btree_map::Entry::Vacant(entry) => {
                 entry.insert(request.id);
             }
         }
-
-        let token = self
-            .network
-            .grant_room_access(&room_name, user.login.as_ref());
+        let credentials = self
+            .grant_repo_room_access(request.id, &user, ReplicaId(0))
+            .await?;
 
         self.db.repos.write().insert(
             request.id,
@@ -687,12 +715,7 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             .lock()
             .insert(request.id, ReplicaId(1));
 
-        Ok(messages::PublishRepoResponse {
-            credentials: RoomCredentials {
-                name: room_name,
-                token,
-            },
-        })
+        Ok(messages::PublishRepoResponse { credentials })
     }
 
     async fn handle_clone_repo(
@@ -705,8 +728,6 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             .lock()
             .get(&request.name)
             .ok_or_else(|| anyhow!("repo not found"))?;
-        let name = RoomName(repo_id.to_string().into());
-        let token = self.network.grant_room_access(&name, user.login.as_ref());
         let replica_id = {
             let mut next_replica_ids = self.next_replica_ids_by_repo_id.lock();
             let next_replica_id = next_replica_ids.get_mut(&repo_id).unwrap();
@@ -714,11 +735,27 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             next_replica_id.0 += 1;
             replica_id
         };
+        let credentials = self
+            .grant_repo_room_access(repo_id, &user, replica_id)
+            .await?;
+
         Ok(messages::CloneRepoResponse {
             repo_id,
             replica_id,
-            credentials: RoomCredentials { name, token },
+            credentials,
         })
+    }
+
+    async fn handle_reconnect_to_repo(
+        self,
+        user: User,
+        request: messages::ReconnectToRepo,
+    ) -> Result<messages::ReconnectToRepoResponse> {
+        // TODO: ensure the same replica can't access the room twice.
+        let credentials = self
+            .grant_repo_room_access(request.id, &user, request.replica_id)
+            .await?;
+        Ok(messages::ReconnectToRepoResponse { credentials })
     }
 
     async fn handle_sync_repo(
@@ -756,6 +793,31 @@ impl<E: Executor, N: ServerNetwork> Server<E, N> {
             .ok_or_else(|| anyhow!("repo not found"))?;
         repo.apply_operations(request.operations).await?;
         Ok(())
+    }
+
+    async fn create_repo_room(&self, repo_id: RepoId) -> Result<()> {
+        let room_name = Self::room_name_for_repo(repo_id);
+        self.network.create_room(&room_name).await?;
+        Ok(())
+    }
+
+    async fn grant_repo_room_access(
+        &self,
+        repo_id: RepoId,
+        user: &User,
+        replica_id: ReplicaId,
+    ) -> Result<RoomCredentials> {
+        let room_name = Self::room_name_for_repo(repo_id);
+        let room_user = format!("{}/{}", user.login, replica_id);
+        let room_token = self.network.grant_room_access(&room_name, &room_user);
+        Ok(RoomCredentials {
+            name: room_name,
+            token: room_token,
+        })
+    }
+
+    fn room_name_for_repo(repo_id: RepoId) -> RoomName {
+        RoomName(format!("repos/{}", repo_id).into())
     }
 }
 
@@ -803,7 +865,11 @@ pub struct Repo {
 }
 
 impl Repo {
-    fn create_empty_branch(&self, name: impl Into<Arc<str>>) -> Branch {
+    pub fn is_published(&self) -> bool {
+        self.read(|repo| repo.published)
+    }
+
+    pub fn create_empty_branch(&self, name: impl Into<Arc<str>>) -> Branch {
         let branch_id = self.update(|repo| {
             let (operation, branch_id) = repo.create_empty_branch(name);
             (Some(operation), branch_id)
@@ -814,7 +880,7 @@ impl Repo {
         }
     }
 
-    fn load_branch(&self, name: impl Into<Arc<str>>) -> impl Future<Output = Result<Branch>> {
+    pub fn load_branch(&self, name: impl Into<Arc<str>>) -> impl Future<Output = Result<Branch>> {
         let this = self.clone();
         let name = name.into();
 
@@ -841,6 +907,7 @@ impl Repo {
         }
     }
 
+    #[cfg(test)]
     fn branches(&self) -> Vec<Branch> {
         self.read(|repo| {
             repo.branches
@@ -926,7 +993,7 @@ impl Repo {
 }
 
 #[derive(Clone)]
-struct Branch {
+pub struct Branch {
     id: BranchId,
     repo: Repo,
 }
@@ -978,18 +1045,17 @@ impl Branch {
                     repo.revisions.insert(head, revision);
                 }
 
-                Ok((
-                    repo,
-                    Document {
-                        branch: self.clone(),
-                        id: document_id,
-                    },
-                ))
+                Ok((repo, ()))
             })
-            .await
+            .await?;
+        Ok(Document {
+            branch: self.clone(),
+            id: document_id,
+        })
     }
 
-    pub fn documents(&self) -> Vec<Document> {
+    #[cfg(test)]
+    fn documents(&self) -> Vec<Document> {
         self.read(|revision| {
             revision
                 .document_metadata
@@ -1273,7 +1339,7 @@ impl<'a> btree::SeekTarget<'a, InsertionFragmentSummary, InsertionFragmentSummar
     }
 }
 
-struct Document {
+pub struct Document {
     branch: Branch,
     id: DocumentId,
 }
@@ -1722,6 +1788,7 @@ pub struct RepoSnapshot {
     revisions: btree::Map<RevisionId, Revision>,
     dirty_revisions: btree::Set<RevisionId>,
     document_ref_counts: btree::Map<(BranchId, DocumentId), usize>,
+    published: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1729,6 +1796,7 @@ struct SavedRepoSnapshot {
     history: SavedHistory,
     branches: btree::SavedId,
     branch_ids_by_name: btree::SavedId,
+    published: bool,
 }
 
 impl RepoSnapshot {
@@ -1744,6 +1812,7 @@ impl RepoSnapshot {
             )]),
             dirty_revisions: Default::default(),
             document_ref_counts: Default::default(),
+            published: false,
         }
     }
 
@@ -1770,6 +1839,7 @@ impl RepoSnapshot {
             )]),
             dirty_revisions: Default::default(),
             document_ref_counts: Default::default(),
+            published: saved_repo.published,
         })
     }
 
@@ -1778,6 +1848,7 @@ impl RepoSnapshot {
             history: self.history.save(kv).await?,
             branches: self.branches.save(kv).await?,
             branch_ids_by_name: self.branch_ids_by_name.save(kv).await?,
+            published: self.published,
         };
         let repo_bytes = serde_bare::to_vec(&saved_repo)?;
         kv.store(self.id.to_be_bytes(), "root".into(), repo_bytes)
@@ -2309,6 +2380,8 @@ mod tests {
         assert_eq!(doc1_a.text().to_string(), "abc");
         assert_eq!(doc2_a.text().to_string(), "def");
 
+        // Publish the repository, ensuring another client can clone it and
+        // collaborate.
         let kv_b = Arc::new(TestKv::new(deterministic.build_background()));
         client_a.publish_repo(&repo_a, "repo-1").await.unwrap();
         let client_b = Client::new(
@@ -2334,17 +2407,26 @@ mod tests {
         assert_eq!(doc1_a.text().to_string(), "aghic");
         assert_eq!(doc1_b.text().to_string(), "aghic");
 
-        // Re-create the client with the same KvStore. We should restore the saved state.
+        // Client A leaves.
         drop(client_a);
+        deterministic.run_until_parked();
+
+        // Re-create client A with the same KvStore. We should restore the saved state.
         let client_a2 = Client::new(
             deterministic.build_background(),
             network.client("client-a"),
             kv_a,
         );
-        let repo_a2 = client_a2.repo(repo_b.id).await.unwrap();
+        let repo_a2 = client_a2.load_repo(repo_b.id).await.unwrap();
         let branch_a2 = repo_a2.load_branch("main").await.unwrap();
         let doc1_a2 = branch_a2.load_document(doc1_a.id).await.unwrap();
         assert_eq!(doc1_a2.text().to_string(), "aghic");
+
+        // Client A should be able to collaborate after re-joining.
+        doc1_a2.edit([(1..4, "GHI")]);
+        assert_eq!(doc1_a2.text().to_string(), "aGHIc");
+        deterministic.run_until_parked();
+        assert_eq!(doc1_b.text().to_string(), "aGHIc");
     }
 
     #[derive(Clone)]
@@ -2467,7 +2549,7 @@ mod tests {
         deterministic.run_until_parked();
         for client in clients {
             for client_repo in client.repos() {
-                if !client.is_local_repo(&client_repo) {
+                if client_repo.is_published() {
                     let server_repo = server.db.repo(client_repo.id).unwrap();
                     let client_branches = client_repo.branches();
                     let server_branches = server_repo.branches();
@@ -2587,7 +2669,7 @@ mod tests {
                 } else {
                     let repo = repos.choose(rng).unwrap().clone();
                     let branches = repo.branches();
-                    if client.is_local_repo(&repo) && rng.gen_bool(0.05) {
+                    if !repo.is_published() && rng.gen_bool(0.05) {
                         Self::PublishRepo {
                             client_id,
                             id: repo.id,
@@ -2674,12 +2756,11 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*id).await?;
+                    let repo = client.load_repo(*id).await?;
                     let publish = client.publish_repo(&repo, name.clone());
-                    let publish = async move {
+                    client.executor.spawn(async move {
                         publish.await.log_err();
-                    };
-                    deterministic.build_background().spawn(publish);
+                    });
                 }
 
                 TestOperation::CloneRepo { client_id, name } => {
@@ -2688,10 +2769,9 @@ mod tests {
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
                     let clone = client.clone_repo(name.clone());
-                    let clone = async move {
+                    client.executor.spawn(async move {
                         clone.await.log_err();
-                    };
-                    deterministic.build_background().spawn(clone);
+                    });
                 }
 
                 TestOperation::CreateEmptyBranch {
@@ -2703,7 +2783,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id).await?;
+                    let repo = client.load_repo(*repo_id).await?;
                     repo.create_empty_branch(name.as_str());
                 }
 
@@ -2716,7 +2796,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id).await?;
+                    let repo = client.load_repo(*repo_id).await?;
                     let branch = repo.load_branch(branch_name.clone()).await?;
                     branch.create_document();
                 }
@@ -2732,7 +2812,7 @@ mod tests {
                         .iter_mut()
                         .find(|c| c.id == *client_id)
                         .ok_or_else(|| anyhow!("client not found"))?;
-                    let repo = client.repo(*repo_id).await?;
+                    let repo = client.load_repo(*repo_id).await?;
                     let branch = repo.load_branch(branch_name.clone()).await?;
                     let document = branch.load_document(*document_id).await?;
                     document.edit(edits.iter().cloned());

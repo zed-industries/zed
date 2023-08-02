@@ -62,6 +62,10 @@ impl History {
         })
     }
 
+    pub fn replica_id(&self) -> ReplicaId {
+        self.next_operation_id.replica_id
+    }
+
     pub fn next_operation_id(&mut self) -> OperationId {
         self.next_operation_id.tick()
     }
