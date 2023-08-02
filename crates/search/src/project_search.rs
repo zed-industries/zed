@@ -50,6 +50,7 @@ actions!(
         ToggleFocus,
         NextField,
         CycleMode,
+        ToggleFilters,
         ActivateTextMode,
         ActivateSemanticMode,
         ActivateRegexMode
@@ -72,6 +73,18 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_filters_action::<ToggleFilters>(cx);
+}
+
+fn add_toggle_filters_action<A: Action>(cx: &mut AppContext) {
+    cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| search_bar.toggle_filters(cx)) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    });
 }
 
 fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
@@ -380,7 +393,7 @@ impl View for ProjectSearchView {
                     let dots_count = semantic.outstanding_file_count % 3 + 1;
                     let dots: String = std::iter::repeat('.').take(dots_count).collect();
                     format!(
-                        "Indexing. {} of {}{dots}",
+                        "Indexing: {} of {}{dots}",
                         semantic.file_count - semantic.outstanding_file_count,
                         semantic.file_count
                     )
@@ -388,13 +401,13 @@ impl View for ProjectSearchView {
                     "Indexing complete".to_string()
                 }
             } else {
-                "This is an invalid state".to_string()
+                "Indexing: ...".to_string()
             };
 
             let minor_text = match current_mode {
                 SearchMode::Semantic => [
                     semantic_status,
-                    "ex. list all available languages".to_owned(),
+                    "ex. 'list all available languages'".to_owned(),
                 ],
                 _ => [
                     "Include/exclude specific paths with the filter option.".to_owned(),
@@ -1396,8 +1409,6 @@ impl ProjectSearchBar {
                 search_view
                     .excluded_files_editor
                     .update(cx, |_, cx| cx.notify());
-                search_view.semantic = None;
-                search_view.search(cx);
                 cx.notify();
             });
             cx.notify();
@@ -1518,6 +1529,7 @@ impl ProjectSearchBar {
 
                 if button_side == Side::Left {
                     Flex::row()
+                        .align_children_center()
                         .with_child(
                             ButtonSide::left(
                                 style
@@ -1534,6 +1546,7 @@ impl ProjectSearchBar {
                         .into_any()
                 } else {
                     Flex::row()
+                        .align_children_center()
                         .with_child(label)
                         .with_child(
                             ButtonSide::right(
@@ -1646,7 +1659,13 @@ impl View for ProjectSearchBar {
                     this.toggle_filters(cx);
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .with_tooltip::<Self>(0, "Toggle filters".into(), None, tooltip_style, cx)
+                .with_tooltip::<Self>(
+                    0,
+                    "Toggle filters".into(),
+                    Some(Box::new(ToggleFilters)),
+                    tooltip_style,
+                    cx,
+                )
                 .into_any()
             };
             let search = _search.read(cx);

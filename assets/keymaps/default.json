@@ -229,13 +229,15 @@
   {
     "context": "ProjectSearchBar",
     "bindings": {
-      "escape": "project_search::ToggleFocus"
+      "escape": "project_search::ToggleFocus",
+      "alt-tab": "project_search::CycleMode",
     }
   },
   {
     "context": "ProjectSearchView",
     "bindings": {
-      "escape": "project_search::ToggleFocus"
+      "escape": "project_search::ToggleFocus",
+      "alt-tab": "project_search::CycleMode"
     }
   },
   {
@@ -247,7 +249,8 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
-      "alt-cmd-r": "search::ToggleRegex"
+      "alt-cmd-r": "search::ToggleRegex",
+      "alt-cmd-f": "project_search::ToggleFilters"
     }
   },
   // Bindings from VS Code
