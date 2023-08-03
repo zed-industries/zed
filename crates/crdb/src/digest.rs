@@ -6,7 +6,7 @@ use crate::{
 };
 use bromberg_sl2::HashMatrix;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Digest {
     pub count: usize,
     pub hash: HashMatrix,
@@ -74,52 +74,40 @@ impl DigestSequence {
         }
     }
 
-    pub fn items(&self) -> Vec<Digest> {
-        self.digests.items(&())
-    }
-
-    pub fn digest(&self, range: Range<usize>) -> (Digest, Digest) {
-        let start = cmp::min(range.start, self.digests.summary().count);
-        let end = cmp::min(range.end, self.digests.summary().count);
-        let mut cursor = self.digests.cursor::<usize>();
-        cursor.seek(&start, Bias::Right, &());
-        assert_eq!(*cursor.start(), start, "start is inside an unfilled range");
-        let left_digest_hash = cursor.summary(&end, Bias::Right, &());
-        let left_digest = Digest {
-            count: *cursor.start() - start,
-            hash: left_digest_hash,
-        };
-        let right_digest = if end == *cursor.start() {
-            left_digest.clone()
-        } else {
-            let digest = cursor.item().unwrap();
-            Digest {
-                count: cursor.end(&()) - start,
-                hash: left_digest.hash * digest.hash,
-            }
-        };
-        (left_digest, right_digest)
-    }
-
-    pub fn insert(&mut self, index: usize, digest: Digest) {
-        if index > self.digests.summary().count {
-            panic!("index out of bounds");
+    pub fn debug(&self) {
+        let mut start = 0;
+        print!("[");
+        for item in self.digests.iter() {
+            let end = start + item.count;
+            print!("{:?}, ", start..end);
+            start = end;
         }
+        println!("]");
+    }
 
+    pub fn digest(&self, mut range: Range<usize>) -> Digest {
+        let mut count = range.len();
+        range.start = cmp::min(range.start, self.digests.summary().count);
+        range.end = cmp::min(range.end, self.digests.summary().count);
         let mut cursor = self.digests.cursor::<usize>();
-        let mut new_digests = cursor.slice(&index, Bias::Right, &());
+        cursor.seek(&range.start, Bias::Right, &());
         assert_eq!(
             *cursor.start(),
-            index,
-            "tried to insert into an unfilled range"
+            range.start,
+            "start is not at the start of a digest range"
         );
-        new_digests.push(digest, &());
-        new_digests.append(cursor.suffix(&()), &());
-        drop(cursor);
-        self.digests = new_digests;
+        let mut hash = cursor.summary(&range.end, Bias::Right, &());
+
+        if range.end > *cursor.start() {
+            let digest = cursor.item().unwrap();
+            hash = hash * digest.hash;
+            cursor.next(&());
+            count = cmp::max(*cursor.start() - range.start, count);
+        }
+        Digest { count, hash }
     }
 
-    pub fn fill(&mut self, mut range: Range<usize>, digests: impl IntoIterator<Item = Digest>) {
+    pub fn splice(&mut self, mut range: Range<usize>, digests: impl IntoIterator<Item = Digest>) {
         let max_index = self.digests.summary().count;
         if range.start > max_index {
             panic!("range out of bounds");
@@ -128,16 +116,12 @@ impl DigestSequence {
 
         let mut cursor = self.digests.cursor::<usize>();
         let mut new_digests = cursor.slice(&range.start, Bias::Right, &());
-        assert_eq!(
-            *cursor.start(),
-            range.start,
-            "start is inside an unfilled range"
-        );
+        assert_eq!(*cursor.start(), range.start, "start is nedigest range");
         cursor.seek(&range.end, Bias::Right, &());
         assert_eq!(
             *cursor.start(),
             range.end,
-            "end is inside an unfilled range"
+            "end is not at the start of a digest range"
         );
         new_digests.extend(digests, &());
         new_digests.append(cursor.suffix(&()), &());
