@@ -82,11 +82,25 @@ fn request_digests(
     let mut digests = Vec::with_capacity(digest_count);
     let mut subrange_start = root_range.start;
     while subrange_start < root_range.end {
-        let subrange_end = subrange_start + subrange_len;
+        let subrange_end = cmp::min(subrange_start + subrange_len, root_range.end);
         digests.push(digest_for_range(operations, subrange_start..subrange_end));
         subrange_start = subrange_end;
     }
     digests
+}
+
+fn leaf_ranges(root_range: Range<usize>, tree_base: usize, tree_depth: u32) -> Vec<Range<usize>> {
+    let count = tree_base.pow(tree_depth);
+    let subrange_len = (root_range.len() + count - 1) / count;
+
+    let mut subranges = Vec::with_capacity(count);
+    let mut subrange_start = root_range.start;
+    while subrange_start < root_range.end {
+        let subrange_end = cmp::min(subrange_start + subrange_len, root_range.end);
+        subranges.push(subrange_start..subrange_end);
+        subrange_start = subrange_end;
+    }
+    subranges
 }
 
 fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Operation>) {
@@ -94,8 +108,11 @@ fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Op
     const DEPTH: u32 = 2;
     const MIN_OPERATIONS: usize = 5;
     let max_sync_range = 0..(client.summary().digest.count + server.summary().digest.count);
-    let mut stack = vec![max_sync_range];
     let mut server_digests = DigestSequence::new();
+    let digests = request_digests(server, max_sync_range.clone(), BASE, DEPTH);
+    server_digests.splice(0..0, digests.iter().cloned());
+    let mut stack = leaf_ranges(max_sync_range, BASE, DEPTH);
+    stack.reverse();
 
     let mut synced_end = 0;
     while let Some(mut sync_range) = stack.pop() {
@@ -103,7 +120,7 @@ fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Op
         println!("visiting {:?}", sync_range);
         server_digests.debug();
         let server_digest = server_digests.digest(sync_range.clone());
-        sync_range.end = sync_range.start + server_digest.count;
+        sync_range.end = cmp::max(sync_range.start + server_digest.count, sync_range.end);
         println!("server digest range was {:?}", sync_range);
         let client_digest = digest_for_range(client, sync_range.clone());
         if client_digest == server_digest {
@@ -113,15 +130,10 @@ fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Op
         } else if sync_range.len() > MIN_OPERATIONS {
             println!("digests are not the same, recursing");
             let digests = request_digests(server, sync_range.clone(), BASE, DEPTH);
-            server_digests.splice(sync_range, digests.iter().cloned());
-            let stack_ix = stack.len();
-            let mut start = 0;
-            for digest in digests {
-                let end = start + digest.count;
-                stack.push(start..end);
-                start = end;
-            }
-            stack[stack_ix..].reverse();
+            server_digests.splice(sync_range.clone(), digests.iter().cloned());
+            let old_stack_len = stack.len();
+            stack.extend(leaf_ranges(sync_range, BASE, DEPTH));
+            stack[old_stack_len..].reverse();
         } else {
             let mut missed_client_ops = Vec::new();
             let mut missed_server_ops = Vec::new();
@@ -304,9 +316,7 @@ fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Op
 fn digest_for_range(operations: &btree::Sequence<Operation>, range: Range<usize>) -> Digest {
     let mut cursor = operations.cursor::<usize>();
     cursor.seek(&range.start, Bias::Right, &());
-    let mut digest: Digest = cursor.summary(&range.end, Bias::Right, &());
-    digest.count = range.len();
-    digest
+    cursor.summary(&range.end, Bias::Right, &())
 }
 
 fn request_operations<T: RangeBounds<usize>>(
@@ -366,13 +376,13 @@ mod tests {
 
     #[test]
     fn test_sync() {
-        // assert_sync(1..=10, 5..=10);
-        // assert_sync(1..=10, 4..=10);
+        assert_sync(1..=10, 5..=10);
+        assert_sync(1..=10, 4..=10);
         assert_sync(1..=10, 1..=5);
-        // assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
-        // assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
-        // assert_sync(1..=10, 5..=14);
-        // assert_sync(1..=10000, 1..=7000);
+        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
+        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
+        assert_sync(1..=10, 5..=14);
+        assert_sync(1..=10000, 1..=7000);
     }
 
     fn assert_sync(

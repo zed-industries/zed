@@ -86,7 +86,6 @@ impl DigestSequence {
     }
 
     pub fn digest(&self, mut range: Range<usize>) -> Digest {
-        let mut count = range.len();
         range.start = cmp::min(range.start, self.digests.summary().count);
         range.end = cmp::min(range.end, self.digests.summary().count);
         let mut cursor = self.digests.cursor::<usize>();
@@ -102,8 +101,9 @@ impl DigestSequence {
             let digest = cursor.item().unwrap();
             hash = hash * digest.hash;
             cursor.next(&());
-            count = cmp::max(*cursor.start() - range.start, count);
         }
+
+        let count = cursor.start() - range.start;
         Digest { count, hash }
     }
 
