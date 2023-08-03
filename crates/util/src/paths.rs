@@ -61,7 +61,6 @@ impl PathExt for Path {
     }
 
     fn icon_suffix(&self) -> Option<&str> {
-        // if it has one dot and starts with a dot, take the rest
         let file_name = self.file_name()?.to_str()?;
 
         if file_name.starts_with(".") {
