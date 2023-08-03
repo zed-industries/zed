@@ -16,7 +16,7 @@ use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{search::PathMatcher, Fs, Project, WorktreeId};
+use project::{project_settings, search::PathMatcher, Fs, Project, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
@@ -49,9 +49,8 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<SemanticIndexSettings>(cx).enabled
-    {
+    // This needs to be removed at some point before stable.
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
 

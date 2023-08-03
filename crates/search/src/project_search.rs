@@ -2,7 +2,7 @@ use crate::{
     NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
     SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
@@ -13,6 +13,7 @@ use gpui::color::Color;
 use gpui::geometry::rect::RectF;
 use gpui::geometry::vector::IntoVector2F;
 use gpui::json::{self, ToJson};
+use gpui::platform::PromptLevel;
 use gpui::SceneBuilder;
 use gpui::{
     actions,
@@ -127,7 +128,8 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
-    semantic: Option<SemanticSearchState>,
+    semantic_state: Option<SemanticSearchState>,
+    semantic_permissioned: bool,
     search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
@@ -402,7 +404,7 @@ impl View for ProjectSearchView {
                 }
             };
 
-            let semantic_status = if let Some(semantic) = &self.semantic {
+            let semantic_status = if let Some(semantic) = &self.semantic_state {
                 if semantic.outstanding_file_count > 0 {
                     let dots_count = semantic.outstanding_file_count % 3 + 1;
                     let dots: String = std::iter::repeat('.').take(dots_count).collect();
@@ -709,65 +711,108 @@ impl ProjectSearchView {
     fn toggle_search_option(&mut self, option: SearchOptions) {
         self.search_options.toggle(option);
     }
+
+    fn index_project(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(semantic_index) = SemanticIndex::global(cx) {
+            // Semantic search uses no options
+            self.search_options = SearchOptions::none();
+
+            let project = self.model.read(cx).project.clone();
+            let index_task = semantic_index.update(cx, |semantic_index, cx| {
+                semantic_index.index_project(project, cx)
+            });
+
+            cx.spawn(|search_view, mut cx| async move {
+                let (files_to_index, mut files_remaining_rx) = index_task.await?;
+
+                search_view.update(&mut cx, |search_view, cx| {
+                    cx.notify();
+                    search_view.semantic_state = Some(SemanticSearchState {
+                        file_count: files_to_index,
+                        outstanding_file_count: files_to_index,
+                        _progress_task: cx.spawn(|search_view, mut cx| async move {
+                            while let Some(count) = files_remaining_rx.recv().await {
+                                search_view
+                                    .update(&mut cx, |search_view, cx| {
+                                        if let Some(semantic_search_state) =
+                                            &mut search_view.semantic_state
+                                        {
+                                            semantic_search_state.outstanding_file_count = count;
+                                            cx.notify();
+                                            if count == 0 {
+                                                return;
+                                            }
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        }),
+                    });
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         self.model.update(cx, |model, _| model.kill_search());
         self.current_mode = mode;
 
         match mode {
             SearchMode::Semantic => {
-                if let Some(semantic_index) = SemanticIndex::global(cx) {
-                    // Semantic search uses no options
-                    self.search_options = SearchOptions::none();
-
+                // let semantic_permissioned = self.semantic_permissioned.await;
+                // if semantic_permissioned.is_ok_and(|permission| !permission) {
+                if !self.semantic_permissioned {
+                    // TODO: Change this to read from the project name
                     let project = self.model.read(cx).project.clone();
-                    let index_task = semantic_index.update(cx, |semantic_index, cx| {
-                        semantic_index.index_project(project, cx)
-                    });
+                    let project_name = project
+                        .read(cx)
+                        .worktree_root_names(cx)
+                        .collect::<Vec<&str>>()
+                        .join("/");
+                    let is_plural =
+                        project_name.chars().filter(|letter| *letter == '/').count() > 0;
+                    let prompt_text = format!("Would you like to index the '{}' project{} for semantic search? This requires sending code to the OpenAI API", project_name,
+                        if is_plural {
+                            "s"
+                        } else {""});
+                    let mut answer = cx.prompt(
+                        PromptLevel::Info,
+                        prompt_text.as_str(),
+                        &["Continue", "Cancel"],
+                    );
 
                     cx.spawn(|search_view, mut cx| async move {
-                        let (files_to_index, mut files_remaining_rx) = index_task.await?;
-
-                        search_view.update(&mut cx, |search_view, cx| {
-                            cx.notify();
-                            search_view.semantic = Some(SemanticSearchState {
-                                file_count: files_to_index,
-                                outstanding_file_count: files_to_index,
-                                _progress_task: cx.spawn(|search_view, mut cx| async move {
-                                    while let Some(count) = files_remaining_rx.recv().await {
-                                        search_view
-                                            .update(&mut cx, |search_view, cx| {
-                                                if let Some(semantic_search_state) =
-                                                    &mut search_view.semantic
-                                                {
-                                                    semantic_search_state.outstanding_file_count =
-                                                        count;
-                                                    cx.notify();
-                                                    if count == 0 {
-                                                        return;
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                }),
+                        if answer.next().await == Some(0) {
+                            search_view.update(&mut cx, |search_view, cx| {
+                                search_view.semantic_permissioned = true;
+                                search_view.index_project(cx);
+                            })?;
+                            anyhow::Ok(())
+                        } else {
+                            search_view.update(&mut cx, |search_view, cx| {
+                                search_view.activate_search_mode(SearchMode::Regex, cx);
                             });
-                        })?;
-                        anyhow::Ok(())
+                            anyhow::Ok(())
+                        }
                     })
                     .detach_and_log_err(cx);
+                } else {
+                    self.index_project(cx);
                 }
             }
             SearchMode::Regex => {
                 if !self.is_option_enabled(SearchOptions::REGEX) {
                     self.toggle_search_option(SearchOptions::REGEX);
                 }
-                self.semantic = None;
+                self.semantic_state = None;
             }
             SearchMode::Text => {
                 if self.is_option_enabled(SearchOptions::REGEX) {
                     self.toggle_search_option(SearchOptions::REGEX);
                 }
-                self.semantic = None;
+                self.semantic_state = None;
             }
         }
         cx.notify();
@@ -856,12 +901,15 @@ impl ProjectSearchView {
         })
         .detach();
         let filters_enabled = false;
+
+        // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
             search_id: model.read(cx).search_id,
             model,
             query_editor,
             results_editor,
-            semantic: None,
+            semantic_state: None,
+            semantic_permissioned: false,
             search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
@@ -953,7 +1001,7 @@ impl ProjectSearchView {
         let mode = self.current_mode;
         match mode {
             SearchMode::Semantic => {
-                if let Some(semantic) = &mut self.semantic {
+                if let Some(semantic) = &mut self.semantic_state {
                     if semantic.outstanding_file_count > 0 {
                         return;
                     }
@@ -1747,7 +1795,7 @@ impl View for ProjectSearchBar {
                 .into_any()
             };
             let search = _search.read(cx);
-            let is_semantic_disabled = search.semantic.is_none();
+            let is_semantic_disabled = search.semantic_state.is_none();
 
             let case_sensitive = if is_semantic_disabled {
                 Some(self.render_option_button_icon(
