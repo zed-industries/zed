@@ -1,7 +1,7 @@
-use crate::{ItemHandle, Pane};
+use crate::ItemHandle;
 use gpui::{
-    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyElement, AnyViewHandle,
-    AppContext, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    elements::*, AnyElement, AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
+    WindowContext,
 };
 
 pub trait ToolbarItemView: View {

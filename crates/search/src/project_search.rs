@@ -1426,7 +1426,7 @@ impl ProjectSearchBar {
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| {
+            search_view.update(cx, |search_view, _cx| {
                 search_view.toggle_search_option(option);
             });
             cx.notify();
