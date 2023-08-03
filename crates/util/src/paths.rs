@@ -298,7 +298,7 @@ mod tests {
         let path = Path::new("/a/b/c/file_name.rs");
         assert_eq!(path.icon_suffix(), Some("rs"));
 
-        // Dot in name
+        // Single dot in name
         let path = Path::new("/a/b/c/file.name.rs");
         assert_eq!(path.icon_suffix(), Some("rs"));
 
