@@ -130,10 +130,12 @@ pub trait BorrowAppContext {
 }
 
 pub trait BorrowWindowContext {
-    fn read_with<T, F>(&self, window_id: usize, f: F) -> T
+    type Return<T>;
+
+    fn read_with<T, F>(&self, window_id: usize, f: F) -> Self::Return<T>
     where
         F: FnOnce(&WindowContext) -> T;
-    fn update<T, F>(&mut self, window_id: usize, f: F) -> T
+    fn update<T, F>(&mut self, window_id: usize, f: F) -> Self::Return<T>
     where
         F: FnOnce(&mut WindowContext) -> T;
 }
@@ -3358,6 +3360,8 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
 }
 
 impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
+    type Return<T> = T;
+
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.window_context, window_id, f)
     }
@@ -3463,6 +3467,8 @@ impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
 }
 
 impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
+    type Return<T> = T;
+
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }
@@ -3515,6 +3521,8 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 }
 
 impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
+    type Return<T> = T;
+
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }
@@ -4013,7 +4021,7 @@ impl<T: View> ViewHandle<T> {
         cx.read_view(self)
     }
 
-    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::Return<S>
     where
         C: BorrowWindowContext,
         F: FnOnce(&T, &ViewContext<T>) -> S,
@@ -4024,7 +4032,7 @@ impl<T: View> ViewHandle<T> {
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::Return<S>
     where
         C: BorrowWindowContext,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,

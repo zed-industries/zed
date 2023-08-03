@@ -406,6 +406,8 @@ impl BorrowAppContext for TestAppContext {
 }
 
 impl BorrowWindowContext for TestAppContext {
+    type Return<T> = T;
+
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         self.cx
             .borrow()
