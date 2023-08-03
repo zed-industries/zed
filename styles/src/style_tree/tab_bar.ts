@@ -88,8 +88,8 @@ export default function tab_bar(): any {
         base: {
             color: foreground(theme.highest, "on"),
             icon_width: 12,
-            button_width: 24,
-            corner_radius: 6,
+
+            button_width: active_pane_active_tab.height,
         },
         state: {
             hovered: {
