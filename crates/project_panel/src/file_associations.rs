@@ -48,7 +48,7 @@ impl FileAssociations {
             // FIXME: Associate a type with the languages and have the file's langauge
             //        override these associations
             iife!({
-                let suffix = path.suffix()?;
+                let suffix = path.icon_suffix()?;
 
                 this.suffixes
                     .get(suffix)

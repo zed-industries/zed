@@ -32,7 +32,7 @@ pub mod legacy {
 
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
-    fn suffix(&self) -> Option<&str>;
+    fn icon_suffix(&self) -> Option<&str>;
 }
 
 impl PathExt for Path {
@@ -60,7 +60,7 @@ impl PathExt for Path {
         }
     }
 
-    fn suffix(&self) -> Option<&str> {
+    fn icon_suffix(&self) -> Option<&str> {
         match self.extension() {
             Some(extension) => extension.to_str(),
             None => {
@@ -298,13 +298,20 @@ mod tests {
 
     #[test]
     fn test_path_suffix() {
+        // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
-        assert_eq!(path.suffix(), Some("rs"));
+        assert_eq!(path.icon_suffix(), Some("rs"));
 
+        // Dot in name
         let path = Path::new("/a/b/c/file.name.rs");
-        assert_eq!(path.suffix(), Some("rs"));
+        assert_eq!(path.icon_suffix(), Some("rs"));
 
+        // Hidden file, no extension
         let path = Path::new("/a/b/c/.gitignore");
-        assert_eq!(path.suffix(), Some("gitignore"));
+        assert_eq!(path.icon_suffix(), Some("gitignore"));
+
+        // Hidden file, with extension
+        let path = Path::new("/a/b/c/.eslintrc.js");
+        assert_eq!(path.icon_suffix(), Some("eslintrc.js"));
     }
 }
