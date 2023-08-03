@@ -419,7 +419,7 @@ impl View for ProjectSearchView {
             };
 
             let minor_text = if let Some(no_results) = model.no_results {
-                if no_results {
+                if model.pending_search.is_none() && no_results {
                     vec!["No results found in this project for the provided query".to_owned()]
                 } else {
                     vec![]
