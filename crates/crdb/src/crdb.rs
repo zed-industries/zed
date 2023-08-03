@@ -1,5 +1,6 @@
 mod btree;
 mod dense_id;
+mod digest;
 mod history;
 mod messages;
 mod operations;
@@ -9,6 +10,7 @@ mod sync;
 mod test;
 
 use anyhow::{anyhow, Result};
+use bromberg_sl2::HashMatrix;
 use btree::{Bias, KvStore, SavedId};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, VecDeque};
 use dense_id::DenseId;
@@ -175,6 +177,10 @@ impl OperationId {
         bytes[..4].copy_from_slice(&self.replica_id.0.to_be_bytes());
         bytes[4..].copy_from_slice(&self.operation_count.0.to_be_bytes());
         bytes
+    }
+
+    fn digest(&self) -> HashMatrix {
+        bromberg_sl2::hash_strict(&self.to_be_bytes())
     }
 }
 
