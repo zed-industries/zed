@@ -1,6 +1,7 @@
 use call::ActiveCall;
 use client::{Channel, User};
 use gpui::{executor::Deterministic, TestAppContext};
+use rpc::proto;
 use std::sync::Arc;
 
 use crate::tests::{room_participants, RoomParticipants};
@@ -46,8 +47,14 @@ async fn test_basic_channels(
     // Invite client B to channel A as client A.
     client_a
         .channel_store()
-        .update(cx_a, |channel_store, _| {
-            channel_store.invite_member(channel_a_id, client_b.user_id().unwrap(), false)
+        .update(cx_a, |store, cx| {
+            assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
+
+            let invite = store.invite_member(channel_a_id, client_b.user_id().unwrap(), false, cx);
+
+            // Make sure we're synchronously storing the pending invite
+            assert!(store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
+            invite
         })
         .await
         .unwrap();
@@ -66,6 +73,27 @@ async fn test_basic_channels(
             })]
         )
     });
+    let members = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| {
+            assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
+            store.get_channel_member_details(channel_a_id, cx)
+        })
+        .await
+        .unwrap();
+    assert_members_eq(
+        &members,
+        &[
+            (
+                client_a.user_id().unwrap(),
+                proto::channel_member::Kind::Member,
+            ),
+            (
+                client_b.user_id().unwrap(),
+                proto::channel_member::Kind::Invitee,
+            ),
+        ],
+    );
 
     // Client B now sees that they are a member channel A.
     client_b
@@ -110,6 +138,19 @@ fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u
     assert_eq!(
         participants.iter().map(|p| p.id).collect::<Vec<_>>(),
         expected_partitipants
+    );
+}
+
+fn assert_members_eq(
+    members: &[(Arc<User>, proto::channel_member::Kind)],
+    expected_members: &[(u64, proto::channel_member::Kind)],
+) {
+    assert_eq!(
+        members
+            .iter()
+            .map(|(user, status)| (user.id, *status))
+            .collect::<Vec<_>>(),
+        expected_members
     );
 }
 

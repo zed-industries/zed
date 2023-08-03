@@ -246,6 +246,7 @@ impl Server {
             .add_request_handler(remove_channel)
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
+            .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
             .add_request_handler(follow)
@@ -2233,6 +2234,18 @@ async fn remove_channel_member(
     _response: Response<proto::RemoveChannelMember>,
     _session: Session,
 ) -> Result<()> {
+    Ok(())
+}
+
+async fn get_channel_members(
+    request: proto::GetChannelMembers,
+    response: Response<proto::GetChannelMembers>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let members = db.get_channel_member_details(channel_id).await?;
+    response.send(proto::GetChannelMembersResponse { members })?;
     Ok(())
 }
 

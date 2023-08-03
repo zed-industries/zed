@@ -1,6 +1,8 @@
 use crate::{Client, Subscription, User, UserStore};
+use anyhow::anyhow;
 use anyhow::Result;
 use collections::HashMap;
+use collections::HashSet;
 use futures::Future;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, TypedEnvelope};
@@ -13,6 +15,7 @@ pub struct ChannelStore {
     channels: Vec<Arc<Channel>>,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
+    outgoing_invites: HashSet<(ChannelId, UserId)>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -33,6 +36,7 @@ impl Entity for ChannelStore {
 pub enum ChannelMemberStatus {
     Invited,
     Member,
+    NotMember,
 }
 
 impl ChannelStore {
@@ -48,6 +52,7 @@ impl ChannelStore {
             channels: vec![],
             channel_invitations: vec![],
             channel_participants: Default::default(),
+            outgoing_invites: Default::default(),
             client,
             user_store,
             _rpc_subscription: rpc_subscription,
@@ -88,13 +93,19 @@ impl ChannelStore {
     }
 
     pub fn invite_member(
-        &self,
+        &mut self,
         channel_id: ChannelId,
         user_id: UserId,
         admin: bool,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if !self.outgoing_invites.insert((channel_id, user_id)) {
+            return Task::ready(Err(anyhow!("invite request already in progress")));
+        }
+
+        cx.notify();
         let client = self.client.clone();
-        async move {
+        cx.spawn(|this, mut cx| async move {
             client
                 .request(proto::InviteChannelMember {
                     channel_id,
@@ -102,8 +113,12 @@ impl ChannelStore {
                     admin,
                 })
                 .await?;
+            this.update(&mut cx, |this, cx| {
+                this.outgoing_invites.remove(&(channel_id, user_id));
+                cx.notify();
+            });
             Ok(())
-        }
+        })
     }
 
     pub fn respond_to_channel_invite(
@@ -120,24 +135,34 @@ impl ChannelStore {
         }
     }
 
-    pub fn get_channel_members(
+    pub fn get_channel_member_details(
         &self,
         channel_id: ChannelId,
-    ) -> impl 'static + Future<Output = Result<HashMap<UserId, ChannelMemberStatus>>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<(Arc<User>, proto::channel_member::Kind)>>> {
         let client = self.client.clone();
-        async move {
+        let user_store = self.user_store.downgrade();
+        cx.spawn(|_, mut cx| async move {
             let response = client
                 .request(proto::GetChannelMembers { channel_id })
                 .await?;
-            let mut result = HashMap::default();
-            for member_id in response.members {
-                result.insert(member_id, ChannelMemberStatus::Member);
-            }
-            for invitee_id in response.invited_members {
-                result.insert(invitee_id, ChannelMemberStatus::Invited);
-            }
-            Ok(result)
-        }
+
+            let user_ids = response.members.iter().map(|m| m.user_id).collect();
+            let user_store = user_store
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("user store dropped"))?;
+            let users = user_store
+                .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))
+                .await?;
+
+            Ok(users
+                .into_iter()
+                .zip(response.members)
+                .filter_map(|(user, member)| {
+                    Some((user, proto::channel_member::Kind::from_i32(member.kind)?))
+                })
+                .collect())
+        })
     }
 
     pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
@@ -148,25 +173,22 @@ impl ChannelStore {
         }
     }
 
-    pub fn is_channel_invite_pending(&self, _: &Arc<Channel>) -> bool {
+    pub fn has_pending_channel_invite_response(&self, _: &Arc<Channel>) -> bool {
         false
+    }
+
+    pub fn has_pending_channel_invite(&self, channel_id: ChannelId, user_id: UserId) -> bool {
+        self.outgoing_invites.contains(&(channel_id, user_id))
     }
 
     pub fn remove_member(
         &self,
-        channel_id: ChannelId,
-        user_id: u64,
-        cx: &mut ModelContext<Self>,
+        _channel_id: ChannelId,
+        _user_id: u64,
+        _cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        todo!()
-    }
-
-    pub fn channel_members(
-        &self,
-        channel_id: ChannelId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Arc<User>>>> {
-        todo!()
+        dbg!("TODO");
+        Task::Ready(Some(Ok(())))
     }
 
     async fn handle_update_channels(

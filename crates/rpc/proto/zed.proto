@@ -893,8 +893,18 @@ message GetChannelMembers {
 }
 
 message GetChannelMembersResponse {
-    repeated uint64 members = 1;
-    repeated uint64 invited_members = 2;
+    repeated ChannelMember members = 1;
+}
+
+message ChannelMember {
+    uint64 user_id = 1;
+    Kind kind = 2;
+
+    enum Kind {
+        Member = 0;
+        Invitee = 1;
+        AncestorMember = 2;
+    }
 }
 
 message CreateChannel {

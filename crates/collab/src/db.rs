@@ -213,20 +213,21 @@ impl Database {
             );
 
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
-            let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_members_internal(channel_id, &tx).await?
+            let channel_members;
+            if let Some(channel_id) = channel_id {
+                channel_members = self.get_channel_members_internal(channel_id, &tx).await?;
             } else {
-                Vec::new()
-            };
+                channel_members = Vec::new();
 
-            // Delete the room if it becomes empty.
-            if room.participants.is_empty() {
-                project::Entity::delete_many()
-                    .filter(project::Column::RoomId.eq(room_id))
-                    .exec(&*tx)
-                    .await?;
-                room::Entity::delete_by_id(room_id).exec(&*tx).await?;
-            }
+                // Delete the room if it becomes empty.
+                if room.participants.is_empty() {
+                    project::Entity::delete_many()
+                        .filter(project::Column::RoomId.eq(room_id))
+                        .exec(&*tx)
+                        .await?;
+                    room::Entity::delete_by_id(room_id).exec(&*tx).await?;
+                }
+            };
 
             Ok(RefreshedRoom {
                 room,
@@ -3475,10 +3476,61 @@ impl Database {
     }
 
     pub async fn get_channel_members(&self, id: ChannelId) -> Result<Vec<UserId>> {
+        self.transaction(|tx| async move { self.get_channel_members_internal(id, &*tx).await })
+            .await
+    }
+
+    // TODO: Add a chekc whether this user is allowed to read this channel
+    pub async fn get_channel_member_details(
+        &self,
+        id: ChannelId,
+    ) -> Result<Vec<proto::ChannelMember>> {
         self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryMemberDetails {
+                UserId,
+                IsDirectMember,
+                Accepted,
+            }
+
             let tx = tx;
-            let user_ids = self.get_channel_members_internal(id, &*tx).await?;
-            Ok(user_ids)
+            let ancestor_ids = self.get_channel_ancestors(id, &*tx).await?;
+            let mut stream = channel_member::Entity::find()
+                .distinct()
+                .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
+                .select_only()
+                .column(channel_member::Column::UserId)
+                .column_as(
+                    channel_member::Column::ChannelId.eq(id),
+                    QueryMemberDetails::IsDirectMember,
+                )
+                .column(channel_member::Column::Accepted)
+                .order_by_asc(channel_member::Column::UserId)
+                .into_values::<_, QueryMemberDetails>()
+                .stream(&*tx)
+                .await?;
+
+            let mut rows = Vec::<proto::ChannelMember>::new();
+            while let Some(row) = stream.next().await {
+                let (user_id, is_direct_member, is_invite_accepted): (UserId, bool, bool) = row?;
+                let kind = match (is_direct_member, is_invite_accepted) {
+                    (true, true) => proto::channel_member::Kind::Member,
+                    (true, false) => proto::channel_member::Kind::Invitee,
+                    (false, true) => proto::channel_member::Kind::AncestorMember,
+                    (false, false) => continue,
+                };
+                let user_id = user_id.to_proto();
+                let kind = kind.into();
+                if let Some(last_row) = rows.last_mut() {
+                    if last_row.user_id == user_id {
+                        last_row.kind = last_row.kind.min(kind);
+                        continue;
+                    }
+                }
+                rows.push(proto::ChannelMember { user_id, kind });
+            }
+
+            Ok(rows)
         })
         .await
     }

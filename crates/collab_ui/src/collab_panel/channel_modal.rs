@@ -1,7 +1,5 @@
-use client::{
-    ChannelId, ChannelMemberStatus, ChannelStore, ContactRequestStatus, User, UserId, UserStore,
-};
-use collections::HashMap;
+use client::{proto, ChannelId, ChannelStore, User, UserId, UserStore};
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::sync::Arc;
@@ -17,30 +15,48 @@ pub fn build_channel_modal(
     user_store: ModelHandle<UserStore>,
     channel_store: ModelHandle<ChannelStore>,
     channel: ChannelId,
-    members: HashMap<UserId, ChannelMemberStatus>,
+    mode: Mode,
+    members: Vec<(Arc<User>, proto::channel_member::Kind)>,
     cx: &mut ViewContext<ChannelModal>,
 ) -> ChannelModal {
     Picker::new(
         ChannelModalDelegate {
-            potential_contacts: Arc::from([]),
+            matches: Vec::new(),
             selected_index: 0,
             user_store,
             channel_store,
             channel_id: channel,
-            member_statuses: members,
+            match_candidates: members
+                .iter()
+                .enumerate()
+                .map(|(id, member)| StringMatchCandidate {
+                    id,
+                    string: member.0.github_login.clone(),
+                    char_bag: member.0.github_login.chars().collect(),
+                })
+                .collect(),
+            members,
+            mode,
         },
         cx,
     )
     .with_theme(|theme| theme.picker.clone())
 }
 
+pub enum Mode {
+    ManageMembers,
+    InviteMembers,
+}
+
 pub struct ChannelModalDelegate {
-    potential_contacts: Arc<[Arc<User>]>,
+    matches: Vec<(Arc<User>, Option<proto::channel_member::Kind>)>,
     user_store: ModelHandle<UserStore>,
     channel_store: ModelHandle<ChannelStore>,
     channel_id: ChannelId,
     selected_index: usize,
-    member_statuses: HashMap<UserId, ChannelMemberStatus>,
+    mode: Mode,
+    match_candidates: Arc<[StringMatchCandidate]>,
+    members: Vec<(Arc<User>, proto::channel_member::Kind)>,
 }
 
 impl PickerDelegate for ChannelModalDelegate {
@@ -49,7 +65,7 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn match_count(&self) -> usize {
-        self.potential_contacts.len()
+        self.matches.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -61,39 +77,80 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        let search_users = self
-            .user_store
-            .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
-
-        cx.spawn(|picker, mut cx| async move {
-            async {
-                let potential_contacts = search_users.await?;
-                picker.update(&mut cx, |picker, cx| {
-                    picker.delegate_mut().potential_contacts = potential_contacts.into();
-                    cx.notify();
-                })?;
-                anyhow::Ok(())
+        match self.mode {
+            Mode::ManageMembers => {
+                let match_candidates = self.match_candidates.clone();
+                cx.spawn(|picker, mut cx| async move {
+                    async move {
+                        let matches = match_strings(
+                            &match_candidates,
+                            &query,
+                            true,
+                            usize::MAX,
+                            &Default::default(),
+                            cx.background().clone(),
+                        )
+                        .await;
+                        picker.update(&mut cx, |picker, cx| {
+                            let delegate = picker.delegate_mut();
+                            delegate.matches.clear();
+                            delegate.matches.extend(matches.into_iter().map(|m| {
+                                let member = &delegate.members[m.candidate_id];
+                                (member.0.clone(), Some(member.1))
+                            }));
+                            cx.notify();
+                        })?;
+                        anyhow::Ok(())
+                    }
+                    .log_err()
+                    .await;
+                })
             }
-            .log_err()
-            .await;
-        })
+            Mode::InviteMembers => {
+                let search_users = self
+                    .user_store
+                    .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
+                cx.spawn(|picker, mut cx| async move {
+                    async {
+                        let users = search_users.await?;
+                        picker.update(&mut cx, |picker, cx| {
+                            let delegate = picker.delegate_mut();
+                            delegate.matches.clear();
+                            delegate
+                                .matches
+                                .extend(users.into_iter().map(|user| (user, None)));
+                            cx.notify();
+                        })?;
+                        anyhow::Ok(())
+                    }
+                    .log_err()
+                    .await;
+                })
+            }
+        }
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(user) = self.potential_contacts.get(self.selected_index) {
-            let user_store = self.user_store.read(cx);
-            match user_store.contact_request_status(user) {
-                ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                    self.user_store
-                        .update(cx, |store, cx| store.request_contact(user.id, cx))
-                        .detach();
+        if let Some((user, _)) = self.matches.get(self.selected_index) {
+            match self.mode {
+                Mode::ManageMembers => {
+                    //
                 }
-                ContactRequestStatus::RequestSent => {
-                    self.user_store
-                        .update(cx, |store, cx| store.remove_contact(user.id, cx))
-                        .detach();
-                }
-                _ => {}
+                Mode::InviteMembers => match self.member_status(user.id, cx) {
+                    Some(proto::channel_member::Kind::Member) => {}
+                    Some(proto::channel_member::Kind::Invitee) => self
+                        .channel_store
+                        .update(cx, |store, cx| {
+                            store.remove_member(self.channel_id, user.id, cx)
+                        })
+                        .detach(),
+                    Some(proto::channel_member::Kind::AncestorMember) | None => self
+                        .channel_store
+                        .update(cx, |store, cx| {
+                            store.invite_member(self.channel_id, user.id, false, cx)
+                        })
+                        .detach(),
+                },
             }
         }
     }
@@ -108,12 +165,16 @@ impl PickerDelegate for ChannelModalDelegate {
     ) -> Option<AnyElement<Picker<Self>>> {
         let theme = &theme::current(cx).collab_panel.channel_modal;
 
+        let operation = match self.mode {
+            Mode::ManageMembers => "Manage",
+            Mode::InviteMembers => "Add",
+        };
         self.channel_store
             .read(cx)
             .channel_for_id(self.channel_id)
             .map(|channel| {
                 Label::new(
-                    format!("Add members for #{}", channel.name),
+                    format!("{} members for #{}", operation, channel.name),
                     theme.picker.item.default_style().label.clone(),
                 )
                 .into_any()
@@ -128,19 +189,17 @@ impl PickerDelegate for ChannelModalDelegate {
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
         let theme = &theme::current(cx).collab_panel.channel_modal;
-        let user = &self.potential_contacts[ix];
-        let request_status = self.member_statuses.get(&user.id);
+        let (user, _) = &self.matches[ix];
+        let request_status = self.member_status(user.id, cx);
 
         let icon_path = match request_status {
-            Some(ChannelMemberStatus::Member) => Some("icons/check_8.svg"),
-            Some(ChannelMemberStatus::Invited) => Some("icons/x_mark_8.svg"),
+            Some(proto::channel_member::Kind::AncestorMember) => Some("icons/check_8.svg"),
+            Some(proto::channel_member::Kind::Member) => Some("icons/check_8.svg"),
+            Some(proto::channel_member::Kind::Invitee) => Some("icons/x_mark_8.svg"),
             None => None,
         };
-        let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
-            &theme.disabled_contact_button
-        } else {
-            &theme.contact_button
-        };
+        let button_style = &theme.contact_button;
+
         let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
@@ -175,5 +234,22 @@ impl PickerDelegate for ChannelModalDelegate {
             .constrained()
             .with_height(theme.row_height)
             .into_any()
+    }
+}
+
+impl ChannelModalDelegate {
+    fn member_status(
+        &self,
+        user_id: UserId,
+        cx: &AppContext,
+    ) -> Option<proto::channel_member::Kind> {
+        self.members
+            .iter()
+            .find_map(|(user, status)| (user.id == user_id).then_some(*status))
+            .or(self
+                .channel_store
+                .read(cx)
+                .has_pending_channel_invite(self.channel_id, user_id)
+                .then_some(proto::channel_member::Kind::Invitee))
     }
 }

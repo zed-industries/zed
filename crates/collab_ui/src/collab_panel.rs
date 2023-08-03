@@ -1333,7 +1333,9 @@ impl CollabPanel {
         enum Accept {}
 
         let channel_id = channel.id;
-        let is_invite_pending = channel_store.read(cx).is_channel_invite_pending(&channel);
+        let is_invite_pending = channel_store
+            .read(cx)
+            .has_pending_channel_invite_response(&channel);
         let button_spacing = theme.contact_button_spacing;
 
         Flex::row()
@@ -1682,7 +1684,10 @@ impl CollabPanel {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
-        let members = self.channel_store.read(cx).get_channel_members(channel_id);
+        let members = self.channel_store.update(cx, |channel_store, cx| {
+            channel_store.get_channel_member_details(channel_id, cx)
+        });
+
         cx.spawn(|_, mut cx| async move {
             let members = members.await?;
             workspace.update(&mut cx, |workspace, cx| {
@@ -1692,6 +1697,7 @@ impl CollabPanel {
                             user_store.clone(),
                             channel_store.clone(),
                             channel_id,
+                            channel_modal::Mode::InviteMembers,
                             members,
                             cx,
                         )

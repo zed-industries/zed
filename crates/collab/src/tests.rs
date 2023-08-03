@@ -291,8 +291,13 @@ impl TestServer {
             admin_client
                 .app_state
                 .channel_store
-                .update(admin_cx, |channel_store, _| {
-                    channel_store.invite_member(channel_id, member_client.user_id().unwrap(), false)
+                .update(admin_cx, |channel_store, cx| {
+                    channel_store.invite_member(
+                        channel_id,
+                        member_client.user_id().unwrap(),
+                        false,
+                        cx,
+                    )
                 })
                 .await
                 .unwrap();

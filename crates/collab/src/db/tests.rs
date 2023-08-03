@@ -1161,7 +1161,50 @@ test_both_dbs!(
             .map(|channel| channel.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(user_3_invites, &[channel_1_1])
+        assert_eq!(user_3_invites, &[channel_1_1]);
+
+        let members = db.get_channel_member_details(channel_1_1).await.unwrap();
+        assert_eq!(
+            members,
+            &[
+                proto::ChannelMember {
+                    user_id: user_1.to_proto(),
+                    kind: proto::channel_member::Kind::Member.into(),
+                },
+                proto::ChannelMember {
+                    user_id: user_2.to_proto(),
+                    kind: proto::channel_member::Kind::Invitee.into(),
+                },
+                proto::ChannelMember {
+                    user_id: user_3.to_proto(),
+                    kind: proto::channel_member::Kind::Invitee.into(),
+                },
+            ]
+        );
+
+        db.respond_to_channel_invite(channel_1_1, user_2, true)
+            .await
+            .unwrap();
+
+        let channel_1_3 = db
+            .create_channel("channel_3", Some(channel_1_1), "1", user_1)
+            .await
+            .unwrap();
+
+        let members = db.get_channel_member_details(channel_1_3).await.unwrap();
+        assert_eq!(
+            members,
+            &[
+                proto::ChannelMember {
+                    user_id: user_1.to_proto(),
+                    kind: proto::channel_member::Kind::Member.into(),
+                },
+                proto::ChannelMember {
+                    user_id: user_2.to_proto(),
+                    kind: proto::channel_member::Kind::AncestorMember.into(),
+                },
+            ]
+        );
     }
 );
 
