@@ -2,7 +2,7 @@ use crate::{
     NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
     SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
@@ -761,46 +761,50 @@ impl ProjectSearchView {
 
         match mode {
             SearchMode::Semantic => {
-                // let semantic_permissioned = self.semantic_permissioned.await;
-                // if semantic_permissioned.is_ok_and(|permission| !permission) {
-                if !self.semantic_permissioned(cx) {
-                    // TODO: Change this to read from the project name
-                    let project = self.model.read(cx).project.clone();
-                    let project_name = project
-                        .read(cx)
-                        .worktree_root_names(cx)
-                        .collect::<Vec<&str>>()
-                        .join("/");
-                    let is_plural =
-                        project_name.chars().filter(|letter| *letter == '/').count() > 0;
-                    let prompt_text = format!("Would you like to index the '{}' project{} for semantic search? This requires sending code to the OpenAI API", project_name,
-                        if is_plural {
-                            "s"
-                        } else {""});
-                    let mut answer = cx.prompt(
-                        PromptLevel::Info,
-                        prompt_text.as_str(),
-                        &["Continue", "Cancel"],
-                    );
+                let has_permission = self.semantic_permissioned(cx);
+                cx.spawn(|this, mut cx| async move {
+                    let has_permission = has_permission.await?;
 
-                    cx.spawn(|search_view, mut cx| async move {
+                    if !has_permission {
+                        let mut answer = this.update(&mut cx, |this, cx| {
+                            let project = this.model.read(cx).project.clone();
+                            let project_name = project
+                                .read(cx)
+                                .worktree_root_names(cx)
+                                .collect::<Vec<&str>>()
+                                .join("/");
+                            let is_plural =
+                                project_name.chars().filter(|letter| *letter == '/').count() > 0;
+                            let prompt_text = format!("Would you like to index the '{}' project{} for semantic search? This requires sending code to the OpenAI API", project_name,
+                                if is_plural {
+                                    "s"
+                                } else {""});
+                            cx.prompt(
+                                PromptLevel::Info,
+                                prompt_text.as_str(),
+                                &["Continue", "Cancel"],
+                            )
+                        })?;
+
                         if answer.next().await == Some(0) {
-                            search_view.update(&mut cx, |search_view, cx| {
-                                search_view.semantic_permissioned = Some(true);
-                                search_view.index_project(cx);
+                            this.update(&mut cx, |this, cx| {
+                                this.semantic_permissioned = Some(true);
                             })?;
-                            anyhow::Ok(())
                         } else {
-                            search_view.update(&mut cx, |search_view, cx| {
-                                search_view.activate_search_mode(SearchMode::Regex, cx);
+                            this.update(&mut cx, |this, cx| {
+                                this.semantic_permissioned = Some(false);
+                                this.activate_search_mode(SearchMode::Regex, cx);
                             })?;
-                            anyhow::Ok(())
+                            return anyhow::Ok(());
                         }
-                    })
-                    .detach_and_log_err(cx);
-                } else {
-                    self.index_project(cx);
-                }
+                    }
+
+                    this.update(&mut cx, |this, cx| {
+                        this.index_project(cx);
+                    })?;
+
+                    anyhow::Ok(())
+                }).detach_and_log_err(cx);
             }
             SearchMode::Regex => {
                 if !self.is_option_enabled(SearchOptions::REGEX) {
@@ -922,19 +926,18 @@ impl ProjectSearchView {
         this.model_changed(cx);
         this
     }
-    fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        *self.semantic_permissioned.get_or_insert_with(|| {
-            SemanticIndex::global(cx)
-                .and_then(|semantic| {
-                    let project = self.model.read(cx).project.clone();
-                    smol::block_on(
-                        semantic
-                            .update(cx, |this, cx| this.project_previously_indexed(project, cx)),
-                    )
-                    .ok()
-                })
-                .unwrap_or_default()
-        })
+
+    fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+        if let Some(value) = self.semantic_permissioned {
+            return Task::ready(Ok(value));
+        }
+
+        SemanticIndex::global(cx)
+            .map(|semantic| {
+                let project = self.model.read(cx).project.clone();
+                semantic.update(cx, |this, cx| this.project_previously_indexed(project, cx))
+            })
+            .unwrap_or(Task::ready(Ok(false)))
     }
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
