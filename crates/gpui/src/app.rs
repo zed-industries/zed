@@ -808,7 +808,7 @@ impl AppContext {
         result
     }
 
-    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
         window_id: usize,
         callback: F,
@@ -3892,31 +3892,26 @@ impl<V: View> WindowHandle<V> {
         cx.read_window_with(self.window_id(), |cx| read(cx))
     }
 
-    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> R
+    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
     where
-        C: BorrowAppContext,
+        C: BorrowWindowContext,
         F: FnOnce(&mut WindowContext) -> R,
     {
-        cx.update(|cx| cx.update_window(self.window_id(), update).unwrap())
+        cx.update_window(self.window_id(), update)
     }
 
-    pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> R
-    where
-        C: BorrowAppContext,
-        F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    {
-        let window_id = self.window_id();
-        cx.update(|cx| {
-            cx.update_window(window_id, |cx| {
-                cx.root_view()
-                    .clone()
-                    .downcast::<V>()
-                    .unwrap()
-                    .update(cx, update)
-            })
-            .unwrap()
-        })
-    }
+    // pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<Option<R>>
+    // where
+    //     C: BorrowWindowContext,
+    //     F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    // {
+    //     cx.update_window(self.window_id, |cx| {
+    //         cx.root_view()
+    //             .clone()
+    //             .downcast::<V>()
+    //             .map(|v| v.update(cx, update))
+    //     })
+    // }
 
     pub fn read_root<'a>(&self, cx: &'a AppContext) -> &'a V {
         let root_view = cx
@@ -3940,9 +3935,9 @@ impl<V: View> WindowHandle<V> {
         })
     }
 
-    pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> ViewHandle<U>
+    pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> C::Result<ViewHandle<U>>
     where
-        C: BorrowAppContext,
+        C: BorrowWindowContext,
         U: View,
         F: FnOnce(&mut ViewContext<U>) -> U,
     {
@@ -4836,7 +4831,7 @@ mod tests {
         let called_defer = Rc::new(AtomicBool::new(false));
         let called_after_window_update = Rc::new(AtomicBool::new(false));
 
-        window.update_root(cx, |this, cx| {
+        window.root(cx).update(cx, |this, cx| {
             assert_eq!(this.render_count, 1);
             cx.defer({
                 let called_defer = called_defer.clone();

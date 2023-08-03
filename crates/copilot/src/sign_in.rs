@@ -18,42 +18,42 @@ const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
 pub fn init(cx: &mut AppContext) {
     if let Some(copilot) = Copilot::global(cx) {
-        let mut code_verification: Option<WindowHandle<CopilotCodeVerification>> = None;
+        let mut verification_window: Option<WindowHandle<CopilotCodeVerification>> = None;
         cx.observe(&copilot, move |copilot, cx| {
             let status = copilot.read(cx).status();
 
             match &status {
                 crate::Status::SigningIn { prompt } => {
-                    if let Some(code_verification_handle) = code_verification.as_mut() {
-                        let window_id = code_verification_handle.window_id();
-                        let updated = cx.update_window(window_id, |cx| {
-                            code_verification_handle.update_root(cx, |code_verification, cx| {
-                                code_verification.set_status(status.clone(), cx)
-                            });
-                            cx.activate_window();
-                        });
-                        if updated.is_none() {
-                            code_verification = Some(create_copilot_auth_window(cx, &status));
+                    if let Some(window) = verification_window.as_mut() {
+                        let updated = window
+                            .root(cx)
+                            .map(|root| {
+                                root.update(cx, |verification, cx| {
+                                    verification.set_status(status.clone(), cx);
+                                    cx.activate_window();
+                                })
+                            })
+                            .is_some();
+                        if !updated {
+                            verification_window = Some(create_copilot_auth_window(cx, &status));
                         }
                     } else if let Some(_prompt) = prompt {
-                        code_verification = Some(create_copilot_auth_window(cx, &status));
+                        verification_window = Some(create_copilot_auth_window(cx, &status));
                     }
                 }
                 Status::Authorized | Status::Unauthorized => {
-                    if let Some(code_verification) = code_verification.as_ref() {
-                        let window_id = code_verification.window_id();
-                        cx.update_window(window_id, |cx| {
-                            code_verification.update_root(cx, |code_verification, cx| {
-                                code_verification.set_status(status, cx)
+                    if let Some(window) = verification_window.as_ref() {
+                        if let Some(verification) = window.root(cx) {
+                            verification.update(cx, |verification, cx| {
+                                verification.set_status(status, cx);
+                                cx.platform().activate(true);
+                                cx.activate_window();
                             });
-
-                            cx.platform().activate(true);
-                            cx.activate_window();
-                        });
+                        }
                     }
                 }
                 _ => {
-                    if let Some(code_verification) = code_verification.take() {
+                    if let Some(code_verification) = verification_window.take() {
                         code_verification.update(cx, |cx| cx.remove_window());
                     }
                 }
