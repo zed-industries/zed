@@ -52,7 +52,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
-                    .push(window.id());
+                    .push(window.window_id());
             }
         }
         room::Event::RemoteProjectUnshared { project_id } => {

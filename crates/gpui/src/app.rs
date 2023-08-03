@@ -1337,7 +1337,7 @@ impl AppContext {
                     .open_window(window_id, window_options, this.foreground.clone());
             let window = this.build_window(window_id, platform_window, build_root_view);
             this.windows.insert(window_id, window);
-            WindowHandle::new(window_id, this.ref_counts.clone())
+            WindowHandle::new(window_id)
         })
     }
 
@@ -3863,21 +3863,21 @@ impl<T> Clone for WeakModelHandle<T> {
 impl<T> Copy for WeakModelHandle<T> {}
 
 pub struct WindowHandle<T> {
-    any_handle: AnyWindowHandle,
-    view_type: PhantomData<T>,
+    window_id: usize,
+    root_view_type: PhantomData<T>,
 }
 
 #[allow(dead_code)]
 impl<V: View> WindowHandle<V> {
-    fn new(window_id: usize, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+    fn new(window_id: usize) -> Self {
         WindowHandle {
-            any_handle: AnyWindowHandle::new::<V>(window_id, ref_counts),
-            view_type: PhantomData,
+            window_id,
+            root_view_type: PhantomData,
         }
     }
 
-    pub fn id(&self) -> usize {
-        self.any_handle.id()
+    pub fn window_id(&self) -> usize {
+        self.window_id
     }
 
     pub fn root<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<ViewHandle<V>> {
@@ -3889,7 +3889,7 @@ impl<V: View> WindowHandle<V> {
         C: BorrowWindowContext,
         F: FnOnce(&WindowContext) -> R,
     {
-        cx.read_window_with(self.id(), |cx| read(cx))
+        cx.read_window_with(self.window_id(), |cx| read(cx))
     }
 
     pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> R
@@ -3897,7 +3897,7 @@ impl<V: View> WindowHandle<V> {
         C: BorrowAppContext,
         F: FnOnce(&mut WindowContext) -> R,
     {
-        cx.update(|cx| cx.update_window(self.id(), update).unwrap())
+        cx.update(|cx| cx.update_window(self.window_id(), update).unwrap())
     }
 
     pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> R
@@ -3905,7 +3905,7 @@ impl<V: View> WindowHandle<V> {
         C: BorrowAppContext,
         F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
     {
-        let window_id = self.id();
+        let window_id = self.window_id();
         cx.update(|cx| {
             cx.update_window(window_id, |cx| {
                 cx.root_view()
@@ -3920,7 +3920,9 @@ impl<V: View> WindowHandle<V> {
 
     pub fn read_root<'a>(&self, cx: &'a AppContext) -> &'a V {
         let root_view = cx
-            .read_window(self.id(), |cx| cx.root_view().clone().downcast().unwrap())
+            .read_window(self.window_id(), |cx| {
+                cx.root_view().clone().downcast().unwrap()
+            })
             .unwrap();
         root_view.read(cx)
     }
@@ -3945,66 +3947,6 @@ impl<V: View> WindowHandle<V> {
         F: FnOnce(&mut ViewContext<U>) -> U,
     {
         self.update(cx, |cx| cx.add_view(build_view))
-    }
-}
-
-pub struct AnyWindowHandle {
-    window_id: usize,
-    root_view_type: TypeId,
-    ref_counts: Option<Arc<Mutex<RefCounts>>>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    handle_id: usize,
-}
-
-impl AnyWindowHandle {
-    fn new<V: View>(window_id: usize, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_window(window_id);
-
-        #[cfg(any(test, feature = "test-support"))]
-        let handle_id = ref_counts
-            .lock()
-            .leak_detector
-            .lock()
-            .handle_created(None, window_id);
-
-        Self {
-            window_id,
-            root_view_type: TypeId::of::<V>(),
-            ref_counts: Some(ref_counts),
-            #[cfg(any(test, feature = "test-support"))]
-            handle_id,
-        }
-    }
-
-    pub fn id(&self) -> usize {
-        self.window_id
-    }
-
-    pub fn downcast<V: View>(self) -> Option<WindowHandle<V>> {
-        if TypeId::of::<V>() == self.root_view_type {
-            Some(WindowHandle {
-                any_handle: self,
-                view_type: PhantomData,
-            })
-        } else {
-            None
-        }
-    }
-}
-
-impl Drop for AnyWindowHandle {
-    fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.as_ref() {
-            ref_counts.lock().dec_window(self.window_id);
-
-            #[cfg(any(test, feature = "test-support"))]
-            ref_counts
-                .lock()
-                .leak_detector
-                .lock()
-                .handle_dropped(self.window_id, self.handle_id);
-        }
     }
 }
 
@@ -6281,7 +6223,7 @@ mod tests {
 
         // Check that global actions do not have a binding, even if a binding does exist in another view
         assert_eq!(
-            &available_actions(window.id(), view_1.id(), cx),
+            &available_actions(window.window_id(), view_1.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::GlobalAction", vec![])
@@ -6290,7 +6232,7 @@ mod tests {
 
         // Check that view 1 actions and bindings are available even when called from view 2
         assert_eq!(
-            &available_actions(window.id(), view_2.id(), cx),
+            &available_actions(window.window_id(), view_2.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
@@ -6353,7 +6295,7 @@ mod tests {
             ]);
         });
 
-        let actions = cx.available_actions(window.id(), view.id());
+        let actions = cx.available_actions(window.window_id(), view.id());
         assert_eq!(
             actions[0].1.as_any().downcast_ref::<ActionWithArg>(),
             Some(&ActionWithArg { arg: false })
@@ -6639,25 +6581,25 @@ mod tests {
             [("window 2", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_2.id()));
+        cx.simulate_window_activation(Some(window_2.window_id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 3", false), ("window 2", true)]
         );
 
-        cx.simulate_window_activation(Some(window_1.id()));
+        cx.simulate_window_activation(Some(window_1.window_id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 2", false), ("window 1", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.id()));
+        cx.simulate_window_activation(Some(window_3.window_id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 1", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.id()));
+        cx.simulate_window_activation(Some(window_3.window_id()));
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 

@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
             match &status {
                 crate::Status::SigningIn { prompt } => {
                     if let Some(code_verification_handle) = code_verification.as_mut() {
-                        let window_id = code_verification_handle.id();
+                        let window_id = code_verification_handle.window_id();
                         let updated = cx.update_window(window_id, |cx| {
                             code_verification_handle.update_root(cx, |code_verification, cx| {
                                 code_verification.set_status(status.clone(), cx)
@@ -41,7 +41,7 @@ pub fn init(cx: &mut AppContext) {
                 }
                 Status::Authorized | Status::Unauthorized => {
                     if let Some(code_verification) = code_verification.as_ref() {
-                        let window_id = code_verification.id();
+                        let window_id = code_verification.window_id();
                         cx.update_window(window_id, |cx| {
                             code_verification.update_root(cx, |code_verification, cx| {
                                 code_verification.set_status(status, cx)

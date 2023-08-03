@@ -157,9 +157,9 @@ impl TestAppContext {
             .cx
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window.id()));
+        self.simulate_window_activation(Some(window.window_id()));
 
-        WindowHandle::new(window.id(), self.cx.borrow_mut().ref_counts.clone())
+        WindowHandle::new(window.window_id())
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>

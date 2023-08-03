@@ -1165,7 +1165,7 @@ impl<'a> WindowContext<'a> {
         let root_view = self.add_view(|cx| build_root_view(cx));
         self.window.focused_view_id = Some(root_view.id());
         self.window.root_view = Some(root_view.into_any());
-        WindowHandle::new(self.window_id, self.ref_counts.clone())
+        WindowHandle::new(self.window_id)
     }
 
     pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>

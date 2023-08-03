@@ -3446,7 +3446,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     let editor_a = window_a.add_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
     let mut editor_cx_a = EditorTestContext {
         cx: cx_a,
-        window_id: window_a.id(),
+        window_id: window_a.window_id(),
         editor: editor_a,
     };
 
@@ -3459,7 +3459,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
     let mut editor_cx_b = EditorTestContext {
         cx: cx_b,
-        window_id: window_b.id(),
+        window_id: window_b.window_id(),
         editor: editor_b,
     };
 
