@@ -303,7 +303,7 @@ mod tests {
         assert_eq!(path.icon_suffix(), Some("rs"));
 
         // Multiple dots in name
-        let path = Path::new("/a/b/c/long.name.name.rs");
+        let path = Path::new("/a/b/c/long.file.name.rs");
         assert_eq!(path.icon_suffix(), Some("rs"));
 
         // Hidden file, no extension
