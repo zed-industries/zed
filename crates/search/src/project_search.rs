@@ -398,7 +398,7 @@ impl View for ProjectSearchView {
                 match current_mode {
                     SearchMode::Text => Cow::Borrowed("Text search all files and folders"),
                     SearchMode::Semantic => {
-                        Cow::Borrowed("Search all files and folders using Natural Language")
+                        Cow::Borrowed("Search all code objects using Natural Language")
                     }
                     SearchMode::Regex => Cow::Borrowed("Regex search all files and folders"),
                 }
@@ -429,10 +429,13 @@ impl View for ProjectSearchView {
             } else {
                 match current_mode {
                     SearchMode::Semantic => vec![
+                        "".to_owned(),
                         semantic_status,
-                        "ex. 'list all available languages'".to_owned(),
+                        "Simply explain the code you are looking to find.".to_owned(),
+                        "ex. 'prompt user for permissions to index their project'".to_owned(),
                     ],
                     _ => vec![
+                        "".to_owned(),
                         "Include/exclude specific paths with the filter option.".to_owned(),
                         "Matching exact word and/or casing is available too.".to_owned(),
                     ],
