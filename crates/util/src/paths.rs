@@ -61,19 +61,16 @@ impl PathExt for Path {
     }
 
     fn icon_suffix(&self) -> Option<&str> {
-        match self.extension() {
-            Some(extension) => extension.to_str(),
-            None => {
-                // Fall back to custom logic to handle cases that the built-in `extension()` doesn't handle, such as `.gitignore`
-                self.file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .and_then(|file_name| {
-                        file_name
-                            .find('.')
-                            .and_then(|dot_index| file_name.get(dot_index + 1..))
-                    })
-            }
+        // if it has one dot and starts with a dot, take the rest
+        let file_name = self.file_name()?.to_str()?;
+
+        if file_name.starts_with(".") {
+            return file_name.strip_prefix(".");
         }
+
+        self.extension()
+            .map(|extension| extension.to_str())
+            .flatten()
     }
 }
 
@@ -304,6 +301,10 @@ mod tests {
 
         // Dot in name
         let path = Path::new("/a/b/c/file.name.rs");
+        assert_eq!(path.icon_suffix(), Some("rs"));
+
+        // Multiple dots in name
+        let path = Path::new("/a/b/c/long.name.name.rs");
         assert_eq!(path.icon_suffix(), Some("rs"));
 
         // Hidden file, no extension
