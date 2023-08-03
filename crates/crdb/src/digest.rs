@@ -85,6 +85,10 @@ impl DigestSequence {
         println!("]");
     }
 
+    pub fn operation_count(&self) -> usize {
+        self.digests.summary().count
+    }
+
     pub fn digest(&self, mut range: Range<usize>) -> Digest {
         range.start = cmp::min(range.start, self.digests.summary().count);
         range.end = cmp::min(range.end, self.digests.summary().count);
