@@ -7,6 +7,7 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
+import channel_modal from "./channel_modal"
 
 
 export default function contacts_panel(): any {
@@ -51,6 +52,7 @@ export default function contacts_panel(): any {
     }
 
     return {
+        modal: channel_modal(),
         background: background(layer),
         padding: {
             top: 12,

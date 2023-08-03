@@ -1,5 +1,8 @@
+use client::{ChannelId, ChannelStore};
 use editor::Editor;
-use gpui::{elements::*, AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
+use gpui::{
+    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
+};
 use menu::Cancel;
 use workspace::{item::ItemHandle, Modal};
 
@@ -10,6 +13,10 @@ pub fn init(cx: &mut AppContext) {
 pub struct ChannelModal {
     has_focus: bool,
     filter_editor: ViewHandle<Editor>,
+    selection: usize,
+    list_state: ListState<Self>,
+    channel_store: ModelHandle<ChannelStore>,
+    channel_id: ChannelId,
 }
 
 pub enum Event {
@@ -21,16 +28,28 @@ impl Entity for ChannelModal {
 }
 
 impl ChannelModal {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        channel_id: ChannelId,
+        channel_store: ModelHandle<ChannelStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(None, cx);
-            editor.set_placeholder_text("Create or add a channel", cx);
+            editor.set_placeholder_text("Add a member", cx);
             editor
+        });
+
+        let list_state = ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
+            Empty::new().into_any()
         });
 
         ChannelModal {
             has_focus: false,
             filter_editor: input_editor,
+            selection: 0,
+            list_state,
+            channel_id,
+            channel_store,
         }
     }
 
@@ -49,14 +68,21 @@ impl View for ChannelModal {
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
-        let style = theme::current(cx).editor.hint_diagnostic.message.clone();
+        let theme = theme::current(cx).clone();
+        let style = &theme.collab_panel.modal;
         let modal_container = theme::current(cx).picker.container.clone();
 
         enum ChannelModal {}
         MouseEventHandler::<ChannelModal, _>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_child(ChildView::new(self.filter_editor.as_any(), cx))
-                .with_child(Label::new("ADD OR BROWSE CHANNELS HERE", style))
+                .with_child(
+                    List::new(self.list_state.clone())
+                        .constrained()
+                        .with_width(style.width)
+                        .flex(1., true)
+                        .into_any(),
+                )
                 .contained()
                 .with_style(modal_container)
                 .constrained()

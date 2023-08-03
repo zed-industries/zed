@@ -6,8 +6,8 @@ use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 
-type ChannelId = u64;
-type UserId = u64;
+pub type ChannelId = u64;
+pub type UserId = u64;
 
 pub struct ChannelStore {
     channels: Vec<Arc<Channel>>,

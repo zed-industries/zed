@@ -220,6 +220,7 @@ pub struct CopilotAuthAuthorized {
 pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub modal: ChannelModal,
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub leave_call_button: IconButton,
@@ -242,6 +243,11 @@ pub struct CollabPanel {
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
     pub face_overlap: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ChannelModal {
+    pub width: f32,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

@@ -42,6 +42,8 @@ use workspace::{
 
 use crate::face_pile::FacePile;
 
+use self::channel_modal::ChannelModal;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
     channel_id: u64,
@@ -52,9 +54,14 @@ struct NewChannel {
     channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct AddMember {
+    channel_id: u64,
+}
+
 actions!(collab_panel, [ToggleFocus]);
 
-impl_actions!(collab_panel, [RemoveChannel, NewChannel]);
+impl_actions!(collab_panel, [RemoveChannel, NewChannel, AddMember]);
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 
@@ -69,6 +76,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::confirm);
     cx.add_action(CollabPanel::remove_channel);
     cx.add_action(CollabPanel::new_subchannel);
+    cx.add_action(CollabPanel::add_member);
 }
 
 #[derive(Debug, Default)]
@@ -1506,6 +1514,7 @@ impl CollabPanel {
                 vec![
                     ContextMenuItem::action("New Channel", NewChannel { channel_id }),
                     ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
+                    ContextMenuItem::action("Add member", AddMember { channel_id }),
                 ],
                 cx,
             );
@@ -1666,6 +1675,18 @@ impl CollabPanel {
 
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
+    }
+
+    fn add_member(&mut self, action: &AddMember, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |_, cx| {
+                    cx.add_view(|cx| {
+                        ChannelModal::new(action.channel_id, self.channel_store.clone(), cx)
+                    })
+                })
+            });
+        }
     }
 
     fn remove_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
