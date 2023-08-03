@@ -35,7 +35,7 @@ pub trait PathExt {
     fn icon_suffix(&self) -> Option<&str>;
 }
 
-impl PathExt for Path {
+impl<T: AsRef<Path>> PathExt for T {
     /// Compacts a given file path by replacing the user's home directory
     /// prefix with a tilde (`~`).
     ///
@@ -46,28 +46,29 @@ impl PathExt for Path {
     ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            match self.strip_prefix(HOME.as_path()) {
+            match self.as_ref().strip_prefix(HOME.as_path()) {
                 Ok(relative_path) => {
                     let mut shortened_path = PathBuf::new();
                     shortened_path.push("~");
                     shortened_path.push(relative_path);
                     shortened_path
                 }
-                Err(_) => self.to_path_buf(),
+                Err(_) => self.as_ref().to_path_buf(),
             }
         } else {
-            self.to_path_buf()
+            self.as_ref().to_path_buf()
         }
     }
 
     fn icon_suffix(&self) -> Option<&str> {
-        let file_name = self.file_name()?.to_str()?;
+        let file_name = self.as_ref().file_name()?.to_str()?;
 
         if file_name.starts_with(".") {
             return file_name.strip_prefix(".");
         }
 
-        self.extension()
+        self.as_ref()
+            .extension()
             .map(|extension| extension.to_str())
             .flatten()
     }
