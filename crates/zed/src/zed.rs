@@ -209,9 +209,9 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace,
-         _: &collab_ui::panel::ToggleFocus,
+         _: &collab_ui::collab_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus::<collab_ui::panel::CollabPanel>(cx);
+            workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
         },
     );
     cx.add_action(
@@ -333,7 +333,7 @@ pub fn initialize_workspace(
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
-            collab_ui::panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let (project_panel, terminal_panel, assistant_panel, channels_panel) = futures::try_join!(
             project_panel,
             terminal_panel,

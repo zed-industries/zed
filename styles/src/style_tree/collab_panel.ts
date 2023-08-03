@@ -52,7 +52,7 @@ export default function contacts_panel(): any {
     }
 
     return {
-        modal: channel_modal(),
+        channel_modal: channel_modal(),
         background: background(layer),
         padding: {
             top: 12,

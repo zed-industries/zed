@@ -244,7 +244,9 @@ messages!(
     (UpdateWorktreeSettings, Foreground),
     (UpdateDiffBase, Foreground),
     (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground)
+    (GetPrivateUserInfoResponse, Foreground),
+    (GetChannelMembers, Foreground),
+    (GetChannelMembersResponse, Foreground)
 );
 
 request_messages!(
@@ -296,6 +298,7 @@ request_messages!(
     (RemoveContact, Ack),
     (RespondToContactRequest, Ack),
     (RespondToChannelInvite, Ack),
+    (GetChannelMembers, GetChannelMembersResponse),
     (JoinChannel, JoinRoomResponse),
     (RemoveChannel, Ack),
     (RenameProjectEntry, ProjectEntryResponse),

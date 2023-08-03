@@ -30,6 +30,11 @@ impl Entity for ChannelStore {
     type Event = ();
 }
 
+pub enum ChannelMemberStatus {
+    Invited,
+    Member,
+}
+
 impl ChannelStore {
     pub fn new(
         client: Arc<Client>,
@@ -112,6 +117,26 @@ impl ChannelStore {
                 .request(proto::RespondToChannelInvite { channel_id, accept })
                 .await?;
             Ok(())
+        }
+    }
+
+    pub fn get_channel_members(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Future<Output = Result<HashMap<UserId, ChannelMemberStatus>>> {
+        let client = self.client.clone();
+        async move {
+            let response = client
+                .request(proto::GetChannelMembers { channel_id })
+                .await?;
+            let mut result = HashMap::default();
+            for member_id in response.members {
+                result.insert(member_id, ChannelMemberStatus::Member);
+            }
+            for invitee_id in response.invited_members {
+                result.insert(invitee_id, ChannelMemberStatus::Invited);
+            }
+            Ok(result)
         }
     }
 

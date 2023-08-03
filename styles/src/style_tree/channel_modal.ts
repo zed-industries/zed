@@ -1,9 +1,74 @@
 import { useTheme } from "../theme"
+import { background, border, foreground, text } from "./components"
+import picker from "./picker"
 
 export default function contacts_panel(): any {
     const theme = useTheme()
 
+    const side_margin = 6
+    const contact_button = {
+        background: background(theme.middle, "variant"),
+        color: foreground(theme.middle, "variant"),
+        icon_width: 8,
+        button_width: 16,
+        corner_radius: 8,
+    }
+
+    const picker_style = picker()
+    const picker_input = {
+        background: background(theme.middle, "on"),
+        corner_radius: 6,
+        text: text(theme.middle, "mono"),
+        placeholder_text: text(theme.middle, "mono", "on", "disabled", {
+            size: "xs",
+        }),
+        selection: theme.players[0],
+        border: border(theme.middle),
+        padding: {
+            bottom: 4,
+            left: 8,
+            right: 8,
+            top: 4,
+        },
+        margin: {
+            left: side_margin,
+            right: side_margin,
+        },
+    }
+
     return {
-        width: 100,
+        picker: {
+            empty_container: {},
+            item: {
+                ...picker_style.item,
+                margin: { left: side_margin, right: side_margin },
+            },
+            no_matches: picker_style.no_matches,
+            input_editor: picker_input,
+            empty_input_editor: picker_input,
+            header: picker_style.header,
+            footer: picker_style.footer,
+        },
+        row_height: 28,
+        contact_avatar: {
+            corner_radius: 10,
+            width: 18,
+        },
+        contact_username: {
+            padding: {
+                left: 8,
+            },
+        },
+        contact_button: {
+            ...contact_button,
+            hover: {
+                background: background(theme.middle, "variant", "hovered"),
+            },
+        },
+        disabled_contact_button: {
+            ...contact_button,
+            background: background(theme.middle, "disabled"),
+            color: foreground(theme.middle, "disabled"),
+        },
     }
 }

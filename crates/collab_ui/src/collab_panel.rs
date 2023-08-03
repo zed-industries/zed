@@ -42,7 +42,7 @@ use workspace::{
 
 use crate::face_pile::FacePile;
 
-use self::channel_modal::ChannelModal;
+use self::channel_modal::build_channel_modal;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
@@ -1682,7 +1682,12 @@ impl CollabPanel {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.add_view(|cx| {
-                        ChannelModal::new(action.channel_id, self.channel_store.clone(), cx)
+                        build_channel_modal(
+                            self.user_store.clone(),
+                            self.channel_store.clone(),
+                            action.channel_id,
+                            cx,
+                        )
                     })
                 })
             });

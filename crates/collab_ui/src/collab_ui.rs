@@ -1,9 +1,9 @@
+pub mod collab_panel;
 mod collab_titlebar_item;
 mod contact_notification;
 mod face_pile;
 mod incoming_call_notification;
 mod notifications;
-pub mod panel;
 mod project_shared_notification;
 mod sharing_status_indicator;
 
@@ -22,7 +22,7 @@ actions!(
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
-    panel::init(app_state.client.clone(), cx);
+    collab_panel::init(app_state.client.clone(), cx);
     incoming_call_notification::init(&app_state, cx);
     project_shared_notification::init(&app_state, cx);
     sharing_status_indicator::init(cx);

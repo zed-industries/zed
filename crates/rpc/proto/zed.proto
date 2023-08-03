@@ -138,6 +138,8 @@ message Envelope {
         UpdateChannels update_channels = 124;
         JoinChannel join_channel = 126;
         RemoveChannel remove_channel = 127;
+        GetChannelMembers get_channel_members = 128;
+        GetChannelMembersResponse get_channel_members_response = 129;
     }
 }
 
@@ -886,6 +888,14 @@ message RemoveChannel {
     uint64 channel_id = 1;
 }
 
+message GetChannelMembers {
+    uint64 channel_id = 1;
+}
+
+message GetChannelMembersResponse {
+    repeated uint64 members = 1;
+    repeated uint64 invited_members = 2;
+}
 
 message CreateChannel {
     string name = 1;
