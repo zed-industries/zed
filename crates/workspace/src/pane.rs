@@ -308,7 +308,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: cx.add_view(|_| Toolbar::new(Some(handle))),
+            toolbar: cx.add_view(|_| Toolbar::new()),
             tab_bar_context_menu: TabBarContextMenu {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,

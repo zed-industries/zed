@@ -54,7 +54,6 @@ pub struct Toolbar {
     active_item: Option<Box<dyn ItemHandle>>,
     hidden: bool,
     can_navigate: bool,
-    pane: Option<WeakViewHandle<Pane>>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
@@ -144,63 +143,10 @@ impl View for Toolbar {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
-    svg_path: &'static str,
-    style: theme::Interactive<theme::IconButton>,
-    nav_button_height: f32,
-    tooltip_style: TooltipStyle,
-    enabled: bool,
-    spacing: f32,
-    on_click: F,
-    tooltip_action: A,
-    action_name: &str,
-    cx: &mut ViewContext<Toolbar>,
-) -> AnyElement<Toolbar> {
-    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
-        let style = if enabled {
-            style.style_for(state)
-        } else {
-            style.disabled_style()
-        };
-        Svg::new(svg_path)
-            .with_color(style.color)
-            .constrained()
-            .with_width(style.icon_width)
-            .aligned()
-            .contained()
-            .with_style(style.container)
-            .constrained()
-            .with_width(style.button_width)
-            .with_height(nav_button_height)
-            .aligned()
-            .top()
-    })
-    .with_cursor_style(if enabled {
-        CursorStyle::PointingHand
-    } else {
-        CursorStyle::default()
-    })
-    .on_click(MouseButton::Left, move |_, toolbar, cx| {
-        on_click(toolbar, cx)
-    })
-    .with_tooltip::<A>(
-        0,
-        action_name.to_string(),
-        Some(Box::new(tooltip_action)),
-        tooltip_style,
-        cx,
-    )
-    .contained()
-    .with_margin_right(spacing)
-    .into_any_named("nav button")
-}
-
 impl Toolbar {
-    pub fn new(pane: Option<WeakViewHandle<Pane>>) -> Self {
+    pub fn new() -> Self {
         Self {
             active_item: None,
-            pane,
             items: Default::default(),
             hidden: false,
             can_navigate: true,

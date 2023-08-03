@@ -238,7 +238,7 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "project_search::CycleMode",
+      "alt-tab": "project_search::CycleMode"
     }
   },
   {

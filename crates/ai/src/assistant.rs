@@ -158,7 +158,7 @@ impl AssistantPanel {
                     });
 
                     let toolbar = cx.add_view(|cx| {
-                        let mut toolbar = Toolbar::new(None);
+                        let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
                         toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar

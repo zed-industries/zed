@@ -100,7 +100,7 @@ export default function tab_bar(): any {
                 color: foreground(theme.highest, "on", "disabled"),
             },
         },
-    });
+    })
     const dragged_tab = {
         ...active_pane_active_tab,
         background: with_opacity(tab.background, 0.9),
