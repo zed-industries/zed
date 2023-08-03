@@ -13,6 +13,7 @@ use std::{cmp, sync::Arc};
 use util::ResultExt;
 use workspace::Modal;
 
+#[derive(Clone, Copy)]
 pub enum PickerEvent {
     Dismiss,
 }

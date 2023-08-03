@@ -1,8 +1,9 @@
 import { useTheme } from "../theme"
+import { interactive, toggleable } from "../element"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
 
-export default function contacts_panel(): any {
+export default function channel_modal(): any {
     const theme = useTheme()
 
     const side_margin = 6
@@ -15,6 +16,9 @@ export default function contacts_panel(): any {
     }
 
     const picker_style = picker()
+    delete picker_style.shadow
+    delete picker_style.border
+
     const picker_input = {
         background: background(theme.middle, "on"),
         corner_radius: 6,
@@ -37,6 +41,57 @@ export default function contacts_panel(): any {
     }
 
     return {
+        container: {
+            background: background(theme.lowest),
+            border: border(theme.lowest),
+            shadow: theme.modal_shadow,
+            corner_radius: 12,
+            padding: {
+                bottom: 4,
+                left: 20,
+                right: 20,
+                top: 20,
+            },
+        },
+        height: 400,
+        header: text(theme.middle, "sans", "on", { size: "lg" }),
+        mode_button: toggleable({
+            base: interactive({
+                base: {
+                    ...text(theme.middle, "sans", { size: "xs" }),
+                    border: border(theme.middle, "active"),
+                    corner_radius: 4,
+                    padding: {
+                        top: 3,
+                        bottom: 3,
+                        left: 7,
+                        right: 7,
+                    },
+
+                    margin: { left: 6, top: 6, bottom: 6 },
+                },
+                state: {
+                    hovered: {
+                        ...text(theme.middle, "sans", "default", { size: "xs" }),
+                        background: background(theme.middle, "hovered"),
+                        border: border(theme.middle, "active"),
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        color: foreground(theme.middle, "accent"),
+                    },
+                    hovered: {
+                        color: foreground(theme.middle, "accent", "hovered"),
+                    },
+                    clicked: {
+                        color: foreground(theme.middle, "accent", "pressed"),
+                    },
+                },
+            }
+        }),
         picker: {
             empty_container: {},
             item: {

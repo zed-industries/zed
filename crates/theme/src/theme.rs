@@ -247,6 +247,10 @@ pub struct CollabPanel {
 
 #[derive(Deserialize, Default, JsonSchema)]
 pub struct ChannelModal {
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub header: TextStyle,
+    pub mode_button: Toggleable<Interactive<ContainedText>>,
     pub picker: Picker,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,

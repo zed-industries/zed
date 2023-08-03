@@ -1,48 +1,175 @@
 use client::{proto, ChannelId, ChannelStore, User, UserId, UserStore};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
+use gpui::{
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Entity, ModelHandle, MouseState, Task, View, ViewContext, ViewHandle,
+};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::sync::Arc;
 use util::TryFutureExt;
+use workspace::Modal;
 
 pub fn init(cx: &mut AppContext) {
     Picker::<ChannelModalDelegate>::init(cx);
 }
 
-pub type ChannelModal = Picker<ChannelModalDelegate>;
+pub struct ChannelModal {
+    picker: ViewHandle<Picker<ChannelModalDelegate>>,
+    channel_store: ModelHandle<ChannelStore>,
+    channel_id: ChannelId,
+    has_focus: bool,
+}
+
+impl Entity for ChannelModal {
+    type Event = PickerEvent;
+}
+
+impl View for ChannelModal {
+    fn ui_name() -> &'static str {
+        "ChannelModal"
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let theme = &theme::current(cx).collab_panel.channel_modal;
+
+        let mode = self.picker.read(cx).delegate().mode;
+        let Some(channel) = self
+            .channel_store
+            .read(cx)
+            .channel_for_id(self.channel_id) else {
+                return Empty::new().into_any()
+            };
+
+        enum InviteMembers {}
+        enum ManageMembers {}
+
+        fn render_mode_button<T: 'static>(
+            mode: Mode,
+            text: &'static str,
+            current_mode: Mode,
+            theme: &theme::ChannelModal,
+            cx: &mut ViewContext<ChannelModal>,
+        ) -> AnyElement<ChannelModal> {
+            let active = mode == current_mode;
+            MouseEventHandler::<T, _>::new(0, cx, move |state, _| {
+                let contained_text = theme.mode_button.style_for(active, state);
+                Label::new(text, contained_text.text.clone())
+                    .contained()
+                    .with_style(contained_text.container.clone())
+            })
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                if !active {
+                    this.picker.update(cx, |picker, cx| {
+                        picker.delegate_mut().mode = mode;
+                        picker.update_matches(picker.query(cx), cx);
+                        cx.notify();
+                    })
+                }
+            })
+            .with_cursor_style(if active {
+                CursorStyle::Arrow
+            } else {
+                CursorStyle::PointingHand
+            })
+            .into_any()
+        }
+
+        Flex::column()
+            .with_child(Label::new(
+                format!("#{}", channel.name),
+                theme.header.clone(),
+            ))
+            .with_child(Flex::row().with_children([
+                render_mode_button::<InviteMembers>(
+                    Mode::InviteMembers,
+                    "Invite members",
+                    mode,
+                    theme,
+                    cx,
+                ),
+                render_mode_button::<ManageMembers>(
+                    Mode::ManageMembers,
+                    "Manage members",
+                    mode,
+                    theme,
+                    cx,
+                ),
+            ]))
+            .with_child(ChildView::new(&self.picker, cx))
+            .constrained()
+            .with_height(theme.height)
+            .contained()
+            .with_style(theme.container)
+            .into_any()
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = true;
+    }
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
+}
+
+impl Modal for ChannelModal {
+    fn has_focus(&self) -> bool {
+        self.has_focus
+    }
+
+    fn dismiss_on_event(event: &Self::Event) -> bool {
+        match event {
+            PickerEvent::Dismiss => true,
+        }
+    }
+}
 
 pub fn build_channel_modal(
     user_store: ModelHandle<UserStore>,
     channel_store: ModelHandle<ChannelStore>,
-    channel: ChannelId,
+    channel_id: ChannelId,
     mode: Mode,
     members: Vec<(Arc<User>, proto::channel_member::Kind)>,
     cx: &mut ViewContext<ChannelModal>,
 ) -> ChannelModal {
-    Picker::new(
-        ChannelModalDelegate {
-            matches: Vec::new(),
-            selected_index: 0,
-            user_store,
-            channel_store,
-            channel_id: channel,
-            match_candidates: members
-                .iter()
-                .enumerate()
-                .map(|(id, member)| StringMatchCandidate {
-                    id,
-                    string: member.0.github_login.clone(),
-                    char_bag: member.0.github_login.chars().collect(),
-                })
-                .collect(),
-            members,
-            mode,
-        },
-        cx,
-    )
-    .with_theme(|theme| theme.picker.clone())
+    let picker = cx.add_view(|cx| {
+        Picker::new(
+            ChannelModalDelegate {
+                matches: Vec::new(),
+                selected_index: 0,
+                user_store: user_store.clone(),
+                channel_store: channel_store.clone(),
+                channel_id,
+                match_candidates: members
+                    .iter()
+                    .enumerate()
+                    .map(|(id, member)| StringMatchCandidate {
+                        id,
+                        string: member.0.github_login.clone(),
+                        char_bag: member.0.github_login.chars().collect(),
+                    })
+                    .collect(),
+                members,
+                mode,
+            },
+            cx,
+        )
+        .with_theme(|theme| theme.collab_panel.channel_modal.picker.clone())
+    });
+
+    cx.subscribe(&picker, |_, _, e, cx| cx.emit(*e)).detach();
+    let has_focus = picker.read(cx).has_focus();
+
+    ChannelModal {
+        picker,
+        channel_store,
+        channel_id,
+        has_focus,
+    }
 }
 
+#[derive(Copy, Clone, PartialEq)]
 pub enum Mode {
     ManageMembers,
     InviteMembers,
@@ -157,28 +284,6 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         cx.emit(PickerEvent::Dismiss);
-    }
-
-    fn render_header(
-        &self,
-        cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<AnyElement<Picker<Self>>> {
-        let theme = &theme::current(cx).collab_panel.channel_modal;
-
-        let operation = match self.mode {
-            Mode::ManageMembers => "Manage",
-            Mode::InviteMembers => "Add",
-        };
-        self.channel_store
-            .read(cx)
-            .channel_for_id(self.channel_id)
-            .map(|channel| {
-                Label::new(
-                    format!("{} members for #{}", operation, channel.name),
-                    theme.picker.item.default_style().label.clone(),
-                )
-                .into_any()
-            })
     }
 
     fn render_match(
