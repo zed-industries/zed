@@ -63,7 +63,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 
     let log_view = cx
         .add_window(|cx| LspLogView::new(project.clone(), log_store.clone(), cx))
-        .detach(cx);
+        .root(cx);
 
     language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
         message: "hello from the server".into(),

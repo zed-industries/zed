@@ -64,7 +64,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
                 Editor::for_buffer(buffer.clone(), None, cx)
             }
         })
-        .detach(cx);
+        .root(cx);
     let editor2 = cx
         .add_window({
             let events = events.clone();
@@ -81,7 +81,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
                 Editor::for_buffer(buffer.clone(), None, cx)
             }
         })
-        .detach(cx);
+        .root(cx);
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
 
     // Mutating editor 1 will emit an `Edited` event only for that editor.
@@ -179,7 +179,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
     let editor = cx
         .add_window(|cx| build_editor(buffer.clone(), cx))
-        .detach(cx);
+        .root(cx);
 
     editor.update(cx, |editor, cx| {
         editor.start_transaction_at(now, cx);
@@ -354,7 +354,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     editor.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
     });
@@ -423,7 +423,7 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
@@ -471,7 +471,7 @@ fn test_clone(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&text, cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
 
     editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
@@ -489,7 +489,7 @@ fn test_clone(cx: &mut TestAppContext) {
         .update(cx, |editor, cx| {
             cx.add_window(Default::default(), |cx| editor.clone(cx))
         })
-        .detach(cx);
+        .root(cx);
 
     let snapshot = editor.update(cx, |e, cx| e.snapshot(cx));
     let cloned_snapshot = cloned_editor.update(cx, |e, cx| e.snapshot(cx));
@@ -639,7 +639,7 @@ fn test_cancel(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
@@ -704,7 +704,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
             );
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
@@ -774,7 +774,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx));
     let view = cx
         .add_window(|cx| build_editor(buffer.clone(), cx))
-        .detach(cx);
+        .root(cx);
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit(
@@ -854,7 +854,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
 
     assert_eq!('ⓐ'.len_utf8(), 3);
     assert_eq!('α'.len_utf8(), 2);
@@ -961,7 +961,7 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
@@ -1013,7 +1013,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\n  def", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -1178,7 +1178,7 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -1233,7 +1233,7 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
                 MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.set_wrap_width(Some(140.), cx);
@@ -1568,7 +1568,7 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("one two three four", cx);
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
@@ -1606,7 +1606,7 @@ fn test_newline(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
@@ -1651,7 +1651,7 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
             });
             editor
         })
-        .detach(cx);
+        .root(cx);
 
     editor.update(cx, |editor, cx| {
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
@@ -1863,7 +1863,7 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
             editor.change_selections(None, cx, |s| s.select_ranges([3..4, 11..12, 19..20]));
             editor
         })
-        .detach(cx);
+        .root(cx);
 
     editor.update(cx, |editor, cx| {
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
@@ -2375,7 +2375,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -2400,7 +2400,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)])
@@ -2704,7 +2704,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -2732,7 +2732,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -2761,7 +2761,7 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
@@ -2862,7 +2862,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer.read(cx).snapshot(cx);
         editor.insert_blocks(
@@ -3182,7 +3182,7 @@ fn test_select_all(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.select_all(&SelectAll, cx);
         assert_eq!(
@@ -3201,7 +3201,7 @@ fn test_select_line(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
@@ -3250,7 +3250,7 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
     view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
@@ -3323,7 +3323,7 @@ fn test_add_selection_above_below(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
             build_editor(buffer, cx)
         })
-        .detach(cx);
+        .root(cx);
 
     view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
@@ -3608,7 +3608,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let view = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let view = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
@@ -3771,7 +3771,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     editor
         .condition(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -4334,7 +4334,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let view = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let view = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
@@ -4482,7 +4482,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     editor
         .condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
@@ -4572,7 +4572,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
 
     editor.update(cx, |editor, cx| {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
@@ -4702,7 +4702,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -4814,7 +4814,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -4928,7 +4928,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor.update(cx, |editor, cx| {
@@ -5706,7 +5706,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let view = cx.add_window(|cx| build_editor(multibuffer, cx)).detach(cx);
+    let view = cx.add_window(|cx| build_editor(multibuffer, cx)).root(cx);
     view.update(cx, |view, cx| {
         assert_eq!(view.text(cx), "aaaa\nbbbb");
         view.change_selections(None, cx, |s| {
@@ -5776,7 +5776,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let view = cx.add_window(|cx| build_editor(multibuffer, cx)).detach(cx);
+    let view = cx.add_window(|cx| build_editor(multibuffer, cx)).root(cx);
     view.update(cx, |view, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
@@ -5869,7 +5869,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
             );
             editor
         })
-        .detach(cx);
+        .root(cx);
 
     // Refreshing selections is a no-op when excerpts haven't changed.
     editor.update(cx, |editor, cx| {
@@ -5950,7 +5950,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
             );
             editor
         })
-        .detach(cx);
+        .root(cx);
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
@@ -6013,7 +6013,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let view = cx.add_window(|cx| build_editor(buffer, cx)).detach(cx);
+    let view = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
     view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
@@ -6054,7 +6054,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
             build_editor(buffer.clone(), cx)
         })
-        .detach(cx);
+        .root(cx);
 
     editor.update(cx, |editor, cx| {
         struct Type1;
@@ -6145,7 +6145,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     });
     let leader = cx
         .add_window(|cx| build_editor(buffer.clone(), cx))
-        .detach(cx);
+        .root(cx);
     let follower = cx
         .update(|cx| {
             cx.add_window(
@@ -6156,7 +6156,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
                 |cx| build_editor(buffer.clone(), cx),
             )
         })
-        .detach(cx);
+        .root(cx);
 
     let is_still_following = Rc::new(RefCell::new(true));
     let follower_edit_event_count = Rc::new(RefCell::new(0));
@@ -6289,7 +6289,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     let workspace = cx
         .add_window(|cx| Workspace::test_new(project.clone(), cx))
-        .detach(cx);
+        .root(cx);
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     let leader = pane.update(cx, |_, cx| {
@@ -7033,7 +7033,7 @@ async fn test_copilot_multibuffer(
         );
         multibuffer
     });
-    let editor = cx.add_window(|cx| build_editor(multibuffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(multibuffer, cx)).root(cx);
 
     handle_copilot_completion_request(
         &copilot_lsp,
@@ -7163,7 +7163,7 @@ async fn test_copilot_disabled_globs(
         );
         multibuffer
     });
-    let editor = cx.add_window(|cx| build_editor(multibuffer, cx)).detach(cx);
+    let editor = cx.add_window(|cx| build_editor(multibuffer, cx)).root(cx);
 
     let mut copilot_requests = copilot_lsp
         .handle_request::<copilot::request::GetCompletions, _, _>(move |_params, _cx| async move {
@@ -7244,7 +7244,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, _| project.languages().add(Arc::new(language)));
     let workspace = cx
         .add_window(|cx| Workspace::test_new(project.clone(), cx))
-        .detach(cx);
+        .root(cx);
     let worktree_id = workspace.update(cx, |workspace, cx| {
         workspace.project().read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()

@@ -406,16 +406,20 @@ impl BorrowAppContext for TestAppContext {
 }
 
 impl BorrowWindowContext for TestAppContext {
-    type Return<T> = T;
+    type Result<T> = T;
 
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         self.cx
             .borrow()
             .read_window(window_id, f)
             .expect("window was closed")
     }
 
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> T {
         self.cx
             .borrow_mut()
             .update_window(window_id, f)

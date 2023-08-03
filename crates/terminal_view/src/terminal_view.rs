@@ -1072,7 +1072,7 @@ mod tests {
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
 
         (project, workspace)
     }

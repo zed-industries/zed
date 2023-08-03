@@ -1449,7 +1449,7 @@ pub mod tests {
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx
             .add_window(|cx| ProjectSearchView::new(search.clone(), cx))
-            .detach(cx);
+            .root(cx);
 
         search_view.update(cx, |search_view, cx| {
             search_view
@@ -1754,7 +1754,7 @@ pub mod tests {
         });
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
 
         let active_item = cx.read(|cx| {
             workspace

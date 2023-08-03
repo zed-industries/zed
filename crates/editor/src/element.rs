@@ -3007,7 +3007,7 @@ mod tests {
                 let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
                 Editor::new(EditorMode::Full, buffer, None, None, cx)
             })
-            .detach(cx);
+            .root(cx);
         let element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
 
         let layouts = editor.update(cx, |editor, cx| {
@@ -3028,7 +3028,7 @@ mod tests {
                 let buffer = MultiBuffer::build_simple("", cx);
                 Editor::new(EditorMode::Full, buffer, None, None, cx)
             })
-            .detach(cx);
+            .root(cx);
 
         editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("hello", cx);
@@ -3240,7 +3240,7 @@ mod tests {
                 let buffer = MultiBuffer::build_simple(&input_text, cx);
                 Editor::new(editor_mode, buffer, None, None, cx)
             })
-            .detach(cx);
+            .root(cx);
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (_, layout_state) = editor.update(cx, |editor, cx| {

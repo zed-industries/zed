@@ -842,7 +842,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let finder = cx
             .add_window(|cx| {
                 Picker::new(
@@ -856,7 +856,7 @@ mod tests {
                     cx,
                 )
             })
-            .detach(cx);
+            .root(cx);
 
         let query = test_path_like("hi");
         finder
@@ -940,7 +940,7 @@ mod tests {
         .await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let finder = cx
             .add_window(|cx| {
                 Picker::new(
@@ -954,7 +954,7 @@ mod tests {
                     cx,
                 )
             })
-            .detach(cx);
+            .root(cx);
         finder
             .update(cx, |f, cx| {
                 f.delegate_mut().spawn_search(test_path_like("hi"), cx)
@@ -980,7 +980,7 @@ mod tests {
         .await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let finder = cx
             .add_window(|cx| {
                 Picker::new(
@@ -994,7 +994,7 @@ mod tests {
                     cx,
                 )
             })
-            .detach(cx);
+            .root(cx);
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -1051,7 +1051,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1078,7 +1078,7 @@ mod tests {
                     cx,
                 )
             })
-            .detach(cx);
+            .root(cx);
 
         finder
             .update(cx, |f, cx| {
@@ -1117,7 +1117,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let finder = cx
             .add_window(|cx| {
                 Picker::new(
@@ -1131,7 +1131,7 @@ mod tests {
                     cx,
                 )
             })
-            .detach(cx);
+            .root(cx);
         finder
             .update(cx, |f, cx| {
                 f.delegate_mut().spawn_search(test_path_like("dir"), cx)

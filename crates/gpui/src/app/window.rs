@@ -142,9 +142,9 @@ impl BorrowAppContext for WindowContext<'_> {
 }
 
 impl BorrowWindowContext for WindowContext<'_> {
-    type Return<T> = T;
+    type Result<T> = T;
 
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         if self.window_id == window_id {
             f(self)
         } else {
@@ -152,7 +152,11 @@ impl BorrowWindowContext for WindowContext<'_> {
         }
     }
 
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> T {
         if self.window_id == window_id {
             f(self)
         } else {

@@ -985,7 +985,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1566,7 +1566,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -1845,7 +1845,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project, cx))
-            .detach(cx);
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));

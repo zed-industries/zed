@@ -1782,7 +1782,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -2327,7 +2327,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
@@ -2641,7 +2641,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         let new_search_events_count = Arc::new(AtomicUsize::new(0));
@@ -2730,7 +2730,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .detach(cx);
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
