@@ -2,7 +2,7 @@ use crate::{
     NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
     SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
-use anyhow::{Context, Result};
+use anyhow::Context;
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
@@ -793,7 +793,7 @@ impl ProjectSearchView {
                         } else {
                             search_view.update(&mut cx, |search_view, cx| {
                                 search_view.activate_search_mode(SearchMode::Regex, cx);
-                            });
+                            })?;
                             anyhow::Ok(())
                         }
                     })
@@ -851,7 +851,7 @@ impl ProjectSearchView {
         .detach();
 
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), cx);
             editor.set_searchable(false);
             editor
         });
@@ -901,6 +901,14 @@ impl ProjectSearchView {
         })
         .detach();
         let filters_enabled = false;
+        let semantic_permissioned = SemanticIndex::global(cx)
+            .and_then(|semantic| {
+                smol::block_on(
+                    semantic.update(cx, |this, cx| this.project_previously_indexed(project, cx)),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
@@ -909,7 +917,7 @@ impl ProjectSearchView {
             query_editor,
             results_editor,
             semantic_state: None,
-            semantic_permissioned: false,
+            semantic_permissioned,
             search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
