@@ -48,14 +48,19 @@ impl FileAssociations {
             // FIXME: Associate a type with the languages and have the file's langauge
             //        override these associations
             iife!({
-                let suffix = path
-                    .file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .and_then(|file_name| {
-                        file_name
-                            .find('.')
-                            .and_then(|dot_index| file_name.get(dot_index + 1..))
-                    })?;
+                let suffix = match path.extension() {
+                    Some(extension) => extension.to_str()?,
+                    None => {
+                        // Fall back to custom logic to handle cases that the built-in `extension()` doesn't handle, such as `.gitignore`
+                        path.file_name()
+                            .and_then(|os_str| os_str.to_str())
+                            .and_then(|file_name| {
+                                file_name
+                                    .find('.')
+                                    .and_then(|dot_index| file_name.get(dot_index + 1..))
+                            })?
+                    }
+                };
 
                 this.suffixes
                     .get(suffix)
