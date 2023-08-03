@@ -30,49 +30,50 @@ pub mod legacy {
     }
 }
 
-/// Compacts a given file path by replacing the user's home directory
-/// prefix with a tilde (`~`).
-///
-/// # Arguments
-///
-/// * `path` - A reference to a `Path` representing the file path to compact.
-///
-/// # Examples
-///
-/// ```
-/// use std::path::{Path, PathBuf};
-/// use util::paths::compact;
-/// let path: PathBuf = [
-///     util::paths::HOME.to_string_lossy().to_string(),
-///     "some_file.txt".to_string(),
-///  ]
-///  .iter()
-///  .collect();
-/// if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-///     assert_eq!(compact(&path).to_str(), Some("~/some_file.txt"));
-/// } else {
-///     assert_eq!(compact(&path).to_str(), path.to_str());
-/// }
-/// ```
-///
-/// # Returns
-///
-/// * A `PathBuf` containing the compacted file path. If the input path
-///   does not have the user's home directory prefix, or if we are not on
-///   Linux or macOS, the original path is returned unchanged.
-pub fn compact(path: &Path) -> PathBuf {
-    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-        match path.strip_prefix(HOME.as_path()) {
-            Ok(relative_path) => {
-                let mut shortened_path = PathBuf::new();
-                shortened_path.push("~");
-                shortened_path.push(relative_path);
-                shortened_path
+pub trait PathExt {
+    fn compact(&self) -> PathBuf;
+    fn suffix(&self) -> Option<&str>;
+}
+
+impl PathExt for Path {
+    /// Compacts a given file path by replacing the user's home directory
+    /// prefix with a tilde (`~`).
+    ///
+    /// # Returns
+    ///
+    /// * A `PathBuf` containing the compacted file path. If the input path
+    ///   does not have the user's home directory prefix, or if we are not on
+    ///   Linux or macOS, the original path is returned unchanged.
+    fn compact(&self) -> PathBuf {
+        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+            match self.strip_prefix(HOME.as_path()) {
+                Ok(relative_path) => {
+                    let mut shortened_path = PathBuf::new();
+                    shortened_path.push("~");
+                    shortened_path.push(relative_path);
+                    shortened_path
+                }
+                Err(_) => self.to_path_buf(),
             }
-            Err(_) => path.to_path_buf(),
+        } else {
+            self.to_path_buf()
         }
-    } else {
-        path.to_path_buf()
+    }
+
+    fn suffix(&self) -> Option<&str> {
+        match self.extension() {
+            Some(extension) => extension.to_str(),
+            None => {
+                // Fall back to custom logic to handle cases that the built-in `extension()` doesn't handle, such as `.gitignore`
+                self.file_name()
+                    .and_then(|os_str| os_str.to_str())
+                    .and_then(|file_name| {
+                        file_name
+                            .find('.')
+                            .and_then(|dot_index| file_name.get(dot_index + 1..))
+                    })
+            }
+        }
     }
 }
 
@@ -278,5 +279,32 @@ mod tests {
                 "For special case input str '{input}', got a parse mismatch"
             );
         }
+    }
+
+    #[test]
+    fn test_path_compact() {
+        let path: PathBuf = [
+            HOME.to_string_lossy().to_string(),
+            "some_file.txt".to_string(),
+        ]
+        .iter()
+        .collect();
+        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+            assert_eq!(path.compact().to_str(), Some("~/some_file.txt"));
+        } else {
+            assert_eq!(path.compact().to_str(), path.to_str());
+        }
+    }
+
+    #[test]
+    fn test_path_suffix() {
+        let path = Path::new("/a/b/c/file_name.rs");
+        assert_eq!(path.suffix(), Some("rs"));
+
+        let path = Path::new("/a/b/c/file.name.rs");
+        assert_eq!(path.suffix(), Some("rs"));
+
+        let path = Path::new("/a/b/c/.gitignore");
+        assert_eq!(path.suffix(), Some("gitignore"));
     }
 }
