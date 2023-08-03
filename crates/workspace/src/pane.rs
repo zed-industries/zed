@@ -222,6 +222,56 @@ impl TabBarContextMenu {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn nav_button<A: Action, F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>)>(
+    svg_path: &'static str,
+    style: theme::Interactive<theme::IconButton>,
+    nav_button_height: f32,
+    tooltip_style: TooltipStyle,
+    enabled: bool,
+    on_click: F,
+    tooltip_action: A,
+    action_name: &str,
+    cx: &mut ViewContext<Pane>,
+) -> AnyElement<Pane> {
+    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
+        let style = if enabled {
+            style.style_for(state)
+        } else {
+            style.disabled_style()
+        };
+        Svg::new(svg_path)
+            .with_color(style.color)
+            .constrained()
+            .with_width(style.icon_width)
+            .aligned()
+            .contained()
+            .with_style(style.container)
+            .constrained()
+            .with_width(style.button_width)
+            .with_height(nav_button_height)
+            .aligned()
+            .top()
+    })
+    .with_cursor_style(if enabled {
+        CursorStyle::PointingHand
+    } else {
+        CursorStyle::default()
+    })
+    .on_click(MouseButton::Left, move |_, toolbar, cx| {
+        on_click(toolbar, cx)
+    })
+    .with_tooltip::<A>(
+        0,
+        action_name.to_string(),
+        Some(Box::new(tooltip_action)),
+        tooltip_style,
+        cx,
+    )
+    .contained()
+    .into_any_named("nav button")
+}
+
 impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
@@ -236,6 +286,11 @@ impl Pane {
         context_menu.update(cx, |menu, _| {
             menu.set_position_mode(OverlayPositionMode::Local)
         });
+        let theme = theme::current(cx).workspace.tab_bar.clone();
+        let mut border_for_nav_buttons = theme.tab_style(false, false).container.border.clone();
+        border_for_nav_buttons.left = false;
+        let nav_button_height = theme.height;
+        let button_style = theme.nav_button;
 
         Self {
             items: Vec::new(),
@@ -265,8 +320,59 @@ impl Pane {
             has_focus: false,
             can_drop: Rc::new(|_, _| true),
             can_split: true,
-            render_tab_bar_buttons: Rc::new(|pane, cx| {
+            render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                let tooltip_style = theme::current(cx).tooltip.clone();
                 Flex::row()
+                    .with_child(nav_button(
+                        "icons/arrow_left_16.svg",
+                        button_style.clone(),
+                        nav_button_height,
+                        tooltip_style.clone(),
+                        pane.can_navigate_backward(),
+                        {
+                            move |pane, cx| {
+                                if let Some(workspace) = pane.workspace.upgrade(cx) {
+                                    let pane = cx.weak_handle();
+                                    cx.window_context().defer(move |cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.go_back(pane, cx).detach_and_log_err(cx)
+                                        })
+                                    })
+                                }
+                            }
+                        },
+                        super::GoBack,
+                        "Go Back",
+                        cx,
+                    ))
+                    .with_child(
+                        nav_button(
+                            "icons/arrow_right_16.svg",
+                            button_style.clone(),
+                            nav_button_height,
+                            tooltip_style,
+                            pane.can_navigate_forward(),
+                            {
+                                move |pane, cx| {
+                                    if let Some(workspace) = pane.workspace.upgrade(cx) {
+                                        let pane = cx.weak_handle();
+                                        cx.window_context().defer(move |cx| {
+                                            workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .go_forward(pane, cx)
+                                                    .detach_and_log_err(cx)
+                                            })
+                                        })
+                                    }
+                                }
+                            },
+                            super::GoForward,
+                            "Go Forward",
+                            cx,
+                        )
+                        .contained()
+                        .with_border(border_for_nav_buttons),
+                    )
                     // New menu
                     .with_child(Self::render_tab_bar_button(
                         0,

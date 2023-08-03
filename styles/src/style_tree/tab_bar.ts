@@ -84,7 +84,23 @@ export default function tab_bar(): any {
             bottom: false,
         },
     }
-
+    const nav_button = interactive({
+        base: {
+            color: foreground(theme.highest, "on"),
+            icon_width: 12,
+            button_width: 24,
+            corner_radius: 6,
+        },
+        state: {
+            hovered: {
+                color: foreground(theme.highest, "on", "hovered"),
+                background: background(theme.highest, "on", "hovered"),
+            },
+            disabled: {
+                color: foreground(theme.highest, "on", "disabled"),
+            },
+        },
+    });
     const dragged_tab = {
         ...active_pane_active_tab,
         background: with_opacity(tab.background, 0.9),
@@ -141,5 +157,6 @@ export default function tab_bar(): any {
                 right: false,
             },
         },
+        nav_button: nav_button
     }
 }

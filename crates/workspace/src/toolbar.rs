@@ -118,76 +118,10 @@ impl View for Toolbar {
             }
         }
 
-        let pane = self.pane.clone();
-        let mut enable_go_backward = false;
-        let mut enable_go_forward = false;
-        if let Some(pane) = pane.and_then(|pane| pane.upgrade(cx)) {
-            let pane = pane.read(cx);
-            enable_go_backward = pane.can_navigate_backward();
-            enable_go_forward = pane.can_navigate_forward();
-        }
-
         let container_style = theme.container;
         let height = theme.height * primary_items_row_count as f32;
-        let nav_button_height = theme.height;
-        let button_style = theme.nav_button;
-        let tooltip_style = theme::current(cx).tooltip.clone();
 
         let mut primary_items = Flex::row();
-        if self.can_navigate {
-            primary_items.add_child(nav_button(
-                "icons/arrow_left_16.svg",
-                button_style,
-                nav_button_height,
-                tooltip_style.clone(),
-                enable_go_backward,
-                spacing,
-                {
-                    move |toolbar, cx| {
-                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
-                        {
-                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
-                                let pane = pane.downgrade();
-                                cx.window_context().defer(move |cx| {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.go_back(pane, cx).detach_and_log_err(cx);
-                                    });
-                                })
-                            }
-                        }
-                    }
-                },
-                super::GoBack,
-                "Go Back",
-                cx,
-            ));
-            primary_items.add_child(nav_button(
-                "icons/arrow_right_16.svg",
-                button_style,
-                nav_button_height,
-                tooltip_style,
-                enable_go_forward,
-                spacing,
-                {
-                    move |toolbar, cx| {
-                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
-                        {
-                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
-                                let pane = pane.downgrade();
-                                cx.window_context().defer(move |cx| {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.go_forward(pane, cx).detach_and_log_err(cx);
-                                    });
-                                })
-                            }
-                        }
-                    }
-                },
-                super::GoForward,
-                "Go Forward",
-                cx,
-            ));
-        }
         primary_items.extend(primary_left_items);
         primary_items.extend(primary_right_items);
 
