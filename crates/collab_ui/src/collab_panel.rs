@@ -1678,20 +1678,28 @@ impl CollabPanel {
     }
 
     fn add_member(&mut self, action: &AddMember, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            workspace.update(cx, |workspace, cx| {
+        let channel_id = action.channel_id;
+        let workspace = self.workspace.clone();
+        let user_store = self.user_store.clone();
+        let channel_store = self.channel_store.clone();
+        let members = self.channel_store.read(cx).get_channel_members(channel_id);
+        cx.spawn(|_, mut cx| async move {
+            let members = members.await?;
+            workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.add_view(|cx| {
                         build_channel_modal(
-                            self.user_store.clone(),
-                            self.channel_store.clone(),
-                            action.channel_id,
+                            user_store.clone(),
+                            channel_store.clone(),
+                            channel_id,
+                            members,
                             cx,
                         )
                     })
-                })
-            });
-        }
+                });
+            })
+        })
+        .detach();
     }
 
     fn remove_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {

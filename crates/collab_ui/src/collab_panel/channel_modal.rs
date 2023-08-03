@@ -17,6 +17,7 @@ pub fn build_channel_modal(
     user_store: ModelHandle<UserStore>,
     channel_store: ModelHandle<ChannelStore>,
     channel: ChannelId,
+    members: HashMap<UserId, ChannelMemberStatus>,
     cx: &mut ViewContext<ChannelModal>,
 ) -> ChannelModal {
     Picker::new(
@@ -26,7 +27,7 @@ pub fn build_channel_modal(
             user_store,
             channel_store,
             channel_id: channel,
-            member_statuses: Default::default(),
+            member_statuses: members,
         },
         cx,
     )

@@ -123,7 +123,7 @@ impl ChannelStore {
     pub fn get_channel_members(
         &self,
         channel_id: ChannelId,
-    ) -> impl Future<Output = Result<HashMap<UserId, ChannelMemberStatus>>> {
+    ) -> impl 'static + Future<Output = Result<HashMap<UserId, ChannelMemberStatus>>> {
         let client = self.client.clone();
         async move {
             let response = client
