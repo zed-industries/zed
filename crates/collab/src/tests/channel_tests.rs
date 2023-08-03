@@ -304,3 +304,50 @@ async fn test_channel_room(
         }
     );
 }
+
+#[gpui::test]
+async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let zed_id = server.make_channel("zed", (&client_a, cx_a), &mut []).await;
+    let rust_id = server
+        .make_channel("rust", (&client_a, cx_a), &mut [])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    active_call_a
+        .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .await
+        .unwrap();
+
+    // Give everything a chance to observe user A joining
+    deterministic.run_until_parked();
+
+    client_a.channel_store().read_with(cx_a, |channels, _| {
+        assert_participants_eq(
+            channels.channel_participants(zed_id),
+            &[client_a.user_id().unwrap()],
+        );
+        assert_participants_eq(channels.channel_participants(rust_id), &[]);
+    });
+
+    active_call_a
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(rust_id, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_a.channel_store().read_with(cx_a, |channels, _| {
+        assert_participants_eq(channels.channel_participants(zed_id), &[]);
+        assert_participants_eq(
+            channels.channel_participants(rust_id),
+            &[client_a.user_id().unwrap()],
+        );
+    });
+}

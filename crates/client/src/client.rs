@@ -540,6 +540,7 @@ impl Client {
         }
     }
 
+    #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
         model: ModelHandle<E>,
@@ -575,8 +576,11 @@ impl Client {
             }),
         );
         if prev_handler.is_some() {
+            let location = std::panic::Location::caller();
             panic!(
-                "registered handler for the same message {} twice",
+                "{}:{} registered handler for the same message {} twice",
+                location.file(),
+                location.line(),
                 std::any::type_name::<M>()
             );
         }

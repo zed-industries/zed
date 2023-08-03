@@ -2276,6 +2276,14 @@ async fn join_channel(
 
     let joined_room = {
         let db = session.db().await;
+
+        if db
+            .is_current_room_different_channel(session.user_id, channel_id)
+            .await?
+        {
+            leave_room_for_session_with_guard(&session, &db).await?;
+        }
+
         let room_id = db.room_id_for_channel(channel_id).await?;
 
         let joined_room = db
@@ -2531,6 +2539,14 @@ fn channel_updated(
 
 async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> {
     let db = session.db().await;
+    update_user_contacts_with_guard(user_id, session, &db).await
+}
+
+async fn update_user_contacts_with_guard(
+    user_id: UserId,
+    session: &Session,
+    db: &DbHandle,
+) -> Result<()> {
     let contacts = db.get_contacts(user_id).await?;
     let busy = db.is_user_busy(user_id).await?;
 
@@ -2564,6 +2580,11 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
 }
 
 async fn leave_room_for_session(session: &Session) -> Result<()> {
+    let db = session.db().await;
+    leave_room_for_session_with_guard(session, &db).await
+}
+
+async fn leave_room_for_session_with_guard(session: &Session, db: &DbHandle) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
     let room_id;
@@ -2574,7 +2595,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let channel_members;
     let channel_id;
 
-    if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
+    if let Some(mut left_room) = db.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
 
         for project in left_room.left_projects.values() {
@@ -2624,7 +2645,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     }
 
     for contact_user_id in contacts_to_update {
-        update_user_contacts(contact_user_id, &session).await?;
+        update_user_contacts_with_guard(contact_user_id, &session, db).await?;
     }
 
     if let Some(live_kit) = session.live_kit_client.as_ref() {

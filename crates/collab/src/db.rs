@@ -1342,6 +1342,35 @@ impl Database {
         .await
     }
 
+    pub async fn is_current_room_different_channel(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> Result<bool> {
+        self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryAs {
+                ChannelId,
+            }
+
+            let channel_id_model: Option<ChannelId> = room_participant::Entity::find()
+                .select_only()
+                .column_as(room::Column::ChannelId, QueryAs::ChannelId)
+                .inner_join(room::Entity)
+                .filter(room_participant::Column::UserId.eq(user_id))
+                .into_values::<_, QueryAs>()
+                .one(&*tx)
+                .await?;
+
+            let result = channel_id_model
+                .map(|channel_id_model| channel_id_model != channel_id)
+                .unwrap_or(false);
+
+            Ok(result)
+        })
+        .await
+    }
+
     pub async fn join_room(
         &self,
         room_id: RoomId,
