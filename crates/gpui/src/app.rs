@@ -1128,6 +1128,12 @@ impl AppContext {
         self.keystroke_matcher.clear_bindings();
     }
 
+    pub fn binding_for_action(&self, action: &dyn Action) -> Option<&Binding> {
+        self.keystroke_matcher
+            .bindings_for_action(action.id())
+            .find(|binding| binding.action().eq(action))
+    }
+
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
         let type_id = TypeId::of::<T>();
         self.update(|this| {

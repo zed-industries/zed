@@ -4,21 +4,21 @@ use serde::{Deserialize, Serialize};
 use settings::Setting;
 
 #[derive(Deserialize, Debug)]
-pub struct VectorStoreSettings {
+pub struct SemanticIndexSettings {
     pub enabled: bool,
     pub reindexing_delay_seconds: usize,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct VectorStoreSettingsContent {
+pub struct SemanticIndexSettingsContent {
     pub enabled: Option<bool>,
     pub reindexing_delay_seconds: Option<usize>,
 }
 
-impl Setting for VectorStoreSettings {
-    const KEY: Option<&'static str> = Some("vector_store");
+impl Setting for SemanticIndexSettings {
+    const KEY: Option<&'static str> = Some("semantic_index");
 
-    type FileContent = VectorStoreSettingsContent;
+    type FileContent = SemanticIndexSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,

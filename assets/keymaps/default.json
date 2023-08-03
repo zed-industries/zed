@@ -22,6 +22,7 @@
       "alt-cmd-right": "pane::ActivateNextItem",
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": "pane::CloseInactiveItems",
+      "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
       "cmd-k u": "pane::CloseCleanItems",
       "cmd-k cmd-w": "pane::CloseAllItems",
       "cmd-shift-w": "workspace::CloseWindow",
@@ -227,9 +228,23 @@
     }
   },
   {
+    "context": "BufferSearchBar > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
+    }
+  },
+  {
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus"
+    }
+  },
+  {
+    "context": "ProjectSearchBar > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
     }
   },
   {
@@ -411,7 +426,6 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-t": "project_symbols::Toggle",
-      "cmd-ctrl-t": "semantic_search::Toggle",
       "cmd-p": "file_finder::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",

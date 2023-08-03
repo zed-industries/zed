@@ -308,6 +308,7 @@ pub fn initialize_workspace(
             );
             let active_buffer_language =
                 cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
             let feedback_button = cx.add_view(|_| {
                 feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
             });
@@ -315,9 +316,11 @@ pub fn initialize_workspace(
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_left_item(diagnostic_summary, cx);
                 status_bar.add_left_item(activity_indicator, cx);
+
                 status_bar.add_right_item(feedback_button, cx);
                 status_bar.add_right_item(copilot, cx);
                 status_bar.add_right_item(active_buffer_language, cx);
+                status_bar.add_right_item(vim_mode_indicator, cx);
                 status_bar.add_right_item(cursor_position, cx);
             });
 
@@ -542,7 +545,6 @@ pub fn handle_keymap_file_changes(
                             reload_keymaps(cx, &keymap_content);
                         }
                     })
-                    .detach();
                 }));
             }
         }
@@ -2361,7 +2363,7 @@ mod tests {
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let http = FakeHttpClient::with_404_response();
-        let node_runtime = NodeRuntime::instance(http, cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http);
         languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);

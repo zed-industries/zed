@@ -571,7 +571,6 @@ fn new_update_task(
                     if let Some(buffer) =
                         refresh_multi_buffer.buffer(pending_refresh_query.buffer_id)
                     {
-                        drop(refresh_multi_buffer);
                         editor.inlay_hint_cache.update_tasks.insert(
                             pending_refresh_query.excerpt_id,
                             UpdateTask {

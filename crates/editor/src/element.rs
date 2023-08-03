@@ -172,6 +172,10 @@ impl EditorElement {
             .on_drag(MouseButton::Left, {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
+                    if event.end {
+                        return;
+                    }
+
                     if !Self::mouse_dragged(
                         editor,
                         event.platform_event,
@@ -542,8 +546,20 @@ impl EditorElement {
                 });
             }
 
+            let scroll_left =
+                layout.position_map.snapshot.scroll_position().x() * layout.position_map.em_width;
+
             for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x = text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.;
+                let x =
+                    (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
+                        - scroll_left;
+
+                if x < text_bounds.origin_x()
+                    || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
+                {
+                    continue;
+                }
+
                 let color = if *active {
                     self.style.active_wrap_guide
                 } else {
@@ -1032,6 +1048,10 @@ impl EditorElement {
         scene.pop_layer();
     }
 
+    fn scrollbar_left(&self, bounds: &RectF) -> f32 {
+        bounds.max_x() - self.style.theme.scrollbar.width
+    }
+
     fn paint_scrollbar(
         &mut self,
         scene: &mut SceneBuilder,
@@ -1050,7 +1070,7 @@ impl EditorElement {
         let top = bounds.min_y();
         let bottom = bounds.max_y();
         let right = bounds.max_x();
-        let left = right - style.width;
+        let left = self.scrollbar_left(&bounds);
         let row_range = &layout.scrollbar_row_range;
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
@@ -1235,6 +1255,10 @@ impl EditorElement {
                 })
                 .on_drag(MouseButton::Left, {
                     move |event, editor: &mut Editor, cx| {
+                        if event.end {
+                            return;
+                        }
+
                         let y = event.prev_mouse_position.y();
                         let new_y = event.position.y();
                         if thumb_top < y && y < thumb_bottom {

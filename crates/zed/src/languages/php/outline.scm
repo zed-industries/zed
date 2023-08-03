@@ -8,8 +8,6 @@
     name: (_) @name
     ) @item
 
-
-
 (method_declaration
     "function" @context
     name: (_) @name
@@ -22,5 +20,10 @@
 
 (enum_declaration
     "enum" @context
+    name: (_) @name
+    ) @item
+
+(trait_declaration
+    "trait" @context
     name: (_) @name
     ) @item

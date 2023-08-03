@@ -2369,7 +2369,7 @@ impl BackgroundScannerState {
         }
 
         // Remove any git repositories whose .git entry no longer exists.
-        let mut snapshot = &mut self.snapshot;
+        let snapshot = &mut self.snapshot;
         let mut repositories = mem::take(&mut snapshot.git_repositories);
         let mut repository_entries = mem::take(&mut snapshot.repository_entries);
         repositories.retain(|work_directory_id, _| {

@@ -74,6 +74,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rand::{seq::SliceRandom, thread_rng};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -226,6 +227,10 @@ actions!(
         MoveLineUp,
         MoveLineDown,
         JoinLines,
+        SortLinesCaseSensitive,
+        SortLinesCaseInsensitive,
+        ReverseLines,
+        ShuffleLines,
         Transpose,
         Cut,
         Copy,
@@ -344,6 +349,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::join_lines);
+    cx.add_action(Editor::sort_lines_case_sensitive);
+    cx.add_action(Editor::sort_lines_case_insensitive);
+    cx.add_action(Editor::reverse_lines);
+    cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -534,6 +543,7 @@ pub struct Editor {
     show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
+    show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -1366,6 +1376,7 @@ impl Editor {
             show_local_selections: true,
             mode,
             show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -1528,7 +1539,7 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
-    fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
             return range.start..range.start;
         }
@@ -4205,6 +4216,96 @@ impl Editor {
         });
     }
 
+    pub fn sort_lines_case_sensitive(
+        &mut self,
+        _: &SortLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| lines.sort())
+    }
+
+    pub fn sort_lines_case_insensitive(
+        &mut self,
+        _: &SortLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
+    }
+
+    pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.reverse())
+    }
+
+    pub fn shuffle_lines(&mut self, _: &ShuffleLines, cx: &mut ViewContext<Self>) {
+        self.manipulate_lines(cx, |lines| lines.shuffle(&mut thread_rng()))
+    }
+
+    fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&mut [&str]),
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        let mut contiguous_row_selections = Vec::new();
+        let mut new_selections = Vec::new();
+
+        while let Some(selection) = selections.next() {
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
+
+            let start_point = Point::new(start_row, 0);
+            let end_point = Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            let text = buffer
+                .text_for_range(start_point..end_point)
+                .collect::<String>();
+            let mut lines = text.split("\n").collect_vec();
+
+            let lines_len = lines.len();
+            callback(&mut lines);
+
+            // This is a current limitation with selections.
+            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
+            debug_assert!(
+                lines.len() == lines_len,
+                "callback should not change the number of lines"
+            );
+
+            edits.push((start_point..end_point, lines.join("\n")));
+            let start_anchor = buffer.anchor_after(start_point);
+            let end_anchor = buffer.anchor_before(end_point);
+
+            // Make selection and push
+            new_selections.push(Selection {
+                id: selection.id,
+                start: start_anchor.to_offset(&buffer),
+                end: end_anchor.to_offset(&buffer),
+                goal: SelectionGoal::None,
+                reversed: selection.reversed,
+            });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -6275,8 +6376,8 @@ impl Editor {
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
+            let range = self.range_for_match(&range);
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
-                let range = self.range_for_match(&range);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
@@ -6293,7 +6394,6 @@ impl Editor {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
                         pane.update(cx, |pane, _| pane.disable_history());
-                        let range = target_editor.range_for_match(&range);
                         target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
@@ -7089,6 +7189,10 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
+
         let settings = self.buffer.read(cx).settings_at(0, cx);
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
@@ -7143,6 +7247,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_gutter);
         cx.notify();
     }
 

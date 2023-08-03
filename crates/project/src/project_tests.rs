@@ -1,7 +1,6 @@
-use crate::{worktree::WorktreeHandle, Event, *};
+use crate::{search::PathMatcher, worktree::WorktreeHandle, Event, *};
 use fs::{FakeFs, LineEnding, RealFs};
 use futures::{future, StreamExt};
-use globset::Glob;
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
@@ -3641,7 +3640,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![Glob::new("*.odd").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.odd").unwrap()],
                 Vec::new()
             ),
             cx
@@ -3659,7 +3658,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![Glob::new("*.rs").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.rs").unwrap()],
                 Vec::new()
             ),
             cx
@@ -3681,8 +3680,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
                 ],
                 Vec::new()
             ),
@@ -3705,9 +3704,9 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    Glob::new("*.rs").unwrap().compile_matcher(),
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher(),
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
                 ],
                 Vec::new()
             ),
@@ -3752,7 +3751,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![Glob::new("*.odd").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.odd").unwrap()],
             ),
             cx
         )
@@ -3775,7 +3774,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![Glob::new("*.rs").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.rs").unwrap()],
             ),
             cx
         )
@@ -3797,8 +3796,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
                 ],
             ),
             cx
@@ -3821,9 +3820,9 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    Glob::new("*.rs").unwrap().compile_matcher(),
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher(),
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
                 ],
             ),
             cx
@@ -3860,8 +3859,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![Glob::new("*.odd").unwrap().compile_matcher()],
-                vec![Glob::new("*.odd").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.odd").unwrap()],
+                vec![PathMatcher::new("*.odd").unwrap()],
             ),
             cx
         )
@@ -3878,8 +3877,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![Glob::new("*.ts").unwrap().compile_matcher()],
-                vec![Glob::new("*.ts").unwrap().compile_matcher()],
+                vec![PathMatcher::new("*.ts").unwrap()],
+                vec![PathMatcher::new("*.ts").unwrap()],
             ),
             cx
         )
@@ -3897,12 +3896,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher()
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
                 ],
                 vec![
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher()
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
                 ],
             ),
             cx
@@ -3921,12 +3920,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    Glob::new("*.ts").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher()
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
                 ],
                 vec![
-                    Glob::new("*.rs").unwrap().compile_matcher(),
-                    Glob::new("*.odd").unwrap().compile_matcher()
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
                 ],
             ),
             cx

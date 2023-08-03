@@ -339,6 +339,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub line_comment: Option<Arc<str>>,
     #[serde(default)]
+    pub collapsed_placeholder: String,
+    #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
@@ -408,6 +410,7 @@ impl Default for LanguageConfig {
             line_comment: Default::default(),
             block_comment: Default::default(),
             overrides: Default::default(),
+            collapsed_placeholder: Default::default(),
         }
     }
 }
@@ -523,9 +526,10 @@ pub struct OutlineConfig {
 pub struct EmbeddingConfig {
     pub query: Query,
     pub item_capture_ix: u32,
-    pub name_capture_ix: u32,
+    pub name_capture_ix: Option<u32>,
     pub context_capture_ix: Option<u32>,
-    pub extra_context_capture_ix: Option<u32>,
+    pub collapse_capture_ix: Option<u32>,
+    pub keep_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -840,8 +844,8 @@ impl LanguageRegistry {
                                             }
                                         }
                                     }
-                                    Err(err) => {
-                                        log::error!("failed to load language {name} - {err}");
+                                    Err(e) => {
+                                        log::error!("failed to load language {name}:\n{:?}", e);
                                         let mut state = this.state.write();
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
@@ -849,7 +853,7 @@ impl LanguageRegistry {
                                                 let _ = tx.send(Err(anyhow!(
                                                     "failed to load language {}: {}",
                                                     name,
-                                                    err
+                                                    e
                                                 )));
                                             }
                                         }
@@ -1184,25 +1188,39 @@ impl Language {
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
-            self = self.with_highlights_query(query.as_ref())?;
+            self = self
+                .with_highlights_query(query.as_ref())
+                .context("Error loading highlights query")?;
         }
         if let Some(query) = queries.brackets {
-            self = self.with_brackets_query(query.as_ref())?;
+            self = self
+                .with_brackets_query(query.as_ref())
+                .context("Error loading brackets query")?;
         }
         if let Some(query) = queries.indents {
-            self = self.with_indents_query(query.as_ref())?;
+            self = self
+                .with_indents_query(query.as_ref())
+                .context("Error loading indents query")?;
         }
         if let Some(query) = queries.outline {
-            self = self.with_outline_query(query.as_ref())?;
+            self = self
+                .with_outline_query(query.as_ref())
+                .context("Error loading outline query")?;
         }
         if let Some(query) = queries.embedding {
-            self = self.with_embedding_query(query.as_ref())?;
+            self = self
+                .with_embedding_query(query.as_ref())
+                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
-            self = self.with_injection_query(query.as_ref())?;
+            self = self
+                .with_injection_query(query.as_ref())
+                .context("Error loading injection query")?;
         }
         if let Some(query) = queries.overrides {
-            self = self.with_override_query(query.as_ref())?;
+            self = self
+                .with_override_query(query.as_ref())
+                .context("Error loading override query")?;
         }
         Ok(self)
     }
@@ -1247,23 +1265,26 @@ impl Language {
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
-        let mut extra_context_capture_ix = None;
+        let mut collapse_capture_ix = None;
+        let mut keep_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("item", &mut item_capture_ix),
                 ("name", &mut name_capture_ix),
                 ("context", &mut context_capture_ix),
-                ("context.extra", &mut extra_context_capture_ix),
+                ("keep", &mut keep_capture_ix),
+                ("collapse", &mut collapse_capture_ix),
             ],
         );
-        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
+        if let Some(item_capture_ix) = item_capture_ix {
             grammar.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
                 context_capture_ix,
-                extra_context_capture_ix,
+                collapse_capture_ix,
+                keep_capture_ix,
             });
         }
         Ok(self)
@@ -1548,9 +1569,20 @@ impl Language {
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
     }
+
+    pub fn default_scope(self: &Arc<Self>) -> LanguageScope {
+        LanguageScope {
+            language: self.clone(),
+            override_id: None,
+        }
+    }
 }
 
 impl LanguageScope {
+    pub fn collapsed_placeholder(&self) -> &str {
+        self.language.config.collapsed_placeholder.as_ref()
+    }
+
     pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
         Override::as_option(
             self.config_override().map(|o| &o.line_comment),
