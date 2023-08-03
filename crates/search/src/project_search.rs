@@ -129,7 +129,7 @@ pub struct ProjectSearchView {
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
     semantic_state: Option<SemanticSearchState>,
-    semantic_permissioned: bool,
+    semantic_permissioned: Option<bool>,
     search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
@@ -763,7 +763,7 @@ impl ProjectSearchView {
             SearchMode::Semantic => {
                 // let semantic_permissioned = self.semantic_permissioned.await;
                 // if semantic_permissioned.is_ok_and(|permission| !permission) {
-                if !self.semantic_permissioned {
+                if !self.semantic_permissioned(cx) {
                     // TODO: Change this to read from the project name
                     let project = self.model.read(cx).project.clone();
                     let project_name = project
@@ -786,7 +786,7 @@ impl ProjectSearchView {
                     cx.spawn(|search_view, mut cx| async move {
                         if answer.next().await == Some(0) {
                             search_view.update(&mut cx, |search_view, cx| {
-                                search_view.semantic_permissioned = true;
+                                search_view.semantic_permissioned = Some(true);
                                 search_view.index_project(cx);
                             })?;
                             anyhow::Ok(())
@@ -901,14 +901,6 @@ impl ProjectSearchView {
         })
         .detach();
         let filters_enabled = false;
-        let semantic_permissioned = SemanticIndex::global(cx)
-            .and_then(|semantic| {
-                smol::block_on(
-                    semantic.update(cx, |this, cx| this.project_previously_indexed(project, cx)),
-                )
-                .ok()
-            })
-            .unwrap_or_default();
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
@@ -917,7 +909,7 @@ impl ProjectSearchView {
             query_editor,
             results_editor,
             semantic_state: None,
-            semantic_permissioned,
+            semantic_permissioned: None,
             search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
@@ -930,7 +922,20 @@ impl ProjectSearchView {
         this.model_changed(cx);
         this
     }
-
+    fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        *self.semantic_permissioned.get_or_insert_with(|| {
+            SemanticIndex::global(cx)
+                .and_then(|semantic| {
+                    let project = self.model.read(cx).project.clone();
+                    smol::block_on(
+                        semantic
+                            .update(cx, |this, cx| this.project_previously_indexed(project, cx)),
+                    )
+                    .ok()
+                })
+                .unwrap_or_default()
+        })
+    }
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
         dir_entry: &Entry,
