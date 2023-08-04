@@ -1507,11 +1507,6 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.filters_enabled = !search_view.filters_enabled;
-                if search_view.filters_enabled {
-                    cx.focus(&search_view.included_files_editor);
-                } else {
-                    cx.focus(&search_view.query_editor);
-                }
                 search_view
                     .included_files_editor
                     .update(cx, |_, cx| cx.notify());
