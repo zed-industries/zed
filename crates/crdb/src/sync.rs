@@ -104,17 +104,19 @@ fn subdivide_range(
     })
 }
 
-fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Operation>) {
-    const BASE: usize = 16;
-    const DEPTH: u32 = 2;
-    const MIN_OPERATIONS: usize = 256;
-
+fn sync(
+    client: &mut btree::Sequence<Operation>,
+    server: &mut btree::Sequence<Operation>,
+    base: usize,
+    depth: u32,
+    min_operations: usize,
+) {
     let mut server_digests = DigestSequence::new();
-    let digests = request_digests(server, 0..usize::MAX, BASE, DEPTH, MIN_OPERATIONS);
+    let digests = request_digests(server, 0..usize::MAX, base, depth, min_operations);
     server_digests.splice(0..0, digests.iter().cloned());
     let max_sync_range = 0..(client.summary().digest.count + server_digests.operation_count());
     let mut stack =
-        subdivide_range(max_sync_range, BASE, DEPTH, MIN_OPERATIONS).collect::<Vec<_>>();
+        subdivide_range(max_sync_range, base, depth, min_operations).collect::<Vec<_>>();
     stack.reverse();
 
     let mut synced_end = 0;
@@ -129,11 +131,11 @@ fn sync(client: &mut btree::Sequence<Operation>, server: &mut btree::Sequence<Op
             }
 
             synced_end = sync_range.end;
-        } else if sync_range.len() > MIN_OPERATIONS {
-            let digests = request_digests(server, sync_range.clone(), BASE, DEPTH, MIN_OPERATIONS);
+        } else if sync_range.len() > min_operations {
+            let digests = request_digests(server, sync_range.clone(), base, depth, min_operations);
             server_digests.splice(sync_range.clone(), digests.iter().cloned());
             let old_stack_len = stack.len();
-            stack.extend(subdivide_range(sync_range, BASE, DEPTH, MIN_OPERATIONS));
+            stack.extend(subdivide_range(sync_range, base, depth, min_operations));
             stack[old_stack_len..].reverse();
         } else {
             let mut missed_client_ops = Vec::new();
@@ -242,13 +244,12 @@ mod tests {
 
     #[test]
     fn test_sync() {
-        // assert_sync(1..=10, 5..=10);
-        // assert_sync(1..=10, 4..=10);
-        // assert_sync(1..=10, 1..=5);
-        // assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
-        // assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
-        // assert_sync(1..=10, 5..=14);
-        assert_sync(1..=1000000, 1..=1000000 - 100);
+        assert_sync(1..=10, 5..=10);
+        assert_sync(1..=10, 4..=10);
+        assert_sync(1..=10, 1..=5);
+        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
+        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
+        assert_sync(1..=10, 5..=14);
     }
 
     fn assert_sync(
@@ -263,30 +264,35 @@ mod tests {
             .into_iter()
             .map(build_operation)
             .collect::<Vec<_>>();
-        println!("===== syncing =====");
-        println!(
-            "Client: {:?}",
-            client_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
-        );
-        println!(
-            "Server: {:?}",
-            server_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
-        );
-        let mut client_operations = btree::Sequence::from_iter(client_ops, &());
-        let mut server_operations = btree::Sequence::from_iter(server_ops, &());
-        sync(&mut client_operations, &mut server_operations);
-        assert_eq!(
-            client_operations
-                .iter()
-                .map(|op| op.id())
-                .collect::<Vec<_>>(),
-            server_operations
-                .iter()
-                .map(|op| op.id())
-                .collect::<Vec<_>>()
-        );
-        println!("===================");
-        println!();
+        for base in 2..16 {
+            for depth in 1..=4 {
+                for min_operations in 1..16 {
+                    println!(
+                        "base: {}, depth: {}, min_operations: {}",
+                        base, depth, min_operations
+                    );
+                    let mut client_operations = btree::Sequence::from_iter(client_ops.clone(), &());
+                    let mut server_operations = btree::Sequence::from_iter(server_ops.clone(), &());
+                    sync(
+                        &mut client_operations,
+                        &mut server_operations,
+                        base,
+                        depth,
+                        min_operations,
+                    );
+                    assert_eq!(
+                        client_operations
+                            .iter()
+                            .map(|op| op.id())
+                            .collect::<Vec<_>>(),
+                        server_operations
+                            .iter()
+                            .map(|op| op.id())
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
     }
 
     #[test]
