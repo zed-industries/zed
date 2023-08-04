@@ -1970,6 +1970,7 @@ impl View for ProjectSearchBar {
                                 )
                                 .with_children(matches)
                                 .aligned()
+                                .top()
                                 .left(),
                         )
                         .contained()
@@ -2015,6 +2016,7 @@ impl View for ProjectSearchBar {
                                 .with_style(theme.search.container)
                                 .aligned()
                                 .right()
+                                .top()
                                 .flex(1., true),
                         )
                         .with_children(
@@ -2027,6 +2029,7 @@ impl View for ProjectSearchBar {
                         .flex(1., true),
                 )
                 .contained()
+                .with_uniform_padding(theme.workspace.toolbar.height / 3.)
                 .flex_float()
                 .into_any_named("project search")
         } else {
@@ -2060,9 +2063,9 @@ impl ToolbarItemView for ProjectSearchBar {
             .as_ref()
             .map(|search| {
                 let offset = search.read(cx).filters_enabled as usize;
-                1 + offset
+                2 + offset
             })
-            .unwrap_or_else(|| 1)
+            .unwrap_or_else(|| 2)
     }
 }
 
