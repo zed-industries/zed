@@ -67,24 +67,21 @@ impl btree::Dimension<'_, OperationSummary> for Digest {
 fn request_digests(
     operations: &btree::Sequence<Operation>,
     mut root_range: Range<usize>,
-    tree_base: usize,
-    tree_depth: u32,
+    count: usize,
     min_operations: usize,
 ) -> Vec<Digest> {
     root_range.start = cmp::min(root_range.start, operations.summary().digest.count);
     root_range.end = cmp::min(root_range.end, operations.summary().digest.count);
-    subdivide_range(root_range, tree_base, tree_depth, min_operations)
+    subdivide_range(root_range, count, min_operations)
         .map(|range| digest_for_range(operations, range))
         .collect()
 }
 
 fn subdivide_range(
     root_range: Range<usize>,
-    tree_base: usize,
-    tree_depth: u32,
+    count: usize,
     min_operations: usize,
 ) -> impl Iterator<Item = Range<usize>> {
-    let count = tree_base.pow(tree_depth);
     let subrange_len = cmp::max(min_operations, (root_range.len() + count - 1) / count);
 
     let mut subrange_start = root_range.start;
@@ -101,18 +98,17 @@ fn subdivide_range(
 fn sync(
     client: &mut btree::Sequence<Operation>,
     server: &mut btree::Sequence<Operation>,
-    base: usize,
-    depth: u32,
+    max_digests: usize,
     min_operations: usize,
 ) -> usize {
     let mut server_digests = DigestSequence::new();
     let mut roundtrips = 1;
-    let digests = request_digests(server, 0..usize::MAX, base, depth, min_operations);
+    let digests = request_digests(server, 0..usize::MAX, max_digests, min_operations);
     server_digests.splice(0..0, digests.iter().cloned());
     let server_operation_count = server_digests.operation_count();
     let max_sync_range = 0..(client.summary().digest.count + server_operation_count);
     let mut stack =
-        subdivide_range(max_sync_range, base, depth, min_operations).collect::<Vec<_>>();
+        subdivide_range(max_sync_range, max_digests, min_operations).collect::<Vec<_>>();
     stack.reverse();
 
     let mut missed_server_ops = Vec::new();
@@ -137,18 +133,21 @@ fn sync(
 
         let client_digest = digest_for_range(client, sync_range.clone());
         if client_digest == server_digest {
+            log::debug!("skipping {:?}", sync_range);
             synced_end = sync_range.end;
             server_end += server_digest.count;
         } else if sync_range.len() > min_operations {
+            log::debug!("descending into {:?}", sync_range);
             roundtrips += 1;
             let digests =
-                request_digests(server, server_range.clone(), base, depth, min_operations);
+                request_digests(server, server_range.clone(), max_digests, min_operations);
             server_digests.splice(sync_range.clone(), digests.iter().cloned());
             let old_stack_len = stack.len();
 
-            stack.extend(subdivide_range(sync_range, base, depth, min_operations));
+            stack.extend(subdivide_range(sync_range, max_digests, min_operations));
             stack[old_stack_len..].reverse();
         } else {
+            log::debug!("exchanging operations for {:?}", sync_range);
             roundtrips += 1;
             let server_operations = request_operations(server, server_range.clone());
             debug_assert!(server_operations.len() > 0);
@@ -206,6 +205,7 @@ fn sync(
 
     // Fetch and publish the remaining suffixes.
     if synced_end < client.summary().digest.count || server_end < server_operation_count {
+        log::debug!("exchanging operations for {:?}..", synced_end);
         roundtrips += 1;
 
         let remaining_client_ops = operations_for_range(client, synced_end..);
@@ -315,8 +315,10 @@ mod tests {
         assert_sync_with_config(
             client_ops,
             server_ops,
-            rng.gen_range(2..=16),
-            rng.gen_range(1..=4),
+            [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+                .choose(&mut rng)
+                .unwrap()
+                .clone(),
             [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
                 .choose(&mut rng)
                 .unwrap()
@@ -330,17 +332,14 @@ mod tests {
     ) {
         let client_ops = client_ops.into_iter().collect::<Vec<_>>();
         let server_ops = server_ops.into_iter().collect::<Vec<_>>();
-        for base in [2, 3, 4] {
-            for depth in [1, 2, 3] {
-                for min_operations in [1, 2, 4, 8] {
-                    assert_sync_with_config(
-                        client_ops.clone(),
-                        server_ops.clone(),
-                        base,
-                        depth,
-                        min_operations,
-                    );
-                }
+        for max_digests in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+            for min_operations in [1, 2, 4, 8] {
+                assert_sync_with_config(
+                    client_ops.clone(),
+                    server_ops.clone(),
+                    max_digests,
+                    min_operations,
+                );
             }
         }
     }
@@ -348,13 +347,12 @@ mod tests {
     fn assert_sync_with_config(
         client_ops: impl IntoIterator<Item = usize>,
         server_ops: impl IntoIterator<Item = usize>,
-        base: usize,
-        depth: u32,
+        max_digests: usize,
         min_operations: usize,
     ) {
         println!(
-            "base: {}, depth: {}, min_operations: {}",
-            base, depth, min_operations
+            "max digests: {}, min_operations: {}",
+            max_digests, min_operations
         );
         let client_ops = client_ops
             .into_iter()
@@ -369,8 +367,7 @@ mod tests {
         let roundtrips = sync(
             &mut client_operations,
             &mut server_operations,
-            base,
-            depth,
+            max_digests,
             min_operations,
         );
         dbg!(roundtrips);
@@ -384,41 +381,6 @@ mod tests {
                 .iter()
                 .map(|op| op.id())
                 .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn test_request_digests() {
-        let operations = btree::Sequence::from_iter((1..=64).map(build_operation), &());
-
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 2, 0, 0)),
-            [64]
-        );
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 2, 1, 0)),
-            [32, 32]
-        );
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 2, 2, 0)),
-            [16, 16, 16, 16]
-        );
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 32..48, 2, 2, 0)),
-            [4, 4, 4, 4]
-        );
-
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 3, 0, 0)),
-            [64]
-        );
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 3, 1, 0)),
-            [22, 22, 22]
-        );
-        assert_eq!(
-            digest_counts(&request_digests(&operations, 0..64, 3, 2, 0)),
-            [8, 8, 8, 8, 8, 8, 8, 8]
         );
     }
 
