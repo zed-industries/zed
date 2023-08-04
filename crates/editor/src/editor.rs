@@ -231,6 +231,8 @@ actions!(
         SortLinesCaseInsensitive,
         ReverseLines,
         ShuffleLines,
+        ConvertToUpperCase,
+        ConvertToLowerCase,
         Transpose,
         Cut,
         Copy,
@@ -353,6 +355,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::sort_lines_case_insensitive);
     cx.add_action(Editor::reverse_lines);
     cx.add_action(Editor::shuffle_lines);
+    cx.add_action(Editor::convert_to_upper_case);
+    cx.add_action(Editor::convert_to_lower_case);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -4291,6 +4295,68 @@ impl Editor {
                 goal: SelectionGoal::None,
                 reversed: selection.reversed,
             });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
+    pub fn convert_to_upper_case(&mut self, _: &ConvertToUpperCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_uppercase())
+    }
+
+    pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_lowercase())
+    }
+
+    fn manipulate_text<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&str) -> String,
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        for selection in self.selections.all::<usize>(cx) {
+            let selection_is_empty = selection.is_empty();
+
+            let (start, end) = if selection_is_empty {
+                let word_range = movement::surrounding_word(
+                    &display_map,
+                    selection.start.to_display_point(&display_map),
+                );
+                let start = word_range.start.to_offset(&display_map, Bias::Left);
+                let end = word_range.end.to_offset(&display_map, Bias::Left);
+                (start, end)
+            } else {
+                (selection.start, selection.end)
+            };
+
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            let text = callback(&text);
+
+            if selection_is_empty {
+                new_selections.push(selection);
+            } else {
+                new_selections.push(Selection {
+                    start,
+                    end: start + text.len(),
+                    goal: SelectionGoal::None,
+                    ..selection
+                });
+            }
+
+            edits.push((start..end, text));
         }
 
         self.transact(cx, |this, cx| {
