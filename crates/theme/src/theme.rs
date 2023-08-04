@@ -255,8 +255,12 @@ pub struct ChannelModal {
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainerStyle,
-    pub contact_button: IconButton,
-    pub disabled_contact_button: IconButton,
+    pub remove_member_button: ContainedText,
+    pub cancel_invite_button: ContainedText,
+    pub member_icon: Icon,
+    pub invitee_icon: Icon,
+    pub admin_toggle: ContainerStyle,
+    pub admin_toggle_part: Toggleable<ContainedText>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

@@ -41,6 +41,61 @@ export default function channel_modal(): any {
     }
 
     return {
+        member_icon: {
+            background: background(theme.middle),
+            padding: {
+                bottom: 4,
+                left: 4,
+                right: 4,
+                top: 4,
+            },
+            width: 5,
+            color: foreground(theme.middle, "accent"),
+        },
+        invitee_icon: {
+            background: background(theme.middle),
+            padding: {
+                bottom: 4,
+                left: 4,
+                right: 4,
+                top: 4,
+            },
+            width: 5,
+            color: foreground(theme.middle, "accent"),
+        },
+        remove_member_button: {
+            ...text(theme.middle, "sans", { size: "xs" }),
+            background: background(theme.middle),
+            padding: {
+                left: 7,
+                right: 7
+            }
+        },
+        cancel_invite_button: {
+            ...text(theme.middle, "sans", { size: "xs" }),
+            background: background(theme.middle),
+        },
+        admin_toggle_part: toggleable({
+            base: {
+                ...text(theme.middle, "sans", { size: "xs" }),
+                padding: {
+                    left: 7,
+                    right: 7,
+                },
+            },
+            state: {
+                active: {
+                    background: background(theme.middle, "on"),
+                }
+            }
+        }),
+        admin_toggle: {
+            border: border(theme.middle, "active"),
+            background: background(theme.middle),
+            margin: {
+                right: 8,
+            }
+        },
         container: {
             background: background(theme.lowest),
             border: border(theme.lowest),

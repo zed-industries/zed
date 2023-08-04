@@ -915,7 +915,7 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
 
     let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
 
-    db.invite_channel_member(zed_id, b_id, a_id, true)
+    db.invite_channel_member(zed_id, b_id, a_id, false)
         .await
         .unwrap();
 
@@ -999,6 +999,43 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
             }
         ]
     );
+
+    let (channels, _) = db.get_channels_for_user(b_id).await.unwrap();
+    assert_eq!(
+        channels,
+        vec![
+            Channel {
+                id: zed_id,
+                name: "zed".to_string(),
+                parent_id: None,
+                user_is_admin: false,
+            },
+            Channel {
+                id: crdb_id,
+                name: "crdb".to_string(),
+                parent_id: Some(zed_id),
+                user_is_admin: false,
+            },
+            Channel {
+                id: livestreaming_id,
+                name: "livestreaming".to_string(),
+                parent_id: Some(zed_id),
+                user_is_admin: false,
+            },
+            Channel {
+                id: replace_id,
+                name: "replace".to_string(),
+                parent_id: Some(zed_id),
+                user_is_admin: false,
+            },
+        ]
+    );
+
+    // Update member permissions
+    let set_subchannel_admin = db.set_channel_member_admin(crdb_id, a_id, b_id, true).await;
+    assert!(set_subchannel_admin.is_err());
+    let set_channel_admin = db.set_channel_member_admin(zed_id, a_id, b_id, true).await;
+    assert!(set_channel_admin.is_ok());
 
     let (channels, _) = db.get_channels_for_user(b_id).await.unwrap();
     assert_eq!(
@@ -1176,7 +1213,7 @@ test_both_dbs!(
         db.invite_channel_member(channel_1_2, user_2, user_1, false)
             .await
             .unwrap();
-        db.invite_channel_member(channel_1_1, user_3, user_1, false)
+        db.invite_channel_member(channel_1_1, user_3, user_1, true)
             .await
             .unwrap();
 
@@ -1210,14 +1247,17 @@ test_both_dbs!(
                 proto::ChannelMember {
                     user_id: user_1.to_proto(),
                     kind: proto::channel_member::Kind::Member.into(),
+                    admin: true,
                 },
                 proto::ChannelMember {
                     user_id: user_2.to_proto(),
                     kind: proto::channel_member::Kind::Invitee.into(),
+                    admin: false,
                 },
                 proto::ChannelMember {
                     user_id: user_3.to_proto(),
                     kind: proto::channel_member::Kind::Invitee.into(),
+                    admin: true,
                 },
             ]
         );
@@ -1241,10 +1281,12 @@ test_both_dbs!(
                 proto::ChannelMember {
                     user_id: user_1.to_proto(),
                     kind: proto::channel_member::Kind::Member.into(),
+                    admin: true,
                 },
                 proto::ChannelMember {
                     user_id: user_2.to_proto(),
                     kind: proto::channel_member::Kind::AncestorMember.into(),
+                    admin: false,
                 },
             ]
         );

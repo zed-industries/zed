@@ -41,8 +41,7 @@ use workspace::{
 };
 
 use crate::face_pile::FacePile;
-
-use self::channel_modal::build_channel_modal;
+use channel_modal::ChannelModal;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
@@ -1284,7 +1283,14 @@ impl CollabPanel {
         let channel_id = channel.id;
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
-                .with_child(Svg::new("icons/file_icons/hash.svg").aligned().left())
+                .with_child(
+                    Svg::new("icons/channels.svg")
+                        .with_color(theme.add_channel_button.color)
+                        .constrained()
+                        .with_width(14.)
+                        .aligned()
+                        .left(),
+                )
                 .with_child(
                     Label::new(channel.name.clone(), theme.contact_username.text.clone())
                         .contained()
@@ -1509,21 +1515,19 @@ impl CollabPanel {
         channel_id: u64,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(channel) = self.channel_store.read(cx).channel_for_id(channel_id) {
-            if channel.user_is_admin {
-                self.context_menu.update(cx, |context_menu, cx| {
-                    context_menu.show(
-                        position,
-                        gpui::elements::AnchorCorner::BottomLeft,
-                        vec![
-                            ContextMenuItem::action("New Channel", NewChannel { channel_id }),
-                            ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
-                            ContextMenuItem::action("Add member", AddMember { channel_id }),
-                        ],
-                        cx,
-                    );
-                });
-            }
+        if self.channel_store.read(cx).is_user_admin(channel_id) {
+            self.context_menu.update(cx, |context_menu, cx| {
+                context_menu.show(
+                    position,
+                    gpui::elements::AnchorCorner::BottomLeft,
+                    vec![
+                        ContextMenuItem::action("New Channel", NewChannel { channel_id }),
+                        ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
+                        ContextMenuItem::action("Add member", AddMember { channel_id }),
+                    ],
+                    cx,
+                );
+            });
         }
     }
 
@@ -1697,7 +1701,7 @@ impl CollabPanel {
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.add_view(|cx| {
-                        build_channel_modal(
+                        ChannelModal::new(
                             user_store.clone(),
                             channel_store.clone(),
                             channel_id,

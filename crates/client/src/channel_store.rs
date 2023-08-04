@@ -30,6 +30,12 @@ pub struct Channel {
     pub depth: usize,
 }
 
+pub struct ChannelMembership {
+    pub user: Arc<User>,
+    pub kind: proto::channel_member::Kind,
+    pub admin: bool,
+}
+
 impl Entity for ChannelStore {
     type Event = ();
 }
@@ -70,6 +76,20 @@ impl ChannelStore {
 
     pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<Arc<Channel>> {
         self.channels.iter().find(|c| c.id == channel_id).cloned()
+    }
+
+    pub fn is_user_admin(&self, mut channel_id: ChannelId) -> bool {
+        while let Some(channel) = self.channel_for_id(channel_id) {
+            if channel.user_is_admin {
+                return true;
+            }
+            if let Some(parent_id) = channel.parent_id {
+                channel_id = parent_id;
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -149,6 +169,35 @@ impl ChannelStore {
         })
     }
 
+    pub fn set_member_admin(
+        &mut self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        admin: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if !self.outgoing_invites.insert((channel_id, user_id)) {
+            return Task::ready(Err(anyhow!("member request already in progress")));
+        }
+
+        cx.notify();
+        let client = self.client.clone();
+        cx.spawn(|this, mut cx| async move {
+            client
+                .request(proto::SetChannelMemberAdmin {
+                    channel_id,
+                    user_id,
+                    admin,
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.outgoing_invites.remove(&(channel_id, user_id));
+                cx.notify();
+            });
+            Ok(())
+        })
+    }
+
     pub fn respond_to_channel_invite(
         &mut self,
         channel_id: ChannelId,
@@ -167,7 +216,7 @@ impl ChannelStore {
         &self,
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(Arc<User>, proto::channel_member::Kind)>>> {
+    ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
         let user_store = self.user_store.downgrade();
         cx.spawn(|_, mut cx| async move {
@@ -187,7 +236,11 @@ impl ChannelStore {
                 .into_iter()
                 .zip(response.members)
                 .filter_map(|(user, member)| {
-                    Some((user, proto::channel_member::Kind::from_i32(member.kind)?))
+                    Some(ChannelMembership {
+                        user,
+                        admin: member.admin,
+                        kind: proto::channel_member::Kind::from_i32(member.kind)?,
+                    })
                 })
                 .collect())
         })
@@ -239,7 +292,8 @@ impl ChannelStore {
                 .iter_mut()
                 .find(|c| c.id == channel.id)
             {
-                Arc::make_mut(existing_channel).name = channel.name;
+                let existing_channel = Arc::make_mut(existing_channel);
+                existing_channel.name = channel.name;
                 continue;
             }
 
@@ -257,7 +311,9 @@ impl ChannelStore {
 
         for channel in payload.channels {
             if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
-                Arc::make_mut(existing_channel).name = channel.name;
+                let existing_channel = Arc::make_mut(existing_channel);
+                existing_channel.name = channel.name;
+                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
@@ -270,7 +326,7 @@ impl ChannelStore {
                         Arc::new(Channel {
                             id: channel.id,
                             name: channel.name,
-                            user_is_admin: channel.user_is_admin || parent_channel.user_is_admin,
+                            user_is_admin: channel.user_is_admin,
                             parent_id: Some(parent_id),
                             depth,
                         }),

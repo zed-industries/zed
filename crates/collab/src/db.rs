@@ -3243,8 +3243,9 @@ impl Database {
                 }
             }
 
+            let channel_ancestors = self.get_channel_ancestors(channel_id, &*tx).await?;
             let members_to_notify: Vec<UserId> = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.is_in(channels_to_remove.keys().copied()))
+                .filter(channel_member::Column::ChannelId.is_in(channel_ancestors))
                 .select_only()
                 .column(channel_member::Column::UserId)
                 .distinct()
@@ -3472,6 +3473,39 @@ impl Database {
             .await
     }
 
+    pub async fn set_channel_member_admin(
+        &self,
+        channel_id: ChannelId,
+        from: UserId,
+        for_user: UserId,
+        admin: bool,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            self.check_user_is_channel_admin(channel_id, from, &*tx)
+                .await?;
+
+            let result = channel_member::Entity::update_many()
+                .filter(
+                    channel_member::Column::ChannelId
+                        .eq(channel_id)
+                        .and(channel_member::Column::UserId.eq(for_user)),
+                )
+                .set(channel_member::ActiveModel {
+                    admin: ActiveValue::set(admin),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+            if result.rows_affected == 0 {
+                Err(anyhow!("no such member"))?;
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn get_channel_member_details(
         &self,
         channel_id: ChannelId,
@@ -3484,6 +3518,7 @@ impl Database {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryMemberDetails {
                 UserId,
+                Admin,
                 IsDirectMember,
                 Accepted,
             }
@@ -3495,6 +3530,7 @@ impl Database {
                 .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
                 .select_only()
                 .column(channel_member::Column::UserId)
+                .column(channel_member::Column::Admin)
                 .column_as(
                     channel_member::Column::ChannelId.eq(channel_id),
                     QueryMemberDetails::IsDirectMember,
@@ -3507,7 +3543,12 @@ impl Database {
 
             let mut rows = Vec::<proto::ChannelMember>::new();
             while let Some(row) = stream.next().await {
-                let (user_id, is_direct_member, is_invite_accepted): (UserId, bool, bool) = row?;
+                let (user_id, is_admin, is_direct_member, is_invite_accepted): (
+                    UserId,
+                    bool,
+                    bool,
+                    bool,
+                ) = row?;
                 let kind = match (is_direct_member, is_invite_accepted) {
                     (true, true) => proto::channel_member::Kind::Member,
                     (true, false) => proto::channel_member::Kind::Invitee,
@@ -3518,11 +3559,18 @@ impl Database {
                 let kind = kind.into();
                 if let Some(last_row) = rows.last_mut() {
                     if last_row.user_id == user_id {
-                        last_row.kind = last_row.kind.min(kind);
+                        if is_direct_member {
+                            last_row.kind = kind;
+                            last_row.admin = is_admin;
+                        }
                         continue;
                     }
                 }
-                rows.push(proto::ChannelMember { user_id, kind });
+                rows.push(proto::ChannelMember {
+                    user_id,
+                    kind,
+                    admin: is_admin,
+                });
             }
 
             Ok(rows)

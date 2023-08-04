@@ -140,6 +140,7 @@ message Envelope {
         RemoveChannel remove_channel = 127;
         GetChannelMembers get_channel_members = 128;
         GetChannelMembersResponse get_channel_members_response = 129;
+        SetChannelMemberAdmin set_channel_member_admin = 130;
     }
 }
 
@@ -898,7 +899,8 @@ message GetChannelMembersResponse {
 
 message ChannelMember {
     uint64 user_id = 1;
-    Kind kind = 2;
+    bool admin = 2;
+    Kind kind = 3;
 
     enum Kind {
         Member = 0;
@@ -925,6 +927,12 @@ message InviteChannelMember {
 message RemoveChannelMember {
     uint64 channel_id = 1;
     uint64 user_id = 2;
+}
+
+message SetChannelMemberAdmin {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+    bool admin = 3;
 }
 
 message RespondToChannelInvite {

@@ -246,6 +246,7 @@ impl Server {
             .add_request_handler(remove_channel)
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
+            .add_request_handler(set_channel_member_admin)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -2150,19 +2151,24 @@ async fn create_channel(
         id: id.to_proto(),
         name: request.name,
         parent_id: request.parent_id,
-        user_is_admin: true,
+        user_is_admin: false,
     });
 
-    if let Some(parent_id) = parent_id {
-        let member_ids = db.get_channel_members(parent_id).await?;
-        let connection_pool = session.connection_pool().await;
-        for member_id in member_ids {
-            for connection_id in connection_pool.user_connection_ids(member_id) {
-                session.peer.send(connection_id, update.clone())?;
-            }
-        }
+    let user_ids_to_notify = if let Some(parent_id) = parent_id {
+        db.get_channel_members(parent_id).await?
     } else {
-        session.peer.send(session.connection_id, update)?;
+        vec![session.user_id]
+    };
+
+    let connection_pool = session.connection_pool().await;
+    for user_id in user_ids_to_notify {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
+            let mut update = update.clone();
+            if user_id == session.user_id {
+                update.channels[0].user_is_admin = true;
+            }
+            session.peer.send(connection_id, update)?;
+        }
     }
 
     Ok(())
@@ -2239,8 +2245,57 @@ async fn remove_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
+
     db.remove_channel_member(channel_id, member_id, session.user_id)
         .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.remove_channels.push(channel_id.to_proto());
+
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(member_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn set_channel_member_admin(
+    request: proto::SetChannelMemberAdmin,
+    response: Response<proto::SetChannelMemberAdmin>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let member_id = UserId::from_proto(request.user_id);
+    db.set_channel_member_admin(channel_id, session.user_id, member_id, request.admin)
+        .await?;
+
+    let channel = db
+        .get_channel(channel_id, member_id)
+        .await?
+        .ok_or_else(|| anyhow!("channel not found"))?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(proto::Channel {
+        id: channel.id.to_proto(),
+        name: channel.name,
+        parent_id: None,
+        user_is_admin: request.admin,
+    });
+
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(member_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
     response.send(proto::Ack {})?;
     Ok(())
 }

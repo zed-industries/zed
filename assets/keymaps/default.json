@@ -551,6 +551,14 @@
     }
   },
   {
+    "context": "ChannelModal",
+    "bindings": {
+      "left": "channel_modal::SelectNextControl",
+      "right": "channel_modal::SelectNextControl",
+      "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
     "context": "Terminal",
     "bindings": {
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
