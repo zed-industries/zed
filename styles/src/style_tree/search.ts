@@ -44,7 +44,7 @@ export default function search(): any {
                 base: {
                     ...text(theme.highest, "mono", "on"),
                     background: background(theme.highest, "on"),
-
+                    corner_radius: 2,
                     border: border(theme.highest, "on"),
 
                     padding: {
@@ -130,6 +130,8 @@ export default function search(): any {
             padding: {
                 left: 12,
                 right: 12,
+                top: 3,
+                bottom: 3,
             },
         },
         include_exclude_inputs: {

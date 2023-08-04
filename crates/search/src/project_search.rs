@@ -1954,20 +1954,27 @@ impl View for ProjectSearchBar {
                         .flex(2., true),
                 )
                 .with_child(
-                    Flex::column().with_child(
-                        Flex::row()
-                            .align_children_center()
-                            .with_child(self.render_search_mode_button(SearchMode::Text, cx))
-                            .with_children(semantic_index)
-                            .with_child(self.render_search_mode_button(SearchMode::Regex, cx))
-                            .constrained()
-                            .with_height(theme.workspace.toolbar.height)
-                            .contained()
-                            .with_style(theme.search.container)
-                            .aligned()
-                            .right()
-                            .flex(1., true),
-                    ),
+                    Flex::column()
+                        .with_child(
+                            Flex::row()
+                                .align_children_center()
+                                .with_child(self.render_search_mode_button(SearchMode::Text, cx))
+                                .with_children(semantic_index)
+                                .with_child(self.render_search_mode_button(SearchMode::Regex, cx))
+                                .constrained()
+                                .with_height(theme.workspace.toolbar.height)
+                                .contained()
+                                .with_style(theme.search.container)
+                                .aligned()
+                                .right()
+                                .flex(1., true),
+                        )
+                        .with_children(
+                            _search
+                                .read(cx)
+                                .filters_enabled
+                                .then(|| Flex::row().flex(1., true)),
+                        ),
                 )
                 .contained()
                 .flex_float()
