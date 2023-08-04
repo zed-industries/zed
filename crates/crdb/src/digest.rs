@@ -74,15 +74,8 @@ impl DigestSequence {
         }
     }
 
-    pub fn debug(&self) {
-        let mut start = 0;
-        print!("[");
-        for item in self.digests.iter() {
-            let end = start + item.count;
-            print!("{:?}, ", start..end);
-            start = end;
-        }
-        println!("]");
+    pub fn items(&self) -> Vec<Digest> {
+        self.digests.items(&())
     }
 
     pub fn operation_count(&self) -> usize {
