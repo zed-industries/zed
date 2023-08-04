@@ -3385,6 +3385,7 @@ impl Database {
                 .map(|channel| Channel {
                     id: channel.id,
                     name: channel.name,
+                    user_is_admin: false,
                     parent_id: None,
                 })
                 .collect();
@@ -3401,20 +3402,21 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            let starting_channel_ids: Vec<ChannelId> = channel_member::Entity::find()
+            let channel_memberships = channel_member::Entity::find()
                 .filter(
                     channel_member::Column::UserId
                         .eq(user_id)
                         .and(channel_member::Column::Accepted.eq(true)),
                 )
-                .select_only()
-                .column(channel_member::Column::ChannelId)
-                .into_values::<_, QueryChannelIds>()
                 .all(&*tx)
                 .await?;
 
+            let admin_channel_ids = channel_memberships
+                .iter()
+                .filter_map(|m| m.admin.then_some(m.channel_id))
+                .collect::<HashSet<_>>();
             let parents_by_child_id = self
-                .get_channel_descendants(starting_channel_ids, &*tx)
+                .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
                 .await?;
 
             let mut channels = Vec::with_capacity(parents_by_child_id.len());
@@ -3428,6 +3430,7 @@ impl Database {
                     channels.push(Channel {
                         id: row.id,
                         name: row.name,
+                        user_is_admin: admin_channel_ids.contains(&row.id),
                         parent_id: parents_by_child_id.get(&row.id).copied().flatten(),
                     });
                 }
@@ -3627,7 +3630,7 @@ impl Database {
             r#"
             WITH RECURSIVE channel_tree(child_id, parent_id) AS (
                     SELECT root_ids.column1 as child_id, CAST(NULL as INTEGER) as parent_id
-                    FROM (VALUES {}) as root_ids
+                    FROM (VALUES {values}) as root_ids
                 UNION
                     SELECT channel_parents.child_id, channel_parents.parent_id
                     FROM channel_parents, channel_tree
@@ -3637,7 +3640,6 @@ impl Database {
             FROM channel_tree
             ORDER BY child_id, parent_id IS NOT NULL
             "#,
-            values
         );
 
         #[derive(FromQueryResult, Debug, PartialEq)]
@@ -3663,14 +3665,29 @@ impl Database {
         Ok(parents_by_child_id)
     }
 
-    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<Option<Channel>> {
+    pub async fn get_channel(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+    ) -> Result<Option<Channel>> {
         self.transaction(|tx| async move {
             let tx = tx;
             let channel = channel::Entity::find_by_id(channel_id).one(&*tx).await?;
+            let user_is_admin = channel_member::Entity::find()
+                .filter(
+                    channel_member::Column::ChannelId
+                        .eq(channel_id)
+                        .and(channel_member::Column::UserId.eq(user_id))
+                        .and(channel_member::Column::Admin.eq(true)),
+                )
+                .count(&*tx)
+                .await?
+                > 0;
 
             Ok(channel.map(|channel| Channel {
                 id: channel.id,
                 name: channel.name,
+                user_is_admin,
                 parent_id: None,
             }))
         })
@@ -3942,6 +3959,7 @@ pub struct NewUserResult {
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub user_is_admin: bool,
     pub parent_id: Option<ChannelId>,
 }
 
@@ -4197,11 +4215,6 @@ pub struct Worktree {
 pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
-}
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-enum QueryChannelIds {
-    ChannelId,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]

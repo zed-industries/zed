@@ -960,43 +960,50 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
+                user_is_admin: true,
             },
             Channel {
                 id: crdb_id,
                 name: "crdb".to_string(),
                 parent_id: Some(zed_id),
+                user_is_admin: true,
             },
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
                 parent_id: Some(zed_id),
+                user_is_admin: true,
             },
             Channel {
                 id: replace_id,
                 name: "replace".to_string(),
                 parent_id: Some(zed_id),
+                user_is_admin: true,
             },
             Channel {
                 id: rust_id,
                 name: "rust".to_string(),
                 parent_id: None,
+                user_is_admin: true,
             },
             Channel {
                 id: cargo_id,
                 name: "cargo".to_string(),
                 parent_id: Some(rust_id),
+                user_is_admin: true,
             },
             Channel {
                 id: cargo_ra_id,
                 name: "cargo-ra".to_string(),
                 parent_id: Some(cargo_id),
+                user_is_admin: true,
             }
         ]
     );
 
     // Remove a single channel
     db.remove_channel(crdb_id, a_id).await.unwrap();
-    assert!(db.get_channel(crdb_id).await.unwrap().is_none());
+    assert!(db.get_channel(crdb_id, a_id).await.unwrap().is_none());
 
     // Remove a channel tree
     let (mut channel_ids, user_ids) = db.remove_channel(rust_id, a_id).await.unwrap();
@@ -1004,9 +1011,9 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
     assert_eq!(channel_ids, &[rust_id, cargo_id, cargo_ra_id]);
     assert_eq!(user_ids, &[a_id]);
 
-    assert!(db.get_channel(rust_id).await.unwrap().is_none());
-    assert!(db.get_channel(cargo_id).await.unwrap().is_none());
-    assert!(db.get_channel(cargo_ra_id).await.unwrap().is_none());
+    assert!(db.get_channel(rust_id, a_id).await.unwrap().is_none());
+    assert!(db.get_channel(cargo_id, a_id).await.unwrap().is_none());
+    assert!(db.get_channel(cargo_ra_id, a_id).await.unwrap().is_none());
 });
 
 test_both_dbs!(

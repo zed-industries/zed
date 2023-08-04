@@ -18,11 +18,13 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 1,
                     name: "b".to_string(),
                     parent_id: None,
+                    user_is_admin: true,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     parent_id: None,
+                    user_is_admin: false,
                 },
             ],
             ..Default::default()
@@ -33,8 +35,8 @@ fn test_update_channels(cx: &mut AppContext) {
         &channel_store,
         &[
             //
-            (0, "a"),
-            (0, "b"),
+            (0, "a", true),
+            (0, "b", false),
         ],
         cx,
     );
@@ -47,11 +49,13 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 3,
                     name: "x".to_string(),
                     parent_id: Some(1),
+                    user_is_admin: false,
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     parent_id: Some(2),
+                    user_is_admin: false,
                 },
             ],
             ..Default::default()
@@ -61,11 +65,10 @@ fn test_update_channels(cx: &mut AppContext) {
     assert_channels(
         &channel_store,
         &[
-            //
-            (0, "a"),
-            (1, "y"),
-            (0, "b"),
-            (1, "x"),
+            (0, "a", true),
+            (1, "y", true),
+            (0, "b", false),
+            (1, "x", false),
         ],
         cx,
     );
@@ -81,14 +84,14 @@ fn update_channels(
 
 fn assert_channels(
     channel_store: &ModelHandle<ChannelStore>,
-    expected_channels: &[(usize, &str)],
+    expected_channels: &[(usize, &str, bool)],
     cx: &AppContext,
 ) {
     channel_store.read_with(cx, |store, _| {
         let actual = store
             .channels()
             .iter()
-            .map(|c| (c.depth, c.name.as_str()))
+            .map(|c| (c.depth, c.name.as_str(), c.user_is_admin))
             .collect::<Vec<_>>();
         assert_eq!(actual, expected_channels);
     });

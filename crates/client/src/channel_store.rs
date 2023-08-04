@@ -26,6 +26,7 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub parent_id: Option<ChannelId>,
+    pub user_is_admin: bool,
     pub depth: usize,
 }
 
@@ -247,6 +248,7 @@ impl ChannelStore {
                 Arc::new(Channel {
                     id: channel.id,
                     name: channel.name,
+                    user_is_admin: false,
                     parent_id: None,
                     depth: 0,
                 }),
@@ -267,6 +269,7 @@ impl ChannelStore {
                         Arc::new(Channel {
                             id: channel.id,
                             name: channel.name,
+                            user_is_admin: channel.user_is_admin,
                             parent_id: Some(parent_id),
                             depth,
                         }),
@@ -278,6 +281,7 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
+                        user_is_admin: channel.user_is_admin,
                         parent_id: None,
                         depth: 0,
                     }),

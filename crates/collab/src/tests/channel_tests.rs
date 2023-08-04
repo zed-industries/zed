@@ -1,12 +1,9 @@
+use crate::tests::{room_participants, RoomParticipants, TestServer};
 use call::ActiveCall;
 use client::{Channel, User};
 use gpui::{executor::Deterministic, TestAppContext};
 use rpc::proto;
 use std::sync::Arc;
-
-use crate::tests::{room_participants, RoomParticipants};
-
-use super::TestServer;
 
 #[gpui::test]
 async fn test_basic_channels(
@@ -35,6 +32,7 @@ async fn test_basic_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
+                user_is_admin: true,
                 depth: 0,
             })]
         )
@@ -69,6 +67,7 @@ async fn test_basic_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
+                user_is_admin: false,
                 depth: 0,
             })]
         )
@@ -111,6 +110,7 @@ async fn test_basic_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
+                user_is_admin: false,
                 depth: 0,
             })]
         )
@@ -204,6 +204,7 @@ async fn test_channel_room(
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
+                user_is_admin: false,
                 depth: 0,
             })]
         )

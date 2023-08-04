@@ -1295,7 +1295,8 @@ message Nonce {
 message Channel {
     uint64 id = 1;
     string name = 2;
-    optional uint64 parent_id = 3;
+    bool user_is_admin = 3;
+    optional uint64 parent_id = 4;
 }
 
 message Contact {

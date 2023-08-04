@@ -2150,6 +2150,7 @@ async fn create_channel(
         id: id.to_proto(),
         name: request.name,
         parent_id: request.parent_id,
+        user_is_admin: true,
     });
 
     if let Some(parent_id) = parent_id {
@@ -2204,7 +2205,7 @@ async fn invite_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let channel = db
-        .get_channel(channel_id)
+        .get_channel(channel_id, session.user_id)
         .await?
         .ok_or_else(|| anyhow!("channel not found"))?;
     let invitee_id = UserId::from_proto(request.user_id);
@@ -2216,6 +2217,7 @@ async fn invite_channel_member(
         id: channel.id.to_proto(),
         name: channel.name,
         parent_id: None,
+        user_is_admin: false,
     });
     for connection_id in session
         .connection_pool()
@@ -2264,12 +2266,12 @@ async fn respond_to_channel_invite(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let channel = db
-        .get_channel(channel_id)
-        .await?
-        .ok_or_else(|| anyhow!("no such channel"))?;
     db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
+    let channel = db
+        .get_channel(channel_id, session.user_id)
+        .await?
+        .ok_or_else(|| anyhow!("no such channel"))?;
 
     let mut update = proto::UpdateChannels::default();
     update
@@ -2279,6 +2281,7 @@ async fn respond_to_channel_invite(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
+            user_is_admin: channel.user_is_admin,
             parent_id: None,
         });
     }
@@ -2430,6 +2433,7 @@ fn build_initial_channels_update(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
+            user_is_admin: channel.user_is_admin,
             parent_id: channel.parent_id.map(|id| id.to_proto()),
         });
     }
@@ -2447,6 +2451,7 @@ fn build_initial_channels_update(
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
+            user_is_admin: false,
             parent_id: None,
         });
     }
