@@ -1513,6 +1513,7 @@ impl ProjectSearchBar {
                 search_view
                     .excluded_files_editor
                     .update(cx, |_, cx| cx.notify());
+                cx.refresh_windows();
                 cx.notify();
             });
             cx.notify();
