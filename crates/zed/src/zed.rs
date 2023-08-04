@@ -308,6 +308,7 @@ pub fn initialize_workspace(
             );
             let active_buffer_language =
                 cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
             let feedback_button = cx.add_view(|_| {
                 feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
             });
@@ -315,9 +316,11 @@ pub fn initialize_workspace(
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_left_item(diagnostic_summary, cx);
                 status_bar.add_left_item(activity_indicator, cx);
+
                 status_bar.add_right_item(feedback_button, cx);
                 status_bar.add_right_item(copilot, cx);
                 status_bar.add_right_item(active_buffer_language, cx);
+                status_bar.add_right_item(vim_mode_indicator, cx);
                 status_bar.add_right_item(cursor_position, cx);
             });
 
@@ -542,7 +545,6 @@ pub fn handle_keymap_file_changes(
                             reload_keymaps(cx, &keymap_content);
                         }
                     })
-                    .detach();
                 }));
             }
         }
@@ -980,7 +982,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1292,7 +1296,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         // Open a file within an existing worktree.
         workspace
@@ -1333,7 +1339,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1426,7 +1434,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1477,7 +1487,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1551,7 +1563,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -1828,7 +1842,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2070,7 +2086,8 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
+        let window_id = window.window_id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
@@ -2240,7 +2257,8 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
+        let window_id = window.window_id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
@@ -2361,7 +2379,7 @@ mod tests {
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let http = FakeHttpClient::with_404_response();
-        let node_runtime = NodeRuntime::instance(http, cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http);
         languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);

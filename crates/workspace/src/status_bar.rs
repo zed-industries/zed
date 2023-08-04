@@ -27,6 +27,7 @@ trait StatusItemViewHandle {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut WindowContext,
     );
+    fn ui_name(&self) -> &'static str;
 }
 
 pub struct StatusBar {
@@ -57,7 +58,6 @@ impl View for StatusBar {
                         .with_margin_right(theme.item_spacing)
                 }))
                 .into_any(),
-
             right: Flex::row()
                 .with_children(self.right_items.iter().rev().map(|i| {
                     ChildView::new(i.as_any(), cx)
@@ -93,6 +93,56 @@ impl StatusBar {
         T: 'static + StatusItemView,
     {
         self.left_items.push(Box::new(item));
+        cx.notify();
+    }
+
+    pub fn item_of_type<T: StatusItemView>(&self) -> Option<ViewHandle<T>> {
+        self.left_items
+            .iter()
+            .chain(self.right_items.iter())
+            .find_map(|item| item.as_any().clone().downcast())
+    }
+
+    pub fn position_of_item<T>(&self) -> Option<usize>
+    where
+        T: StatusItemView,
+    {
+        for (index, item) in self.left_items.iter().enumerate() {
+            if item.as_ref().ui_name() == T::ui_name() {
+                return Some(index);
+            }
+        }
+        for (index, item) in self.right_items.iter().enumerate() {
+            if item.as_ref().ui_name() == T::ui_name() {
+                return Some(index + self.left_items.len());
+            }
+        }
+        return None;
+    }
+
+    pub fn insert_item_after<T>(
+        &mut self,
+        position: usize,
+        item: ViewHandle<T>,
+        cx: &mut ViewContext<Self>,
+    ) where
+        T: 'static + StatusItemView,
+    {
+        if position < self.left_items.len() {
+            self.left_items.insert(position + 1, Box::new(item))
+        } else {
+            self.right_items
+                .insert(position + 1 - self.left_items.len(), Box::new(item))
+        }
+        cx.notify()
+    }
+
+    pub fn remove_item_at(&mut self, position: usize, cx: &mut ViewContext<Self>) {
+        if position < self.left_items.len() {
+            self.left_items.remove(position);
+        } else {
+            self.right_items.remove(position - self.left_items.len());
+        }
         cx.notify();
     }
 
@@ -132,6 +182,10 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         });
+    }
+
+    fn ui_name(&self) -> &'static str {
+        T::ui_name()
     }
 }
 

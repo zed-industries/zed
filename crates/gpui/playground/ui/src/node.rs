@@ -824,7 +824,6 @@ where
     }
 }
 
-#[derive(Clone, Default)]
 struct CornerRadii {
     top_left: f32,
     top_right: f32,
@@ -1509,26 +1508,24 @@ mod tests {
 
     #[gpui::test]
     fn test_layout(cx: &mut TestAppContext) {
-        let view = cx
-            .add_window(|_| {
-                view(|_| {
-                    let theme = rose_pine::dawn();
-                    column()
-                        .width(auto())
-                        .height(auto())
-                        .justify(1.)
-                        .child(
-                            row()
-                                .width(auto())
-                                .height(rems(10.))
-                                .fill(theme.foam)
-                                .justify(1.)
-                                .child(row().width(rems(10.)).height(auto()).fill(theme.gold)),
-                        )
-                        .child(row())
-                });
-            })
-            .1;
+        let window = cx.add_window(|_| {
+            view(|_| {
+                let theme = rose_pine::dawn();
+                column()
+                    .width(auto())
+                    .height(auto())
+                    .justify(1.)
+                    .child(
+                        row()
+                            .width(auto())
+                            .height(rems(10.))
+                            .fill(theme.foam)
+                            .justify(1.)
+                            .child(row().width(rems(10.)).height(auto()).fill(theme.gold)),
+                    )
+                    .child(row())
+            });
+        });
 
         // tree.layout(
         //     SizeConstraint::strict(vec2f(100., 100.)),

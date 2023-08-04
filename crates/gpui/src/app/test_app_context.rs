@@ -6,7 +6,7 @@ use crate::{
     platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache, Handle,
     ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakHandle,
-    WindowContext,
+    WindowContext, WindowHandle,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -60,7 +60,7 @@ impl TestAppContext {
             RefCounts::new(leak_detector),
             (),
         );
-        cx.next_entity_id = first_entity_id;
+        cx.next_id = first_entity_id;
         let cx = TestAppContext {
             cx: Rc::new(RefCell::new(cx)),
             foreground_platform,
@@ -148,30 +148,18 @@ impl TestAppContext {
         self.cx.borrow_mut().add_model(build_model)
     }
 
-    pub fn add_window<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
+    pub fn add_window<T, F>(&mut self, build_root_view: F) -> WindowHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        let (window_id, view) = self
+        let window = self
             .cx
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window_id));
-        (window_id, view)
-    }
+        self.simulate_window_activation(Some(window.window_id()));
 
-    pub fn add_window2<T, F>(&mut self, build_root_view: F) -> WindowHandle<T>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        let (window_id, view) = self
-            .cx
-            .borrow_mut()
-            .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window_id));
-        (window_id, view)
+        WindowHandle::new(window.window_id())
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -418,14 +406,20 @@ impl BorrowAppContext for TestAppContext {
 }
 
 impl BorrowWindowContext for TestAppContext {
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    type Result<T> = T;
+
+    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         self.cx
             .borrow()
             .read_window(window_id, f)
             .expect("window was closed")
     }
 
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> T {
         self.cx
             .borrow_mut()
             .update_window(window_id, f)

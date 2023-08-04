@@ -495,8 +495,9 @@ impl TestClient {
 
         // We use a workspace container so that we don't need to remove the window in order to
         // drop the workspace and we can use a ViewHandle instead.
-        let (window_id, container) = cx.add_window(|_| WorkspaceContainer { workspace: None });
-        let workspace = cx.add_view(window_id, |cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|_| WorkspaceContainer { workspace: None });
+        let container = window.root(cx);
+        let workspace = window.add_view(cx, |cx| Workspace::test_new(project.clone(), cx));
         container.update(cx, |container, cx| {
             container.workspace = Some(workspace.downgrade());
             cx.notify();

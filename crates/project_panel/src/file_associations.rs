@@ -4,7 +4,7 @@ use collections::HashMap;
 
 use gpui::{AppContext, AssetSource};
 use serde_derive::Deserialize;
-use util::iife;
+use util::{iife, paths::PathExt};
 
 #[derive(Deserialize, Debug)]
 struct TypeConfig {
@@ -48,14 +48,7 @@ impl FileAssociations {
             // FIXME: Associate a type with the languages and have the file's langauge
             //        override these associations
             iife!({
-                let suffix = path
-                    .file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .and_then(|file_name| {
-                        file_name
-                            .find('.')
-                            .and_then(|dot_index| file_name.get(dot_index + 1..))
-                    })?;
+                let suffix = path.icon_suffix()?;
 
                 this.suffixes
                     .get(suffix)

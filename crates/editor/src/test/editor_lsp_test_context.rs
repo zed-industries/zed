@@ -69,7 +69,8 @@ impl<'a> EditorLspTestContext<'a> {
             .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))
             .await;
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
@@ -98,7 +99,7 @@ impl<'a> EditorLspTestContext<'a> {
         Self {
             cx: EditorTestContext {
                 cx,
-                window_id,
+                window_id: window.window_id(),
                 editor,
             },
             lsp,

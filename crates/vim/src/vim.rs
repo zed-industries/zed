@@ -3,6 +3,7 @@ mod test;
 
 mod editor_events;
 mod insert;
+mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
@@ -18,6 +19,7 @@ use gpui::{
     Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
+pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
@@ -40,6 +42,11 @@ struct Number(u8);
 
 actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
+
+#[derive(Copy, Clone, Debug)]
+enum VimEvent {
+    ModeChanged { mode: Mode },
+}
 
 pub fn init(cx: &mut AppContext) {
     settings::register::<VimModeSetting>(cx);
@@ -119,7 +126,6 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
 pub struct Vim {
     active_editor: Option<WeakViewHandle<Editor>>,
     editor_subscription: Option<Subscription>,
-
     enabled: bool,
     state: VimState,
 }
@@ -177,6 +183,8 @@ impl Vim {
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
+
+        cx.emit_global(VimEvent::ModeChanged { mode });
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);

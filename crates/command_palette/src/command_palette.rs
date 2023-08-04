@@ -295,7 +295,9 @@ mod tests {
         let app_state = init_test(cx);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let editor = cx.add_view(window_id, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);

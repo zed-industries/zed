@@ -571,7 +571,6 @@ fn new_update_task(
                     if let Some(buffer) =
                         refresh_multi_buffer.buffer(pending_refresh_query.buffer_id)
                     {
-                        drop(refresh_multi_buffer);
                         editor.inlay_hint_cache.update_tasks.insert(
                             pending_refresh_query.excerpt_id,
                             UpdateTask {
@@ -1136,7 +1135,9 @@ mod tests {
                 )
                 .await;
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -1836,7 +1837,9 @@ mod tests {
         .await;
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -1989,7 +1992,9 @@ mod tests {
         project.update(cx, |project, _| {
             project.languages().add(Arc::clone(&language))
         });
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -2075,8 +2080,9 @@ mod tests {
 
         deterministic.run_until_parked();
         cx.foreground().run_until_parked();
-        let (_, editor) =
-            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+        let editor = cx
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx))
+            .root(cx);
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -2328,7 +2334,9 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         project.update(cx, |project, _| {
             project.languages().add(Arc::clone(&language))
         });
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -2373,8 +2381,9 @@ all hints should be invalidated and requeried for all of its visible excerpts"
 
         deterministic.run_until_parked();
         cx.foreground().run_until_parked();
-        let (_, editor) =
-            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+        let editor = cx
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx))
+            .root(cx);
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -2562,7 +2571,9 @@ all hints should be invalidated and requeried for all of its visible excerpts"
 
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().read_with(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()

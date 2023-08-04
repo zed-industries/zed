@@ -58,11 +58,14 @@ fn build_bridge(swift_target: &SwiftTarget) {
         "cargo:rerun-if-changed={}/Package.resolved",
         SWIFT_PACKAGE_NAME
     );
+
     let swift_package_root = swift_package_root();
+    let swift_target_folder = swift_target_folder();
     if !Command::new("swift")
         .arg("build")
         .args(["--configuration", &env::var("PROFILE").unwrap()])
         .args(["--triple", &swift_target.target.triple])
+        .args(["--build-path".into(), swift_target_folder])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
@@ -128,6 +131,12 @@ fn swift_package_root() -> PathBuf {
     env::current_dir().unwrap().join(SWIFT_PACKAGE_NAME)
 }
 
+fn swift_target_folder() -> PathBuf {
+    env::current_dir()
+        .unwrap()
+        .join(format!("../../target/{SWIFT_PACKAGE_NAME}"))
+}
+
 fn copy_dir(source: &Path, destination: &Path) {
     assert!(
         Command::new("rm")
@@ -155,8 +164,7 @@ fn copy_dir(source: &Path, destination: &Path) {
 
 impl SwiftTarget {
     fn out_dir_path(&self) -> PathBuf {
-        swift_package_root()
-            .join(".build")
+        swift_target_folder()
             .join(&self.target.unversioned_triple)
             .join(env::var("PROFILE").unwrap())
     }

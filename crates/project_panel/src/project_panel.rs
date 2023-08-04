@@ -115,6 +115,7 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
+        CollapseAllEntries,
         NewDirectory,
         NewFile,
         Copy,
@@ -140,6 +141,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     file_associations::init(assets, cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
+    cx.add_action(ProjectPanel::collapse_all_entries);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::new_file);
@@ -430,7 +432,7 @@ impl ProjectPanel {
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
             if entry.is_dir() {
                 menu_entries.push(ContextMenuItem::action(
-                    "Search inside",
+                    "Search Inside",
                     NewSearchInDirectory,
                 ));
             }
@@ -512,6 +514,12 @@ impl ProjectPanel {
                 }
             }
         }
+    }
+
+    pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
+        self.expanded_dir_ids.clear();
+        self.update_visible_entries(None, cx);
+        cx.notify();
     }
 
     fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
@@ -1772,7 +1780,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1860,7 +1870,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2211,7 +2223,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2311,7 +2325,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
@@ -2384,7 +2400,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         toggle_expand_dir(&panel, "src/test", cx);
@@ -2473,7 +2491,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "src/", cx);
@@ -2619,7 +2639,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         let new_search_events_count = Arc::new(AtomicUsize::new(0));
@@ -2675,6 +2697,65 @@ mod tests {
             new_search_events_count.load(atomic::Ordering::SeqCst),
             1,
             "Should trigger new search in directory when called on a directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                },
+                "dir_2": {
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        panel.update(cx, |panel, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, cx)
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v project_root", "    > dir_1", "    > dir_2",]
+        );
+
+        // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1  <== selected",
+                "        > nested_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+            ]
         );
     }
 
@@ -2878,3 +2959,4 @@ mod tests {
         });
     }
 }
+// TODO - a workspace command?
