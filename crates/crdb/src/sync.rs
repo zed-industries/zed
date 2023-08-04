@@ -4,7 +4,6 @@ use crate::{
     messages::Operation,
     OperationId,
 };
-use bromberg_sl2::HashMatrix;
 use std::{
     cmp::{self, Ordering},
     iter,
@@ -63,11 +62,6 @@ impl btree::Dimension<'_, OperationSummary> for Digest {
     fn add_summary(&mut self, summary: &'_ OperationSummary, _: &()) {
         Digest::add_summary(self, &summary.digest, &());
     }
-}
-
-struct RangeDigest {
-    range: Range<usize>,
-    digest: HashMatrix,
 }
 
 fn request_digests(
@@ -279,21 +273,15 @@ mod tests {
 
     #[test]
     fn test_sync() {
-        assert_sync_with_config(1..=10, 5..=10, 8, 3, 512);
-        assert_sync_with_config(1..=10, 4..=10, 8, 3, 512);
-        assert_sync_with_config(1..=10, 1..=5, 8, 3, 512);
-        assert_sync_with_config([1, 3, 5, 7, 9], [2, 4, 6, 8, 10], 8, 3, 512);
-        assert_sync_with_config(
-            [1, 2, 3, 4, 6, 7, 8, 9, 11, 12],
-            [4, 5, 6, 10, 12],
-            8,
-            3,
-            512,
-        );
-        assert_sync_with_config(1..=10, 5..=14, 8, 3, 512);
-        assert_sync_with_config(1..=80, (1..=70).chain(90..=100), 8, 3, 512);
-        assert_sync_with_config(1..=1910, (1..=1900).chain(1910..=2000), 8, 3, 512);
-        assert_sync_with_config(1..=190100, (1..=190000).chain(191000..=1000000), 8, 3, 512);
+        assert_sync(1..=10, 5..=10);
+        assert_sync(1..=10, 4..=10);
+        assert_sync(1..=10, 1..=5);
+        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
+        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
+        assert_sync(1..=10, 5..=14);
+        assert_sync(1..=80, (1..=70).chain(90..=100));
+        assert_sync(1..=1910, (1..=1900).chain(1910..=2000));
+        assert_sync(1..=190100, (1..=190000).chain(191000..=1000000));
     }
 
     fn assert_sync(
