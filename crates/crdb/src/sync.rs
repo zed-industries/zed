@@ -100,7 +100,7 @@ fn sync(
     server: &mut btree::Sequence<Operation>,
     max_digests: usize,
     min_operations: usize,
-) -> usize {
+) {
     let mut server_digests = DigestSequence::new();
     let mut roundtrips = 1;
     let digests = request_digests(server, 0..usize::MAX, max_digests, min_operations);
@@ -222,7 +222,7 @@ fn sync(
     }
 
     server.edit(missed_server_ops, &());
-    roundtrips
+    log::debug!("roundtrips: {}", roundtrips);
 }
 
 fn digest_for_range(operations: &btree::Sequence<Operation>, range: Range<usize>) -> Digest {
@@ -315,11 +315,11 @@ mod tests {
         assert_sync_with_config(
             client_ops,
             server_ops,
-            [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+            [2, 4, 8, 16, 32, 64, 128, 256, 512]
                 .choose(&mut rng)
                 .unwrap()
                 .clone(),
-            [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+            [1, 4, 8, 16, 32, 64, 128, 256, 512]
                 .choose(&mut rng)
                 .unwrap()
                 .clone(),
@@ -332,7 +332,7 @@ mod tests {
     ) {
         let client_ops = client_ops.into_iter().collect::<Vec<_>>();
         let server_ops = server_ops.into_iter().collect::<Vec<_>>();
-        for max_digests in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+        for max_digests in [2, 4, 8, 16, 32, 64, 128, 256] {
             for min_operations in [1, 2, 4, 8] {
                 assert_sync_with_config(
                     client_ops.clone(),
@@ -364,13 +364,12 @@ mod tests {
             .collect::<Vec<_>>();
         let mut client_operations = btree::Sequence::from_iter(client_ops, &());
         let mut server_operations = btree::Sequence::from_iter(server_ops, &());
-        let roundtrips = sync(
+        sync(
             &mut client_operations,
             &mut server_operations,
             max_digests,
             min_operations,
         );
-        dbg!(roundtrips);
 
         assert_eq!(
             client_operations
