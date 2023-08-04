@@ -51,6 +51,20 @@ export default function contacts_panel(): any {
         },
     }
 
+    const headerButton = toggleable({
+        base: {
+            color: foreground(layer, "on"),
+            button_width: 28,
+            icon_width: 16,
+        },
+        state: {
+            active: {
+                background: background(layer, "active"),
+                corner_radius: 8,
+            }
+        }
+    })
+
     return {
         channel_modal: channel_modal(),
         background: background(layer),
@@ -77,23 +91,16 @@ export default function contacts_panel(): any {
                 right: side_padding,
             },
         },
+        channel_hash: {
+            color: foreground(layer, "on"),
+            width: 14,
+        },
         user_query_editor_height: 33,
-        add_contact_button: {
-            color: foreground(layer, "on"),
-            button_width: 28,
-            icon_width: 16,
-        },
-        add_channel_button: {
-            color: foreground(layer, "on"),
-            button_width: 28,
-            icon_width: 16,
-        },
-        leave_call_button: {
-            color: foreground(layer, "on"),
-            button_width: 28,
-            icon_width: 16,
-        },
+        add_contact_button: headerButton,
+        add_channel_button: headerButton,
+        leave_call_button: headerButton,
         row_height: 28,
+        channel_indent: 10,
         section_icon_size: 8,
         header_row: {
             ...text(layer, "mono", { size: "sm", weight: "bold" }),

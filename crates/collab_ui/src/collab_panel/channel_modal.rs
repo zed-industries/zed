@@ -487,7 +487,7 @@ impl ChannelModalDelegate {
         });
         cx.spawn(|picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, cx| {
+            picker.update(&mut cx, |picker, _| {
                 let this = picker.delegate_mut();
                 if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
                     member.admin = admin;
@@ -503,7 +503,7 @@ impl ChannelModalDelegate {
         });
         cx.spawn(|picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, cx| {
+            picker.update(&mut cx, |picker, _| {
                 let this = picker.delegate_mut();
                 if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
                     this.members.remove(ix);

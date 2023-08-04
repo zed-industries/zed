@@ -1381,16 +1381,8 @@ impl Database {
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             if let Some(channel_id) = channel_id {
-                channel_member::Entity::find()
-                    .filter(
-                        channel_member::Column::ChannelId
-                            .eq(channel_id)
-                            .and(channel_member::Column::UserId.eq(user_id))
-                            .and(channel_member::Column::Accepted.eq(true)),
-                    )
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("no such channel membership"))?;
+                self.check_user_is_channel_member(channel_id, user_id, &*tx)
+                    .await?;
 
                 room_participant::ActiveModel {
                     room_id: ActiveValue::set(room_id),
@@ -1738,7 +1730,6 @@ impl Database {
             }
 
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
-
             let channel_members = if let Some(channel_id) = channel_id {
                 self.get_channel_members_internal(channel_id, &tx).await?
             } else {
@@ -3595,6 +3586,25 @@ impl Database {
         Ok(user_ids)
     }
 
+    async fn check_user_is_channel_member(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
+        channel_member::Entity::find()
+            .filter(
+                channel_member::Column::ChannelId
+                    .is_in(channel_ids)
+                    .and(channel_member::Column::UserId.eq(user_id)),
+            )
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("user is not a channel member"))?;
+        Ok(())
+    }
+
     async fn check_user_is_channel_admin(
         &self,
         channel_id: ChannelId,
@@ -3611,7 +3621,7 @@ impl Database {
             )
             .one(&*tx)
             .await?
-            .ok_or_else(|| anyhow!("user is not allowed to remove this channel"))?;
+            .ok_or_else(|| anyhow!("user is not a channel admin"))?;
         Ok(())
     }
 

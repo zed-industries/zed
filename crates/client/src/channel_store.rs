@@ -104,7 +104,7 @@ impl ChannelStore {
         parent_id: Option<ChannelId>,
     ) -> impl Future<Output = Result<ChannelId>> {
         let client = self.client.clone();
-        let name = name.to_owned();
+        let name = name.trim_start_matches("#").to_owned();
         async move {
             Ok(client
                 .request(proto::CreateChannel { name, parent_id })
