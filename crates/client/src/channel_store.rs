@@ -263,13 +263,14 @@ impl ChannelStore {
 
             if let Some(parent_id) = channel.parent_id {
                 if let Some(ix) = self.channels.iter().position(|c| c.id == parent_id) {
-                    let depth = self.channels[ix].depth + 1;
+                    let parent_channel = &self.channels[ix];
+                    let depth = parent_channel.depth + 1;
                     self.channels.insert(
                         ix + 1,
                         Arc::new(Channel {
                             id: channel.id,
                             name: channel.name,
-                            user_is_admin: channel.user_is_admin,
+                            user_is_admin: channel.user_is_admin || parent_channel.user_is_admin,
                             parent_id: Some(parent_id),
                             depth,
                         }),

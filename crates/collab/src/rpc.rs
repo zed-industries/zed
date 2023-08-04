@@ -2209,7 +2209,7 @@ async fn invite_channel_member(
         .await?
         .ok_or_else(|| anyhow!("channel not found"))?;
     let invitee_id = UserId::from_proto(request.user_id);
-    db.invite_channel_member(channel_id, invitee_id, session.user_id, false)
+    db.invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
         .await?;
 
     let mut update = proto::UpdateChannels::default();
@@ -2268,22 +2268,29 @@ async fn respond_to_channel_invite(
     let channel_id = ChannelId::from_proto(request.channel_id);
     db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
-    let channel = db
-        .get_channel(channel_id, session.user_id)
-        .await?
-        .ok_or_else(|| anyhow!("no such channel"))?;
 
     let mut update = proto::UpdateChannels::default();
     update
         .remove_channel_invitations
         .push(channel_id.to_proto());
     if request.accept {
-        update.channels.push(proto::Channel {
-            id: channel.id.to_proto(),
-            name: channel.name,
-            user_is_admin: channel.user_is_admin,
-            parent_id: None,
-        });
+        let (channels, participants) = db.get_channels_for_user(session.user_id).await?;
+        update
+            .channels
+            .extend(channels.into_iter().map(|channel| proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name,
+                user_is_admin: channel.user_is_admin,
+                parent_id: channel.parent_id.map(ChannelId::to_proto),
+            }));
+        update
+            .channel_participants
+            .extend(participants.into_iter().map(|(channel_id, user_ids)| {
+                proto::ChannelParticipants {
+                    channel_id: channel_id.to_proto(),
+                    participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
+                }
+            }));
     }
     session.peer.send(session.connection_id, update)?;
     response.send(proto::Ack {})?;

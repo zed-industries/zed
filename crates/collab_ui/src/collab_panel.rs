@@ -1509,18 +1509,22 @@ impl CollabPanel {
         channel_id: u64,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu.update(cx, |context_menu, cx| {
-            context_menu.show(
-                position,
-                gpui::elements::AnchorCorner::BottomLeft,
-                vec![
-                    ContextMenuItem::action("New Channel", NewChannel { channel_id }),
-                    ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
-                    ContextMenuItem::action("Add member", AddMember { channel_id }),
-                ],
-                cx,
-            );
-        });
+        if let Some(channel) = self.channel_store.read(cx).channel_for_id(channel_id) {
+            if channel.user_is_admin {
+                self.context_menu.update(cx, |context_menu, cx| {
+                    context_menu.show(
+                        position,
+                        gpui::elements::AnchorCorner::BottomLeft,
+                        vec![
+                            ContextMenuItem::action("New Channel", NewChannel { channel_id }),
+                            ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
+                            ContextMenuItem::action("Add member", AddMember { channel_id }),
+                        ],
+                        cx,
+                    );
+                });
+            }
+        }
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
