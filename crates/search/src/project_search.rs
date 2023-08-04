@@ -1918,8 +1918,6 @@ impl View for ProjectSearchBar {
                 )
                 .contained()
                 .with_style(theme.search.match_index.container)
-                .aligned()
-                .left()
             });
 
             let filters = search.filters_enabled.then(|| {
@@ -1955,6 +1953,7 @@ impl View for ProjectSearchBar {
                     Flex::column()
                         .with_child(
                             Flex::row()
+                                .align_children_center()
                                 .with_child(
                                     Flex::row()
                                         .with_child(self.render_nav_button(
