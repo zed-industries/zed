@@ -860,9 +860,15 @@ impl EditorElement {
                         } else if cursor_row > 0
                             && cursor_position != layout.position_map.snapshot.max_point()
                         {
-                            cursor_row -= 1;
-                            cursor_column =
-                                layout.position_map.snapshot.line_len(cursor_row) as usize;
+                            let new = layout.position_map.snapshot.clip_point(
+                                DisplayPoint::new(
+                                    cursor_row - 1,
+                                    layout.position_map.snapshot.line_len(cursor_row),
+                                ),
+                                Bias::Left,
+                            );
+                            cursor_row = new.row();
+                            cursor_column = new.column() as usize;
                         }
                     }
                     dbg!(selection.head, cursor_row, cursor_column);
