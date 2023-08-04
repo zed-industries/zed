@@ -1973,10 +1973,12 @@ impl View for ProjectSearchBar {
                                 .aligned()
                                 .left(),
                         )
+                        .contained()
                         .flex(1., true),
                 )
                 .with_child(
                     Flex::column()
+                        .align_children_center()
                         .with_child(
                             Flex::row()
                                 .with_child(
@@ -1997,9 +1999,8 @@ impl View for ProjectSearchBar {
                         .contained()
                         .with_style(theme.search.container)
                         .aligned()
-                        .left()
                         .top()
-                        .flex(1., true),
+                        .flex(1., false),
                 )
                 .with_child(
                     Flex::column()
@@ -2022,7 +2023,9 @@ impl View for ProjectSearchBar {
                                 .read(cx)
                                 .filters_enabled
                                 .then(|| Flex::row().flex(1., true)),
-                        ),
+                        )
+                        .contained()
+                        .flex(1., true),
                 )
                 .contained()
                 .flex_float()
