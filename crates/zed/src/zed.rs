@@ -982,7 +982,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1294,7 +1296,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         // Open a file within an existing worktree.
         workspace
@@ -1335,7 +1339,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1428,7 +1434,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1479,7 +1487,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1553,7 +1563,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -1830,7 +1842,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2072,7 +2086,8 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
+        let window_id = window.window_id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
@@ -2242,7 +2257,8 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
+        let window_id = window.window_id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(

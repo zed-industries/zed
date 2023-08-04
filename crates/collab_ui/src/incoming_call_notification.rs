@@ -31,7 +31,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 
                 for screen in cx.platform().screens() {
                     let screen_bounds = screen.bounds();
-                    let (window_id, _) = cx.add_window(
+                    let window = cx.add_window(
                         WindowOptions {
                             bounds: WindowBounds::Fixed(RectF::new(
                                 screen_bounds.upper_right()
@@ -49,7 +49,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         |_| IncomingCallNotification::new(incoming_call.clone(), app_state.clone()),
                     );
 
-                    notification_windows.push(window_id);
+                    notification_windows.push(window.window_id());
                 }
             }
         }

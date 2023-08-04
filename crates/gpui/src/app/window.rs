@@ -15,7 +15,7 @@ use crate::{
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
     Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
-    View, ViewContext, ViewHandle, WindowInvalidation,
+    View, ViewContext, ViewHandle, WindowHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -142,7 +142,9 @@ impl BorrowAppContext for WindowContext<'_> {
 }
 
 impl BorrowWindowContext for WindowContext<'_> {
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    type Result<T> = T;
+
+    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         if self.window_id == window_id {
             f(self)
         } else {
@@ -150,7 +152,11 @@ impl BorrowWindowContext for WindowContext<'_> {
         }
     }
 
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> T {
         if self.window_id == window_id {
             f(self)
         } else {
@@ -1151,15 +1157,15 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         let root_view = self.add_view(|cx| build_root_view(cx));
-        self.window.root_view = Some(root_view.clone().into_any());
         self.window.focused_view_id = Some(root_view.id());
-        root_view
+        self.window.root_view = Some(root_view.into_any());
+        WindowHandle::new(self.window_id)
     }
 
     pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>
@@ -1176,7 +1182,7 @@ impl<'a> WindowContext<'a> {
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
         let window_id = self.window_id;
-        let view_id = post_inc(&mut self.next_entity_id);
+        let view_id = post_inc(&mut self.next_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
             let mut keymap_context = KeymapContext::default();

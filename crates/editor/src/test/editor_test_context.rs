@@ -32,16 +32,14 @@ impl<'a> EditorTestContext<'a> {
         let buffer = project
             .update(cx, |project, cx| project.create_buffer("", None, cx))
             .unwrap();
-        let (window_id, editor) = cx.update(|cx| {
-            cx.add_window(Default::default(), |cx| {
-                cx.focus_self();
-                build_editor(MultiBuffer::build_from_buffer(buffer, cx), cx)
-            })
+        let window = cx.add_window(|cx| {
+            cx.focus_self();
+            build_editor(MultiBuffer::build_from_buffer(buffer, cx), cx)
         });
-
+        let editor = window.root(cx);
         Self {
             cx,
-            window_id,
+            window_id: window.window_id(),
             editor,
         }
     }
