@@ -1950,8 +1950,9 @@ impl View for ProjectSearchBar {
                         .contained()
                         .with_style(theme.search.container)
                         .aligned()
+                        .left()
                         .top()
-                        .flex(2., true),
+                        .flex(1., true),
                 )
                 .with_child(
                     Flex::column()
