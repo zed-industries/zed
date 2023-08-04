@@ -2696,6 +2696,65 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_manipulate_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test convert_to_upper_case()
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // Test convert_to_lower_case()
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_case(&ConvertToLowerCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // From here on out, test more complex cases of manipulate_text() with a single driver method: convert_to_upper_case()
+
+    // Test no selection case - should affect words cursors are in
+    // Cursor at beginning, middle, and end of word
+    cx.set_state(indoc! {"
+        ˇhello big beauˇtiful worldˇ
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        ˇHELLO big BEAUˇTIFUL WORLDˇ
+    "});
+
+    // Test multiple selections on a single line and across multiple lines
+    cx.set_state(indoc! {"
+        «Theˇ» quick «brown
+        foxˇ» jumps «overˇ»
+        the «lazyˇ» dog
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «THEˇ» quick «BROWN
+        FOXˇ» jumps «OVERˇ»
+        the «LAZYˇ» dog
+    "});
+
+    // Test case where text length grows
+    cx.set_state(indoc! {"
+        «tschüßˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «TSCHÜSSˇ»
+    "});
+}
+
+#[gpui::test]
 fn test_duplicate_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
