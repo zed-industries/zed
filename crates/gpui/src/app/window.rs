@@ -923,7 +923,7 @@ impl<'a> WindowContext<'a> {
         Ok(element)
     }
 
-    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
+    pub fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
         let window_size = self.window.platform_window.content_size();
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
@@ -963,7 +963,7 @@ impl<'a> WindowContext<'a> {
         Ok(old_parents)
     }
 
-    pub(crate) fn paint(&mut self) -> Result<Scene> {
+    pub fn paint(&mut self) -> Result<Scene> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
@@ -993,6 +993,11 @@ impl<'a> WindowContext<'a> {
         }
 
         Ok(scene)
+    }
+
+    pub fn root_element(&self) -> &Box<dyn AnyRootElement> {
+        let view_id = self.window.root_view().id();
+        self.window.rendered_views.get(&view_id).unwrap()
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {

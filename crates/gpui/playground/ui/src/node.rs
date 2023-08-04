@@ -1528,6 +1528,11 @@ mod tests {
             });
         });
 
+        window.update(cx, |cx| {
+            let root = cx.root_element();
+            dbg!(root.debug(cx).unwrap());
+        });
+
         // tree.layout(
         //     SizeConstraint::strict(vec2f(100., 100.)),
         //     &mut (),
