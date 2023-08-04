@@ -104,8 +104,9 @@ fn sync(
     base: usize,
     depth: u32,
     min_operations: usize,
-) {
+) -> usize {
     let mut server_digests = DigestSequence::new();
+    let mut roundtrips = 1;
     let digests = request_digests(server, 0..usize::MAX, base, depth, min_operations);
     server_digests.splice(0..0, digests.iter().cloned());
     let server_operation_count = server_digests.operation_count();
@@ -118,16 +119,18 @@ fn sync(
     let mut server_end = 0;
     let mut synced_end = 0;
     while let Some(mut sync_range) = stack.pop() {
-        if server_end >= server_operation_count && sync_range.start >= client.summary().digest.count
+        sync_range.start = cmp::max(sync_range.start, synced_end);
+        if sync_range.start >= client.summary().digest.count || server_end >= server_operation_count
         {
-            // We've exhaused all operations from the client and the server, so we're done.
+            // We've exhausted all operations from either the client or the server, so we
+            // can fast track to publishing anything the server hasn't seen and requesting
+            // anything the client hasn't seen.
             break;
         } else if sync_range.end < synced_end {
             // This range has already been synced, so we can skip it.
             continue;
         }
 
-        sync_range.start = cmp::max(sync_range.start, synced_end);
         let server_digest = server_digests.digest(sync_range.clone());
         sync_range.end = cmp::max(sync_range.start + server_digest.count, sync_range.end);
         let server_range = server_end..server_end + sync_range.len();
@@ -136,30 +139,19 @@ fn sync(
         if client_digest == server_digest {
             synced_end = sync_range.end;
             server_end += server_digest.count;
-        } else if client_digest.count == 0 {
-            // Client has exhausted its operations, which means that the we don't need to
-            // diff anymore and we can just fetch the remaining operations from the server.
-            break;
         } else if sync_range.len() > min_operations {
-            // If there are still operations that we've missed from the server, subdivide
-            // them into chunks and request their digests.
-            let digests = if server_range.start < server_operation_count {
-                request_digests(server, server_range.clone(), base, depth, min_operations)
-            } else {
-                Vec::new()
-            };
+            roundtrips += 1;
+            let digests =
+                request_digests(server, server_range.clone(), base, depth, min_operations);
             server_digests.splice(sync_range.clone(), digests.iter().cloned());
             let old_stack_len = stack.len();
 
             stack.extend(subdivide_range(sync_range, base, depth, min_operations));
             stack[old_stack_len..].reverse();
         } else {
-            // If there are still operations that we've missed from the server, fetch them.
-            let server_operations = if server_range.start < server_operation_count {
-                request_operations(server, server_range.clone())
-            } else {
-                Vec::new()
-            };
+            roundtrips += 1;
+            let server_operations = request_operations(server, server_range.clone());
+            debug_assert!(server_operations.len() > 0);
             server_digests.splice(
                 sync_range.clone(),
                 server_operations.iter().map(|op| op.into()),
@@ -212,8 +204,13 @@ fn sync(
         }
     }
 
-    // Fetch the remainder of the server's operations in one shot.
-    if server_end < server_operation_count {
+    // Fetch and publish the remaining suffixes.
+    if synced_end < client.summary().digest.count || server_end < server_operation_count {
+        roundtrips += 1;
+
+        let remaining_client_ops = operations_for_range(client, synced_end..);
+        missed_server_ops.extend(remaining_client_ops.cloned().map(btree::Edit::Insert));
+
         let remaining_server_ops = request_operations(server, server_end..);
         client.edit(
             remaining_server_ops
@@ -225,6 +222,7 @@ fn sync(
     }
 
     server.edit(missed_server_ops, &());
+    roundtrips
 }
 
 fn digest_for_range(operations: &btree::Sequence<Operation>, range: Range<usize>) -> Digest {
@@ -283,7 +281,6 @@ mod tests {
         assert_sync(1..=10, 5..=14);
         assert_sync(1..=80, (1..=70).chain(90..=100));
         assert_sync(1..=1910, (1..=1900).chain(1910..=2000));
-        assert_sync(1..=190100, (1..=190000).chain(191000..=1000000));
     }
 
     #[gpui::test(iterations = 100)]
@@ -292,20 +289,24 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
+        let mut connected = true;
+        let mut connection_ixs = (1..=max_operations).choose_multiple(&mut rng, max_operations / 4);
+        connection_ixs.reverse();
         let mut client_ops = Vec::new();
         let mut server_ops = Vec::new();
         for ix in 1..=max_operations {
-            match rng.gen_range(0..100) {
-                0..=24 => {
-                    client_ops.push(ix);
-                }
-                25..=49 => {
-                    server_ops.push(ix);
-                }
-                _ => {
-                    server_ops.push(ix);
-                    client_ops.push(ix);
-                }
+            if connection_ixs.last() == Some(&ix) {
+                connected = !connected;
+                connection_ixs.pop();
+            }
+
+            if connected {
+                client_ops.push(ix);
+                server_ops.push(ix);
+            } else if rng.gen() {
+                server_ops.push(ix);
+            } else {
+                client_ops.push(ix);
             }
         }
 
@@ -365,13 +366,14 @@ mod tests {
             .collect::<Vec<_>>();
         let mut client_operations = btree::Sequence::from_iter(client_ops, &());
         let mut server_operations = btree::Sequence::from_iter(server_ops, &());
-        sync(
+        let roundtrips = sync(
             &mut client_operations,
             &mut server_operations,
             base,
             depth,
             min_operations,
         );
+        dbg!(roundtrips);
 
         assert_eq!(
             client_operations

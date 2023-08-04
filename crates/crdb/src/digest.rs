@@ -92,16 +92,17 @@ impl DigestSequence {
             range.start,
             "start is not at the start of a digest range"
         );
-        let mut hash = cursor.summary(&range.end, Bias::Right, &());
-
+        let mut hash: HashMatrix = cursor.summary(&range.end, Bias::Right, &());
         if range.end > *cursor.start() {
             let digest = cursor.item().unwrap();
             hash = hash * digest.hash;
             cursor.next(&());
         }
 
-        let count = cursor.start() - range.start;
-        Digest { count, hash }
+        Digest {
+            count: cursor.start() - range.start,
+            hash,
+        }
     }
 
     pub fn splice(&mut self, mut range: Range<usize>, digests: impl IntoIterator<Item = Digest>) {
