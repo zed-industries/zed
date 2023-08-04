@@ -530,8 +530,8 @@ impl Server {
             let (contacts, invite_code, (channels, channel_participants), channel_invites) = future::try_join4(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_invite_code_for_user(user_id),
-                this.app_state.db.get_channels(user_id),
-                this.app_state.db.get_channel_invites(user_id)
+                this.app_state.db.get_channels_for_user(user_id),
+                this.app_state.db.get_channel_invites_for_user(user_id)
             ).await?;
 
             {
@@ -2230,10 +2230,16 @@ async fn invite_channel_member(
 }
 
 async fn remove_channel_member(
-    _request: proto::RemoveChannelMember,
-    _response: Response<proto::RemoveChannelMember>,
-    _session: Session,
+    request: proto::RemoveChannelMember,
+    response: Response<proto::RemoveChannelMember>,
+    session: Session,
 ) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let member_id = UserId::from_proto(request.user_id);
+    db.remove_channel_member(channel_id, member_id, session.user_id)
+        .await?;
+    response.send(proto::Ack {})?;
     Ok(())
 }
 
@@ -2244,7 +2250,9 @@ async fn get_channel_members(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let members = db.get_channel_member_details(channel_id).await?;
+    let members = db
+        .get_channel_member_details(channel_id, session.user_id)
+        .await?;
     response.send(proto::GetChannelMembersResponse { members })?;
     Ok(())
 }

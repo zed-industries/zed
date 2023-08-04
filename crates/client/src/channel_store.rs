@@ -121,6 +121,33 @@ impl ChannelStore {
         })
     }
 
+    pub fn remove_member(
+        &mut self,
+        channel_id: ChannelId,
+        user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if !self.outgoing_invites.insert((channel_id, user_id)) {
+            return Task::ready(Err(anyhow!("invite request already in progress")));
+        }
+
+        cx.notify();
+        let client = self.client.clone();
+        cx.spawn(|this, mut cx| async move {
+            client
+                .request(proto::RemoveChannelMember {
+                    channel_id,
+                    user_id,
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.outgoing_invites.remove(&(channel_id, user_id));
+                cx.notify();
+            });
+            Ok(())
+        })
+    }
+
     pub fn respond_to_channel_invite(
         &mut self,
         channel_id: ChannelId,
@@ -179,16 +206,6 @@ impl ChannelStore {
 
     pub fn has_pending_channel_invite(&self, channel_id: ChannelId, user_id: UserId) -> bool {
         self.outgoing_invites.contains(&(channel_id, user_id))
-    }
-
-    pub fn remove_member(
-        &self,
-        _channel_id: ChannelId,
-        _user_id: u64,
-        _cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        dbg!("TODO");
-        Task::Ready(Some(Ok(())))
     }
 
     async fn handle_update_channels(

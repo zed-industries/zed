@@ -951,7 +951,7 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .await
         .unwrap();
 
-    let (channels, _) = db.get_channels(a_id).await.unwrap();
+    let (channels, _) = db.get_channels_for_user(a_id).await.unwrap();
 
     assert_eq!(
         channels,
@@ -1144,7 +1144,7 @@ test_both_dbs!(
             .unwrap();
 
         let user_2_invites = db
-            .get_channel_invites(user_2) // -> [channel_1_1, channel_1_2]
+            .get_channel_invites_for_user(user_2) // -> [channel_1_1, channel_1_2]
             .await
             .unwrap()
             .into_iter()
@@ -1154,7 +1154,7 @@ test_both_dbs!(
         assert_eq!(user_2_invites, &[channel_1_1, channel_1_2]);
 
         let user_3_invites = db
-            .get_channel_invites(user_3) // -> [channel_1_1]
+            .get_channel_invites_for_user(user_3) // -> [channel_1_1]
             .await
             .unwrap()
             .into_iter()
@@ -1163,7 +1163,10 @@ test_both_dbs!(
 
         assert_eq!(user_3_invites, &[channel_1_1]);
 
-        let members = db.get_channel_member_details(channel_1_1).await.unwrap();
+        let members = db
+            .get_channel_member_details(channel_1_1, user_1)
+            .await
+            .unwrap();
         assert_eq!(
             members,
             &[
@@ -1191,7 +1194,10 @@ test_both_dbs!(
             .await
             .unwrap();
 
-        let members = db.get_channel_member_details(channel_1_3).await.unwrap();
+        let members = db
+            .get_channel_member_details(channel_1_3, user_1)
+            .await
+            .unwrap();
         assert_eq!(
             members,
             &[

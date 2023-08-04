@@ -260,9 +260,12 @@ impl PickerDelegate for ChannelModalDelegate {
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some((user, _)) = self.matches.get(self.selected_index) {
             match self.mode {
-                Mode::ManageMembers => {
-                    //
-                }
+                Mode::ManageMembers => self
+                    .channel_store
+                    .update(cx, |store, cx| {
+                        store.remove_member(self.channel_id, user.id, cx)
+                    })
+                    .detach(),
                 Mode::InviteMembers => match self.member_status(user.id, cx) {
                     Some(proto::channel_member::Kind::Member) => {}
                     Some(proto::channel_member::Kind::Invitee) => self
