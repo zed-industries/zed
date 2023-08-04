@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use smallvec::SmallVec;
 
 pub fn rgb(hex: u32) -> Rgba {
@@ -70,10 +72,12 @@ impl From<Rgba> for Hsla {
         let delta = max - min;
 
         let l = (max + min) / 2.0;
-        let s = match l {
-            0.0 | 1.0 => 0.0,
-            l if l < 0.5 => delta / (2.0 * l),
-            l => delta / (2.0 - 2.0 * l),
+        let s = if l == 0.0 || l == 1.0 {
+            0.0
+        } else if l < 0.5 {
+            delta / (2.0 * l)
+        } else {
+            delta / (2.0 - 2.0 * l)
         };
 
         let h = if delta == 0.0 {

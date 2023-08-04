@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
 use node::{length::auto, *};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};

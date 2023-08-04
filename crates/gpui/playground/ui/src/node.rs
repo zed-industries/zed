@@ -1,3 +1,5 @@
+#![allow(unused_variables, dead_code)]
+
 use derive_more::{Add, Deref, DerefMut};
 use gpui::elements::layout_highlighted_chunks;
 use gpui::Entity;
@@ -644,7 +646,7 @@ impl Size<Rems> {
 }
 
 #[derive(Clone, Default, Debug)]
-struct Edges<T> {
+pub struct Edges<T> {
     top: T,
     bottom: T,
     left: T,
@@ -1498,12 +1500,11 @@ impl View for ViewFn {
 
 #[cfg(test)]
 mod tests {
-    use crate::themes::rose_pine::{self, RosePineThemes};
-
     use super::{
         length::{auto, rems},
         *,
     };
+    use crate::themes::rose_pine;
     use gpui::TestAppContext;
 
     #[gpui::test]
