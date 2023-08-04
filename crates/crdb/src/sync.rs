@@ -168,7 +168,7 @@ fn sync(
             let mut missed_client_ops = Vec::new();
             let mut server_operations = server_operations.into_iter().peekable();
             let mut client_operations = operations_for_range(client, sync_range.clone()).peekable();
-            for _ in sync_range.clone() {
+            for _ in sync_range {
                 match (client_operations.peek(), server_operations.peek()) {
                     (Some(client_operation), Some(server_operation)) => {
                         match client_operation.id().cmp(&server_operation.id()) {
@@ -270,6 +270,8 @@ fn operations_for_range<T: RangeBounds<usize>>(
 mod tests {
     use super::*;
     use crate::{operations, OperationCount};
+    use rand::prelude::*;
+    use std::env;
 
     #[test]
     fn test_sync() {
@@ -284,15 +286,52 @@ mod tests {
         assert_sync(1..=190100, (1..=190000).chain(191000..=1000000));
     }
 
+    #[gpui::test(iterations = 100)]
+    fn test_random(mut rng: StdRng) {
+        let max_operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let mut client_ops = Vec::new();
+        let mut server_ops = Vec::new();
+        for ix in 1..=max_operations {
+            match rng.gen_range(0..100) {
+                0..=24 => {
+                    client_ops.push(ix);
+                }
+                25..=49 => {
+                    server_ops.push(ix);
+                }
+                _ => {
+                    server_ops.push(ix);
+                    client_ops.push(ix);
+                }
+            }
+        }
+
+        // println!("client operations: {:?}", client_ops);
+        // println!("server operations: {:?}", server_ops);
+        assert_sync_with_config(
+            client_ops,
+            server_ops,
+            rng.gen_range(2..=16),
+            rng.gen_range(1..=4),
+            [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+                .choose(&mut rng)
+                .unwrap()
+                .clone(),
+        );
+    }
+
     fn assert_sync(
         client_ops: impl IntoIterator<Item = usize>,
         server_ops: impl IntoIterator<Item = usize>,
     ) {
         let client_ops = client_ops.into_iter().collect::<Vec<_>>();
         let server_ops = server_ops.into_iter().collect::<Vec<_>>();
-        for base in 2..=16 {
-            for depth in 1..=4 {
-                for min_operations in 1..=16 {
+        for base in [2, 3, 4] {
+            for depth in [1, 2, 3] {
+                for min_operations in [1, 2, 4, 8] {
                     assert_sync_with_config(
                         client_ops.clone(),
                         server_ops.clone(),
