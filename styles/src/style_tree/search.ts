@@ -225,5 +225,33 @@ export default function search(): any {
             },
         }),
         mode_filling_width: 4.0,
+        nav_button: interactive({
+            base: {
+                text: text(theme.highest, "mono", "on"),
+                background: background(theme.highest, "on"),
+                corner_radius: 2,
+                border: border(theme.highest, "on"),
+
+                padding: {
+                    bottom: 6,
+                    left: 6,
+                    right: 6,
+                    top: 6,
+                },
+            },
+            state: {
+                hovered: {
+                    ...text(theme.highest, "mono", "on", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                    border: border(theme.highest, "on", "hovered"),
+                },
+                clicked: {
+                    ...text(theme.highest, "mono", "on", "pressed"),
+                    background: background(theme.highest, "on", "pressed"),
+                    border: border(theme.highest, "on", "pressed"),
+                },
+            },
+        }),
+
     }
 }

@@ -389,6 +389,7 @@ pub struct Search {
     pub editor_icon: IconStyle,
     pub mode_button: Toggleable<Interactive<ContainedText>>,
     pub mode_filling_width: f32,
+    pub nav_button: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

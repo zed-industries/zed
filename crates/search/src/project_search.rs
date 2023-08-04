@@ -1531,6 +1531,7 @@ impl ProjectSearchBar {
     ) -> AnyElement<Self> {
         let action: Box<dyn Action>;
         let tooltip;
+
         match direction {
             Direction::Prev => {
                 action = Box::new(SelectPrevMatch);
@@ -1546,10 +1547,51 @@ impl ProjectSearchBar {
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.option_button.inactive_state().style_for(state);
-            Label::new(icon, style.text.clone())
+            let mut style = theme.search.nav_button.style_for(state).clone();
+
+            match direction {
+                Direction::Prev => style.container.border.left = false,
+                Direction::Next => style.container.border.right = false,
+            };
+            let mut label = Label::new(icon, style.label.clone())
                 .contained()
-                .with_style(style.container)
+                .with_style(style.container.clone());
+            match direction {
+                Direction::Prev => Flex::row()
+                    .with_child(
+                        ButtonSide::left(
+                            style
+                                .clone()
+                                .container
+                                .background_color
+                                .unwrap_or_else(gpui::color::Color::transparent_black),
+                        )
+                        .with_border(style.container.border.width, style.container.border.color)
+                        .contained()
+                        .constrained()
+                        .with_max_width(theme.search.mode_filling_width),
+                    )
+                    .with_child(label)
+                    .constrained()
+                    .with_height(theme.workspace.toolbar.height),
+                Direction::Next => Flex::row()
+                    .with_child(label)
+                    .with_child(
+                        ButtonSide::right(
+                            style
+                                .clone()
+                                .container
+                                .background_color
+                                .unwrap_or_else(gpui::color::Color::transparent_black),
+                        )
+                        .with_border(style.container.border.width, style.container.border.color)
+                        .contained()
+                        .constrained()
+                        .with_max_width(theme.search.mode_filling_width),
+                    )
+                    .constrained()
+                    .with_height(theme.workspace.toolbar.height),
+            }
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             if let Some(search) = this.active_project_search.as_ref() {
@@ -1911,7 +1953,26 @@ impl View for ProjectSearchBar {
             Flex::row()
                 .with_child(
                     Flex::column()
-                        .with_child(Flex::row().with_children(matches).aligned().left())
+                        .with_child(
+                            Flex::row()
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(self.render_nav_button(
+                                            "<",
+                                            Direction::Prev,
+                                            cx,
+                                        ))
+                                        .with_child(self.render_nav_button(
+                                            ">",
+                                            Direction::Next,
+                                            cx,
+                                        ))
+                                        .aligned(),
+                                )
+                                .with_children(matches)
+                                .aligned()
+                                .left(),
+                        )
                         .flex(1., true),
                 )
                 .with_child(
@@ -1928,20 +1989,6 @@ impl View for ProjectSearchBar {
                                         .with_min_width(theme.search.editor.min_width)
                                         .with_max_width(theme.search.editor.max_width)
                                         .flex(1., false),
-                                )
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(self.render_nav_button(
-                                            "<",
-                                            Direction::Prev,
-                                            cx,
-                                        ))
-                                        .with_child(self.render_nav_button(
-                                            ">",
-                                            Direction::Next,
-                                            cx,
-                                        ))
-                                        .aligned(),
                                 )
                                 .contained()
                                 .with_margin_bottom(row_spacing),
