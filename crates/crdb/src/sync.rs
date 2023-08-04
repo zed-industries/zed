@@ -1,7 +1,7 @@
 use crate::{
     btree::{self, Bias},
     digest::{Digest, DigestSequence},
-    messages::Operation,
+    messages::{Operation, PublishOperations},
     OperationId,
 };
 use std::{
@@ -9,6 +9,112 @@ use std::{
     iter,
     ops::{Range, RangeBounds},
 };
+
+struct SyncRequest {
+    digests: Vec<Digest>,
+}
+
+struct SyncResponse {
+    shared_prefix_end: usize,
+    operations: Vec<Operation>,
+}
+
+struct SyncStats {
+    server_operations: usize,
+    client_operations: usize,
+}
+
+fn sync_server(
+    operations: &mut btree::Sequence<Operation>,
+    sync_request: SyncRequest,
+) -> SyncResponse {
+    for client_digest in sync_request.digests {
+        let server_digest = digest_for_range(operations, 0..client_digest.count);
+        if server_digest == client_digest {
+            return SyncResponse {
+                shared_prefix_end: server_digest.count,
+                operations: operations_for_range(operations, server_digest.count..)
+                    .cloned()
+                    .collect(),
+            };
+        }
+    }
+
+    SyncResponse {
+        shared_prefix_end: 0,
+        operations: operations.iter().cloned().collect(),
+    }
+}
+
+fn publish_operations(
+    server_operations: &mut btree::Sequence<Operation>,
+    request: PublishOperations,
+) {
+    server_operations.edit(
+        request
+            .operations
+            .into_iter()
+            .map(btree::Edit::Insert)
+            .collect(),
+        &(),
+    );
+}
+
+fn sync_client(
+    client_operations: &mut btree::Sequence<Operation>,
+    server_operations: &mut btree::Sequence<Operation>,
+    min_digest_delta: usize,
+    max_digest_count: usize,
+) -> SyncStats {
+    let mut client_operation_count = client_operations.summary().digest.count;
+    let mut digests = Vec::new();
+    let mut n = client_operation_count;
+
+    // We will multiply by some some factor less than 1 to produce digests
+    // over ever smaller digest ranges.
+    // op_count * factor^max_digest_count = min_digest_size
+    // factor^max_digest_count = min_digest_size/op_count
+    // max_digest_count * log(factor) = log(min_digest_size/op_count)
+    // log(factor) = log(min_digest_size/op_count)/max_digest_count
+    // factor = base^(log(min_digest_size/op_count)/max_digest_count)
+    let factor = 2f64.powf(
+        (min_digest_delta as f64 / client_operation_count as f64).log2() / max_digest_count as f64,
+    );
+    for _ in 0..max_digest_count {
+        if n <= min_digest_delta {
+            break;
+        }
+
+        digests.push(digest_for_range(client_operations, 0..n));
+        n = (n as f64 * factor).ceil() as usize; // 🪬
+    }
+
+    let response = sync_server(server_operations, SyncRequest { digests });
+    let client_suffix = operations_for_range(client_operations, response.shared_prefix_end..)
+        .cloned()
+        .collect::<Vec<_>>();
+    let sync_stats = SyncStats {
+        server_operations: response.operations.len(),
+        client_operations: client_suffix.len(),
+    };
+    client_operations.edit(
+        response
+            .operations
+            .into_iter()
+            .map(btree::Edit::Insert)
+            .collect(),
+        &(),
+    );
+    publish_operations(
+        server_operations,
+        PublishOperations {
+            repo_id: Default::default(),
+            operations: client_suffix,
+        },
+    );
+
+    sync_stats
+}
 
 impl btree::Item for Operation {
     type Summary = OperationSummary;
@@ -273,14 +379,14 @@ mod tests {
 
     #[test]
     fn test_sync() {
-        assert_sync(1..=10, 5..=10);
-        assert_sync(1..=10, 4..=10);
-        assert_sync(1..=10, 1..=5);
-        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
-        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
-        assert_sync(1..=10, 5..=14);
-        assert_sync(1..=80, (1..=70).chain(90..=100));
-        assert_sync(1..=1910, (1..=1900).chain(1910..=2000));
+        assert_sync(1..=10, 5..=10, 0, 16);
+        assert_sync(1..=10, 4..=10, 0, 16);
+        assert_sync(1..=10, 1..=5, 0, 16);
+        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10], 0, 16);
+        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12], 0, 16);
+        assert_sync(1..=10, 5..=14, 0, 16);
+        assert_sync(1..=80, (1..=70).chain(90..=100), 0, 16);
+        assert_sync(1..=1910, (1..=1900).chain(1910..=2000), 0, 16);
     }
 
     #[gpui::test(iterations = 100)]
@@ -288,72 +394,110 @@ mod tests {
         let max_operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
+        let min_digest_delta = 32;
+        let max_digest_count = 2048;
 
         let mut connected = true;
-        let mut connection_ixs = (1..=max_operations).choose_multiple(&mut rng, max_operations / 4);
-        connection_ixs.reverse();
-        let mut client_ops = Vec::new();
-        let mut server_ops = Vec::new();
+        let mut client_ops = btree::Sequence::new();
+        let mut server_ops = btree::Sequence::new();
+        let mut ideal_server_ops = 0;
+        let mut ideal_client_ops = 0;
+        let mut next_reconnection = None;
         for ix in 1..=max_operations {
-            if connection_ixs.last() == Some(&ix) {
-                connected = !connected;
-                connection_ixs.pop();
+            if connected && rng.gen_bool(0.0005) {
+                dbg!(ix);
+                connected = false;
+
+                let mut factor = 0.0005;
+                while rng.gen() {
+                    factor *= 2.0;
+                }
+
+                let remaining_operations = max_operations - ix;
+                let disconnection_period = (remaining_operations as f64 * factor) as usize;
+                next_reconnection = Some(ix + disconnection_period);
+                dbg!(disconnection_period);
+            }
+
+            if next_reconnection == Some(ix) {
+                connected = true;
+                next_reconnection = None;
+                log::debug!("===============");
+
+                let stats = sync_client(
+                    &mut client_ops,
+                    &mut server_ops,
+                    min_digest_delta,
+                    max_digest_count,
+                );
+                log::debug!(
+                    "ideal server ops: {}, actual server ops: {}, abs error: {}, pct error: {:.3}%",
+                    ideal_server_ops,
+                    stats.server_operations,
+                    stats.server_operations - ideal_server_ops,
+                    ((stats.server_operations as f64 / ideal_server_ops as f64) - 1.) * 100.
+                );
+                log::debug!(
+                    "ideal client ops: {}, actual client ops: {}, abs error: {}, pct error: {:.3}%",
+                    ideal_client_ops,
+                    stats.client_operations,
+                    stats.client_operations - ideal_client_ops,
+                    ((stats.client_operations as f64 / ideal_client_ops as f64) - 1.0) * 100.
+                );
+
+                assert_eq!(
+                    client_ops.iter().map(|op| op.id()).collect::<Vec<_>>(),
+                    server_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
+                );
+                ideal_client_ops = 0;
+                ideal_server_ops = 0;
             }
 
             if connected {
-                client_ops.push(ix);
-                server_ops.push(ix);
-            } else if rng.gen() {
-                server_ops.push(ix);
+                client_ops.push(build_operation(ix), &());
+                server_ops.push(build_operation(ix), &());
+            } else if rng.gen_bool(0.95) {
+                ideal_server_ops += 1;
+                server_ops.push(build_operation(ix), &());
             } else {
-                client_ops.push(ix);
+                ideal_client_ops += 1;
+                client_ops.push(build_operation(ix), &());
             }
         }
 
-        // println!("client operations: {:?}", client_ops);
-        // println!("server operations: {:?}", server_ops);
-        assert_sync_with_config(
-            client_ops,
-            server_ops,
-            [2, 4, 8, 16, 32, 64, 128, 256, 512]
-                .choose(&mut rng)
-                .unwrap()
-                .clone(),
-            [1, 4, 8, 16, 32, 64, 128, 256, 512]
-                .choose(&mut rng)
-                .unwrap()
-                .clone(),
+        log::debug!("============");
+        let stats = sync_client(
+            &mut client_ops,
+            &mut server_ops,
+            min_digest_delta,
+            max_digest_count,
+        );
+        log::debug!(
+            "ideal server ops: {}, actual server ops: {}, abs error: {}, pct error: {:.3}%",
+            ideal_server_ops,
+            stats.server_operations,
+            stats.server_operations - ideal_server_ops,
+            ((stats.server_operations as f64 / ideal_server_ops as f64) - 1.) * 100.
+        );
+        log::debug!(
+            "ideal client ops: {}, actual client ops: {}, abs error: {}, pct error: {:.3}%",
+            ideal_client_ops,
+            stats.client_operations,
+            stats.client_operations - ideal_client_ops,
+            ((stats.client_operations as f64 / ideal_client_ops as f64) - 1.0) * 100.
+        );
+        assert_eq!(
+            client_ops.iter().map(|op| op.id()).collect::<Vec<_>>(),
+            server_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
         );
     }
 
     fn assert_sync(
         client_ops: impl IntoIterator<Item = usize>,
         server_ops: impl IntoIterator<Item = usize>,
+        min_digest_delta: usize,
+        max_digest_count: usize,
     ) {
-        let client_ops = client_ops.into_iter().collect::<Vec<_>>();
-        let server_ops = server_ops.into_iter().collect::<Vec<_>>();
-        for max_digests in [2, 4, 8, 16, 32, 64, 128, 256] {
-            for min_operations in [1, 2, 4, 8] {
-                assert_sync_with_config(
-                    client_ops.clone(),
-                    server_ops.clone(),
-                    max_digests,
-                    min_operations,
-                );
-            }
-        }
-    }
-
-    fn assert_sync_with_config(
-        client_ops: impl IntoIterator<Item = usize>,
-        server_ops: impl IntoIterator<Item = usize>,
-        max_digests: usize,
-        min_operations: usize,
-    ) {
-        println!(
-            "max digests: {}, min_operations: {}",
-            max_digests, min_operations
-        );
         let client_ops = client_ops
             .into_iter()
             .map(build_operation)
@@ -364,13 +508,12 @@ mod tests {
             .collect::<Vec<_>>();
         let mut client_operations = btree::Sequence::from_iter(client_ops, &());
         let mut server_operations = btree::Sequence::from_iter(server_ops, &());
-        sync(
+        sync_client(
             &mut client_operations,
             &mut server_operations,
-            max_digests,
-            min_operations,
+            min_digest_delta,
+            max_digest_count,
         );
-
         assert_eq!(
             client_operations
                 .iter()
