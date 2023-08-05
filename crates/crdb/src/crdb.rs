@@ -148,6 +148,11 @@ impl Debug for OperationId {
 }
 
 impl OperationId {
+    const MAX: Self = Self {
+        replica_id: ReplicaId(u32::MAX),
+        operation_count: OperationCount(usize::MAX),
+    };
+
     pub fn new(replica_id: ReplicaId) -> Self {
         Self {
             replica_id,

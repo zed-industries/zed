@@ -82,12 +82,11 @@ impl DigestSequence {
         self.digests.summary().count
     }
 
-    pub fn digest(&self, mut range: Range<usize>) -> (Range<OperationId>, Digest) {
+    pub fn digest(&self, mut range: Range<usize>) -> Digest {
         range.start = cmp::min(range.start, self.digests.summary().count);
         range.end = cmp::min(range.end, self.digests.summary().count);
         let mut cursor = self.digests.cursor::<(usize, Digest)>();
         cursor.seek(&range.start, Bias::Right, &());
-        let start_op_id = cursor.start().1.max_op_id;
         assert_eq!(
             cursor.start().0,
             range.start,
@@ -99,16 +98,12 @@ impl DigestSequence {
             hash = hash * digest.hash;
             cursor.next(&());
         }
-        let end_op_id = cursor.start().1.max_op_id;
 
-        (
-            start_op_id..end_op_id,
-            Digest {
-                count: cursor.start().0 - range.start,
-                hash,
-                max_op_id: end_op_id,
-            },
-        )
+        Digest {
+            count: cursor.start().0 - range.start,
+            hash,
+            max_op_id: cursor.start().1.max_op_id,
+        }
     }
 
     pub fn splice(&mut self, mut range: Range<usize>, digests: impl IntoIterator<Item = Digest>) {
