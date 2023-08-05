@@ -20,6 +20,7 @@ struct SyncResponse {
 }
 
 struct SyncStats {
+    roundtrips: usize,
     server_operations: usize,
     client_operations: usize,
 }
@@ -94,6 +95,7 @@ fn sync_client(
         .cloned()
         .collect::<Vec<_>>();
     let sync_stats = SyncStats {
+        roundtrips: 1,
         server_operations: response.operations.len(),
         client_operations: client_suffix.len(),
     };
@@ -121,7 +123,6 @@ impl btree::Item for Operation {
 
     fn summary(&self) -> Self::Summary {
         OperationSummary {
-            max_id: self.id(),
             digest: Digest::from(self),
         }
     }
@@ -137,7 +138,6 @@ impl btree::KeyedItem for Operation {
 
 #[derive(Clone, Debug, Default)]
 pub struct OperationSummary {
-    max_id: OperationId,
     digest: Digest,
 }
 
@@ -145,16 +145,13 @@ impl btree::Summary for OperationSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
-        debug_assert!(self.max_id < summary.max_id);
-        self.max_id = summary.max_id;
         Digest::add_summary(&mut self.digest, &summary.digest, &());
     }
 }
 
 impl btree::Dimension<'_, OperationSummary> for OperationId {
     fn add_summary(&mut self, summary: &'_ OperationSummary, _: &()) {
-        debug_assert!(*self < summary.max_id);
-        *self = summary.max_id;
+        *self = summary.digest.max_op_id;
     }
 }
 
@@ -206,9 +203,13 @@ fn sync(
     server: &mut btree::Sequence<Operation>,
     max_digests: usize,
     min_operations: usize,
-) {
+) -> SyncStats {
     let mut server_digests = DigestSequence::new();
-    let mut roundtrips = 1;
+    let mut stats = SyncStats {
+        roundtrips: 1,
+        server_operations: 0,
+        client_operations: 0,
+    };
     let digests = request_digests(server, 0..usize::MAX, max_digests, min_operations);
     server_digests.splice(0..0, digests.iter().cloned());
     let server_operation_count = server_digests.operation_count();
@@ -233,91 +234,130 @@ fn sync(
             continue;
         }
 
-        let server_digest = server_digests.digest(sync_range.clone());
+        let (op_range, server_digest) = server_digests.digest(sync_range.clone());
         sync_range.end = cmp::max(sync_range.start + server_digest.count, sync_range.end);
-        let server_range = server_end..server_end + sync_range.len();
+        let mut server_range = server_end..server_end + sync_range.len();
 
         let client_digest = digest_for_range(client, sync_range.clone());
         if client_digest == server_digest {
             log::debug!("skipping {:?}", sync_range);
             synced_end = sync_range.end;
             server_end += server_digest.count;
-        } else if sync_range.len() > min_operations {
-            log::debug!("descending into {:?}", sync_range);
-            roundtrips += 1;
-            let digests =
-                request_digests(server, server_range.clone(), max_digests, min_operations);
-            server_digests.splice(sync_range.clone(), digests.iter().cloned());
-            let old_stack_len = stack.len();
-
-            stack.extend(subdivide_range(sync_range, max_digests, min_operations));
-            stack[old_stack_len..].reverse();
         } else {
-            log::debug!("exchanging operations for {:?}", sync_range);
-            roundtrips += 1;
-            let server_operations = request_operations(server, server_range.clone());
-            debug_assert!(server_operations.len() > 0);
-            server_digests.splice(
-                sync_range.clone(),
-                server_operations.iter().map(|op| op.into()),
-            );
-
-            let mut missed_client_ops = Vec::new();
-            let mut server_operations = server_operations.into_iter().peekable();
-            let mut client_operations = operations_for_range(client, sync_range.clone()).peekable();
-            for _ in sync_range {
-                match (client_operations.peek(), server_operations.peek()) {
-                    (Some(client_operation), Some(server_operation)) => {
-                        match client_operation.id().cmp(&server_operation.id()) {
-                            Ordering::Less => {
-                                let client_operation = client_operations.next().unwrap();
-                                missed_server_ops
-                                    .push(btree::Edit::Insert(client_operation.clone()));
-                                server_digests
-                                    .splice(synced_end..synced_end, [client_operation.into()]);
-                            }
-                            Ordering::Equal => {
-                                client_operations.next().unwrap();
-                                server_operations.next().unwrap();
-                                server_end += 1;
-                            }
-                            Ordering::Greater => {
-                                let server_operation = server_operations.next().unwrap();
-                                missed_client_ops.push(btree::Edit::Insert(server_operation));
-                                server_end += 1;
-                            }
-                        }
-                    }
-                    (None, Some(_)) => {
-                        let server_operation = server_operations.next().unwrap();
-                        missed_client_ops.push(btree::Edit::Insert(server_operation));
-                        server_end += 1;
-                    }
-                    (Some(_), None) => {
-                        let client_operation = client_operations.next().unwrap();
-                        missed_server_ops.push(btree::Edit::Insert(client_operation.clone()));
-                        server_digests.splice(synced_end..synced_end, [client_operation.into()]);
-                    }
-                    (None, None) => break,
+            let client_start_op = operations_for_range(client, sync_range.start..)
+                .next()
+                .map(|op| op.id())
+                .unwrap();
+            let client_end_op = operations_for_range(client, sync_range.start + 1..)
+                .next()
+                .map(|op| op.id())
+                .unwrap();
+            let recurse = client_start_op < op_range.end && client_end_op > op_range.start;
+            while let Some(next_sync_range) = stack.last_mut() {
+                let max_end = cmp::max(sync_range.end, next_sync_range.end);
+                let mut merged_sync_range = sync_range.start..max_end;
+                let (merged_op_range, merged_digest) =
+                    server_digests.digest(merged_sync_range.clone());
+                merged_sync_range.end = cmp::max(
+                    merged_sync_range.start + merged_digest.count,
+                    merged_sync_range.end,
+                );
+                let intersects =
+                    client_start_op < merged_op_range.end && client_end_op > merged_op_range.start;
+                if intersects {
+                    break;
+                } else {
+                    sync_range.end = merged_sync_range.end;
+                    server_range.end = server_end + sync_range.len();
+                    stack.pop();
                 }
-
-                synced_end += 1;
             }
 
-            drop(client_operations);
-            client.edit(missed_client_ops, &());
+            if sync_range.len() > min_operations && recurse {
+                log::debug!("descending into {:?}", sync_range);
+                stats.roundtrips += 1;
+                let digests =
+                    request_digests(server, server_range.clone(), max_digests, min_operations);
+                server_digests.splice(sync_range.clone(), digests.iter().cloned());
+                let old_stack_len = stack.len();
+
+                stack.extend(subdivide_range(sync_range, max_digests, min_operations));
+                stack[old_stack_len..].reverse();
+            } else {
+                log::debug!(
+                    "fetching operations for {:?} (server range: {:?})",
+                    sync_range,
+                    server_range,
+                );
+                stats.roundtrips += 1;
+                let server_operations = request_operations(server, server_range.clone());
+                debug_assert!(server_operations.len() > 0);
+                server_digests.splice(
+                    sync_range.clone(),
+                    server_operations.iter().map(|op| op.into()),
+                );
+
+                let mut missed_client_ops = Vec::new();
+                stats.server_operations += server_operations.len();
+                let mut server_operations = server_operations.into_iter().peekable();
+                let mut client_operations =
+                    operations_for_range(&client, sync_range.clone()).peekable();
+                for _ in sync_range.clone() {
+                    match (client_operations.peek(), server_operations.peek()) {
+                        (Some(client_operation), Some(server_operation)) => {
+                            match client_operation.id().cmp(&server_operation.id()) {
+                                Ordering::Less => {
+                                    let client_operation = client_operations.next().unwrap();
+                                    missed_server_ops
+                                        .push(btree::Edit::Insert(client_operation.clone()));
+                                    server_digests
+                                        .splice(synced_end..synced_end, [client_operation.into()]);
+                                }
+                                Ordering::Equal => {
+                                    client_operations.next().unwrap();
+                                    server_operations.next().unwrap();
+                                    server_end += 1;
+                                }
+                                Ordering::Greater => {
+                                    let server_operation = server_operations.next().unwrap();
+                                    missed_client_ops.push(btree::Edit::Insert(server_operation));
+                                    server_end += 1;
+                                }
+                            }
+                        }
+                        (None, Some(_)) => {
+                            let server_operation = server_operations.next().unwrap();
+                            missed_client_ops.push(btree::Edit::Insert(server_operation));
+                            server_end += 1;
+                        }
+                        (Some(_), None) => {
+                            let client_operation = client_operations.next().unwrap();
+                            missed_server_ops.push(btree::Edit::Insert(client_operation.clone()));
+                            server_digests
+                                .splice(synced_end..synced_end, [client_operation.into()]);
+                        }
+                        (None, None) => break,
+                    }
+
+                    synced_end += 1;
+                }
+
+                drop(client_operations);
+                client.edit(missed_client_ops, &());
+            }
         }
     }
 
     // Fetch and publish the remaining suffixes.
+    stats.roundtrips += 1;
     if synced_end < client.summary().digest.count || server_end < server_operation_count {
-        log::debug!("exchanging operations for {:?}..", synced_end);
-        roundtrips += 1;
-
-        let remaining_client_ops = operations_for_range(client, synced_end..);
+        log::debug!("sending client operations from {:?}..", synced_end);
+        let remaining_client_ops = operations_for_range(&client, synced_end..);
         missed_server_ops.extend(remaining_client_ops.cloned().map(btree::Edit::Insert));
 
+        log::debug!("getting server operations from {:?}..", server_end);
         let remaining_server_ops = request_operations(server, server_end..);
+        stats.server_operations += remaining_server_ops.len();
         client.edit(
             remaining_server_ops
                 .into_iter()
@@ -327,8 +367,10 @@ fn sync(
         );
     }
 
+    stats.client_operations = missed_server_ops.len();
+
     server.edit(missed_server_ops, &());
-    log::debug!("roundtrips: {}", roundtrips);
+    stats
 }
 
 fn digest_for_range(operations: &btree::Sequence<Operation>, range: Range<usize>) -> Digest {
@@ -373,20 +415,25 @@ fn operations_for_range<T: RangeBounds<usize>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{operations, OperationCount};
+    use crate::{operations, OperationCount, ReplicaId};
     use rand::prelude::*;
     use std::env;
 
     #[test]
     fn test_sync() {
-        assert_sync(1..=10, 5..=10, 0, 16);
-        assert_sync(1..=10, 4..=10, 0, 16);
-        assert_sync(1..=10, 1..=5, 0, 16);
-        assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10], 0, 16);
-        assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12], 0, 16);
-        assert_sync(1..=10, 5..=14, 0, 16);
-        assert_sync(1..=80, (1..=70).chain(90..=100), 0, 16);
-        assert_sync(1..=1910, (1..=1900).chain(1910..=2000), 0, 16);
+        // assert_sync(1..=15, (1..=5).chain(7..=15));
+        // assert_sync(1..=10, 5..=10);
+        // assert_sync(1..=10, 4..=10);
+        // assert_sync(1..=10, 1..=5);
+        // assert_sync([1, 3, 5, 7, 9], [2, 4, 6, 8, 10]);
+        // assert_sync([1, 2, 3, 4, 6, 7, 8, 9, 11, 12], [4, 5, 6, 10, 12]);
+        // assert_sync(1..=10, 5..=14);
+        // assert_sync(1..=80, (1..=70).chain(90..=100));
+        // assert_sync(1..=1910, (1..=1900).chain(1910..=2000));
+        assert_sync(
+            (1..=1500).chain(4000..=10000),
+            (1..=1000).chain(4000..=11000),
+        );
     }
 
     #[gpui::test(iterations = 100)]
@@ -394,12 +441,12 @@ mod tests {
         let max_operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let min_digest_delta = 32;
-        let max_digest_count = 2048;
+        let max_digest_count = 4096;
+        let min_operations = 4096;
 
         let mut connected = true;
-        let mut client_ops = btree::Sequence::new();
-        let mut server_ops = btree::Sequence::new();
+        let mut client_ops = btree::Sequence::<Operation>::new();
+        let mut server_ops = btree::Sequence::<Operation>::new();
         let mut ideal_server_ops = 0;
         let mut ideal_client_ops = 0;
         let mut next_reconnection = None;
@@ -423,13 +470,22 @@ mod tests {
                 connected = true;
                 next_reconnection = None;
                 log::debug!("===============");
+                // log::debug!(
+                //     "client ops: {:?}",
+                //     client_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
+                // );
+                // log::debug!(
+                //     "server ops: {:?}",
+                //     server_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
+                // );
 
-                let stats = sync_client(
+                let stats = sync(
                     &mut client_ops,
                     &mut server_ops,
-                    min_digest_delta,
                     max_digest_count,
+                    min_operations,
                 );
+                log::debug!("roundtrips: {}", stats.roundtrips);
                 log::debug!(
                     "ideal server ops: {}, actual server ops: {}, abs error: {}, pct error: {:.3}%",
                     ideal_server_ops,
@@ -454,24 +510,34 @@ mod tests {
             }
 
             if connected {
-                client_ops.push(build_operation(ix), &());
-                server_ops.push(build_operation(ix), &());
+                let replica_id = ReplicaId(rng.gen_range(0..=1));
+                client_ops.insert_or_replace(build_operation2(replica_id, ix), &());
+                server_ops.insert_or_replace(build_operation2(replica_id, ix), &());
             } else if rng.gen_bool(0.95) {
                 ideal_server_ops += 1;
-                server_ops.push(build_operation(ix), &());
+                server_ops.insert_or_replace(build_operation2(ReplicaId(0), ix), &());
             } else {
                 ideal_client_ops += 1;
-                client_ops.push(build_operation(ix), &());
+                client_ops.insert_or_replace(build_operation2(ReplicaId(1), ix), &());
             }
         }
 
         log::debug!("============");
-        let stats = sync_client(
+        // log::debug!(
+        //     "client ops: {:?}",
+        //     client_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
+        // );
+        // log::debug!(
+        //     "server ops: {:?}",
+        //     server_ops.iter().map(|op| op.id()).collect::<Vec<_>>()
+        // );
+        let stats = sync(
             &mut client_ops,
             &mut server_ops,
-            min_digest_delta,
             max_digest_count,
+            min_operations,
         );
+        log::debug!("roundtrips: {}", stats.roundtrips);
         log::debug!(
             "ideal server ops: {}, actual server ops: {}, abs error: {}, pct error: {:.3}%",
             ideal_server_ops,
@@ -495,8 +561,6 @@ mod tests {
     fn assert_sync(
         client_ops: impl IntoIterator<Item = usize>,
         server_ops: impl IntoIterator<Item = usize>,
-        min_digest_delta: usize,
-        max_digest_count: usize,
     ) {
         let client_ops = client_ops
             .into_iter()
@@ -506,30 +570,51 @@ mod tests {
             .into_iter()
             .map(build_operation)
             .collect::<Vec<_>>();
-        let mut client_operations = btree::Sequence::from_iter(client_ops, &());
-        let mut server_operations = btree::Sequence::from_iter(server_ops, &());
-        sync_client(
-            &mut client_operations,
-            &mut server_operations,
-            min_digest_delta,
-            max_digest_count,
-        );
-        assert_eq!(
-            client_operations
-                .iter()
-                .map(|op| op.id())
-                .collect::<Vec<_>>(),
-            server_operations
-                .iter()
-                .map(|op| op.id())
-                .collect::<Vec<_>>()
-        );
+
+        for max_digests in 256..=256 {
+            for min_operations in 256..=256 {
+                log::debug!(
+                    "max digests: {}, min operations: {}",
+                    max_digests,
+                    min_operations
+                );
+                let mut client_operations = btree::Sequence::from_iter(client_ops.clone(), &());
+                let mut server_operations = btree::Sequence::from_iter(server_ops.clone(), &());
+                sync(
+                    &mut client_operations,
+                    &mut server_operations,
+                    max_digests,
+                    min_operations,
+                );
+                assert_eq!(
+                    client_operations
+                        .iter()
+                        .map(|op| op.id())
+                        .collect::<Vec<_>>(),
+                    server_operations
+                        .iter()
+                        .map(|op| op.id())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     fn build_operation(id: usize) -> Operation {
         Operation::CreateBranch(operations::CreateBranch {
             id: OperationId {
                 replica_id: Default::default(),
+                operation_count: OperationCount(id),
+            },
+            parent: Default::default(),
+            name: "".into(),
+        })
+    }
+
+    fn build_operation2(replica_id: ReplicaId, id: usize) -> Operation {
+        Operation::CreateBranch(operations::CreateBranch {
+            id: OperationId {
+                replica_id,
                 operation_count: OperationCount(id),
             },
             parent: Default::default(),

@@ -3,6 +3,7 @@ use std::{cmp, ops::Range};
 use crate::{
     btree::{self, Bias},
     messages::Operation,
+    OperationId,
 };
 use bromberg_sl2::HashMatrix;
 
@@ -10,6 +11,7 @@ use bromberg_sl2::HashMatrix;
 pub struct Digest {
     pub count: usize,
     pub hash: HashMatrix,
+    pub max_op_id: OperationId,
 }
 
 impl std::fmt::Debug for Digest {
@@ -21,16 +23,13 @@ impl std::fmt::Debug for Digest {
     }
 }
 
-impl Digest {
-    pub fn new(count: usize, hash: HashMatrix) -> Self {
-        assert!(count > 0);
-        Self { count, hash }
-    }
-}
-
 impl From<&'_ Operation> for Digest {
     fn from(op: &'_ Operation) -> Self {
-        Self::new(1, op.id().digest())
+        Self {
+            count: 1,
+            hash: op.id().digest(),
+            max_op_id: op.id(),
+        }
     }
 }
 
@@ -48,6 +47,7 @@ impl btree::Summary for Digest {
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.count += summary.count;
         self.hash = self.hash * summary.hash;
+        self.max_op_id = summary.max_op_id;
     }
 }
 
@@ -82,27 +82,33 @@ impl DigestSequence {
         self.digests.summary().count
     }
 
-    pub fn digest(&self, mut range: Range<usize>) -> Digest {
+    pub fn digest(&self, mut range: Range<usize>) -> (Range<OperationId>, Digest) {
         range.start = cmp::min(range.start, self.digests.summary().count);
         range.end = cmp::min(range.end, self.digests.summary().count);
-        let mut cursor = self.digests.cursor::<usize>();
+        let mut cursor = self.digests.cursor::<(usize, Digest)>();
         cursor.seek(&range.start, Bias::Right, &());
+        let start_op_id = cursor.start().1.max_op_id;
         assert_eq!(
-            *cursor.start(),
+            cursor.start().0,
             range.start,
             "start is not at the start of a digest range"
         );
         let mut hash: HashMatrix = cursor.summary(&range.end, Bias::Right, &());
-        if range.end > *cursor.start() {
+        if range.end > cursor.start().0 {
             let digest = cursor.item().unwrap();
             hash = hash * digest.hash;
             cursor.next(&());
         }
+        let end_op_id = cursor.start().1.max_op_id;
 
-        Digest {
-            count: cursor.start() - range.start,
-            hash,
-        }
+        (
+            start_op_id..end_op_id,
+            Digest {
+                count: cursor.start().0 - range.start,
+                hash,
+                max_op_id: end_op_id,
+            },
+        )
     }
 
     pub fn splice(&mut self, mut range: Range<usize>, digests: impl IntoIterator<Item = Digest>) {
