@@ -28,6 +28,7 @@ use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use convert_case::{Case, Casing};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -233,6 +234,11 @@ actions!(
         ShuffleLines,
         ConvertToUpperCase,
         ConvertToLowerCase,
+        ConvertToTitleCase,
+        ConvertToSnakeCase,
+        ConvertToKebabCase,
+        ConvertToUpperCamelCase,
+        ConvertToLowerCamelCase,
         Transpose,
         Cut,
         Copy,
@@ -357,6 +363,11 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::shuffle_lines);
     cx.add_action(Editor::convert_to_upper_case);
     cx.add_action(Editor::convert_to_lower_case);
+    cx.add_action(Editor::convert_to_title_case);
+    cx.add_action(Editor::convert_to_snake_case);
+    cx.add_action(Editor::convert_to_kebab_case);
+    cx.add_action(Editor::convert_to_upper_camel_case);
+    cx.add_action(Editor::convert_to_lower_camel_case);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -4316,6 +4327,34 @@ impl Editor {
 
     pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| text.to_lowercase())
+    }
+
+    pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Title))
+    }
+
+    pub fn convert_to_snake_case(&mut self, _: &ConvertToSnakeCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Snake))
+    }
+
+    pub fn convert_to_kebab_case(&mut self, _: &ConvertToKebabCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Kebab))
+    }
+
+    pub fn convert_to_upper_camel_case(
+        &mut self,
+        _: &ConvertToUpperCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::UpperCamel))
+    }
+
+    pub fn convert_to_lower_camel_case(
+        &mut self,
+        _: &ConvertToLowerCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Camel))
     }
 
     fn manipulate_text<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
