@@ -4366,6 +4366,8 @@ impl Editor {
 
         let mut new_selections = Vec::new();
         let mut edits = Vec::new();
+        let mut selection_adjustment = 0i32;
+
         for selection in self.selections.all::<usize>(cx) {
             let selection_is_empty = selection.is_empty();
 
@@ -4382,18 +4384,17 @@ impl Editor {
             };
 
             let text = buffer.text_for_range(start..end).collect::<String>();
+            let old_length = text.len() as i32;
             let text = callback(&text);
 
-            if selection_is_empty {
-                new_selections.push(selection);
-            } else {
-                new_selections.push(Selection {
-                    start,
-                    end: start + text.len(),
-                    goal: SelectionGoal::None,
-                    ..selection
-                });
-            }
+            new_selections.push(Selection {
+                start: (start as i32 - selection_adjustment) as usize,
+                end: ((start + text.len()) as i32 - selection_adjustment) as usize,
+                goal: SelectionGoal::None,
+                ..selection
+            });
+
+            selection_adjustment += old_length - text.len() as i32;
 
             edits.push((start..end, text));
         }

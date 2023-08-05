@@ -2719,7 +2719,7 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «hello worldˇ»
     "});
 
-    // From here on out, test more complex cases of manipulate_text() with a single driver method: convert_to_upper_case()
+    // From here on out, test more complex cases of manipulate_text()
 
     // Test no selection case - should affect words cursors are in
     // Cursor at beginning, middle, and end of word
@@ -2728,7 +2728,7 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
     cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
     cx.assert_editor_state(indoc! {"
-        ˇHELLO big BEAUˇTIFUL WORLDˇ
+        «HELLOˇ» big «BEAUTIFULˇ» «WORLDˇ»
     "});
 
     // Test multiple selections on a single line and across multiple lines
@@ -2751,6 +2751,25 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
     cx.assert_editor_state(indoc! {"
         «TSCHÜSSˇ»
+    "});
+
+    // Test to make sure we don't crash when text shrinks
+    cx.set_state(indoc! {"
+        aaa_bbbˇ
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaBbbˇ»
+    "});
+
+    // Test to make sure we all aware of the fact that each word can grow and shrink
+    // Final selections should be aware of this fact
+    cx.set_state(indoc! {"
+        aaa_bˇbb bbˇb_ccc ˇccc_ddd
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaBbbˇ» «bbbCccˇ» «cccDddˇ»
     "});
 }
 
