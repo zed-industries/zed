@@ -49,7 +49,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         |_| IncomingCallNotification::new(incoming_call.clone(), app_state.clone()),
                     );
 
-                    notification_windows.push(window.window_id());
+                    notification_windows.push(window.id());
                 }
             }
         }

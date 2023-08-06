@@ -1568,7 +1568,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1874,7 +1874,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         workspace.update(cx, |workspace, cx| {
             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
         });

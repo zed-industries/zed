@@ -1872,7 +1872,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2225,7 +2225,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2402,7 +2402,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         toggle_expand_dir(&panel, "src/test", cx);
@@ -2493,7 +2493,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "src/", cx);

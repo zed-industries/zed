@@ -619,7 +619,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.id(), Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
@@ -632,8 +632,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -674,7 +674,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.id(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -706,8 +706,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -758,7 +758,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.id(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -790,8 +790,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.id(), SelectNext);
+        cx.dispatch_action(window.id(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -1168,7 +1168,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1376,7 +1376,7 @@ mod tests {
 
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);

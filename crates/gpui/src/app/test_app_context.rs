@@ -4,9 +4,9 @@ use crate::{
     keymap_matcher::{Binding, Keystroke},
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
-    Action, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache, Handle,
-    ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakHandle,
-    WindowContext, WindowHandle,
+    Action, AnyWindowHandle, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache,
+    Handle, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakHandle, WindowContext, WindowHandle,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -124,6 +124,13 @@ impl TestAppContext {
         }
     }
 
+    pub fn window<V: View>(&self, window_id: usize) -> Option<WindowHandle<V>> {
+        self.cx
+            .borrow()
+            .read_window(window_id, |cx| cx.window())
+            .flatten()
+    }
+
     pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
         window_id: usize,
@@ -157,9 +164,9 @@ impl TestAppContext {
             .cx
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window.window_id()));
+        self.simulate_window_activation(Some(window.id()));
 
-        WindowHandle::new(window.window_id())
+        WindowHandle::new(window.id())
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -191,9 +198,13 @@ impl TestAppContext {
         self.cx.borrow_mut().subscribe_global(callback)
     }
 
-    pub fn window_ids(&self) -> Vec<usize> {
-        self.cx.borrow().windows.keys().copied().collect()
+    pub fn windows(&self) -> impl Iterator<Item = AnyWindowHandle> {
+        self.cx.borrow().windows()
     }
+
+    // pub fn window_ids(&self) -> Vec<usize> {
+    //     self.cx.borrow().windows.keys().copied().collect()
+    // }
 
     pub fn remove_all_windows(&mut self) {
         self.update(|cx| cx.windows.clear());
@@ -311,15 +322,15 @@ impl TestAppContext {
 
     pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
         self.cx.borrow_mut().update(|cx| {
-            let other_window_ids = cx
+            let other_windows = cx
                 .windows
                 .keys()
-                .filter(|window_id| Some(**window_id) != to_activate)
+                .filter(|window| Some(window.id()) != to_activate)
                 .copied()
                 .collect::<Vec<_>>();
 
-            for window_id in other_window_ids {
-                cx.window_changed_active_status(window_id, false)
+            for window in other_windows {
+                cx.window_changed_active_status(window.id(), false)
             }
 
             if let Some(to_activate) = to_activate {

@@ -39,7 +39,7 @@ impl<'a> EditorTestContext<'a> {
         let editor = window.root(cx);
         Self {
             cx,
-            window_id: window.window_id(),
+            window_id: window.id(),
             editor,
         }
     }

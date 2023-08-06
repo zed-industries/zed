@@ -23,6 +23,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use derive_more::Deref;
 use parking_lot::Mutex;
 use postage::oneshot;
 use smallvec::SmallVec;
@@ -132,11 +133,13 @@ pub trait BorrowAppContext {
 pub trait BorrowWindowContext {
     type Result<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window_with<H, T, F>(&self, window_handle: H, f: F) -> Self::Result<T>
     where
+        H: Into<AnyWindowHandle>,
         F: FnOnce(&WindowContext) -> T;
-    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
+    fn update_window<H, T, F>(&mut self, window_handle: H, f: F) -> Self::Result<T>
     where
+        H: Into<AnyWindowHandle>,
         F: FnOnce(&mut WindowContext) -> T;
 }
 
@@ -300,13 +303,13 @@ impl App {
         result
     }
 
-    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
+    fn update_window<H, T, F>(&mut self, handle: H, callback: F) -> Option<T>
+    where
+        H: Into<AnyWindowHandle>,
+        F: FnOnce(&mut WindowContext) -> T,
+    {
         let mut state = self.0.borrow_mut();
-        let result = state.update_window(window_id, callback);
+        let result = state.update_window(handle, callback);
         state.pending_notifications.clear();
         result
     }
@@ -333,6 +336,10 @@ impl AsyncAppContext {
         self.0.borrow_mut().update(callback)
     }
 
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.0.borrow().windows().collect()
+    }
+
     pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
         window_id: usize,
@@ -343,10 +350,10 @@ impl AsyncAppContext {
 
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        handle: AnyWindowHandle,
         callback: F,
     ) -> Option<T> {
-        self.0.borrow_mut().update_window(window_id, callback)
+        self.0.borrow_mut().update_window(handle, callback)
     }
 
     pub fn debug_elements(&self, window_id: usize) -> Option<json::Value> {
@@ -359,14 +366,14 @@ impl AsyncAppContext {
 
     pub fn dispatch_action(
         &mut self,
-        window_id: usize,
+        window: impl Into<AnyWindowHandle>,
         view_id: usize,
         action: &dyn Action,
     ) -> Result<()> {
         self.0
             .borrow_mut()
-            .update_window(window_id, |window| {
-                window.dispatch_action(Some(view_id), action);
+            .update_window(window, |cx| {
+                cx.dispatch_action(Some(view_id), action);
             })
             .ok_or_else(|| anyhow!("window not found"))
     }
@@ -378,22 +385,6 @@ impl AsyncAppContext {
     ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         self.read_window(window_id, |cx| cx.available_actions(view_id))
             .unwrap_or_default()
-    }
-
-    pub fn has_window(&self, window_id: usize) -> bool {
-        self.read(|cx| cx.windows.contains_key(&window_id))
-    }
-
-    pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.read(|cx| cx.windows.get(&window_id).map_or(false, |w| w.is_active))
-    }
-
-    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
-        self.read(|cx| cx.windows.get(&window_id).map(|w| w.root_view().clone()))
-    }
-
-    pub fn window_ids(&self) -> Vec<usize> {
-        self.read(|cx| cx.windows.keys().copied().collect())
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -501,7 +492,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     views_metadata: HashMap<(usize, usize), ViewMetadata>,
-    windows: HashMap<usize, Window>,
+    windows: HashMap<AnyWindowHandle, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
@@ -816,22 +807,6 @@ impl AppContext {
         let window = self.windows.get(&window_id)?;
         let window_context = WindowContext::immutable(self, &window, window_id);
         Some(callback(&window_context))
-    }
-
-    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
-        self.update(|app_context| {
-            let mut window = app_context.windows.remove(&window_id)?;
-            let mut window_context = WindowContext::mutable(app_context, &mut window, window_id);
-            let result = callback(&mut window_context);
-            if !window_context.removed {
-                app_context.windows.insert(window_id, window);
-            }
-            Some(result)
-        })
     }
 
     pub fn update_active_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -1331,43 +1306,40 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
+            let window = WindowHandle::<V>::new(post_inc(&mut this.next_id));
             let platform_window =
                 this.platform
-                    .open_window(window_id, window_options, this.foreground.clone());
-            let window = this.build_window(window_id, platform_window, build_root_view);
-            this.windows.insert(window_id, window);
-            WindowHandle::new(window_id)
+                    .open_window(window, window_options, this.foreground.clone());
+            let window = this.build_window(window, platform_window, build_root_view);
+            this.windows.insert(window.into(), window);
+            window
         })
     }
 
-    pub fn add_status_bar_item<V, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<V>)
+    pub fn add_status_bar_item<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
-            let platform_window = this.platform.add_status_item(window_id);
-            let window = this.build_window(window_id, platform_window, build_root_view);
-            let root_view = window.root_view().clone().downcast::<V>().unwrap();
+            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
+            let platform_window = this.platform.add_status_item(handle.id());
+            let window = this.build_window(handle, platform_window, build_root_view);
 
-            this.windows.insert(window_id, window);
-            this.update_window(window_id, |cx| {
-                root_view.update(cx, |view, cx| view.focus_in(cx.handle().into_any(), cx))
-            });
-
-            (window_id, root_view)
+            this.windows.insert(handle.into(), window);
+            handle.update_root(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
+            handle
         })
     }
 
-    pub fn build_window<V, F>(
+    pub fn build_window<H, V, F>(
         &mut self,
-        window_id: usize,
+        handle: H,
         mut platform_window: Box<dyn platform::Window>,
         build_root_view: F,
     ) -> Window
     where
+        H: Into<AnyWindowHandle>,
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
@@ -1375,7 +1347,7 @@ impl AppContext {
             let mut app = self.upgrade();
 
             platform_window.on_event(Box::new(move |event| {
-                app.update_window(window_id, |cx| {
+                app.update_window(handle, |cx| {
                     if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
                         if cx.dispatch_keystroke(keystroke) {
                             return true;
@@ -1391,35 +1363,35 @@ impl AppContext {
         {
             let mut app = self.upgrade();
             platform_window.on_active_status_change(Box::new(move |is_active| {
-                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
+                app.update(|cx| cx.window_changed_active_status(handle, is_active))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_resize(Box::new(move || {
-                app.update(|cx| cx.window_was_resized(window_id))
+                app.update(|cx| cx.window_was_resized(handle))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_moved(Box::new(move || {
-                app.update(|cx| cx.window_was_moved(window_id))
+                app.update(|cx| cx.window_was_moved(handle))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_fullscreen(Box::new(move |is_fullscreen| {
-                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
+                app.update(|cx| cx.window_was_fullscreen_changed(handle, is_fullscreen))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_close(Box::new(move || {
-                app.update(|cx| cx.update_window(window_id, |cx| cx.remove_window()));
+                app.update(|cx| cx.update_window(handle, |cx| cx.remove_window()));
             }));
         }
 
@@ -1431,27 +1403,20 @@ impl AppContext {
 
         platform_window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
-            window_id,
+            window_id: handle,
         }));
 
-        let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let mut cx = WindowContext::mutable(self, &mut window, window_id);
+        let mut window = Window::new(handle, platform_window, self, build_root_view);
+        let mut cx = WindowContext::mutable(self, &mut window, handle);
         cx.layout(false).expect("initial layout should not error");
         let scene = cx.paint().expect("initial paint should not error");
         window.platform_window.present_scene(scene);
         window
     }
 
-    pub(crate) fn replace_root_view<V, F>(
-        &mut self,
-        window_id: usize,
-        build_root_view: F,
-    ) -> Option<WindowHandle<V>>
-    where
-        V: View,
-        F: FnOnce(&mut ViewContext<V>) -> V,
-    {
-        self.update_window(window_id, |cx| cx.replace_root_view(build_root_view))
+    pub fn windows(&self) -> impl Iterator<Item = AnyWindowHandle> {
+        todo!();
+        None.into_iter()
     }
 
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
@@ -2192,11 +2157,20 @@ impl BorrowWindowContext for AppContext {
         AppContext::read_window(self, window_id, f)
     }
 
-    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
+    fn update_window<T, F>(&mut self, window: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&mut WindowContext) -> T,
     {
-        AppContext::update_window(self, window_id, f)
+        self.update(|app_context| {
+            let mut window = app_context.windows.remove(&window_handle)?;
+            let mut window_context =
+                WindowContext::mutable(app_context, &mut window, window_handle);
+            let result = callback(&mut window_context);
+            if !window_context.removed {
+                app_context.windows.insert(window_handle, window);
+            }
+            Some(result)
+        })
     }
 }
 
@@ -3862,42 +3836,26 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
+#[derive(Deref, Copy, Clone)]
 pub struct WindowHandle<T> {
-    window_id: usize,
+    #[deref]
+    any_handle: AnyWindowHandle,
     root_view_type: PhantomData<T>,
 }
 
-#[allow(dead_code)]
 impl<V: View> WindowHandle<V> {
     fn new(window_id: usize) -> Self {
         WindowHandle {
-            window_id,
+            any_handle: AnyWindowHandle {
+                window_id,
+                root_view_type: TypeId::of::<V>(),
+            },
             root_view_type: PhantomData,
         }
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
     pub fn root<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<ViewHandle<V>> {
         self.read_with(cx, |cx| cx.root_view().clone().downcast().unwrap())
-    }
-
-    pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
-    where
-        C: BorrowWindowContext,
-        F: FnOnce(&WindowContext) -> R,
-    {
-        cx.read_window_with(self.window_id(), |cx| read(cx))
-    }
-
-    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
-    where
-        C: BorrowWindowContext,
-        F: FnOnce(&mut WindowContext) -> R,
-    {
-        cx.update_window(self.window_id(), update)
     }
 
     pub fn read_root_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
@@ -3918,13 +3876,60 @@ impl<V: View> WindowHandle<V> {
         C: BorrowWindowContext,
         F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
     {
-        cx.update_window(self.window_id, |cx| {
+        cx.update_window(*self, |cx| {
             cx.root_view()
                 .clone()
                 .downcast::<V>()
                 .unwrap()
                 .update(cx, update)
         })
+    }
+
+    pub fn replace_root<C, F>(&self, cx: &mut C, build_root: F) -> C::Result<ViewHandle<V>>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        cx.update_window(self.into_any(), |cx| {
+            let root_view = self.add_view(cx, |cx| build_root(cx));
+            cx.window.root_view = Some(root_view.clone().into_any());
+            cx.window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+}
+
+impl<V> Into<AnyWindowHandle> for WindowHandle<V> {
+    fn into(self) -> AnyWindowHandle {
+        self.any_handle
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct AnyWindowHandle {
+    window_id: usize,
+    root_view_type: TypeId,
+}
+
+impl AnyWindowHandle {
+    pub fn id(&self) -> usize {
+        self.window_id
+    }
+
+    pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&WindowContext) -> R,
+    {
+        cx.read_window_with(self.window_id, |cx| read(cx))
+    }
+
+    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut WindowContext) -> R,
+    {
+        cx.update_window(self.window_id, update)
     }
 
     pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> C::Result<ViewHandle<U>>
@@ -3936,21 +3941,16 @@ impl<V: View> WindowHandle<V> {
         self.update(cx, |cx| cx.add_view(build_view))
     }
 
-    pub(crate) fn replace_root_view<C, F>(
-        &self,
-        cx: &mut C,
-        build_root_view: F,
-    ) -> C::Result<ViewHandle<V>>
-    where
-        C: BorrowWindowContext,
-        F: FnOnce(&mut ViewContext<V>) -> V,
-    {
-        cx.update_window(self.window_id, |cx| {
-            let root_view = self.add_view(cx, |cx| build_root_view(cx));
-            cx.window.root_view = Some(root_view.clone().into_any());
-            cx.window.focused_view_id = Some(root_view.id());
-            root_view
-        })
+    pub fn root_is<V: View>(&self) -> bool {
+        self.root_view_type == TypeId::of::<V>()
+    }
+
+    pub fn is_active<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<bool> {
+        self.read_with(cx, |cx| cx.window.is_active)
+    }
+
+    pub fn remove<C: BorrowWindowContext>(&self, cx: &mut C) -> C::Result<()> {
+        self.update(cx, |cx| cx.remove_window())
     }
 }
 
@@ -5390,7 +5390,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before notify"])));
+        window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before notify"]));
     }
 
     #[crate::test(self)]
@@ -6227,7 +6227,7 @@ mod tests {
 
         // Check that global actions do not have a binding, even if a binding does exist in another view
         assert_eq!(
-            &available_actions(window.window_id(), view_1.id(), cx),
+            &available_actions(window.id(), view_1.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::GlobalAction", vec![])
@@ -6236,7 +6236,7 @@ mod tests {
 
         // Check that view 1 actions and bindings are available even when called from view 2
         assert_eq!(
-            &available_actions(window.window_id(), view_2.id(), cx),
+            &available_actions(window.id(), view_2.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
@@ -6299,7 +6299,7 @@ mod tests {
             ]);
         });
 
-        let actions = cx.available_actions(window.window_id(), view.id());
+        let actions = cx.available_actions(window.id(), view.id());
         assert_eq!(
             actions[0].1.as_any().downcast_ref::<ActionWithArg>(),
             Some(&ActionWithArg { arg: false })
@@ -6585,25 +6585,25 @@ mod tests {
             [("window 2", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_2.window_id()));
+        cx.simulate_window_activation(Some(window_2.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 3", false), ("window 2", true)]
         );
 
-        cx.simulate_window_activation(Some(window_1.window_id()));
+        cx.simulate_window_activation(Some(window_1.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 2", false), ("window 1", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.window_id()));
+        cx.simulate_window_activation(Some(window_3.id()));
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 1", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.window_id()));
+        cx.simulate_window_activation(Some(window_3.id()));
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 

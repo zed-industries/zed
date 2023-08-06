@@ -196,6 +196,16 @@ impl<'a> WindowContext<'a> {
         self.window_id
     }
 
+    pub fn window<V: View>(&self) -> Option<WindowHandle<V>> {
+        self.window.root_view.as_ref().and_then(|root_view| {
+            if root_view.is::<V>() {
+                Some(WindowHandle::new(self.window_id))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn app_context(&mut self) -> &mut AppContext {
         &mut self.app_context
     }
@@ -1155,17 +1165,6 @@ impl<'a> WindowContext<'a> {
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
         self.window.platform_window.prompt(level, msg, answers)
-    }
-
-    pub(crate) fn replace_root_view<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
-    where
-        V: View,
-        F: FnOnce(&mut ViewContext<V>) -> V,
-    {
-        let root_view = self.add_view(|cx| build_root_view(cx));
-        self.window.focused_view_id = Some(root_view.id());
-        self.window.root_view = Some(root_view.into_any());
-        WindowHandle::new(self.window_id)
     }
 
     pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>

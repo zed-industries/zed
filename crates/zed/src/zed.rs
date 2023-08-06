@@ -813,11 +813,12 @@ mod tests {
 
         // Replace existing windows
         let window_id = cx.window_ids()[0];
+        let window = cx.read_window(window_id, |cx| cx.window()).flatten();
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 &app_state,
-                Some(window_id),
+                window,
                 cx,
             )
         })
@@ -982,9 +983,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1298,7 +1298,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         // Open a file within an existing worktree.
         workspace
@@ -1341,7 +1341,7 @@ mod tests {
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1436,7 +1436,7 @@ mod tests {
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1489,7 +1489,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -2087,7 +2087,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         let window = cx.add_window(|_| TestView);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
@@ -2258,7 +2258,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         let window = cx.add_window(|_| TestView);
-        let window_id = window.window_id();
+        let window_id = window.id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
