@@ -1,6 +1,5 @@
 mod btree;
 mod dense_id;
-mod digest;
 mod history;
 mod messages;
 mod operations;
@@ -137,8 +136,8 @@ pub struct OperationCount(usize);
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct OperationId {
-    pub replica_id: ReplicaId,
     pub operation_count: OperationCount,
+    pub replica_id: ReplicaId,
 }
 
 impl Debug for OperationId {
