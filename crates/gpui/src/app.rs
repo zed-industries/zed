@@ -1442,7 +1442,7 @@ impl AppContext {
         window
     }
 
-    pub fn replace_root_view<V, F>(
+    pub(crate) fn replace_root_view<V, F>(
         &mut self,
         window_id: usize,
         build_root_view: F,
@@ -3900,28 +3900,6 @@ impl<V: View> WindowHandle<V> {
         cx.update_window(self.window_id(), update)
     }
 
-    // pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<Option<R>>
-    // where
-    //     C: BorrowWindowContext,
-    //     F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    // {
-    //     cx.update_window(self.window_id, |cx| {
-    //         cx.root_view()
-    //             .clone()
-    //             .downcast::<V>()
-    //             .map(|v| v.update(cx, update))
-    //     })
-    // }
-
-    pub fn read_root<'a>(&self, cx: &'a AppContext) -> &'a V {
-        let root_view = cx
-            .read_window(self.window_id(), |cx| {
-                cx.root_view().clone().downcast().unwrap()
-            })
-            .unwrap();
-        root_view.read(cx)
-    }
-
     pub fn read_root_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
     where
         C: BorrowWindowContext,
@@ -3935,6 +3913,20 @@ impl<V: View> WindowHandle<V> {
         })
     }
 
+    pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    {
+        cx.update_window(self.window_id, |cx| {
+            cx.root_view()
+                .clone()
+                .downcast::<V>()
+                .unwrap()
+                .update(cx, update)
+        })
+    }
+
     pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> C::Result<ViewHandle<U>>
     where
         C: BorrowWindowContext,
@@ -3942,6 +3934,23 @@ impl<V: View> WindowHandle<V> {
         F: FnOnce(&mut ViewContext<U>) -> U,
     {
         self.update(cx, |cx| cx.add_view(build_view))
+    }
+
+    pub(crate) fn replace_root_view<C, F>(
+        &self,
+        cx: &mut C,
+        build_root_view: F,
+    ) -> C::Result<ViewHandle<V>>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        cx.update_window(self.window_id, |cx| {
+            let root_view = self.add_view(cx, |cx| build_root_view(cx));
+            cx.window.root_view = Some(root_view.clone().into_any());
+            cx.window.focused_view_id = Some(root_view.id());
+            root_view
+        })
     }
 }
 
@@ -5329,7 +5338,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(window.read_root(cx).events, ["before emit"]);
+        window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before emit"]));
     }
 
     #[crate::test(self)]
@@ -5381,7 +5390,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(window.read_root(cx).events, ["before notify"]);
+        assert_eq!(window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before notify"])));
     }
 
     #[crate::test(self)]

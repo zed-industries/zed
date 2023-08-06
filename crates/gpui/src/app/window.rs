@@ -1157,7 +1157,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
+    pub(crate) fn replace_root_view<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
