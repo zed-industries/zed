@@ -368,7 +368,8 @@ impl DisplaySnapshot {
         let new_end = if range.end.column == 0 {
             range.end
         } else if range.end.row < self.max_buffer_row() {
-            Point::new(range.end.row + 1, 0)
+            self.buffer_snapshot
+                .clip_point(Point::new(range.end.row + 1, 0), Bias::Left)
         } else {
             self.buffer_snapshot.max_point()
         };
@@ -376,7 +377,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
-    pub fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
+    fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
