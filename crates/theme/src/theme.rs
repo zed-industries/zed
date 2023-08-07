@@ -220,6 +220,7 @@ pub struct CopilotAuthAuthorized {
 pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub log_in_button: Interactive<ContainedText>,
     pub channel_hash: Icon,
     pub channel_modal: ChannelModal,
     pub user_query_editor: FieldEditor,

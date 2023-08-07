@@ -5,27 +5,29 @@ use settings::Setting;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ChannelsPanelDockPosition {
+pub enum CollaborationPanelDockPosition {
     Left,
     Right,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ChannelsPanelSettings {
-    pub dock: ChannelsPanelDockPosition,
+pub struct CollaborationPanelSettings {
+    pub button: bool,
+    pub dock: CollaborationPanelDockPosition,
     pub default_width: f32,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct ChannelsPanelSettingsContent {
-    pub dock: Option<ChannelsPanelDockPosition>,
+pub struct CollaborationPanelSettingsContent {
+    pub button: Option<bool>,
+    pub dock: Option<CollaborationPanelDockPosition>,
     pub default_width: Option<f32>,
 }
 
-impl Setting for ChannelsPanelSettings {
-    const KEY: Option<&'static str> = Some("channels_panel");
+impl Setting for CollaborationPanelSettings {
+    const KEY: Option<&'static str> = Some("collaboration_panel");
 
-    type FileContent = ChannelsPanelSettingsContent;
+    type FileContent = CollaborationPanelSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,

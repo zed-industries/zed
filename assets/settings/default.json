@@ -122,13 +122,17 @@
     // Amount of indentation for nested items.
     "indent_size": 20
   },
-  "channels_panel": {
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": true,
     // Where to dock channels panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the channels panel.
     "default_width": 240
   },
   "assistant": {
+    // Whether to show the assistant panel button in the status bar.
+    "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.
@@ -220,7 +224,9 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {

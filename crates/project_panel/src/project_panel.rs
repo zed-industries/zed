@@ -1657,8 +1657,8 @@ impl workspace::dock::Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/folder_tree_16.svg"
+    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
+        Some("icons/folder_tree_16.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {

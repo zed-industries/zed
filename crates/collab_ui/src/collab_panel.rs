@@ -27,7 +27,7 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use panel_settings::{ChannelsPanelDockPosition, ChannelsPanelSettings};
+use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings};
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -65,7 +65,7 @@ impl_actions!(collab_panel, [RemoveChannel, NewChannel, AddMember]);
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 
 pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
-    settings::register::<panel_settings::ChannelsPanelSettings>(cx);
+    settings::register::<panel_settings::CollaborationPanelSettings>(cx);
     contact_finder::init(cx);
     channel_modal::init(cx);
 
@@ -95,6 +95,7 @@ pub struct CollabPanel {
     entries: Vec<ListEntry>,
     selection: Option<usize>,
     user_store: ModelHandle<UserStore>,
+    client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
     project: ModelHandle<Project>,
     match_candidates: Vec<StringMatchCandidate>,
@@ -320,6 +321,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: Vec::default(),
                 workspace: workspace.weak_handle(),
+                client: workspace.app_state().client.clone(),
                 list_state,
             };
             this.update_entries(cx);
@@ -334,6 +336,7 @@ impl CollabPanel {
                             old_dock_position = new_dock_position;
                             cx.emit(Event::DockPositionChanged);
                         }
+                        cx.notify();
                     }),
                 );
 
@@ -1862,6 +1865,31 @@ impl View for CollabPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
         let theme = &theme::current(cx).collab_panel;
 
+        if self.user_store.read(cx).current_user().is_none() {
+            enum LogInButton {}
+
+            return Flex::column()
+                .with_child(
+                    MouseEventHandler::<LogInButton, _>::new(0, cx, |state, _| {
+                        let button = theme.log_in_button.style_for(state);
+                        Label::new("Sign in to collaborate", button.text.clone())
+                            .contained()
+                            .with_style(button.container)
+                    })
+                    .on_click(MouseButton::Left, |_, this, cx| {
+                        let client = this.client.clone();
+                        cx.spawn(|_, cx| async move {
+                            client.authenticate_and_connect(true, &cx).await.log_err()
+                        })
+                        .detach();
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand),
+                )
+                .contained()
+                .with_style(theme.container)
+                .into_any();
+        }
+
         enum PanelFocus {}
         MouseEventHandler::<PanelFocus, _>::new(0, cx, |_, cx| {
             Stack::new()
@@ -1901,9 +1929,9 @@ impl View for CollabPanel {
 
 impl Panel for CollabPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        match settings::get::<ChannelsPanelSettings>(cx).dock {
-            ChannelsPanelDockPosition::Left => DockPosition::Left,
-            ChannelsPanelDockPosition::Right => DockPosition::Right,
+        match settings::get::<CollaborationPanelSettings>(cx).dock {
+            CollaborationPanelDockPosition::Left => DockPosition::Left,
+            CollaborationPanelDockPosition::Right => DockPosition::Right,
         }
     }
 
@@ -1912,13 +1940,15 @@ impl Panel for CollabPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<ChannelsPanelSettings>(
+        settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
             move |settings| {
                 let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => ChannelsPanelDockPosition::Left,
-                    DockPosition::Right => ChannelsPanelDockPosition::Right,
+                    DockPosition::Left | DockPosition::Bottom => {
+                        CollaborationPanelDockPosition::Left
+                    }
+                    DockPosition::Right => CollaborationPanelDockPosition::Right,
                 };
                 settings.dock = Some(dock);
             },
@@ -1927,7 +1957,7 @@ impl Panel for CollabPanel {
 
     fn size(&self, cx: &gpui::WindowContext) -> f32 {
         self.width
-            .unwrap_or_else(|| settings::get::<ChannelsPanelSettings>(cx).default_width)
+            .unwrap_or_else(|| settings::get::<CollaborationPanelSettings>(cx).default_width)
     }
 
     fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
@@ -1936,8 +1966,10 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/radix/person.svg"
+    fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
+        settings::get::<CollaborationPanelSettings>(cx)
+            .button
+            .then(|| "icons/radix/person.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
