@@ -553,8 +553,12 @@
   {
     "context": "ChannelModal",
     "bindings": {
-      "left": "channel_modal::SelectNextControl",
-      "right": "channel_modal::SelectNextControl",
+      "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ChannelModal > Picker > Editor",
+    "bindings": {
       "tab": "channel_modal::ToggleMode"
     }
   },

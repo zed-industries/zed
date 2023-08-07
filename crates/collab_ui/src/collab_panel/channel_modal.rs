@@ -16,7 +16,7 @@ actions!(channel_modal, [SelectNextControl, ToggleMode]);
 pub fn init(cx: &mut AppContext) {
     Picker::<ChannelModalDelegate>::init(cx);
     cx.add_action(ChannelModal::toggle_mode);
-    cx.add_action(ChannelModal::select_next_control);
+    // cx.add_action(ChannelModal::select_next_control);
 }
 
 pub struct ChannelModal {
@@ -64,6 +64,7 @@ impl ChannelModal {
         });
 
         cx.subscribe(&picker, |_, _, e, cx| cx.emit(*e)).detach();
+
         let has_focus = picker.read(cx).has_focus();
 
         Self {
@@ -105,29 +106,30 @@ impl ChannelModal {
                     picker.update_matches(picker.query(cx), cx);
                     cx.notify()
                 });
+                cx.notify()
             })
         })
         .detach();
     }
 
-    fn select_next_control(&mut self, _: &SelectNextControl, cx: &mut ViewContext<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            let delegate = picker.delegate_mut();
-            match delegate.mode {
-                Mode::ManageMembers => match delegate.selected_column {
-                    Some(UserColumn::Remove) => {
-                        delegate.selected_column = Some(UserColumn::ToggleAdmin)
-                    }
-                    Some(UserColumn::ToggleAdmin) => {
-                        delegate.selected_column = Some(UserColumn::Remove)
-                    }
-                    None => todo!(),
-                },
-                Mode::InviteMembers => {}
-            }
-            cx.notify()
-        });
-    }
+    // fn select_next_control(&mut self, _: &SelectNextControl, cx: &mut ViewContext<Self>) {
+    //     self.picker.update(cx, |picker, cx| {
+    //         let delegate = picker.delegate_mut();
+    //         match delegate.mode {
+    //             Mode::ManageMembers => match delegate.selected_column {
+    //                 Some(UserColumn::Remove) => {
+    //                     delegate.selected_column = Some(UserColumn::ToggleAdmin)
+    //                 }
+    //                 Some(UserColumn::ToggleAdmin) => {
+    //                     delegate.selected_column = Some(UserColumn::Remove)
+    //                 }
+    //                 None => todo!(),
+    //             },
+    //             Mode::InviteMembers => {}
+    //         }
+    //         cx.notify()
+    //     });
+    // }
 }
 
 impl Entity for ChannelModal {
@@ -209,8 +211,11 @@ impl View for ChannelModal {
             .into_any()
     }
 
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = true;
+        if cx.is_self_focused() {
+            cx.focus(&self.picker)
+        }
     }
 
     fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
