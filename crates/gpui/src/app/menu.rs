@@ -77,9 +77,9 @@ pub(crate) fn setup_menu_handlers(foreground_platform: &dyn ForegroundPlatform, 
         let cx = app.0.clone();
         move |action| {
             let mut cx = cx.borrow_mut();
-            if let Some(main_window_id) = cx.platform.main_window_id() {
-                let dispatched = cx
-                    .update_window(main_window_id, |cx| {
+            if let Some(main_window) = cx.main_window() {
+                let dispatched = main_window
+                    .update(&mut *cx, |cx| {
                         if let Some(view_id) = cx.focused_view_id() {
                             cx.dispatch_action(Some(view_id), action);
                             true

@@ -133,13 +133,11 @@ pub trait BorrowAppContext {
 pub trait BorrowWindowContext {
     type Result<T>;
 
-    fn read_window_with<H, T, F>(&self, window_handle: H, f: F) -> Self::Result<T>
+    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
     where
-        H: Into<AnyWindowHandle>,
         F: FnOnce(&WindowContext) -> T;
-    fn update_window<H, T, F>(&mut self, window_handle: H, f: F) -> Self::Result<T>
+    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
     where
-        H: Into<AnyWindowHandle>,
         F: FnOnce(&mut WindowContext) -> T;
 }
 
@@ -303,13 +301,12 @@ impl App {
         result
     }
 
-    fn update_window<H, T, F>(&mut self, handle: H, callback: F) -> Option<T>
+    fn update_window<T, F>(&mut self, window_id: usize, callback: F) -> Option<T>
     where
-        H: Into<AnyWindowHandle>,
         F: FnOnce(&mut WindowContext) -> T,
     {
         let mut state = self.0.borrow_mut();
-        let result = state.update_window(handle, callback);
+        let result = state.update_window(window_id, callback);
         state.pending_notifications.clear();
         result
     }
@@ -350,10 +347,10 @@ impl AsyncAppContext {
 
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        handle: AnyWindowHandle,
+        window_id: usize,
         callback: F,
     ) -> Option<T> {
-        self.0.borrow_mut().update_window(handle, callback)
+        self.0.borrow_mut().update_window(window_id, callback)
     }
 
     pub fn debug_elements(&self, window_id: usize) -> Option<json::Value> {
@@ -366,13 +363,13 @@ impl AsyncAppContext {
 
     pub fn dispatch_action(
         &mut self,
-        window: impl Into<AnyWindowHandle>,
+        window_id: usize,
         view_id: usize,
         action: &dyn Action,
     ) -> Result<()> {
         self.0
             .borrow_mut()
-            .update_window(window, |cx| {
+            .update_window(window_id, |cx| {
                 cx.dispatch_action(Some(view_id), action);
             })
             .ok_or_else(|| anyhow!("window not found"))
@@ -492,7 +489,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     views_metadata: HashMap<(usize, usize), ViewMetadata>,
-    windows: HashMap<AnyWindowHandle, Window>,
+    windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
@@ -1414,9 +1411,18 @@ impl AppContext {
         window
     }
 
-    pub fn windows(&self) -> impl Iterator<Item = AnyWindowHandle> {
-        todo!();
-        None.into_iter()
+    pub fn main_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.main_window_id().and_then(|main_window_id| {
+            self.windows
+                .get(&main_window_id)
+                .map(|window| AnyWindowHandle::new(main_window_id, window.root_view().type_id()))
+        })
+    }
+
+    pub fn windows(&self) -> impl '_ + Iterator<Item = AnyWindowHandle> {
+        self.windows.iter().map(|(window_id, window)| {
+            AnyWindowHandle::new(*window_id, window.root_view().type_id())
+        })
     }
 
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
@@ -2157,17 +2163,16 @@ impl BorrowWindowContext for AppContext {
         AppContext::read_window(self, window_id, f)
     }
 
-    fn update_window<T, F>(&mut self, window: usize, f: F) -> Self::Result<T>
+    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&mut WindowContext) -> T,
     {
         self.update(|app_context| {
-            let mut window = app_context.windows.remove(&window_handle)?;
-            let mut window_context =
-                WindowContext::mutable(app_context, &mut window, window_handle);
-            let result = callback(&mut window_context);
+            let mut window = app_context.windows.remove(&window_id)?;
+            let mut window_context = WindowContext::mutable(app_context, &mut window, window_id);
+            let result = f(&mut window_context);
             if !window_context.removed {
-                app_context.windows.insert(window_handle, window);
+                app_context.windows.insert(window_id, window);
             }
             Some(result)
         })
@@ -3876,7 +3881,7 @@ impl<V: View> WindowHandle<V> {
         C: BorrowWindowContext,
         F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
     {
-        cx.update_window(*self, |cx| {
+        cx.update_window(self.id(), |cx| {
             cx.root_view()
                 .clone()
                 .downcast::<V>()
@@ -3890,7 +3895,7 @@ impl<V: View> WindowHandle<V> {
         C: BorrowWindowContext,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
-        cx.update_window(self.into_any(), |cx| {
+        cx.update_window(self.id(), |cx| {
             let root_view = self.add_view(cx, |cx| build_root(cx));
             cx.window.root_view = Some(root_view.clone().into_any());
             cx.window.focused_view_id = Some(root_view.id());
@@ -3912,6 +3917,13 @@ pub struct AnyWindowHandle {
 }
 
 impl AnyWindowHandle {
+    fn new(window_id: usize, root_view_type: TypeId) -> Self {
+        Self {
+            window_id,
+            root_view_type,
+        }
+    }
+
     pub fn id(&self) -> usize {
         self.window_id
     }

@@ -198,8 +198,8 @@ impl TestAppContext {
         self.cx.borrow_mut().subscribe_global(callback)
     }
 
-    pub fn windows(&self) -> impl Iterator<Item = AnyWindowHandle> {
-        self.cx.borrow().windows()
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.cx.borrow().windows().collect()
     }
 
     // pub fn window_ids(&self) -> Vec<usize> {
@@ -322,15 +322,15 @@ impl TestAppContext {
 
     pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
         self.cx.borrow_mut().update(|cx| {
-            let other_windows = cx
+            let other_window_ids = cx
                 .windows
                 .keys()
-                .filter(|window| Some(window.id()) != to_activate)
+                .filter(|window_id| Some(**window_id) != to_activate)
                 .copied()
                 .collect::<Vec<_>>();
 
-            for window in other_windows {
-                cx.window_changed_active_status(window.id(), false)
+            for window_id in other_window_ids {
+                cx.window_changed_active_status(window_id, false)
             }
 
             if let Some(to_activate) = to_activate {
