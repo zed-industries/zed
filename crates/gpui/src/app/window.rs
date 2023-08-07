@@ -144,12 +144,19 @@ impl BorrowAppContext for WindowContext<'_> {
 impl BorrowWindowContext for WindowContext<'_> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         if self.window_id == window_id {
             f(self)
         } else {
             panic!("read_with called with id of window that does not belong to this context")
         }
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window(self, window_id, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -162,6 +169,13 @@ impl BorrowWindowContext for WindowContext<'_> {
         } else {
             panic!("update called with id of window that does not belong to this context")
         }
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(self, window_id, f)
     }
 }
 

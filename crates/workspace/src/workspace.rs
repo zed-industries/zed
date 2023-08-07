@@ -4035,16 +4035,9 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspaces = cx
-            .window_ids()
+            .windows()
             .into_iter()
-            .filter_map(|window_id| {
-                Some(
-                    cx.root_view(window_id)?
-                        .clone()
-                        .downcast::<Workspace>()?
-                        .downgrade(),
-                )
-            })
+            .filter_map(|window| Some(window.downcast::<Workspace>()?.root(&cx)?.downgrade()))
             .collect::<Vec<_>>();
 
         // If multiple windows have unsaved changes, and need a save prompt,

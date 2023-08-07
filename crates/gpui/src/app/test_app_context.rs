@@ -92,33 +92,34 @@ impl TestAppContext {
         self.update(|cx| cx.dispatch_global_action_any(&action));
     }
 
-    pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
-        let handled = self
-            .cx
-            .borrow_mut()
-            .update_window(window_id, |cx| {
-                if cx.dispatch_keystroke(&keystroke) {
-                    return true;
-                }
+    pub fn dispatch_keystroke(
+        &mut self,
+        window: AnyWindowHandle,
+        keystroke: Keystroke,
+        is_held: bool,
+    ) {
+        let handled = window.update(self, |cx| {
+            if cx.dispatch_keystroke(&keystroke) {
+                return true;
+            }
 
-                if cx.dispatch_event(
-                    Event::KeyDown(KeyDownEvent {
-                        keystroke: keystroke.clone(),
-                        is_held,
-                    }),
-                    false,
-                ) {
-                    return true;
-                }
+            if cx.dispatch_event(
+                Event::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held,
+                }),
+                false,
+            ) {
+                return true;
+            }
 
-                false
-            })
-            .unwrap_or(false);
+            false
+        });
 
         if !handled && !keystroke.cmd && !keystroke.ctrl {
             WindowInputHandler {
                 app: self.cx.clone(),
-                window_id,
+                window,
             }
             .replace_text_in_range(None, &keystroke.key)
         }
@@ -419,11 +420,18 @@ impl BorrowAppContext for TestAppContext {
 impl BorrowWindowContext for TestAppContext {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         self.cx
             .borrow()
             .read_window(window_id, f)
             .expect("window was closed")
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window(self, window_id, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -435,6 +443,13 @@ impl BorrowWindowContext for TestAppContext {
             .borrow_mut()
             .update_window(window_id, f)
             .expect("window was closed")
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window(self, window_id, f)
     }
 }
 

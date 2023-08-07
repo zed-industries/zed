@@ -133,12 +133,18 @@ pub trait BorrowAppContext {
 pub trait BorrowWindowContext {
     type Result<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T;
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>;
     fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&mut WindowContext) -> T;
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>;
 }
 
 #[derive(Clone)]
@@ -449,11 +455,20 @@ impl BorrowAppContext for AsyncAppContext {
 impl BorrowWindowContext for AsyncAppContext {
     type Result<T> = Option<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T,
     {
         self.0.borrow().read_with(|cx| cx.read_window(window_id, f))
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        self.0
+            .borrow_mut()
+            .update(|cx| cx.read_window_optional(window_id, f))
     }
 
     fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
@@ -463,6 +478,15 @@ impl BorrowWindowContext for AsyncAppContext {
         self.0
             .borrow_mut()
             .update(|cx| cx.update_window(window_id, f))
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        self.0
+            .borrow_mut()
+            .update(|cx| cx.update_window_optional(window_id, f))
     }
 }
 
@@ -1303,13 +1327,14 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window = WindowHandle::<V>::new(post_inc(&mut this.next_id));
+            let window_id = post_inc(&mut this.next_id);
             let platform_window =
                 this.platform
-                    .open_window(window, window_options, this.foreground.clone());
-            let window = this.build_window(window, platform_window, build_root_view);
-            this.windows.insert(window.into(), window);
-            window
+                    .open_window(window_id, window_options, this.foreground.clone());
+            let handle = WindowHandle::<V>::new(window_id);
+            let window = this.build_window(handle, platform_window, build_root_view);
+            this.windows.insert(window_id, window);
+            handle
         })
     }
 
@@ -1319,11 +1344,11 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
-            let platform_window = this.platform.add_status_item(handle.id());
+            let window_id = post_inc(&mut this.next_id);
+            let platform_window = this.platform.add_status_item(window_id);
+            let handle = WindowHandle::<V>::new(window_id);
             let window = this.build_window(handle, platform_window, build_root_view);
-
-            this.windows.insert(handle.into(), window);
+            this.windows.insert(window_id, window);
             handle.update_root(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
             handle
         })
@@ -1340,11 +1365,14 @@ impl AppContext {
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
+        let handle: AnyWindowHandle = handle.into();
+        let window_id = handle.id();
+
         {
             let mut app = self.upgrade();
 
             platform_window.on_event(Box::new(move |event| {
-                app.update_window(handle, |cx| {
+                app.update_window(window_id, |cx| {
                     if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
                         if cx.dispatch_keystroke(keystroke) {
                             return true;
@@ -1360,35 +1388,35 @@ impl AppContext {
         {
             let mut app = self.upgrade();
             platform_window.on_active_status_change(Box::new(move |is_active| {
-                app.update(|cx| cx.window_changed_active_status(handle, is_active))
+                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_resize(Box::new(move || {
-                app.update(|cx| cx.window_was_resized(handle))
+                app.update(|cx| cx.window_was_resized(window_id))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_moved(Box::new(move || {
-                app.update(|cx| cx.window_was_moved(handle))
+                app.update(|cx| cx.window_was_moved(window_id))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_fullscreen(Box::new(move |is_fullscreen| {
-                app.update(|cx| cx.window_was_fullscreen_changed(handle, is_fullscreen))
+                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_close(Box::new(move || {
-                app.update(|cx| cx.update_window(handle, |cx| cx.remove_window()));
+                app.update(|cx| cx.update_window(window_id, |cx| cx.remove_window()));
             }));
         }
 
@@ -1400,11 +1428,11 @@ impl AppContext {
 
         platform_window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
-            window_id: handle,
+            window: handle,
         }));
 
-        let mut window = Window::new(handle, platform_window, self, build_root_view);
-        let mut cx = WindowContext::mutable(self, &mut window, handle);
+        let mut window = Window::new(window_id, platform_window, self, build_root_view);
+        let mut cx = WindowContext::mutable(self, &mut window, window_id);
         cx.layout(false).expect("initial layout should not error");
         let scene = cx.paint().expect("initial paint should not error");
         window.platform_window.present_scene(scene);
@@ -2156,11 +2184,18 @@ impl BorrowAppContext for AppContext {
 impl BorrowWindowContext for AppContext {
     type Result<T> = Option<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T,
     {
         AppContext::read_window(self, window_id, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        AppContext::read_window(self, window_id, f).flatten()
     }
 
     fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
@@ -2176,6 +2211,13 @@ impl BorrowWindowContext for AppContext {
             }
             Some(result)
         })
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        AppContext::update_window(self, window_id, f).flatten()
     }
 }
 
@@ -3379,8 +3421,15 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
 impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.window_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.window_context, window_id, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.window_context, window_id, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -3389,6 +3438,13 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
         f: F,
     ) -> T {
         BorrowWindowContext::update_window(&mut *self.window_context, window_id, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.window_context, window_id, f)
     }
 }
 
@@ -3490,8 +3546,15 @@ impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
 impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.view_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.view_context, window_id, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.view_context, window_id, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -3500,6 +3563,13 @@ impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
         f: F,
     ) -> T {
         BorrowWindowContext::update_window(&mut *self.view_context, window_id, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.view_context, window_id, f)
     }
 }
 
@@ -3548,8 +3618,15 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.view_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.view_context, window_id, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.view_context, window_id, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -3558,6 +3635,13 @@ impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
         f: F,
     ) -> T {
         BorrowWindowContext::update_window(&mut *self.view_context, window_id, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.view_context, window_id, f)
     }
 }
 
@@ -3841,12 +3925,23 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
-#[derive(Deref, Copy, Clone)]
-pub struct WindowHandle<T> {
+#[derive(Deref)]
+pub struct WindowHandle<V> {
     #[deref]
     any_handle: AnyWindowHandle,
-    root_view_type: PhantomData<T>,
+    root_view_type: PhantomData<V>,
 }
+
+impl<V> Clone for WindowHandle<V> {
+    fn clone(&self) -> Self {
+        Self {
+            any_handle: self.any_handle.clone(),
+            root_view_type: PhantomData,
+        }
+    }
+}
+
+impl<V> Copy for WindowHandle<V> {}
 
 impl<V: View> WindowHandle<V> {
     fn new(window_id: usize) -> Self {
@@ -3933,7 +4028,15 @@ impl AnyWindowHandle {
         C: BorrowWindowContext,
         F: FnOnce(&WindowContext) -> R,
     {
-        cx.read_window_with(self.window_id, |cx| read(cx))
+        cx.read_window(self.window_id, |cx| read(cx))
+    }
+
+    pub fn read_optional_with<C, F, R>(&self, cx: &C, read: F) -> Option<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&WindowContext) -> Option<R>,
+    {
+        cx.read_window_optional(self.window_id, |cx| read(cx))
     }
 
     pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
@@ -3944,6 +4047,14 @@ impl AnyWindowHandle {
         cx.update_window(self.window_id, update)
     }
 
+    pub fn update_optional<C, F, R>(&self, cx: &mut C, update: F) -> Option<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut WindowContext) -> Option<R>,
+    {
+        cx.update_window_optional(self.window_id, update)
+    }
+
     pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> C::Result<ViewHandle<U>>
     where
         C: BorrowWindowContext,
@@ -3951,6 +4062,17 @@ impl AnyWindowHandle {
         F: FnOnce(&mut ViewContext<U>) -> U,
     {
         self.update(cx, |cx| cx.add_view(build_view))
+    }
+
+    pub fn downcast<V: View>(self) -> Option<WindowHandle<V>> {
+        if self.root_view_type == TypeId::of::<V>() {
+            Some(WindowHandle {
+                any_handle: self,
+                root_view_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 
     pub fn root_is<V: View>(&self) -> bool {
@@ -4018,7 +4140,7 @@ impl<T: View> ViewHandle<T> {
         C: BorrowWindowContext,
         F: FnOnce(&T, &ViewContext<T>) -> S,
     {
-        cx.read_window_with(self.window_id, |cx| {
+        cx.read_window(self.window_id, |cx| {
             let cx = ViewContext::immutable(cx, self.view_id);
             read(cx.read_view(self), &cx)
         })
