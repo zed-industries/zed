@@ -127,17 +127,21 @@ impl ChannelStore {
         cx.notify();
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            client
+            let result = client
                 .request(proto::InviteChannelMember {
                     channel_id,
                     user_id,
                     admin,
                 })
-                .await?;
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
             });
+
+            result?;
+
             Ok(())
         })
     }
@@ -155,16 +159,18 @@ impl ChannelStore {
         cx.notify();
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            client
+            let result = client
                 .request(proto::RemoveChannelMember {
                     channel_id,
                     user_id,
                 })
-                .await?;
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
             });
+            result?;
             Ok(())
         })
     }
@@ -183,17 +189,20 @@ impl ChannelStore {
         cx.notify();
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            client
+            let result = client
                 .request(proto::SetChannelMemberAdmin {
                     channel_id,
                     user_id,
                     admin,
                 })
-                .await?;
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
             });
+
+            result?;
             Ok(())
         })
     }

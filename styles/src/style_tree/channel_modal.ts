@@ -76,21 +76,8 @@ export default function channel_modal(): any {
             ...text(theme.middle, "sans", { size: "xs" }),
             background: background(theme.middle),
         },
-        admin_toggle_part: toggleable({
-            base: {
-                ...text(theme.middle, "sans", { size: "xs" }),
-                padding: {
-                    left: 7,
-                    right: 7,
-                },
-            },
-            state: {
-                active: {
-                    background: background(theme.middle, "on"),
-                }
-            }
-        }),
         admin_toggle: {
+            ...text(theme.middle, "sans", { size: "xs" }),
             border: border(theme.middle, "active"),
             background: background(theme.middle),
             margin: {

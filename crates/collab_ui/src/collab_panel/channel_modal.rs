@@ -45,15 +45,7 @@ impl ChannelModal {
                     user_store: user_store.clone(),
                     channel_store: channel_store.clone(),
                     channel_id,
-                    match_candidates: members
-                        .iter()
-                        .enumerate()
-                        .map(|(id, member)| StringMatchCandidate {
-                            id,
-                            string: member.user.github_login.clone(),
-                            char_bag: member.user.github_login.chars().collect(),
-                        })
-                        .collect(),
+                    match_candidates: Vec::new(),
                     members,
                     mode,
                     selected_column: None,
@@ -256,7 +248,7 @@ pub struct ChannelModalDelegate {
     selected_index: usize,
     mode: Mode,
     selected_column: Option<UserColumn>,
-    match_candidates: Arc<[StringMatchCandidate]>,
+    match_candidates: Vec<StringMatchCandidate>,
     members: Vec<ChannelMembership>,
 }
 
@@ -287,30 +279,36 @@ impl PickerDelegate for ChannelModalDelegate {
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         match self.mode {
             Mode::ManageMembers => {
-                let match_candidates = self.match_candidates.clone();
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(self.members.iter().enumerate().map(|(id, member)| {
+                        StringMatchCandidate {
+                            id,
+                            string: member.user.github_login.clone(),
+                            char_bag: member.user.github_login.chars().collect(),
+                        }
+                    }));
+
+                let matches = cx.background().block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    cx.background().clone(),
+                ));
+
                 cx.spawn(|picker, mut cx| async move {
-                    async move {
-                        let matches = match_strings(
-                            &match_candidates,
-                            &query,
-                            true,
-                            usize::MAX,
-                            &Default::default(),
-                            cx.background().clone(),
-                        )
-                        .await;
-                        picker.update(&mut cx, |picker, cx| {
+                    picker
+                        .update(&mut cx, |picker, cx| {
                             let delegate = picker.delegate_mut();
                             delegate.matching_member_indices.clear();
                             delegate
                                 .matching_member_indices
                                 .extend(matches.into_iter().map(|m| m.candidate_id));
                             cx.notify();
-                        })?;
-                        anyhow::Ok(())
-                    }
-                    .log_err()
-                    .await;
+                        })
+                        .ok();
                 })
             }
             Mode::InviteMembers => {
@@ -346,11 +344,7 @@ impl PickerDelegate for ChannelModalDelegate {
                     }
                 }
                 Some(proto::channel_member::Kind::AncestorMember) | None => {
-                    self.channel_store
-                        .update(cx, |store, cx| {
-                            store.invite_member(self.channel_id, selected_user.id, false, cx)
-                        })
-                        .detach();
+                    self.invite_member(selected_user, cx)
                 }
             }
         }
@@ -386,41 +380,24 @@ impl PickerDelegate for ChannelModalDelegate {
                     .aligned()
                     .left(),
             )
-            .with_children(admin.map(|admin| {
-                let member_style = theme.admin_toggle_part.in_state(!admin);
-                let admin_style = theme.admin_toggle_part.in_state(admin);
-                Flex::row()
-                    .with_child(
-                        Label::new("member", member_style.text.clone())
-                            .contained()
-                            .with_style(member_style.container),
-                    )
-                    .with_child(
-                        Label::new("admin", admin_style.text.clone())
-                            .contained()
-                            .with_style(admin_style.container),
-                    )
+            .with_children(admin.map(|_| {
+                Label::new("admin", theme.admin_toggle.text.clone())
                     .contained()
-                    .with_style(theme.admin_toggle)
+                    .with_style(theme.admin_toggle.container)
                     .aligned()
-                    .flex_float()
             }))
             .with_children({
                 match self.mode {
                     Mode::ManageMembers => match request_status {
-                        Some(proto::channel_member::Kind::Member) => Some(
-                            Label::new("remove member", theme.remove_member_button.text.clone())
-                                .contained()
-                                .with_style(theme.remove_member_button.container)
-                                .into_any(),
-                        ),
                         Some(proto::channel_member::Kind::Invitee) => Some(
                             Label::new("cancel invite", theme.cancel_invite_button.text.clone())
                                 .contained()
                                 .with_style(theme.cancel_invite_button.container)
                                 .into_any(),
                         ),
-                        Some(proto::channel_member::Kind::AncestorMember) | None => None,
+                        Some(proto::channel_member::Kind::Member)
+                        | Some(proto::channel_member::Kind::AncestorMember)
+                        | None => None,
                     },
                     Mode::InviteMembers => {
                         let svg = match request_status {
@@ -466,11 +443,12 @@ impl ChannelModalDelegate {
         self.members
             .iter()
             .find_map(|membership| (membership.user.id == user_id).then_some(membership.kind))
-            .or(self
-                .channel_store
-                .read(cx)
-                .has_pending_channel_invite(self.channel_id, user_id)
-                .then_some(proto::channel_member::Kind::Invitee))
+            .or_else(|| {
+                self.channel_store
+                    .read(cx)
+                    .has_pending_channel_invite(self.channel_id, user_id)
+                    .then_some(proto::channel_member::Kind::Invitee)
+            })
     }
 
     fn user_at_index(&self, ix: usize) -> Option<(Arc<User>, Option<bool>)> {
@@ -513,6 +491,27 @@ impl ChannelModalDelegate {
                 if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
                     this.members.remove(ix);
                 }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn invite_member(&mut self, user: Arc<User>, cx: &mut ViewContext<Picker<Self>>) {
+        let invite_member = self.channel_store.update(cx, |store, cx| {
+            store.invite_member(self.channel_id, user.id, false, cx)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            invite_member.await?;
+
+            this.update(&mut cx, |this, cx| {
+                let delegate_mut = this.delegate_mut();
+                delegate_mut.members.push(ChannelMembership {
+                    user,
+                    kind: proto::channel_member::Kind::Invitee,
+                    admin: false,
+                });
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);
