@@ -31,6 +31,7 @@ use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings}
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
+use staff_mode::StaffMode;
 use std::{mem, sync::Arc};
 use theme::IconButton;
 use util::{ResultExt, TryFutureExt};
@@ -347,6 +348,8 @@ impl CollabPanel {
                 .push(cx.observe(&this.channel_store, |this, _, cx| this.update_entries(cx)));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
+            this.subscriptions
+                .push(cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(cx)));
 
             this
         })
@@ -516,79 +519,76 @@ impl CollabPanel {
             }
         }
 
-        self.entries.push(ListEntry::Header(Section::Channels, 0));
+        let mut request_entries = Vec::new();
+        if self.include_channels_section(cx) {
+            self.entries.push(ListEntry::Header(Section::Channels, 0));
 
-        let channels = channel_store.channels();
-        if !(channels.is_empty() && self.channel_editing_state.is_none()) {
-            self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    channels
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, channel)| StringMatchCandidate {
+            let channels = channel_store.channels();
+            if !(channels.is_empty() && self.channel_editing_state.is_none()) {
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(channels.iter().enumerate().map(|(ix, channel)| {
+                        StringMatchCandidate {
                             id: ix,
                             string: channel.name.clone(),
                             char_bag: channel.name.chars().collect(),
-                        }),
-                );
-            let matches = executor.block(match_strings(
-                &self.match_candidates,
-                &query,
-                true,
-                usize::MAX,
-                &Default::default(),
-                executor.clone(),
-            ));
-            if let Some(state) = &self.channel_editing_state {
-                if state.parent_id.is_none() {
-                    self.entries.push(ListEntry::ChannelEditor { depth: 0 });
-                }
-            }
-            for mat in matches {
-                let channel = &channels[mat.candidate_id];
-                self.entries.push(ListEntry::Channel(channel.clone()));
+                        }
+                    }));
+                let matches = executor.block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    executor.clone(),
+                ));
                 if let Some(state) = &self.channel_editing_state {
-                    if state.parent_id == Some(channel.id) {
-                        self.entries.push(ListEntry::ChannelEditor {
-                            depth: channel.depth + 1,
-                        });
+                    if state.parent_id.is_none() {
+                        self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                    }
+                }
+                for mat in matches {
+                    let channel = &channels[mat.candidate_id];
+                    self.entries.push(ListEntry::Channel(channel.clone()));
+                    if let Some(state) = &self.channel_editing_state {
+                        if state.parent_id == Some(channel.id) {
+                            self.entries.push(ListEntry::ChannelEditor {
+                                depth: channel.depth + 1,
+                            });
+                        }
                     }
                 }
             }
-        }
 
-        let mut request_entries = Vec::new();
-        let channel_invites = channel_store.channel_invitations();
-        if !channel_invites.is_empty() {
-            self.match_candidates.clear();
-            self.match_candidates
-                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                    StringMatchCandidate {
-                        id: ix,
-                        string: channel.name.clone(),
-                        char_bag: channel.name.chars().collect(),
-                    }
+            let channel_invites = channel_store.channel_invitations();
+            if !channel_invites.is_empty() {
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+                        StringMatchCandidate {
+                            id: ix,
+                            string: channel.name.clone(),
+                            char_bag: channel.name.chars().collect(),
+                        }
+                    }));
+                let matches = executor.block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    executor.clone(),
+                ));
+                request_entries.extend(matches.iter().map(|mat| {
+                    ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
                 }));
-            let matches = executor.block(match_strings(
-                &self.match_candidates,
-                &query,
-                true,
-                usize::MAX,
-                &Default::default(),
-                executor.clone(),
-            ));
-            request_entries.extend(
-                matches
-                    .iter()
-                    .map(|mat| ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())),
-            );
 
-            if !request_entries.is_empty() {
-                self.entries
-                    .push(ListEntry::Header(Section::ChannelInvites, 1));
-                if !self.collapsed_sections.contains(&Section::ChannelInvites) {
-                    self.entries.append(&mut request_entries);
+                if !request_entries.is_empty() {
+                    self.entries
+                        .push(ListEntry::Header(Section::ChannelInvites, 1));
+                    if !self.collapsed_sections.contains(&Section::ChannelInvites) {
+                        self.entries.append(&mut request_entries);
+                    }
                 }
             }
         }
@@ -686,16 +686,9 @@ impl CollabPanel {
                 executor.clone(),
             ));
 
-            let (mut online_contacts, offline_contacts) = matches
+            let (online_contacts, offline_contacts) = matches
                 .iter()
                 .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
-            if let Some(room) = ActiveCall::global(cx).read(cx).room() {
-                let room = room.read(cx);
-                online_contacts.retain(|contact| {
-                    let contact = &contacts[contact.candidate_id];
-                    !room.contains_participant(contact.user.id)
-                });
-            }
 
             for (matches, section) in [
                 (online_contacts, Section::Online),
@@ -1534,6 +1527,14 @@ impl CollabPanel {
             .into_any()
     }
 
+    fn include_channels_section(&self, cx: &AppContext) -> bool {
+        if cx.has_global::<StaffMode>() {
+            cx.global::<StaffMode>().0
+        } else {
+            false
+        }
+    }
+
     fn deploy_channel_context_menu(
         &mut self,
         position: Vector2F,
@@ -1878,8 +1879,12 @@ impl View for CollabPanel {
                     })
                     .on_click(MouseButton::Left, |_, this, cx| {
                         let client = this.client.clone();
-                        cx.spawn(|_, cx| async move {
-                            client.authenticate_and_connect(true, &cx).await.log_err()
+                        cx.spawn(|this, mut cx| async move {
+                            client.authenticate_and_connect(true, &cx).await.log_err();
+
+                            this.update(&mut cx, |_, cx| {
+                                cx.notify();
+                            })
                         })
                         .detach();
                     })

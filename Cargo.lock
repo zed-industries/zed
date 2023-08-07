@@ -1568,6 +1568,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "staff_mode",
  "theme",
  "theme_selector",
  "util",
