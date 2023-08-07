@@ -362,10 +362,12 @@ impl ProjectSearch {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViewEvent {
     UpdateTab,
     Activate,
     EditorEvent(editor::Event),
+    Dismiss,
 }
 
 impl Entity for ProjectSearchView {
@@ -547,7 +549,9 @@ impl Item for ProjectSearchView {
             .then(|| query_text.into())
             .or_else(|| Some("Project Search".into()))
     }
-
+    fn should_close_item_on_event(event: &Self::Event) -> bool {
+        event == &Self::Event::Dismiss
+    }
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -679,6 +683,7 @@ impl Item for ProjectSearchView {
                 smallvec::smallvec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab]
             }
             ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
+            ViewEvent::Dismiss => smallvec::smallvec![ItemEvent::CloseItem],
             _ => SmallVec::new(),
         }
     }
@@ -2010,6 +2015,16 @@ impl View for ProjectSearchBar {
                                 .with_child(self.render_search_mode_button(SearchMode::Text, cx))
                                 .with_children(semantic_index)
                                 .with_child(self.render_search_mode_button(SearchMode::Regex, cx))
+                                .with_child(super::search_bar::render_close_button(
+                                    &theme.search,
+                                    cx,
+                                    |_, this, cx| {
+                                        if let Some(search) = this.active_project_search.as_mut() {
+                                            search.update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
+                                        }
+                                    },
+                                    None,
+                                ))
                                 .constrained()
                                 .with_height(theme.workspace.toolbar.height)
                                 .contained()

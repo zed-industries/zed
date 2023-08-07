@@ -222,7 +222,12 @@ impl View for BufferSearchBar {
                     )
                     .flex(1., true),
             )
-            .with_child(self.render_close_button(&theme.search, cx))
+            .with_child(super::search_bar::render_close_button(
+                &theme.search,
+                cx,
+                |_, this, cx| this.dismiss(&Default::default(), cx),
+                Some(Box::new(Dismiss)),
+            ))
             .contained()
             .with_style(theme.search.container)
             .into_any_named("search bar")
@@ -512,41 +517,6 @@ impl BufferSearchBar {
             action_type_id,
             tooltip.to_string(),
             Some(Box::new(SelectAllMatches)),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
-    fn render_close_button(
-        &self,
-        theme: &theme::Search,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let tooltip = "Dismiss Buffer Search";
-        let tooltip_style = theme::current(cx).tooltip.clone();
-
-        enum CloseButton {}
-        MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
-            let style = theme.dismiss_button.style_for(state);
-            Svg::new("icons/x_mark_8.svg")
-                .with_color(style.color)
-                .constrained()
-                .with_width(style.icon_width)
-                .aligned()
-                .constrained()
-                .with_width(style.button_width)
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.dismiss(&Default::default(), cx)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<CloseButton>(
-            0,
-            tooltip.to_string(),
-            Some(Box::new(Dismiss)),
             tooltip_style,
             cx,
         )

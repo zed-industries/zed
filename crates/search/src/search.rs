@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 
 pub mod buffer_search;
 pub mod project_search;
+pub(crate) mod search_bar;
 
 pub fn init(cx: &mut AppContext) {
     buffer_search::init(cx);
