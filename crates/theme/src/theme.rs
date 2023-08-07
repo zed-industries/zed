@@ -261,7 +261,7 @@ pub struct ChannelModal {
     pub cancel_invite_button: ContainedText,
     pub member_icon: Icon,
     pub invitee_icon: Icon,
-    pub admin_toggle: ContainedText,
+    pub member_tag: ContainedText,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

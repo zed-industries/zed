@@ -76,12 +76,16 @@ export default function channel_modal(): any {
             ...text(theme.middle, "sans", { size: "xs" }),
             background: background(theme.middle),
         },
-        admin_toggle: {
+        member_tag: {
             ...text(theme.middle, "sans", { size: "xs" }),
             border: border(theme.middle, "active"),
             background: background(theme.middle),
             margin: {
-                right: 8,
+                left: 8,
+            },
+            padding: {
+                left: 4,
+                right: 4,
             }
         },
         container: {

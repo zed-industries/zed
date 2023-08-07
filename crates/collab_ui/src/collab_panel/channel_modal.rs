@@ -1,4 +1,5 @@
 use client::{proto, ChannelId, ChannelMembership, ChannelStore, User, UserId, UserStore};
+use context_menu::{ContextMenu, ContextMenuItem};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions,
@@ -11,12 +12,21 @@ use std::sync::Arc;
 use util::TryFutureExt;
 use workspace::Modal;
 
-actions!(channel_modal, [SelectNextControl, ToggleMode]);
+actions!(
+    channel_modal,
+    [
+        SelectNextControl,
+        ToggleMode,
+        ToggleMemberAdmin,
+        RemoveMember
+    ]
+);
 
 pub fn init(cx: &mut AppContext) {
     Picker::<ChannelModalDelegate>::init(cx);
     cx.add_action(ChannelModal::toggle_mode);
-    // cx.add_action(ChannelModal::select_next_control);
+    cx.add_action(ChannelModal::toggle_member_admin);
+    cx.add_action(ChannelModal::remove_member);
 }
 
 pub struct ChannelModal {
@@ -48,7 +58,11 @@ impl ChannelModal {
                     match_candidates: Vec::new(),
                     members,
                     mode,
-                    selected_column: None,
+                    context_menu: cx.add_view(|cx| {
+                        let mut menu = ContextMenu::new(cx.view_id(), cx);
+                        menu.set_position_mode(OverlayPositionMode::Local);
+                        menu
+                    }),
                 },
                 cx,
             )
@@ -95,6 +109,8 @@ impl ChannelModal {
                 this.picker.update(cx, |picker, cx| {
                     let delegate = picker.delegate_mut();
                     delegate.mode = mode;
+                    delegate.selected_index = 0;
+                    picker.set_query("", cx);
                     picker.update_matches(picker.query(cx), cx);
                     cx.notify()
                 });
@@ -104,24 +120,17 @@ impl ChannelModal {
         .detach();
     }
 
-    // fn select_next_control(&mut self, _: &SelectNextControl, cx: &mut ViewContext<Self>) {
-    //     self.picker.update(cx, |picker, cx| {
-    //         let delegate = picker.delegate_mut();
-    //         match delegate.mode {
-    //             Mode::ManageMembers => match delegate.selected_column {
-    //                 Some(UserColumn::Remove) => {
-    //                     delegate.selected_column = Some(UserColumn::ToggleAdmin)
-    //                 }
-    //                 Some(UserColumn::ToggleAdmin) => {
-    //                     delegate.selected_column = Some(UserColumn::Remove)
-    //                 }
-    //                 None => todo!(),
-    //             },
-    //             Mode::InviteMembers => {}
-    //         }
-    //         cx.notify()
-    //     });
-    // }
+    fn toggle_member_admin(&mut self, _: &ToggleMemberAdmin, cx: &mut ViewContext<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate_mut().toggle_selected_member_admin(cx);
+        })
+    }
+
+    fn remove_member(&mut self, _: &RemoveMember, cx: &mut ViewContext<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate_mut().remove_selected_member(cx);
+        });
+    }
 }
 
 impl Entity for ChannelModal {
@@ -233,12 +242,6 @@ pub enum Mode {
     InviteMembers,
 }
 
-#[derive(Copy, Clone, PartialEq)]
-pub enum UserColumn {
-    ToggleAdmin,
-    Remove,
-}
-
 pub struct ChannelModalDelegate {
     matching_users: Vec<Arc<User>>,
     matching_member_indices: Vec<usize>,
@@ -247,9 +250,9 @@ pub struct ChannelModalDelegate {
     channel_id: ChannelId,
     selected_index: usize,
     mode: Mode,
-    selected_column: Option<UserColumn>,
     match_candidates: Vec<StringMatchCandidate>,
     members: Vec<ChannelMembership>,
+    context_menu: ViewHandle<ContextMenu>,
 }
 
 impl PickerDelegate for ChannelModalDelegate {
@@ -270,10 +273,6 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
-        self.selected_column = match self.mode {
-            Mode::ManageMembers => Some(UserColumn::ToggleAdmin),
-            Mode::InviteMembers => None,
-        };
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
@@ -334,18 +333,17 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some((selected_user, admin)) = self.user_at_index(self.selected_index) {
-            match self.member_status(selected_user.id, cx) {
-                Some(proto::channel_member::Kind::Member)
-                | Some(proto::channel_member::Kind::Invitee) => {
-                    if self.selected_column == Some(UserColumn::ToggleAdmin) {
-                        self.set_member_admin(selected_user.id, !admin.unwrap_or(false), cx);
-                    } else {
+            match self.mode {
+                Mode::ManageMembers => self.show_context_menu(admin.unwrap_or(false), cx),
+                Mode::InviteMembers => match self.member_status(selected_user.id, cx) {
+                    Some(proto::channel_member::Kind::Invitee) => {
                         self.remove_member(selected_user.id, cx);
                     }
-                }
-                Some(proto::channel_member::Kind::AncestorMember) | None => {
-                    self.invite_member(selected_user, cx)
-                }
+                    Some(proto::channel_member::Kind::AncestorMember) | None => {
+                        self.invite_member(selected_user, cx)
+                    }
+                    Some(proto::channel_member::Kind::Member) => {}
+                },
             }
         }
     }
@@ -366,7 +364,10 @@ impl PickerDelegate for ChannelModalDelegate {
         let request_status = self.member_status(user.id, cx);
 
         let style = theme.picker.item.in_state(selected).style_for(mouse_state);
-        Flex::row()
+
+        let in_manage = matches!(self.mode, Mode::ManageMembers);
+
+        let mut result = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
@@ -380,57 +381,81 @@ impl PickerDelegate for ChannelModalDelegate {
                     .aligned()
                     .left(),
             )
-            .with_children(admin.map(|_| {
-                Label::new("admin", theme.admin_toggle.text.clone())
-                    .contained()
-                    .with_style(theme.admin_toggle.container)
-                    .aligned()
+            .with_children({
+                (in_manage && request_status == Some(proto::channel_member::Kind::Invitee)).then(
+                    || {
+                        Label::new("Invited", theme.member_tag.text.clone())
+                            .contained()
+                            .with_style(theme.member_tag.container)
+                            .aligned()
+                            .left()
+                    },
+                )
+            })
+            .with_children(admin.and_then(|admin| {
+                (in_manage && admin).then(|| {
+                    Label::new("Admin", theme.member_tag.text.clone())
+                        .contained()
+                        .with_style(theme.member_tag.container)
+                        .aligned()
+                        .left()
+                })
             }))
             .with_children({
-                match self.mode {
-                    Mode::ManageMembers => match request_status {
-                        Some(proto::channel_member::Kind::Invitee) => Some(
-                            Label::new("cancel invite", theme.cancel_invite_button.text.clone())
+                let svg = match self.mode {
+                    Mode::ManageMembers => Some(
+                        Svg::new("icons/ellipsis_14.svg")
+                            .with_color(theme.member_icon.color)
+                            .constrained()
+                            .with_width(theme.member_icon.width)
+                            .aligned()
+                            .contained()
+                            .with_style(theme.member_icon.container),
+                    ),
+                    Mode::InviteMembers => match request_status {
+                        Some(proto::channel_member::Kind::Member) => Some(
+                            Svg::new("icons/check_8.svg")
+                                .with_color(theme.member_icon.color)
+                                .constrained()
+                                .with_width(theme.member_icon.width)
+                                .aligned()
                                 .contained()
-                                .with_style(theme.cancel_invite_button.container)
-                                .into_any(),
+                                .with_style(theme.member_icon.container),
                         ),
-                        Some(proto::channel_member::Kind::Member)
-                        | Some(proto::channel_member::Kind::AncestorMember)
-                        | None => None,
+                        Some(proto::channel_member::Kind::Invitee) => Some(
+                            Svg::new("icons/check_8.svg")
+                                .with_color(theme.invitee_icon.color)
+                                .constrained()
+                                .with_width(theme.invitee_icon.width)
+                                .aligned()
+                                .contained()
+                                .with_style(theme.invitee_icon.container),
+                        ),
+                        Some(proto::channel_member::Kind::AncestorMember) | None => None,
                     },
-                    Mode::InviteMembers => {
-                        let svg = match request_status {
-                            Some(proto::channel_member::Kind::Member) => Some(
-                                Svg::new("icons/check_8.svg")
-                                    .with_color(theme.member_icon.color)
-                                    .constrained()
-                                    .with_width(theme.member_icon.width)
-                                    .aligned()
-                                    .contained()
-                                    .with_style(theme.member_icon.container),
-                            ),
-                            Some(proto::channel_member::Kind::Invitee) => Some(
-                                Svg::new("icons/check_8.svg")
-                                    .with_color(theme.invitee_icon.color)
-                                    .constrained()
-                                    .with_width(theme.invitee_icon.width)
-                                    .aligned()
-                                    .contained()
-                                    .with_style(theme.invitee_icon.container),
-                            ),
-                            Some(proto::channel_member::Kind::AncestorMember) | None => None,
-                        };
+                };
 
-                        svg.map(|svg| svg.aligned().flex_float().into_any())
-                    }
-                }
+                svg.map(|svg| svg.aligned().flex_float().into_any())
             })
             .contained()
             .with_style(style.container)
             .constrained()
             .with_height(theme.row_height)
-            .into_any()
+            .into_any();
+
+        if selected {
+            result = Stack::new()
+                .with_child(result)
+                .with_child(
+                    ChildView::new(&self.context_menu, cx)
+                        .aligned()
+                        .top()
+                        .right(),
+                )
+                .into_any();
+        }
+
+        result
     }
 }
 
@@ -464,20 +489,30 @@ impl ChannelModalDelegate {
         }
     }
 
-    fn set_member_admin(&mut self, user_id: u64, admin: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn toggle_selected_member_admin(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
+        let (user, admin) = self.user_at_index(self.selected_index)?;
+        let admin = !admin.unwrap_or(false);
         let update = self.channel_store.update(cx, |store, cx| {
-            store.set_member_admin(self.channel_id, user_id, admin, cx)
+            store.set_member_admin(self.channel_id, user.id, admin, cx)
         });
         cx.spawn(|picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, _| {
+            picker.update(&mut cx, |picker, cx| {
                 let this = picker.delegate_mut();
-                if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
+                if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user.id) {
                     member.admin = admin;
                 }
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);
+        Some(())
+    }
+
+    fn remove_selected_member(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
+        let (user, _) = self.user_at_index(self.selected_index)?;
+        self.remove_member(user.id, cx);
+        Some(())
     }
 
     fn remove_member(&mut self, user_id: u64, cx: &mut ViewContext<Picker<Self>>) {
@@ -486,11 +521,20 @@ impl ChannelModalDelegate {
         });
         cx.spawn(|picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, _| {
+            picker.update(&mut cx, |picker, cx| {
                 let this = picker.delegate_mut();
                 if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
                     this.members.remove(ix);
+                    this.matching_member_indices.retain_mut(|member_ix| {
+                        if *member_ix == ix {
+                            return false;
+                        } else if *member_ix > ix {
+                            *member_ix -= 1;
+                        }
+                        true
+                    })
                 }
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);
@@ -505,8 +549,7 @@ impl ChannelModalDelegate {
             invite_member.await?;
 
             this.update(&mut cx, |this, cx| {
-                let delegate_mut = this.delegate_mut();
-                delegate_mut.members.push(ChannelMembership {
+                this.delegate_mut().members.push(ChannelMembership {
                     user,
                     kind: proto::channel_member::Kind::Invitee,
                     admin: false,
@@ -515,5 +558,26 @@ impl ChannelModalDelegate {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn show_context_menu(&mut self, user_is_admin: bool, cx: &mut ViewContext<Picker<Self>>) {
+        self.context_menu.update(cx, |context_menu, cx| {
+            context_menu.show(
+                Default::default(),
+                AnchorCorner::TopRight,
+                vec![
+                    ContextMenuItem::action("Remove", RemoveMember),
+                    ContextMenuItem::action(
+                        if user_is_admin {
+                            "Make non-admin"
+                        } else {
+                            "Make admin"
+                        },
+                        ToggleMemberAdmin,
+                    ),
+                ],
+                cx,
+            )
+        })
     }
 }
