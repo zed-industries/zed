@@ -2769,24 +2769,21 @@ impl Project {
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
-                move |mut params, cx| {
+                move |mut params, mut cx| {
                     let this = this;
                     let adapter = adapter.clone();
-                    cx.spawn(|mut cx| async move {
-                        adapter.process_diagnostics(&mut params).await;
-                        if let Some(this) = this.upgrade(&cx) {
-                            this.update(&mut cx, |this, cx| {
-                                this.update_diagnostics(
-                                    server_id,
-                                    params,
-                                    &adapter.disk_based_diagnostic_sources,
-                                    cx,
-                                )
-                                .log_err();
-                            });
-                        }
-                    })
-                    .detach();
+                    adapter.process_diagnostics(&mut params);
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.update_diagnostics(
+                                server_id,
+                                params,
+                                &adapter.disk_based_diagnostic_sources,
+                                cx,
+                            )
+                            .log_err();
+                        });
+                    }
                 }
             })
             .detach();
