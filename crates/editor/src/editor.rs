@@ -7557,12 +7557,11 @@ impl Editor {
     ) -> Vec<RangeInclusive<u32>> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
-        let Some((color_fetcher, ranges)) = self.background_highlights
+        let Some((_, ranges)) = self.background_highlights
             .get(&TypeId::of::<T>()) else {
                 return vec![];
             };
 
-        let color = color_fetcher(theme);
         let start_ix = match ranges.binary_search_by(|probe| {
             let cmp = probe.end.cmp(&search_range.start, buffer);
             if cmp.is_gt() {
@@ -7584,8 +7583,14 @@ impl Editor {
             if range.start.cmp(&search_range.end, buffer).is_ge() {
                 break;
             }
-            let start = range.start.to_point(buffer).row;
             let end = range.end.to_point(buffer).row;
+            if let Some(current_row) = &end_row {
+                if end == *current_row {
+                    continue;
+                }
+            }
+            let start = range.start.to_point(buffer).row;
+
             if start_row.is_none() {
                 assert_eq!(end_row, None);
                 start_row = Some(start);
