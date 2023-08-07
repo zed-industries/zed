@@ -90,7 +90,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -7545,6 +7545,68 @@ impl Editor {
                 .to_display_point(display_snapshot);
             results.push((start..end, color))
         }
+
+        results
+    }
+
+    pub fn selected_rows<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
+    ) -> Vec<RangeInclusive<u32>> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((color_fetcher, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let color = color_fetcher(theme);
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        let mut push_region = |start, end| {
+            if let (Some(start_display), Some(end_display)) = (start, end) {
+                results.push(start_display..=end_display);
+            }
+        };
+        let mut start_row = None;
+        let mut end_row = None;
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let start = range.start.to_point(buffer).row;
+            let end = range.end.to_point(buffer).row;
+            if start_row.is_none() {
+                assert_eq!(end_row, None);
+                start_row = Some(start);
+                end_row = Some(end);
+                continue;
+            }
+            if let Some(current_end) = end_row.as_mut() {
+                if start > *current_end + 1 {
+                    push_region(start_row, end_row);
+                    start_row = Some(start);
+                    end_row = Some(end);
+                } else {
+                    // Merge two hunks.
+                    *current_end = end;
+                }
+            } else {
+                unreachable!();
+            }
+        }
+        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
+        push_region(start_row, end_row);
 
         results
     }
