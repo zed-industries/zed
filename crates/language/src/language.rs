@@ -182,8 +182,8 @@ impl CachedLspAdapter {
         self.adapter.workspace_configuration(cx)
     }
 
-    pub async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params).await
+    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+        self.adapter.process_diagnostics(params)
     }
 
     pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
@@ -262,7 +262,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
-    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
@@ -1487,12 +1487,6 @@ impl Language {
         None
     }
 
-    pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        for adapter in &self.adapters {
-            adapter.process_diagnostics(diagnostics).await;
-        }
-    }
-
     pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
         for adapter in &self.adapters {
             adapter.process_completion(completion).await;
@@ -1756,7 +1750,7 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         unreachable!();
     }
 
-    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
