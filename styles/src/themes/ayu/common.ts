@@ -3,8 +3,8 @@ import {
     chroma,
     color_ramp,
     ThemeLicenseType,
+    ThemeSyntax,
     ThemeFamilyMeta,
-    ThemeConfigInputSyntax,
 } from "../../common"
 
 export const ayu = {
@@ -27,7 +27,7 @@ export const build_theme = (t: typeof dark, light: boolean) => {
         purple: t.syntax.constant.hex(),
     }
 
-    const syntax: ThemeConfigInputSyntax = {
+    const syntax: ThemeSyntax = {
         constant: { color: t.syntax.constant.hex() },
         "string.regex": { color: t.syntax.regexp.hex() },
         string: { color: t.syntax.string.hex() },
@@ -61,7 +61,7 @@ export const build_theme = (t: typeof dark, light: boolean) => {
     }
 }
 
-export const build_syntax = (t: typeof dark): ThemeConfigInputSyntax => {
+export const build_syntax = (t: typeof dark): ThemeSyntax => {
     return {
         constant: { color: t.syntax.constant.hex() },
         "string.regex": { color: t.syntax.regexp.hex() },

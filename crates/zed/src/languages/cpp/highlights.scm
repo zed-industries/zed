@@ -31,13 +31,13 @@
   declarator: (field_identifier) @function)
 
 ((namespace_identifier) @type
-    (.match? @type "^[A-Z]"))
+ (#match? @type "^[A-Z]"))
 
 (auto) @type
 (type_identifier) @type
 
 ((identifier) @constant
-    (.match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 (field_identifier) @property
 (statement_identifier) @label

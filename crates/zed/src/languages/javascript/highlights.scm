@@ -44,7 +44,7 @@
 ; Special identifiers
 
 ((identifier) @type
-    (.match? @type "^[A-Z]"))
+ (#match? @type "^[A-Z]"))
 (type_identifier) @type
 (predefined_type) @type.builtin
 
@@ -53,7 +53,7 @@
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
  ] @constant
-(.match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
 

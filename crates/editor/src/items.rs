@@ -28,7 +28,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::{paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
+use util::{
+    paths::{PathExt, FILE_ROW_COLUMN_DELIMITER},
+    ResultExt, TryFutureExt,
+};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
@@ -546,9 +549,7 @@ impl Item for Editor {
             .and_then(|f| f.as_local())?
             .abs_path(cx);
 
-        let file_path = util::paths::compact(&file_path)
-            .to_string_lossy()
-            .to_string();
+        let file_path = file_path.compact().to_string_lossy().to_string();
 
         Some(file_path.into())
     }

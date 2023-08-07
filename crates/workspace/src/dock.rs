@@ -29,12 +29,8 @@ pub trait Panel: View {
     fn is_zoomed(&self, _cx: &WindowContext) -> bool {
         false
     }
-    fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
-
-    }
-    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {
-
-    }
+    fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
+    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
     fn should_activate_on_event(_: &Self::Event) -> bool {
         false
     }

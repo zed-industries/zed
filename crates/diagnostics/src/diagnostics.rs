@@ -855,7 +855,9 @@ mod tests {
 
         let language_server_id = LanguageServerId(0);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -1248,7 +1250,9 @@ mod tests {
         let server_id_1 = LanguageServerId(100);
         let server_id_2 = LanguageServerId(101);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         let view = cx.add_view(window_id, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)

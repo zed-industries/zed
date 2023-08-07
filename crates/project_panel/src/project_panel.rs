@@ -1756,7 +1756,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1844,7 +1846,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2195,7 +2199,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2295,7 +2301,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
@@ -2368,7 +2376,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         toggle_expand_dir(&panel, "src/test", cx);
@@ -2457,7 +2467,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "src/", cx);
@@ -2603,7 +2615,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         let new_search_events_count = Arc::new(AtomicUsize::new(0));
@@ -2690,7 +2704,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {

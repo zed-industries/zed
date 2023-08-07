@@ -5,6 +5,7 @@ use gpui::{
     elements::{Label, LabelStyle},
     AnyElement, Element, View,
 };
+use util::paths::PathExt;
 use workspace::WorkspaceLocation;
 
 pub struct HighlightedText {
@@ -61,7 +62,7 @@ impl HighlightedWorkspaceLocation {
             .paths()
             .iter()
             .map(|path| {
-                let path = util::paths::compact(&path);
+                let path = path.compact();
                 let highlighted_text = Self::highlights_for_path(
                     path.as_ref(),
                     &string_match.positions,

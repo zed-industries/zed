@@ -1447,7 +1447,9 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
-        let (_, search_view) = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx));
+        let search_view = cx
+            .add_window(|cx| ProjectSearchView::new(search.clone(), cx))
+            .root(cx);
 
         search_view.update(cx, |search_view, cx| {
             search_view
@@ -1564,7 +1566,9 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1748,7 +1752,9 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1866,7 +1872,9 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let window_id = window.window_id();
         workspace.update(cx, |workspace, cx| {
             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
         });
