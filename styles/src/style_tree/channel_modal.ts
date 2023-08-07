@@ -29,7 +29,7 @@ export default function channel_modal(): any {
         selection: theme.players[0],
         border: border(theme.middle),
         padding: {
-            bottom: 4,
+            bottom: 8,
             left: 8,
             right: 8,
             top: 4,
@@ -37,6 +37,7 @@ export default function channel_modal(): any {
         margin: {
             left: side_margin,
             right: side_margin,
+            bottom: 8,
         },
     }
 

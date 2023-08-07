@@ -205,7 +205,7 @@ impl View for ChannelModal {
             ]))
             .with_child(ChildView::new(&self.picker, cx))
             .constrained()
-            .with_height(theme.height)
+            .with_max_height(theme.height)
             .contained()
             .with_style(theme.container)
             .into_any()
