@@ -7579,32 +7579,47 @@ impl Editor {
         };
         let mut start_row = None;
         let mut end_row = None;
-        for range in &ranges[start_ix..] {
+        let ranges = &ranges[start_ix..];
+        let mut it: usize = 0;
+        let find_next_row_candidate = |point: &Point, input_it| {
+            let it = input_it + 1;
+            let line_length = buffer.line_len(point.row);
+
+            if point.column == line_length {
+                return it;
+            }
+            let slice_len = ((line_length - point.column) as usize).min(ranges.len() - it);
+
+            let partition_point = ranges[it..it + slice_len]
+                .partition_point(|p| p.end.to_point(buffer).row <= point.row);
+
+            it + partition_point
+        };
+        while it < ranges.len() {
+            let range = &ranges[it];
             if range.start.cmp(&search_range.end, buffer).is_ge() {
                 break;
             }
-            let end = range.end.to_point(buffer).row;
-            if let Some(current_row) = &end_row {
-                if end == *current_row {
-                    continue;
-                }
-            }
+            let end = range.end.to_point(buffer);
             let start = range.start.to_point(buffer).row;
 
             if start_row.is_none() {
                 assert_eq!(end_row, None);
+                it = find_next_row_candidate(&end, it);
                 start_row = Some(start);
-                end_row = Some(end);
+                end_row = Some(end.row);
+
                 continue;
             }
             if let Some(current_end) = end_row.as_mut() {
+                it = find_next_row_candidate(&end, it);
                 if start > *current_end + 1 {
                     push_region(start_row, end_row);
                     start_row = Some(start);
-                    end_row = Some(end);
+                    end_row = Some(end.row);
                 } else {
                     // Merge two hunks.
-                    *current_end = end;
+                    *current_end = end.row;
                 }
             } else {
                 unreachable!();
