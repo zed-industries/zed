@@ -1,5 +1,5 @@
 name = "TOML"
-path_suffixes = ["toml"]
+path_suffixes = ["Cargo.lock", "toml"]
 line_comment = "# "
 autoclose_before = ",]}"
 brackets = [

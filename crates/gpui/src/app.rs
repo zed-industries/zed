@@ -4088,6 +4088,7 @@ impl AnyWindowHandle {
         self.update(cx, |cx| cx.remove_window())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_activation(&self, cx: &mut TestAppContext) {
         self.update(cx, |cx| {
             let other_window_ids = cx
@@ -4105,6 +4106,7 @@ impl AnyWindowHandle {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_deactivation(&self, cx: &mut TestAppContext) {
         self.update(cx, |cx| {
             cx.window_changed_active_status(self.window_id, false);
