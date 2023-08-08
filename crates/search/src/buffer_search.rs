@@ -211,47 +211,56 @@ impl View for BufferSearchBar {
                             ))
                             .aligned()
                             .left()
-                            .top(),
+                            .top()
+                            .flex(1., true)
+                            .constrained(),
                     )
-                    .contained()
-                    .flex(1., true),
+                    .contained(),
             )
             .with_child(
-                Flex::row()
+                Flex::column()
                     .align_children_center()
                     .with_child(
                         Flex::row()
                             .with_child(
-                                ChildView::new(&self.query_editor, cx)
+                                Flex::row()
+                                    .with_child(
+                                        ChildView::new(&self.query_editor, cx)
+                                            .aligned()
+                                            .left()
+                                            .flex(1., true),
+                                    )
+                                    .with_children(render_search_option(
+                                        supported_options.case,
+                                        "icons/case_insensitive_12.svg",
+                                        SearchOptions::CASE_SENSITIVE,
+                                        cx,
+                                    ))
+                                    .with_children(render_search_option(
+                                        supported_options.word,
+                                        "icons/word_search_12.svg",
+                                        SearchOptions::WHOLE_WORD,
+                                        cx,
+                                    ))
+                                    .contained()
+                                    .with_style(editor_container)
                                     .aligned()
-                                    .left()
-                                    .flex(1., true),
+                                    .top()
+                                    .constrained()
+                                    .with_min_width(theme.search.editor.min_width)
+                                    .with_max_width(theme.search.editor.max_width)
+                                    .flex(1., false),
                             )
-                            .with_children(render_search_option(
-                                supported_options.case,
-                                "icons/case_insensitive_12.svg",
-                                SearchOptions::CASE_SENSITIVE,
-                                cx,
-                            ))
-                            .with_children(render_search_option(
-                                supported_options.word,
-                                "icons/word_search_12.svg",
-                                SearchOptions::WHOLE_WORD,
-                                cx,
-                            ))
-                            .contained()
-                            .with_style(editor_container)
-                            .aligned()
-                            .constrained()
-                            .with_min_width(theme.search.editor.min_width)
-                            .with_max_width(theme.search.editor.max_width)
+                            .with_child(
+                                Flex::row()
+                                    .with_child(self.render_action_button("Select All", cx))
+                                    .aligned(),
+                            )
                             .flex(1., false),
                     )
-                    .with_child(
-                        Flex::row()
-                            .with_child(self.render_action_button("Select All", cx))
-                            .aligned(),
-                    )
+                    .contained()
+                    .aligned()
+                    .top()
                     .flex(1., false),
             )
             .with_child(
@@ -275,6 +284,7 @@ impl View for BufferSearchBar {
             )
             .contained()
             .with_style(theme.search.container)
+            .flex_float()
             .into_any_named("search bar")
     }
 }
