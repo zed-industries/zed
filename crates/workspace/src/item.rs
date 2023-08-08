@@ -281,7 +281,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
 
 pub trait WeakItemHandle {
     fn id(&self) -> usize;
-    fn window_id(&self) -> usize;
+    fn window(&self) -> AnyWindowHandle;
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -650,8 +650,8 @@ impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
         self.id()
     }
 
-    fn window_id(&self) -> usize {
-        self.window_id()
+    fn window(&self) -> AnyWindowHandle {
+        self.window()
     }
 
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
