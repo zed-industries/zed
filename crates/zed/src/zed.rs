@@ -406,26 +406,19 @@ pub fn build_window_options(
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
-        let mut workspaces = cx
-            .window_ids()
+        let mut workspace_windows = cx
+            .windows()
             .into_iter()
-            .filter_map(|window_id| {
-                Some(
-                    cx.root_view(window_id)?
-                        .clone()
-                        .downcast::<Workspace>()?
-                        .downgrade(),
-                )
-            })
+            .filter_map(|window| window.downcast::<Workspace>())
             .collect::<Vec<_>>();
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+        workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
             let answer = cx.prompt(
-                workspace.window_id(),
+                window.id(),
                 PromptLevel::Info,
                 "Are you sure you want to quit?",
                 &["Quit", "Cancel"],
@@ -440,14 +433,13 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for workspace in workspaces {
-            if !workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
-                })?
-                .await?
-            {
-                return Ok(());
+        for window in workspace_windows {
+            if let Some(close) = window.update_root(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(false, cx)
+            }) {
+                if close.await? {
+                    return Ok(());
+                }
             }
         }
         cx.platform().quit();
@@ -782,17 +774,13 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
-        let workspace_1 = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
             assert!(workspace.left_dock().read(cx).is_open());
@@ -809,28 +797,22 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 2);
+        assert_eq!(cx.windows().len(), 2);
 
         // Replace existing windows
-        let window_id = cx.window_ids()[0];
-        let window = cx.read_window(window_id, |cx| cx.window()).flatten();
+        let window = cx.windows()[0].downcast::<Workspace>().unwrap();
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 &app_state,
-                window,
+                Some(window),
                 cx,
             )
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 2);
-        let workspace_1 = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .clone()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 2);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(
                 workspace
@@ -856,14 +838,10 @@ mod tests {
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let workspace = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
@@ -917,12 +895,12 @@ mod tests {
         // buffer having unsaved changes.
         assert!(!cx.simulate_window_close(workspace.window_id()));
         executor.run_until_parked();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         // The window is successfully closed after the user dismisses the prompt.
         cx.simulate_prompt_answer(workspace.window_id(), 1);
         executor.run_until_parked();
-        assert_eq!(cx.window_ids().len(), 0);
+        assert_eq!(cx.windows().len(), 0);
     }
 
     #[gpui::test]
@@ -935,12 +913,13 @@ mod tests {
         })
         .await;
 
-        let window_id = *cx.window_ids().first().unwrap();
-        let workspace = cx
-            .read_window(window_id, |cx| cx.root_view().clone())
+        let window = cx
+            .windows()
+            .first()
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
+        let workspace = window.root(cx);
 
         let editor = workspace.update(cx, |workspace, cx| {
             workspace
@@ -1105,12 +1084,8 @@ mod tests {
         cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
-        let workspace = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
 
         #[track_caller]
         fn assert_project_panel_selection(

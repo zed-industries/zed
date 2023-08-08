@@ -1290,7 +1290,7 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+    cx.simulate_window_resize(cx.window.id(), vec2f(100., 4. * line_height));
 
     cx.set_state(
         &r#"ˇone
@@ -1401,7 +1401,7 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(1000., 4. * line_height + 0.5));
+    cx.simulate_window_resize(cx.window.id(), vec2f(1000., 4. * line_height + 0.5));
 
     cx.set_state(
         &r#"ˇone
@@ -1439,7 +1439,7 @@ async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+    cx.simulate_window_resize(cx.window.id(), vec2f(100., 4. * line_height));
 
     cx.set_state(
         &r#"

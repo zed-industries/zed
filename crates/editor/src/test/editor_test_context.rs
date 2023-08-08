@@ -3,7 +3,8 @@ use crate::{
 };
 use futures::Future;
 use gpui::{
-    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
+    keymap_matcher::Keystroke, AnyWindowHandle, AppContext, ContextHandle, ModelContext,
+    ViewContext, ViewHandle,
 };
 use indoc::indoc;
 use language::{Buffer, BufferSnapshot};
@@ -21,7 +22,7 @@ use super::build_editor;
 
 pub struct EditorTestContext<'a> {
     pub cx: &'a mut gpui::TestAppContext,
-    pub window_id: usize,
+    pub window: AnyWindowHandle,
     pub editor: ViewHandle<Editor>,
 }
 
@@ -39,7 +40,7 @@ impl<'a> EditorTestContext<'a> {
         let editor = window.root(cx);
         Self {
             cx,
-            window_id: window.id(),
+            window: window.into(),
             editor,
         }
     }
@@ -111,7 +112,8 @@ impl<'a> EditorTestContext<'a> {
         let keystroke_under_test_handle =
             self.add_assertion_context(format!("Simulated Keystroke: {:?}", keystroke_text));
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
-        self.cx.dispatch_keystroke(self.window_id, keystroke, false);
+
+        self.cx.dispatch_keystroke(self.window, keystroke, false);
         keystroke_under_test_handle
     }
 

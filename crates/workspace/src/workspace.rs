@@ -3827,9 +3827,9 @@ pub fn activate_workspace_for_project(
     cx: &mut AsyncAppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<WeakViewHandle<Workspace>> {
-    for window_id in cx.window_ids() {
-        let handle = cx
-            .update_window(window_id, |cx| {
+    for window in cx.windows() {
+        let handle = window
+            .update(cx, |cx| {
                 if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
                     let project = workspace_handle.read(cx).project.clone();
                     if project.update(cx, &predicate) {
@@ -3945,18 +3945,23 @@ pub fn join_remote_project(
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
         let existing_workspace = cx
-            .window_ids()
+            .windows()
             .into_iter()
-            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
-            .find(|workspace| {
-                cx.read_window(workspace.window_id(), |cx| {
-                    workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
+            .find_map(|window| {
+                window.downcast::<Workspace>().and_then(|window| {
+                    window.read_root_with(&cx, |workspace, cx| {
+                        if workspace.project().read(cx).remote_id() == Some(project_id) {
+                            Some(cx.handle().downgrade())
+                        } else {
+                            None
+                        }
+                    })
                 })
-                .unwrap_or(false)
-            });
+            })
+            .flatten();
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
-            existing_workspace.downgrade()
+            existing_workspace
         } else {
             let active_call = cx.read(ActiveCall::global);
             let room = active_call
@@ -4034,19 +4039,19 @@ pub fn join_remote_project(
 pub fn restart(_: &Restart, cx: &mut AppContext) {
     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
-        let mut workspaces = cx
+        let mut workspace_windows = cx
             .windows()
             .into_iter()
-            .filter_map(|window| Some(window.downcast::<Workspace>()?.root(&cx)?.downgrade()))
+            .filter_map(|window| window.downcast::<Workspace>())
             .collect::<Vec<_>>();
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+        workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
             let answer = cx.prompt(
-                workspace.window_id(),
+                window.id(),
                 PromptLevel::Info,
                 "Are you sure you want to restart?",
                 &["Restart", "Cancel"],
@@ -4061,14 +4066,13 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for workspace in workspaces {
-            if !workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
-                })?
-                .await?
-            {
-                return Ok(());
+        for window in workspace_windows {
+            if let Some(close) = window.update_root(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
+            }) {
+                if !close.await? {
+                    return Ok(());
+                }
             }
         }
         cx.platform().restart();

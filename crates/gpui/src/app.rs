@@ -23,6 +23,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+
 use derive_more::Deref;
 use parking_lot::Mutex;
 use postage::oneshot;
@@ -4125,6 +4126,12 @@ impl<T: View> ViewHandle<T> {
 
     pub fn window_id(&self) -> usize {
         self.window_id
+    }
+
+    pub fn window<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<AnyWindowHandle> {
+        cx.read_window(self.window_id, |cx| {
+            AnyWindowHandle::new(self.window_id, cx.window.root_view.type_id())
+        })
     }
 
     pub fn id(&self) -> usize {

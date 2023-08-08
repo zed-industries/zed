@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AppContext, Entity, View, ViewContext,
+    AppContext, BorrowWindowContext, Entity, View, ViewContext,
 };
 use std::sync::{Arc, Weak};
 use workspace::AppState;

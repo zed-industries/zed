@@ -1,6 +1,6 @@
 use gpui::{
     elements::{Empty, Label},
-    AnyElement, Element, Entity, Subscription, View, ViewContext,
+    AnyElement, Element, Entity, Subscription, View, ViewContext, BorrowWindowContext
 };
 use settings::SettingsStore;
 use workspace::{item::ItemHandle, StatusItemView};

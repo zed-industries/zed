@@ -175,7 +175,7 @@ impl BorrowWindowContext for WindowContext<'_> {
     where
         F: FnOnce(&mut WindowContext) -> Option<T>,
     {
-        BorrowWindowContext::update_window_optional(self, window_id, f)
+        BorrowWindowContext::update_window(self, window_id, f)
     }
 }
 

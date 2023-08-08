@@ -85,7 +85,7 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
-        let window_id = self.window_id;
+        let window_id = self.window.id();
         self.update_window(window_id, |cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, false, cx);

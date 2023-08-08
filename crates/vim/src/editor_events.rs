@@ -1,6 +1,6 @@
 use crate::Vim;
 use editor::{EditorBlurred, EditorFocused, EditorReleased};
-use gpui::AppContext;
+use gpui::{AppContext, BorrowWindowContext};
 
 pub fn init(cx: &mut AppContext) {
     cx.subscribe_global(focused).detach();
