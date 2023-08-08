@@ -1088,7 +1088,7 @@ impl CollabPanel {
                 MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |_, _| {
                     render_icon_button(
                         theme.collab_panel.add_contact_button.in_state(is_selected),
-                        "icons/user_plus_16.svg",
+                        "icons/plus_16.svg",
                     )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -1993,7 +1993,7 @@ impl Panel for CollabPanel {
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
         settings::get::<CollaborationPanelSettings>(cx)
             .button
-            .then(|| "icons/radix/person.svg")
+            .then(|| "icons/speech_bubble_12.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
