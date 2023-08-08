@@ -192,7 +192,6 @@ where
     F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;
-    // let active = cx.window_is_active(cx.window_id());
 
     Flex::column()
         .with_child(

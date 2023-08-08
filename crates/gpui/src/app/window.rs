@@ -326,7 +326,7 @@ impl<'a> WindowContext<'a> {
             });
         Subscription::WindowActivationObservation(
             self.window_activation_observations
-                .subscribe(handle.id(), subscription_id),
+                .subscribe(handle, subscription_id),
         )
     }
 
@@ -344,7 +344,7 @@ impl<'a> WindowContext<'a> {
             });
         Subscription::WindowActivationObservation(
             self.window_activation_observations
-                .subscribe(window.id(), subscription_id),
+                .subscribe(window, subscription_id),
         )
     }
 
@@ -362,7 +362,7 @@ impl<'a> WindowContext<'a> {
             });
         Subscription::WindowBoundsObservation(
             self.window_bounds_observations
-                .subscribe(window.id(), subscription_id),
+                .subscribe(window, subscription_id),
         )
     }
 
@@ -374,10 +374,10 @@ impl<'a> WindowContext<'a> {
         let window = self.window_handle;
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.keystroke_observations
-            .add_callback(window.id(), subscription_id, Box::new(callback));
+            .add_callback(window, subscription_id, Box::new(callback));
         Subscription::KeystrokeObservation(
             self.keystroke_observations
-                .subscribe(window.id(), subscription_id),
+                .subscribe(window, subscription_id),
         )
     }
 

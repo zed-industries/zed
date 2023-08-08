@@ -882,7 +882,7 @@ impl platform::Window for Window {
 
     fn is_topmost_for_position(&self, position: Vector2F) -> bool {
         let self_borrow = self.0.borrow();
-        let self_id = self_borrow.handle;
+        let self_handle = self_borrow.handle;
 
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -899,8 +899,8 @@ impl platform::Window for Window {
             let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
             let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
             if is_panel == YES || is_window == YES {
-                let topmost_window_id = get_window_state(&*top_most_window).borrow().handle;
-                topmost_window_id == self_id
+                let topmost_window = get_window_state(&*top_most_window).borrow().handle;
+                topmost_window == self_handle
             } else {
                 // Someone else's window is on top
                 false

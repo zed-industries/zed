@@ -477,10 +477,10 @@ pub struct AppContext {
     focus_observations: CallbackCollection<usize, FocusObservationCallback>,
     release_observations: CallbackCollection<usize, ReleaseObservationCallback>,
     action_dispatch_observations: CallbackCollection<(), ActionObservationCallback>,
-    window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
-    window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
-    window_bounds_observations: CallbackCollection<usize, WindowBoundsCallback>,
-    keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
+    window_activation_observations: CallbackCollection<AnyWindowHandle, WindowActivationCallback>,
+    window_fullscreen_observations: CallbackCollection<AnyWindowHandle, WindowFullscreenCallback>,
+    window_bounds_observations: CallbackCollection<AnyWindowHandle, WindowBoundsCallback>,
+    keystroke_observations: CallbackCollection<AnyWindowHandle, KeystrokeCallback>,
     active_labeled_task_observations: CallbackCollection<(), ActiveLabeledTasksCallback>,
 
     foreground: Rc<executor::Foreground>,
@@ -1460,7 +1460,7 @@ impl AppContext {
 
             let mut refreshing = false;
             let mut updated_windows = HashSet::default();
-            let mut focus_effects = HashMap::<usize, FocusEffect>::default();
+            let mut focus_effects = HashMap::<AnyWindowHandle, FocusEffect>::default();
             loop {
                 self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
@@ -1538,13 +1538,13 @@ impl AppContext {
 
                         Effect::Focus(mut effect) => {
                             if focus_effects
-                                .get(&effect.window().id())
+                                .get(&effect.window())
                                 .map_or(false, |prev_effect| prev_effect.is_forced())
                             {
                                 effect.force();
                             }
 
-                            focus_effects.insert(effect.window().id(), effect);
+                            focus_effects.insert(effect.window(), effect);
                         }
 
                         Effect::FocusObservation {
@@ -1577,7 +1577,7 @@ impl AppContext {
                             subscription_id,
                             callback,
                         } => self.window_activation_observations.add_callback(
-                            window.id(),
+                            window,
                             subscription_id,
                             callback,
                         ),
@@ -1586,7 +1586,7 @@ impl AppContext {
                             if self.handle_window_activation_effect(window, is_active) && is_active
                             {
                                 focus_effects
-                                    .entry(window.id())
+                                    .entry(window)
                                     .or_insert_with(|| FocusEffect::View {
                                         window,
                                         view_id: self
@@ -1603,7 +1603,7 @@ impl AppContext {
                             subscription_id,
                             callback,
                         } => self.window_fullscreen_observations.add_callback(
-                            window.id(),
+                            window,
                             subscription_id,
                             callback,
                         ),
@@ -1618,7 +1618,7 @@ impl AppContext {
                             subscription_id,
                             callback,
                         } => self.window_bounds_observations.add_callback(
-                            window.id(),
+                            window,
                             subscription_id,
                             callback,
                         ),
@@ -1718,10 +1718,10 @@ impl AppContext {
                                         let root_view_id = cx.window.root_view().id();
                                         if focused_view_id != root_view_id
                                             && !cx.views.contains_key(&(window, focused_view_id))
-                                            && !focus_effects.contains_key(&window.id())
+                                            && !focus_effects.contains_key(&window)
                                         {
                                             focus_effects.insert(
-                                                window.id(),
+                                                window,
                                                 FocusEffect::View {
                                                     window,
                                                     view_id: Some(root_view_id),
@@ -1860,12 +1860,12 @@ impl AppContext {
             cx.window.is_fullscreen = is_fullscreen;
 
             let mut fullscreen_observations = cx.window_fullscreen_observations.clone();
-            fullscreen_observations.emit(window.id(), |callback| callback(is_fullscreen, cx));
+            fullscreen_observations.emit(window, |callback| callback(is_fullscreen, cx));
 
             if let Some(uuid) = cx.window_display_uuid() {
                 let bounds = cx.window_bounds();
                 let mut bounds_observations = cx.window_bounds_observations.clone();
-                bounds_observations.emit(window.id(), |callback| callback(bounds, uuid, cx));
+                bounds_observations.emit(window, |callback| callback(bounds, uuid, cx));
             }
 
             Some(())
@@ -1881,7 +1881,7 @@ impl AppContext {
     ) {
         self.update_window(window, |cx| {
             let mut observations = cx.keystroke_observations.clone();
-            observations.emit(window.id(), move |callback| {
+            observations.emit(window, move |callback| {
                 callback(&keystroke, &result, handled_by.as_ref(), cx)
             });
         });
@@ -1895,7 +1895,7 @@ impl AppContext {
             cx.window.is_active = active;
 
             let mut observations = cx.window_activation_observations.clone();
-            observations.emit(window.id(), |callback| callback(active, cx));
+            observations.emit(window, |callback| callback(active, cx));
             true
         })
         .unwrap_or(false)
@@ -1989,7 +1989,7 @@ impl AppContext {
                 let bounds = cx.window_bounds();
                 cx.window_bounds_observations
                     .clone()
-                    .emit(window.id(), move |callback| {
+                    .emit(window, move |callback| {
                         callback(bounds, display, cx);
                         true
                     });
@@ -4038,12 +4038,12 @@ impl AnyWindowHandle {
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_activation(&self, cx: &mut TestAppContext) {
         self.update(cx, |cx| {
-            let other_window_ids = cx
+            let other_windows = cx
                 .windows()
                 .filter(|window| *window != *self)
                 .collect::<Vec<_>>();
 
-            for window in other_window_ids {
+            for window in other_windows {
                 cx.window_changed_active_status(window, false)
             }
 
@@ -4241,10 +4241,6 @@ impl AnyViewHandle {
 
     pub fn window(&self) -> AnyWindowHandle {
         self.window
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window.id()
     }
 
     pub fn id(&self) -> usize {
@@ -4660,10 +4656,16 @@ pub enum Subscription {
     GlobalSubscription(callback_collection::Subscription<TypeId, GlobalSubscriptionCallback>),
     GlobalObservation(callback_collection::Subscription<TypeId, GlobalObservationCallback>),
     FocusObservation(callback_collection::Subscription<usize, FocusObservationCallback>),
-    WindowActivationObservation(callback_collection::Subscription<usize, WindowActivationCallback>),
-    WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
-    WindowBoundsObservation(callback_collection::Subscription<usize, WindowBoundsCallback>),
-    KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
+    WindowActivationObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowActivationCallback>,
+    ),
+    WindowFullscreenObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowFullscreenCallback>,
+    ),
+    WindowBoundsObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowBoundsCallback>,
+    ),
+    KeystrokeObservation(callback_collection::Subscription<AnyWindowHandle, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
     ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
     ActiveLabeledTasksObservation(
