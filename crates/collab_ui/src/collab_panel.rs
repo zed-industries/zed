@@ -4,7 +4,7 @@ mod panel_settings;
 
 use anyhow::Result;
 use call::ActiveCall;
-use client::{proto::PeerId, Channel, ChannelStore, Client, Contact, User, UserStore};
+use client::{proto::PeerId, Channel, ChannelId, ChannelStore, Client, Contact, User, UserStore};
 use contact_finder::build_contact_finder;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
@@ -55,13 +55,21 @@ struct NewChannel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct AddMember {
+struct InviteMembers {
+    channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ManageMembers {
     channel_id: u64,
 }
 
 actions!(collab_panel, [ToggleFocus]);
 
-impl_actions!(collab_panel, [RemoveChannel, NewChannel, AddMember]);
+impl_actions!(
+    collab_panel,
+    [RemoveChannel, NewChannel, InviteMembers, ManageMembers]
+);
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
 
@@ -76,7 +84,8 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::confirm);
     cx.add_action(CollabPanel::remove_channel);
     cx.add_action(CollabPanel::new_subchannel);
-    cx.add_action(CollabPanel::add_member);
+    cx.add_action(CollabPanel::invite_members);
+    cx.add_action(CollabPanel::manage_members);
 }
 
 #[derive(Debug, Default)]
@@ -325,6 +334,7 @@ impl CollabPanel {
                 client: workspace.app_state().client.clone(),
                 list_state,
             };
+
             this.update_entries(cx);
 
             // Update the dock position when the setting changes.
@@ -1549,7 +1559,8 @@ impl CollabPanel {
                     vec![
                         ContextMenuItem::action("New Channel", NewChannel { channel_id }),
                         ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
-                        ContextMenuItem::action("Add member", AddMember { channel_id }),
+                        ContextMenuItem::action("Manage members", ManageMembers { channel_id }),
+                        ContextMenuItem::action("Invite members", InviteMembers { channel_id }),
                     ],
                     cx,
                 );
@@ -1710,8 +1721,20 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn add_member(&mut self, action: &AddMember, cx: &mut ViewContext<Self>) {
-        let channel_id = action.channel_id;
+    fn invite_members(&mut self, action: &InviteMembers, cx: &mut ViewContext<Self>) {
+        self.show_channel_modal(action.channel_id, channel_modal::Mode::InviteMembers, cx);
+    }
+
+    fn manage_members(&mut self, action: &ManageMembers, cx: &mut ViewContext<Self>) {
+        self.show_channel_modal(action.channel_id, channel_modal::Mode::ManageMembers, cx);
+    }
+
+    fn show_channel_modal(
+        &mut self,
+        channel_id: ChannelId,
+        mode: channel_modal::Mode,
+        cx: &mut ViewContext<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
@@ -1728,7 +1751,7 @@ impl CollabPanel {
                             user_store.clone(),
                             channel_store.clone(),
                             channel_id,
-                            channel_modal::Mode::InviteMembers,
+                            mode,
                             members,
                             cx,
                         )
@@ -1879,12 +1902,8 @@ impl View for CollabPanel {
                     })
                     .on_click(MouseButton::Left, |_, this, cx| {
                         let client = this.client.clone();
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(|_, cx| async move {
                             client.authenticate_and_connect(true, &cx).await.log_err();
-
-                            this.update(&mut cx, |_, cx| {
-                                cx.notify();
-                            })
                         })
                         .detach();
                     })

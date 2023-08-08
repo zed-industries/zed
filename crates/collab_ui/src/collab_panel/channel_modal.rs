@@ -337,7 +337,7 @@ impl PickerDelegate for ChannelModalDelegate {
                 Mode::ManageMembers => self.show_context_menu(admin.unwrap_or(false), cx),
                 Mode::InviteMembers => match self.member_status(selected_user.id, cx) {
                     Some(proto::channel_member::Kind::Invitee) => {
-                        self.remove_member(selected_user.id, cx);
+                        self.remove_selected_member(cx);
                     }
                     Some(proto::channel_member::Kind::AncestorMember) | None => {
                         self.invite_member(selected_user, cx)
@@ -502,6 +502,7 @@ impl ChannelModalDelegate {
                 if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user.id) {
                     member.admin = admin;
                 }
+                cx.focus_self();
                 cx.notify();
             })
         })
@@ -511,11 +512,7 @@ impl ChannelModalDelegate {
 
     fn remove_selected_member(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
         let (user, _) = self.user_at_index(self.selected_index)?;
-        self.remove_member(user.id, cx);
-        Some(())
-    }
-
-    fn remove_member(&mut self, user_id: u64, cx: &mut ViewContext<Picker<Self>>) {
+        let user_id = user.id;
         let update = self.channel_store.update(cx, |store, cx| {
             store.remove_member(self.channel_id, user_id, cx)
         });
@@ -534,10 +531,17 @@ impl ChannelModalDelegate {
                         true
                     })
                 }
+
+                this.selected_index = this
+                    .selected_index
+                    .min(this.matching_member_indices.len() - 1);
+
+                cx.focus_self();
                 cx.notify();
             })
         })
         .detach_and_log_err(cx);
+        Some(())
     }
 
     fn invite_member(&mut self, user: Arc<User>, cx: &mut ViewContext<Picker<Self>>) {
