@@ -1132,15 +1132,13 @@ impl EditorElement {
                         corner_radius: style.thumb.corner_radius,
                     })
                 };
-                let start = std::time::Instant::now();
-
                 let background_ranges = editor
                     .selected_rows::<crate::items::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
+                        50000,
                         &theme,
                     );
-                dbg!(start.elapsed().as_millis());
                 for row in background_ranges {
                     let start = row.start();
                     let end = row.end();

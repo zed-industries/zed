@@ -7553,6 +7553,7 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
+        count: usize,
         theme: &Theme,
     ) -> Vec<RangeInclusive<u32>> {
         let mut results = Vec::new();
@@ -7572,6 +7573,7 @@ impl Editor {
         }) {
             Ok(i) | Err(i) => i,
         };
+        let end_ix = count.min(ranges.len());
         let mut push_region = |start, end| {
             if let (Some(start_display), Some(end_display)) = (start, end) {
                 results.push(start_display..=end_display);
@@ -7579,7 +7581,7 @@ impl Editor {
         };
         let mut start_row = None;
         let mut end_row = None;
-        for range in &ranges[start_ix..] {
+        for range in &ranges[start_ix..end_ix] {
             if range.start.cmp(&search_range.end, buffer).is_ge() {
                 break;
             }
