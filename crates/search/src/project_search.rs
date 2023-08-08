@@ -1312,41 +1312,6 @@ impl ProjectSearchBar {
         }
     }
 
-    fn render_option_button_icon(
-        &self,
-        icon: &'static str,
-        option: SearchOptions,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let style = theme
-                .search
-                .option_button
-                .in_state(is_active)
-                .style_for(state);
-            Svg::new(icon)
-                .with_color(style.text.color.clone())
-                .contained()
-                .with_style(style.container)
-                .constrained()
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.toggle_search_option(option, cx);
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self>(
-            option.bits as usize,
-            format!("Toggle {}", option.label()),
-            Some(option.to_toggle_action()),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
     fn activate_search_mode(&self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         // Update Current Mode
         if let Some(search_view) = self.active_project_search.as_ref() {
@@ -1478,26 +1443,28 @@ impl View for ProjectSearchBar {
             };
             let search = _search.read(cx);
             let is_semantic_disabled = search.semantic_state.is_none();
-
-            let case_sensitive = if is_semantic_disabled {
-                Some(self.render_option_button_icon(
+            let render_option_button_icon = |path, option, cx: &mut ViewContext<Self>| {
+                crate::search_bar::render_option_button_icon(
+                    self.is_option_enabled(option, cx),
+                    path,
+                    option,
+                    move |_, this, cx| {
+                        this.toggle_search_option(option, cx);
+                    },
+                    cx,
+                )
+            };
+            let case_sensitive = is_semantic_disabled.then(|| {
+                render_option_button_icon(
                     "icons/case_insensitive_12.svg",
                     SearchOptions::CASE_SENSITIVE,
                     cx,
-                ))
-            } else {
-                None
-            };
+                )
+            });
 
-            let whole_word = if is_semantic_disabled {
-                Some(self.render_option_button_icon(
-                    "icons/word_search_12.svg",
-                    SearchOptions::WHOLE_WORD,
-                    cx,
-                ))
-            } else {
-                None
-            };
+            let whole_word = is_semantic_disabled.then(|| {
+                render_option_button_icon("icons/word_search_12.svg", SearchOptions::WHOLE_WORD, cx)
+            });
 
             let search = _search.read(cx);
             let icon_style = theme.search.editor_icon.clone();
