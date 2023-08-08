@@ -1133,7 +1133,7 @@ impl EditorElement {
                     })
                 };
                 let background_ranges = editor
-                    .selected_rows::<crate::items::BufferSearchHighlights>(
+                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,

@@ -7549,7 +7549,7 @@ impl Editor {
         results
     }
 
-    pub fn selected_rows<T: 'static>(
+    pub fn background_highlight_row_ranges<T: 'static>(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
@@ -7616,7 +7616,9 @@ impl Editor {
         }
         // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
-
+        if results.len() > count {
+            return vec![];
+        }
         results
     }
 
