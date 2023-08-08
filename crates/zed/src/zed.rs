@@ -841,7 +841,8 @@ mod tests {
         assert_eq!(cx.windows().len(), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
+        let window = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let workspace = window.root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
@@ -850,19 +851,19 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Editing a buffer marks the window as edited.
         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Undoing the edit restores the window's edited state.
         editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Redoing the edit marks the window as edited again.
         editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Closing the item restores the window's edited state.
         let close = pane.update(cx, |pane, cx| {
@@ -870,9 +871,10 @@ mod tests {
             pane.close_active_item(&Default::default(), cx).unwrap()
         });
         executor.run_until_parked();
-        cx.simulate_prompt_answer(workspace.window_id(), 1);
+
+        window.simulate_prompt_answer(1, cx);
         close.await.unwrap();
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
@@ -885,20 +887,20 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Editing the buffer marks the window as edited.
         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Ensure closing the window via the mouse gets preempted due to the
         // buffer having unsaved changes.
-        assert!(!cx.simulate_window_close(workspace.window_id()));
+        assert!(!window.simulate_close(cx));
         executor.run_until_parked();
         assert_eq!(cx.windows().len(), 1);
 
         // The window is successfully closed after the user dismisses the prompt.
-        cx.simulate_prompt_answer(workspace.window_id(), 1);
+        window.simulate_prompt_answer(1, cx);
         executor.run_until_parked();
         assert_eq!(cx.windows().len(), 0);
     }
@@ -1273,7 +1275,6 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
 
         // Open a file within an existing worktree.
         workspace
@@ -1299,7 +1300,7 @@ mod tests {
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
-        cx.simulate_prompt_answer(window_id, 0);
+        window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
@@ -1506,7 +1507,7 @@ mod tests {
 
         cx.dispatch_action(window_id, workspace::CloseActiveItem);
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 1);
+        window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
 
         workspace.read_with(cx, |workspace, cx| {

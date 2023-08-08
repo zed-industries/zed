@@ -4197,17 +4197,11 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(
-            cx.current_window_title(window.id()).as_deref(),
-            Some("one.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
-        assert_eq!(
-            cx.current_window_title(window.id()).as_deref(),
-            Some("two.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("two.txt — root1"));
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -4223,10 +4217,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(
-            cx.current_window_title(window.id()).as_deref(),
-            Some("one.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -4244,16 +4235,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            cx.current_window_title(window.id()).as_deref(),
+            window.current_title(cx).as_deref(),
             Some("one.txt — root1, root2")
         );
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(
-            cx.current_window_title(window.id()).as_deref(),
-            Some("one.txt — root2")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root2"));
     }
 
     #[gpui::test]
@@ -4287,9 +4275,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window.id(), 2 /* cancel */);
+        window.simulate_prompt_answer(2, cx); // cancel
         cx.foreground().run_until_parked();
-        assert!(!cx.has_pending_prompt(window.id()));
+        assert!(!window.has_pending_prompt(cx));
         assert!(!task.await.unwrap());
     }
 
@@ -4348,10 +4336,10 @@ mod tests {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(cx.has_pending_prompt(window.id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Confirm saving item 1.
-        cx.simulate_prompt_answer(window.id(), 0);
+        window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -4362,10 +4350,10 @@ mod tests {
             assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
-        assert!(cx.has_pending_prompt(window.id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(window.id(), 1);
+        window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -4376,10 +4364,10 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
-        assert!(cx.has_pending_prompt(window.id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Confirm saving item 4.
-        cx.simulate_prompt_answer(window.id(), 0);
+        window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
 
         // There's a prompt for a path for item 4.
@@ -4482,7 +4470,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(0)]
             );
         });
-        cx.simulate_prompt_answer(window.id(), 0);
+        window.simulate_prompt_answer(0, cx);
 
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
@@ -4491,7 +4479,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(2)]
             );
         });
-        cx.simulate_prompt_answer(window.id(), 0);
+        window.simulate_prompt_answer(0, cx);
 
         cx.foreground().run_until_parked();
         close.await.unwrap();
@@ -4593,7 +4581,7 @@ mod tests {
         pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
             .await
             .unwrap();
-        assert!(!cx.has_pending_prompt(window.id()));
+        assert!(!window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
@@ -4614,7 +4602,7 @@ mod tests {
         let _close_items =
             pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
         deterministic.run_until_parked();
-        assert!(cx.has_pending_prompt(window.id()));
+        assert!(window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 

@@ -1726,7 +1726,7 @@ impl ClipboardEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, ViewHandle};
+    use gpui::{AnyWindowHandle, TestAppContext, ViewHandle};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
@@ -2421,7 +2421,7 @@ mod tests {
         );
         ensure_single_file_is_opened(window_id, &workspace, "test/first.rs", cx);
 
-        submit_deletion(window_id, &panel, cx);
+        submit_deletion(window.into(), &panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -2432,7 +2432,7 @@ mod tests {
             ],
             "Project panel should have no deleted file, no other file is selected in it"
         );
-        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+        ensure_no_open_items_and_panes(window.into(), &workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
         panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
@@ -2464,13 +2464,13 @@ mod tests {
                 .expect("Open item should be an editor");
             open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
         });
-        submit_deletion(window_id, &panel, cx);
+        submit_deletion(window.into(), &panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v src", "    v test", "          third.rs"],
             "Project panel should have no deleted file, with one last file remaining"
         );
-        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+        ensure_no_open_items_and_panes(window.into(), &workspace, cx);
     }
 
     #[gpui::test]
@@ -2910,12 +2910,12 @@ mod tests {
     }
 
     fn submit_deletion(
-        window_id: usize,
+        window: AnyWindowHandle,
         panel: &ViewHandle<ProjectPanel>,
         cx: &mut TestAppContext,
     ) {
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts before the deletion"
         );
         panel.update(cx, |panel, cx| {
@@ -2925,27 +2925,27 @@ mod tests {
                 .detach_and_log_err(cx);
         });
         assert!(
-            cx.has_pending_prompt(window_id),
+            window.has_pending_prompt(cx),
             "Should have a prompt after the deletion"
         );
-        cx.simulate_prompt_answer(window_id, 0);
+        window.simulate_prompt_answer(0, cx);
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts after prompt was replied to"
         );
         cx.foreground().run_until_parked();
     }
 
     fn ensure_no_open_items_and_panes(
-        window_id: usize,
+        window: AnyWindowHandle,
         workspace: &ViewHandle<Workspace>,
         cx: &mut TestAppContext,
     ) {
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts after deletion operation closes the file"
         );
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let open_project_paths = workspace
                 .read(cx)
                 .panes()

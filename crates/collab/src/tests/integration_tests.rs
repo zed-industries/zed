@@ -1510,7 +1510,7 @@ async fn test_host_disconnect(
         .unwrap();
     assert!(window_b.read_with(cx_b, |cx| editor_b.is_focused(cx)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-    assert!(cx_b.is_window_edited(workspace_b.window_id()));
+    assert!(window_b.is_edited(cx_b));
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.forbid_connections();
@@ -1525,7 +1525,7 @@ async fn test_host_disconnect(
     window_b.read_with(cx_b, |cx| {
         assert_eq!(cx.focused_view_id(), None);
     });
-    assert!(!cx_b.is_window_edited(workspace_b.window_id()));
+    assert!(!window_b.is_edited(cx_b));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b

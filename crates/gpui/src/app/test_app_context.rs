@@ -202,10 +202,6 @@ impl TestAppContext {
         self.cx.borrow().windows().collect()
     }
 
-    // pub fn window_ids(&self) -> Vec<usize> {
-    //     self.cx.borrow().windows.keys().copied().collect()
-    // }
-
     pub fn remove_all_windows(&mut self) {
         self.update(|cx| cx.windows.clear());
     }
@@ -273,57 +269,6 @@ impl TestAppContext {
         self.foreground_platform.as_ref().did_prompt_for_new_path()
     }
 
-    pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
-        use postage::prelude::Sink as _;
-
-        let mut done_tx = self
-            .platform_window_mut(window_id)
-            .pending_prompts
-            .borrow_mut()
-            .pop_front()
-            .expect("prompt was not called");
-        done_tx.try_send(answer).ok();
-    }
-
-    pub fn has_pending_prompt(&self, window_id: usize) -> bool {
-        let window = self.platform_window_mut(window_id);
-        let prompts = window.pending_prompts.borrow_mut();
-        !prompts.is_empty()
-    }
-
-    pub fn current_window_title(&self, window_id: usize) -> Option<String> {
-        self.platform_window_mut(window_id).title.clone()
-    }
-
-    pub fn simulate_window_close(&self, window_id: usize) -> bool {
-        let handler = self
-            .platform_window_mut(window_id)
-            .should_close_handler
-            .take();
-        if let Some(mut handler) = handler {
-            let should_close = handler();
-            self.platform_window_mut(window_id).should_close_handler = Some(handler);
-            should_close
-        } else {
-            false
-        }
-    }
-
-    pub fn simulate_window_resize(&self, window_id: usize, size: Vector2F) {
-        let mut window = self.platform_window_mut(window_id);
-        window.size = size;
-        let mut handlers = mem::take(&mut window.resize_handlers);
-        drop(window);
-        for handler in &mut handlers {
-            handler();
-        }
-        self.platform_window_mut(window_id).resize_handlers = handlers;
-    }
-
-    pub fn is_window_edited(&self, window_id: usize) -> bool {
-        self.platform_window_mut(window_id).edited
-    }
-
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
     }
@@ -342,18 +287,6 @@ impl TestAppContext {
         let weak = handle.downgrade();
         self.update(|_| drop(handle));
         self.assert_dropped(weak);
-    }
-
-    fn platform_window_mut(&self, window_id: usize) -> std::cell::RefMut<platform::test::Window> {
-        std::cell::RefMut::map(self.cx.borrow_mut(), |state| {
-            let window = state.windows.get_mut(&window_id).unwrap();
-            let test_window = window
-                .platform_window
-                .as_any_mut()
-                .downcast_mut::<platform::test::Window>()
-                .unwrap();
-            test_window
-        })
     }
 
     pub fn set_condition_duration(&mut self, duration: Option<Duration>) {
@@ -542,6 +475,71 @@ impl<T: Entity> ModelHandle<T> {
             .expect("condition timed out");
             drop(subscriptions);
         }
+    }
+}
+
+impl AnyWindowHandle {
+    pub fn has_pending_prompt(&self, cx: &mut TestAppContext) -> bool {
+        let window = self.platform_window_mut(cx);
+        let prompts = window.pending_prompts.borrow_mut();
+        !prompts.is_empty()
+    }
+
+    pub fn current_title(&self, cx: &mut TestAppContext) -> Option<String> {
+        self.platform_window_mut(cx).title.clone()
+    }
+
+    pub fn simulate_close(&self, cx: &mut TestAppContext) -> bool {
+        let handler = self.platform_window_mut(cx).should_close_handler.take();
+        if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.platform_window_mut(cx).should_close_handler = Some(handler);
+            should_close
+        } else {
+            false
+        }
+    }
+
+    pub fn simulate_resize(&self, size: Vector2F, cx: &mut TestAppContext) {
+        let mut window = self.platform_window_mut(cx);
+        window.size = size;
+        let mut handlers = mem::take(&mut window.resize_handlers);
+        drop(window);
+        for handler in &mut handlers {
+            handler();
+        }
+        self.platform_window_mut(cx).resize_handlers = handlers;
+    }
+
+    pub fn is_edited(&self, cx: &mut TestAppContext) -> bool {
+        self.platform_window_mut(cx).edited
+    }
+
+    pub fn simulate_prompt_answer(&self, answer: usize, cx: &mut TestAppContext) {
+        use postage::prelude::Sink as _;
+
+        let mut done_tx = self
+            .platform_window_mut(cx)
+            .pending_prompts
+            .borrow_mut()
+            .pop_front()
+            .expect("prompt was not called");
+        done_tx.try_send(answer).ok();
+    }
+
+    fn platform_window_mut<'a>(
+        &self,
+        cx: &'a mut TestAppContext,
+    ) -> std::cell::RefMut<'a, platform::test::Window> {
+        std::cell::RefMut::map(cx.cx.borrow_mut(), |state| {
+            let window = state.windows.get_mut(&self.window_id).unwrap();
+            let test_window = window
+                .platform_window
+                .as_any_mut()
+                .downcast_mut::<platform::test::Window>()
+                .unwrap();
+            test_window
+        })
     }
 }
 
