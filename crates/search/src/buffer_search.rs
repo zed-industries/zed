@@ -468,46 +468,6 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_search_option(
-        &self,
-        option_supported: bool,
-        icon: &'static str,
-        option: SearchOptions,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement<Self>> {
-        if !option_supported {
-            return None;
-        }
-
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = self.search_options.contains(option);
-        Some(
-            MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
-                let theme = theme::current(cx);
-                let style = theme
-                    .search
-                    .option_button
-                    .in_state(is_active)
-                    .style_for(state);
-                Label::new(icon, style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-            })
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                this.toggle_search_option(option, cx);
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .with_tooltip::<Self>(
-                option.bits as usize,
-                format!("Toggle {}", option.label()),
-                Some(option.to_toggle_action()),
-                tooltip_style,
-                cx,
-            )
-            .into_any(),
-        )
-    }
-
     fn render_nav_button(
         &self,
         icon: &'static str,
