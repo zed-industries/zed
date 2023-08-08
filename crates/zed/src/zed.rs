@@ -182,7 +182,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             let window = cx.window();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
-                let content = to_string_pretty(&cx.debug_elements(window).ok_or_else(|| {
+                let content = to_string_pretty(&window.debug_elements(&cx).ok_or_else(|| {
                     anyhow!("could not debug elements for window {}", window.id())
                 })?)
                 .unwrap();

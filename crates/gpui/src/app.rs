@@ -344,14 +344,6 @@ impl AsyncAppContext {
         self.0.borrow().windows().collect()
     }
 
-    pub fn debug_elements(&self, window: AnyWindowHandle) -> Option<json::Value> {
-        self.0.borrow().read_window(window, |cx| {
-            let root_view = cx.window.root_view();
-            let root_element = cx.window.rendered_views.get(&root_view.id())?;
-            root_element.debug(cx).log_err()
-        })?
-    }
-
     pub fn dispatch_action(
         &mut self,
         window: AnyWindowHandle,
@@ -4058,6 +4050,14 @@ impl AnyWindowHandle {
 
     pub fn remove<C: BorrowWindowContext>(&self, cx: &mut C) -> C::Result<()> {
         self.update(cx, |cx| cx.remove_window())
+    }
+
+    pub fn debug_elements<C: BorrowWindowContext>(&self, cx: &C) -> Option<json::Value> {
+        self.read_optional_with(cx, |cx| {
+            let root_view = cx.window.root_view();
+            let root_element = cx.window.rendered_views.get(&root_view.id())?;
+            root_element.debug(cx).log_err()
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
