@@ -180,14 +180,15 @@ impl View for BufferSearchBar {
             };
         Flex::row()
             .with_child(
-                Flex::row()
+                Flex::column()
                     .with_child(
                         Flex::row()
+                            .align_children_center()
                             .with_child(
-                                ChildView::new(&self.query_editor, cx)
-                                    .aligned()
-                                    .left()
-                                    .flex(1., true),
+                                Flex::row()
+                                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                                    .aligned(),
                             )
                             .with_children(self.active_searchable_item.as_ref().and_then(
                                 |searchable_item| {
@@ -208,23 +209,24 @@ impl View for BufferSearchBar {
                                     )
                                 },
                             ))
-                            .contained()
-                            .with_style(editor_container)
                             .aligned()
-                            .constrained()
-                            .with_min_width(theme.search.editor.min_width)
-                            .with_max_width(theme.search.editor.max_width)
-                            .flex(1., false),
+                            .left()
+                            .top(),
                     )
+                    .contained()
+                    .flex(1., true),
+            )
+            .with_child(
+                Flex::row()
+                    .align_children_center()
                     .with_child(
                         Flex::row()
-                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                            .with_child(self.render_nav_button(">", Direction::Next, cx))
-                            .with_child(self.render_action_button("Select All", cx))
-                            .aligned(),
-                    )
-                    .with_child(
-                        Flex::row()
+                            .with_child(
+                                ChildView::new(&self.query_editor, cx)
+                                    .aligned()
+                                    .left()
+                                    .flex(1., true),
+                            )
                             .with_children(render_search_option(
                                 supported_options.case,
                                 "icons/case_insensitive_12.svg",
@@ -238,19 +240,39 @@ impl View for BufferSearchBar {
                                 cx,
                             ))
                             .contained()
-                            .with_style(theme.search.option_button_group)
+                            .with_style(editor_container)
+                            .aligned()
+                            .constrained()
+                            .with_min_width(theme.search.editor.min_width)
+                            .with_max_width(theme.search.editor.max_width)
+                            .flex(1., false),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_child(self.render_action_button("Select All", cx))
                             .aligned(),
                     )
-                    .flex(1., true),
+                    .flex(1., false),
             )
-            .with_child(search_button_for_mode(SearchMode::Text, cx))
-            .with_child(search_button_for_mode(SearchMode::Regex, cx))
-            .with_child(super::search_bar::render_close_button(
-                &theme.search,
-                cx,
-                |_, this, cx| this.dismiss(&Default::default(), cx),
-                Some(Box::new(Dismiss)),
-            ))
+            .with_child(
+                Flex::column().with_child(
+                    Flex::row()
+                        .align_children_center()
+                        .with_child(search_button_for_mode(SearchMode::Text, cx))
+                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                        .with_child(super::search_bar::render_close_button(
+                            &theme.search,
+                            cx,
+                            |_, this, cx| this.dismiss(&Default::default(), cx),
+                            Some(Box::new(Dismiss)),
+                        ))
+                        .contained()
+                        .aligned()
+                        .right()
+                        .top()
+                        .flex(1., true),
+                ),
+            )
             .contained()
             .with_style(theme.search.container)
             .into_any_named("search bar")
