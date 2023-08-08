@@ -3155,6 +3155,7 @@ impl Database {
         live_kit_room: &str,
         creator_id: UserId,
     ) -> Result<ChannelId> {
+        let name = name.trim().trim_start_matches('#');
         self.transaction(move |tx| async move {
             if let Some(parent) = parent {
                 self.check_user_is_channel_admin(parent, creator_id, &*tx)

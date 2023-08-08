@@ -9,9 +9,11 @@ pub mod test;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
+    mem,
     ops::{AddAssign, Range, RangeInclusive},
     panic::Location,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -116,6 +118,19 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
     } else if !source.is_null() {
         *target = source
     }
+}
+
+/// Mutates through the arc if no other references exist,
+/// otherwise clones the value and swaps out the reference with a new Arc
+/// Useful for mutating the elements of a list while using iter_mut()
+pub fn make_arc_mut<T: Clone>(arc: &mut Arc<T>, mutate: impl FnOnce(&mut T)) {
+    if let Some(t) = Arc::get_mut(arc) {
+        mutate(t);
+        return;
+    }
+    let mut new_t = (**arc).clone();
+    mutate(&mut new_t);
+    mem::swap(&mut Arc::new(new_t), arc);
 }
 
 pub trait ResultExt<E> {

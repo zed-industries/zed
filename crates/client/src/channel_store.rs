@@ -4,8 +4,10 @@ use anyhow::Result;
 use collections::HashMap;
 use collections::HashSet;
 use futures::Future;
+use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, TypedEnvelope};
+use std::mem;
 use std::sync::Arc;
 
 pub type ChannelId = u64;
@@ -19,6 +21,7 @@ pub struct ChannelStore {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
+    _maintain_user: Task<()>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +58,20 @@ impl ChannelStore {
         let rpc_subscription =
             client.add_message_handler(cx.handle(), Self::handle_update_channels);
 
+        let mut current_user = user_store.read(cx).watch_current_user();
+        let maintain_user = cx.spawn(|this, mut cx| async move {
+            while let Some(current_user) = current_user.next().await {
+                if current_user.is_none() {
+                    this.update(&mut cx, |this, cx| {
+                        this.channels.clear();
+                        this.channel_invitations.clear();
+                        this.channel_participants.clear();
+                        this.outgoing_invites.clear();
+                        cx.notify();
+                    });
+                }
+            }
+        });
         Self {
             channels: vec![],
             channel_invitations: vec![],
@@ -63,6 +80,7 @@ impl ChannelStore {
             client,
             user_store,
             _rpc_subscription: rpc_subscription,
+            _maintain_user: maintain_user,
         }
     }
 
@@ -301,10 +319,10 @@ impl ChannelStore {
                 .iter_mut()
                 .find(|c| c.id == channel.id)
             {
-                let existing_channel = Arc::get_mut(existing_channel)
-                    .expect("channel is shared, update would have been lost");
-                existing_channel.name = channel.name;
-                existing_channel.user_is_admin = channel.user_is_admin;
+                util::make_arc_mut(existing_channel, |new_existing_channel| {
+                    new_existing_channel.name = channel.name;
+                    new_existing_channel.user_is_admin = channel.user_is_admin;
+                });
                 continue;
             }
 
@@ -322,10 +340,10 @@ impl ChannelStore {
 
         for channel in payload.channels {
             if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
-                let existing_channel = Arc::get_mut(existing_channel)
-                    .expect("channel is shared, update would have been lost");
-                existing_channel.name = channel.name;
-                existing_channel.user_is_admin = channel.user_is_admin;
+                util::make_arc_mut(existing_channel, |new_existing_channel| {
+                    new_existing_channel.name = channel.name;
+                    new_existing_channel.user_is_admin = channel.user_is_admin;
+                });
                 continue;
             }
 

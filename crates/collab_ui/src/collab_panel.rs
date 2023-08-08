@@ -308,7 +308,7 @@ impl CollabPanel {
                             cx,
                         ),
                         ListEntry::ChannelEditor { depth } => {
-                            this.render_channel_editor(&theme.collab_panel, *depth, cx)
+                            this.render_channel_editor(&theme, *depth, cx)
                         }
                     }
                 });
@@ -1280,11 +1280,37 @@ impl CollabPanel {
 
     fn render_channel_editor(
         &self,
-        _theme: &theme::CollabPanel,
-        _depth: usize,
+        theme: &theme::Theme,
+        depth: usize,
         cx: &AppContext,
     ) -> AnyElement<Self> {
-        ChildView::new(&self.channel_name_editor, cx).into_any()
+        Flex::row()
+            .with_child(
+                Svg::new("icons/channel_hash.svg")
+                    .with_color(theme.collab_panel.channel_hash.color)
+                    .constrained()
+                    .with_width(theme.collab_panel.channel_hash.width)
+                    .aligned()
+                    .left(),
+            )
+            .with_child(
+                ChildView::new(&self.channel_name_editor, cx)
+                    .contained()
+                    .with_style(theme.collab_panel.channel_editor)
+                    .flex(1.0, true),
+            )
+            .align_children_center()
+            .contained()
+            .with_padding_left(
+                theme.collab_panel.contact_row.default_style().padding.left
+                    + theme.collab_panel.channel_indent * depth as f32,
+            )
+            .contained()
+            .with_style(gpui::elements::ContainerStyle {
+                background_color: Some(theme.editor.background),
+                ..Default::default()
+            })
+            .into_any()
     }
 
     fn render_channel(
@@ -1331,7 +1357,7 @@ impl CollabPanel {
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
-                .with_style(*theme.contact_row.in_state(is_selected).style_for(state))
+                .with_style(*theme.contact_row.style_for(is_selected, state))
                 .with_padding_left(
                     theme.contact_row.default_style().padding.left
                         + theme.channel_indent * channel.depth as f32,
