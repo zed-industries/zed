@@ -1,5 +1,7 @@
 use crate::{
-    history::SearchHistory, mode::SearchMode, search_bar::render_search_mode_button,
+    history::SearchHistory,
+    mode::SearchMode,
+    search_bar::{render_nav_button, render_search_mode_button},
     NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches, SelectNextMatch,
     SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
@@ -201,6 +203,17 @@ impl View for BufferSearchBar {
                         .aligned(),
                 )
             });
+        let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
+            render_nav_button(
+                label,
+                direction,
+                move |_, this, cx| match direction {
+                    Direction::Prev => this.select_prev_match(&Default::default(), cx),
+                    Direction::Next => this.select_next_match(&Default::default(), cx),
+                },
+                cx,
+            )
+        };
         Flex::row()
             .with_child(
                 Flex::column()
@@ -209,8 +222,8 @@ impl View for BufferSearchBar {
                             .align_children_center()
                             .with_child(
                                 Flex::row()
-                                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                                    .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+                                    .with_child(nav_button_for_direction(">", Direction::Next, cx))
                                     .aligned(),
                             )
                             .with_children(match_count)

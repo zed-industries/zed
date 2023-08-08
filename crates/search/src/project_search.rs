@@ -1550,19 +1550,18 @@ impl View for ProjectSearchBar {
             };
             let semantic_index = SemanticIndex::enabled(cx)
                 .then(|| search_button_for_mode(SearchMode::Semantic, cx));
-            let nav_button_for_direction =
-                |label, direction, cx: &mut ViewContext<ProjectSearchBar>| {
-                    render_nav_button(
-                        label,
-                        direction,
-                        move |_, this, cx| {
-                            if let Some(search) = this.active_project_search.as_ref() {
-                                search.update(cx, |search, cx| search.select_match(direction, cx));
-                            }
-                        },
-                        cx,
-                    )
-                };
+            let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
+                render_nav_button(
+                    label,
+                    direction,
+                    move |_, this, cx| {
+                        if let Some(search) = this.active_project_search.as_ref() {
+                            search.update(cx, |search, cx| search.select_match(direction, cx));
+                        }
+                    },
+                    cx,
+                )
+            };
 
             Flex::row()
                 .with_child(
