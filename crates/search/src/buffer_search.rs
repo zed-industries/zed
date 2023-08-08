@@ -163,6 +163,21 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
+        let render_search_option =
+            |options: bool, icon, option, cx: &mut ViewContext<BufferSearchBar>| {
+                options.then(|| {
+                    let is_active = self.search_options.contains(option);
+                    crate::search_bar::render_option_button_icon::<Self>(
+                        is_active,
+                        icon,
+                        option,
+                        move |_, this, cx| {
+                            this.toggle_search_option(option, cx);
+                        },
+                        cx,
+                    )
+                })
+            };
         Flex::row()
             .with_child(
                 Flex::row()
@@ -210,15 +225,15 @@ impl View for BufferSearchBar {
                     )
                     .with_child(
                         Flex::row()
-                            .with_children(self.render_search_option(
+                            .with_children(render_search_option(
                                 supported_options.case,
-                                "Case",
+                                "icons/case_insensitive_12.svg",
                                 SearchOptions::CASE_SENSITIVE,
                                 cx,
                             ))
-                            .with_children(self.render_search_option(
+                            .with_children(render_search_option(
                                 supported_options.word,
-                                "Word",
+                                "icons/word_search_12.svg",
                                 SearchOptions::WHOLE_WORD,
                                 cx,
                             ))
