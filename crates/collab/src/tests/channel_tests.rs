@@ -584,3 +584,70 @@ async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut Test
         );
     });
 }
+
+#[gpui::test]
+async fn test_permissions_update_while_invited(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let rust_id = server
+        .make_channel("rust", (&client_a, cx_a), &mut [])
+        .await;
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.invite_member(rust_id, client_b.user_id().unwrap(), false, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_b.channel_store().read_with(cx_b, |channels, _| {
+        assert_eq!(
+            channels.channel_invitations(),
+            &[Arc::new(Channel {
+                id: rust_id,
+                name: "rust".to_string(),
+                parent_id: None,
+                user_is_admin: false,
+                depth: 0,
+            })],
+        );
+
+        assert_eq!(channels.channels(), &[],);
+    });
+
+    // Update B's invite before they've accepted it
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_member_admin(rust_id, client_b.user_id().unwrap(), true, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_b.channel_store().read_with(cx_b, |channels, _| {
+        assert_eq!(
+            channels.channel_invitations(),
+            &[Arc::new(Channel {
+                id: rust_id,
+                name: "rust".to_string(),
+                parent_id: None,
+                user_is_admin: true,
+                depth: 0,
+            })],
+        );
+
+        assert_eq!(channels.channels(), &[],);
+    });
+}

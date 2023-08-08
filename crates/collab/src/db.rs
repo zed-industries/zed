@@ -3601,7 +3601,7 @@ impl Database {
             )
             .one(&*tx)
             .await?
-            .ok_or_else(|| anyhow!("user is not a channel member"))?;
+            .ok_or_else(|| anyhow!("user is not a channel member or channel does not exist"))?;
         Ok(())
     }
 
@@ -3621,7 +3621,7 @@ impl Database {
             )
             .one(&*tx)
             .await?
-            .ok_or_else(|| anyhow!("user is not a channel admin"))?;
+            .ok_or_else(|| anyhow!("user is not a channel admin or channel does not exist"))?;
         Ok(())
     }
 
@@ -3723,31 +3723,53 @@ impl Database {
         Ok(parents_by_child_id)
     }
 
+    /// Returns the channel with the given ID and:
+    /// - true if the user is a member
+    /// - false if the user hasn't accepted the invitation yet
     pub async fn get_channel(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
-    ) -> Result<Option<Channel>> {
+    ) -> Result<Option<(Channel, bool)>> {
         self.transaction(|tx| async move {
             let tx = tx;
-            let channel = channel::Entity::find_by_id(channel_id).one(&*tx).await?;
-            let user_is_admin = channel_member::Entity::find()
-                .filter(
-                    channel_member::Column::ChannelId
-                        .eq(channel_id)
-                        .and(channel_member::Column::UserId.eq(user_id))
-                        .and(channel_member::Column::Admin.eq(true)),
-                )
-                .count(&*tx)
-                .await?
-                > 0;
 
-            Ok(channel.map(|channel| Channel {
-                id: channel.id,
-                name: channel.name,
-                user_is_admin,
-                parent_id: None,
-            }))
+            let channel = channel::Entity::find_by_id(channel_id).one(&*tx).await?;
+
+            if let Some(channel) = channel {
+                if self
+                    .check_user_is_channel_member(channel_id, user_id, &*tx)
+                    .await
+                    .is_err()
+                {
+                    return Ok(None);
+                }
+
+                let channel_membership = channel_member::Entity::find()
+                    .filter(
+                        channel_member::Column::ChannelId
+                            .eq(channel_id)
+                            .and(channel_member::Column::UserId.eq(user_id)),
+                    )
+                    .one(&*tx)
+                    .await?;
+
+                let (user_is_admin, is_accepted) = channel_membership
+                    .map(|membership| (membership.admin, membership.accepted))
+                    .unwrap_or((false, false));
+
+                Ok(Some((
+                    Channel {
+                        id: channel.id,
+                        name: channel.name,
+                        user_is_admin,
+                        parent_id: None,
+                    },
+                    is_accepted,
+                )))
+            } else {
+                Ok(None)
+            }
         })
         .await
     }

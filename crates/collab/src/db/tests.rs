@@ -915,6 +915,9 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
 
     let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
 
+    // Make sure that people cannot read channels they haven't been invited to
+    assert!(db.get_channel(zed_id, b_id).await.unwrap().is_none());
+
     db.invite_channel_member(zed_id, b_id, a_id, false)
         .await
         .unwrap();

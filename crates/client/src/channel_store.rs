@@ -301,8 +301,10 @@ impl ChannelStore {
                 .iter_mut()
                 .find(|c| c.id == channel.id)
             {
-                let existing_channel = Arc::make_mut(existing_channel);
+                let existing_channel = Arc::get_mut(existing_channel)
+                    .expect("channel is shared, update would have been lost");
                 existing_channel.name = channel.name;
+                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
@@ -320,7 +322,8 @@ impl ChannelStore {
 
         for channel in payload.channels {
             if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
-                let existing_channel = Arc::make_mut(existing_channel);
+                let existing_channel = Arc::get_mut(existing_channel)
+                    .expect("channel is shared, update would have been lost");
                 existing_channel.name = channel.name;
                 existing_channel.user_is_admin = channel.user_is_admin;
                 continue;

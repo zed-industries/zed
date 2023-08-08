@@ -2210,13 +2210,14 @@ async fn invite_channel_member(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let channel = db
-        .get_channel(channel_id, session.user_id)
-        .await?
-        .ok_or_else(|| anyhow!("channel not found"))?;
     let invitee_id = UserId::from_proto(request.user_id);
     db.invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
         .await?;
+
+    let (channel, _) = db
+        .get_channel(channel_id, session.user_id)
+        .await?
+        .ok_or_else(|| anyhow!("channel not found"))?;
 
     let mut update = proto::UpdateChannels::default();
     update.channel_invitations.push(proto::Channel {
@@ -2275,18 +2276,27 @@ async fn set_channel_member_admin(
     db.set_channel_member_admin(channel_id, session.user_id, member_id, request.admin)
         .await?;
 
-    let channel = db
+    let (channel, has_accepted) = db
         .get_channel(channel_id, member_id)
         .await?
         .ok_or_else(|| anyhow!("channel not found"))?;
 
     let mut update = proto::UpdateChannels::default();
-    update.channels.push(proto::Channel {
-        id: channel.id.to_proto(),
-        name: channel.name,
-        parent_id: None,
-        user_is_admin: request.admin,
-    });
+    if has_accepted {
+        update.channels.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+            user_is_admin: request.admin,
+        });
+    } else {
+        update.channel_invitations.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+            user_is_admin: request.admin,
+        });
+    }
 
     for connection_id in session
         .connection_pool()
