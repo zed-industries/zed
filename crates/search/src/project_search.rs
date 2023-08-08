@@ -1,4 +1,5 @@
 use crate::{
+    elements::ButtonSide,
     history::SearchHistory,
     mode::{SearchMode, Side},
     CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectNextMatch,
@@ -11,12 +12,9 @@ use editor::{
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
-use gpui::color::Color;
-use gpui::geometry::rect::RectF;
-use gpui::geometry::vector::IntoVector2F;
-use gpui::json::{self, ToJson};
+
 use gpui::platform::PromptLevel;
-use gpui::SceneBuilder;
+
 use gpui::{
     actions,
     elements::*,
@@ -24,7 +22,7 @@ use gpui::{
     Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
-use gpui::{scene::Path, LayoutContext};
+
 use menu::Confirm;
 use postage::stream::Stream;
 use project::{
@@ -717,7 +715,7 @@ impl ProjectSearchView {
                         })?;
 
                         if answer.next().await == Some(0) {
-                            this.update(&mut cx, |this, cx| {
+                            this.update(&mut cx, |this, _| {
                                 this.semantic_permissioned = Some(true);
                             })?;
                         } else {
@@ -1150,138 +1148,6 @@ impl Default for ProjectSearchBar {
         Self::new()
     }
 }
-type CreatePath = fn(RectF, Color) -> Path;
-type AdjustBorder = fn(RectF, f32) -> RectF;
-pub struct ButtonSide {
-    color: Color,
-    factory: CreatePath,
-    border_adjustment: AdjustBorder,
-    border: Option<(f32, Color)>,
-}
-
-impl ButtonSide {
-    fn new(color: Color, factory: CreatePath, border_adjustment: AdjustBorder) -> Self {
-        Self {
-            color,
-            factory,
-            border_adjustment,
-            border: None,
-        }
-    }
-    pub fn with_border(mut self, width: f32, color: Color) -> Self {
-        self.border = Some((width, color));
-        self
-    }
-    pub fn left(color: Color) -> Self {
-        Self::new(color, left_button_side, left_button_border_adjust)
-    }
-    pub fn right(color: Color) -> Self {
-        Self::new(color, right_button_side, right_button_border_adjust)
-    }
-}
-fn left_button_border_adjust(bounds: RectF, width: f32) -> RectF {
-    let width = width.into_vector_2f();
-    let mut lower_right = bounds.clone().lower_right();
-    lower_right.set_x(lower_right.x() + width.x());
-    RectF::from_points(bounds.origin() + width, lower_right)
-}
-fn right_button_border_adjust(bounds: RectF, width: f32) -> RectF {
-    let width = width.into_vector_2f();
-    let mut origin = bounds.clone().origin();
-    origin.set_x(origin.x() - width.x());
-    RectF::from_points(origin, bounds.lower_right() - width)
-}
-fn left_button_side(bounds: RectF, color: Color) -> Path {
-    use gpui::geometry::PathBuilder;
-    let mut path = PathBuilder::new();
-    path.reset(bounds.lower_right());
-    path.line_to(bounds.upper_right());
-    let mut middle_point = bounds.origin();
-    let distance_to_line = (middle_point.y() - bounds.lower_left().y()) / 4.;
-    middle_point.set_y(middle_point.y() - distance_to_line);
-    path.curve_to(middle_point, bounds.origin());
-    let mut target = bounds.lower_left();
-    target.set_y(target.y() + distance_to_line);
-    path.line_to(target);
-    path.curve_to(bounds.lower_right(), bounds.lower_left());
-    path.build(color, None)
-}
-
-fn right_button_side(bounds: RectF, color: Color) -> Path {
-    use gpui::geometry::PathBuilder;
-    let mut path = PathBuilder::new();
-    path.reset(bounds.lower_left());
-    path.line_to(bounds.origin());
-    let mut middle_point = bounds.upper_right();
-    let distance_to_line = (middle_point.y() - bounds.lower_right().y()) / 4.;
-    middle_point.set_y(middle_point.y() - distance_to_line);
-    path.curve_to(middle_point, bounds.upper_right());
-    let mut target = bounds.lower_right();
-    target.set_y(target.y() + distance_to_line);
-    path.line_to(target);
-    path.curve_to(bounds.lower_left(), bounds.lower_right());
-    path.build(color, None)
-}
-
-impl Element<ProjectSearchBar> for ButtonSide {
-    type LayoutState = ();
-
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: gpui::SizeConstraint,
-        _: &mut ProjectSearchBar,
-        _: &mut LayoutContext<ProjectSearchBar>,
-    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        (constraint.max, ())
-    }
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut ProjectSearchBar,
-        _: &mut ViewContext<ProjectSearchBar>,
-    ) -> Self::PaintState {
-        let mut bounds = bounds;
-        if let Some((border_width, border_color)) = self.border.as_ref() {
-            scene.push_path((self.factory)(bounds, border_color.clone()));
-            bounds = (self.border_adjustment)(bounds, *border_width);
-        };
-        scene.push_path((self.factory)(bounds, self.color));
-    }
-
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &ProjectSearchBar,
-        _: &ViewContext<ProjectSearchBar>,
-    ) -> Option<RectF> {
-        None
-    }
-
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &ProjectSearchBar,
-        _: &ViewContext<ProjectSearchBar>,
-    ) -> gpui::json::Value {
-        json::json!({
-            "type": "ButtonSide",
-            "bounds": bounds.to_json(),
-            "color": self.color.to_json(),
-        })
-    }
-}
 
 impl ProjectSearchBar {
     pub fn new() -> Self {
@@ -1480,7 +1346,7 @@ impl ProjectSearchBar {
                 Direction::Prev => style.container.border.left = false,
                 Direction::Next => style.container.border.right = false,
             };
-            let mut label = Label::new(icon, style.label.clone())
+            let label = Label::new(icon, style.label.clone())
                 .contained()
                 .with_style(style.container.clone());
             match direction {
