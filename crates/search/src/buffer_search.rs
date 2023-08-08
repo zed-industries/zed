@@ -1,6 +1,7 @@
 use crate::{
-    history::SearchHistory, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
-    SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    history::SearchHistory, mode::SearchMode, search_bar::render_search_mode_button,
+    NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches, SelectNextMatch,
+    SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -78,6 +79,7 @@ pub struct BufferSearchBar {
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
+    current_mode: SearchMode,
 }
 
 impl Entity for BufferSearchBar {
@@ -149,7 +151,18 @@ impl View for BufferSearchBar {
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
+        let search_button_for_mode = |mode, cx: &mut ViewContext<BufferSearchBar>| {
+            let is_active = self.current_mode == mode;
 
+            render_search_mode_button(
+                mode,
+                is_active,
+                move |_, this, cx| {
+                    //this.activate_search_mode(mode, cx);
+                },
+                cx,
+            )
+        };
         Flex::row()
             .with_child(
                 Flex::row()
@@ -221,6 +234,8 @@ impl View for BufferSearchBar {
                     )
                     .flex(1., true),
             )
+            .with_child(search_button_for_mode(SearchMode::Text, cx))
+            .with_child(search_button_for_mode(SearchMode::Regex, cx))
             .with_child(super::search_bar::render_close_button(
                 &theme.search,
                 cx,
@@ -308,6 +323,7 @@ impl BufferSearchBar {
             query_contains_error: false,
             dismissed: true,
             search_history: SearchHistory::default(),
+            current_mode: SearchMode::default(),
         }
     }
 
