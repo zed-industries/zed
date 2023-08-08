@@ -37,12 +37,18 @@ impl<V: View> Element<V> for FacePile<V> {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
         let mut width = 0.;
+        let mut max_height = 0.;
         for face in &mut self.faces {
-            width += face.layout(constraint, view, cx).x();
+            let layout = face.layout(constraint, view, cx);
+            width += layout.x();
+            max_height = f32::max(max_height, layout.y());
         }
         width -= self.overlap * self.faces.len().saturating_sub(1) as f32;
 
-        (Vector2F::new(width, constraint.max.y()), ())
+        (
+            Vector2F::new(width, max_height.clamp(1., constraint.max.y())),
+            (),
+        )
     }
 
     fn paint(

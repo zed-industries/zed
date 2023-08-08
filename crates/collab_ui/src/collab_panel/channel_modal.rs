@@ -534,7 +534,7 @@ impl ChannelModalDelegate {
 
                 this.selected_index = this
                     .selected_index
-                    .min(this.matching_member_indices.len() - 1);
+                    .min(this.matching_member_indices.len().saturating_sub(1));
 
                 cx.focus_self();
                 cx.notify();
