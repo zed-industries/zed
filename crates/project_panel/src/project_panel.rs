@@ -1415,7 +1415,7 @@ impl ProjectPanel {
 
             if cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
                 .is_some()
                 && dragged_entry_destination
                     .as_ref()
@@ -1459,7 +1459,7 @@ impl ProjectPanel {
         .on_up(MouseButton::Left, move |_, this, cx| {
             if let Some((_, dragged_entry)) = cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
             {
                 this.move_entry(
                     *dragged_entry,
@@ -1472,7 +1472,7 @@ impl ProjectPanel {
         .on_move(move |_, this, cx| {
             if cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
                 .is_some()
             {
                 this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {

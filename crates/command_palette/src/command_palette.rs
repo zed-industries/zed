@@ -1,8 +1,8 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Element, MouseState,
-    ViewContext,
+    actions, elements::*, keymap_matcher::Keystroke, Action, AnyWindowHandle, AppContext, Element,
+    MouseState, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::cmp;
@@ -28,7 +28,7 @@ pub struct CommandPaletteDelegate {
 pub enum Event {
     Dismissed,
     Confirmed {
-        window_id: usize,
+        window: AnyWindowHandle,
         focused_view_id: usize,
         action: Box<dyn Action>,
     },
