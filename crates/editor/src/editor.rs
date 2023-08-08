@@ -7572,7 +7572,6 @@ impl Editor {
         }) {
             Ok(i) | Err(i) => i,
         };
-        let end_ix = count.min(ranges.len());
         let mut push_region = |start: Option<Point>, end: Option<Point>| {
             if let (Some(start_display), Some(end_display)) = (start, end) {
                 results.push(
@@ -7583,7 +7582,10 @@ impl Editor {
         };
         let mut start_row: Option<Point> = None;
         let mut end_row: Option<Point> = None;
-        for range in &ranges[start_ix..end_ix] {
+        if ranges.len() > count {
+            return vec![];
+        }
+        for range in &ranges[start_ix..] {
             if range.start.cmp(&search_range.end, buffer).is_ge() {
                 break;
             }
@@ -7616,9 +7618,6 @@ impl Editor {
         }
         // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
-        if results.len() > count {
-            return vec![];
-        }
         results
     }
 
