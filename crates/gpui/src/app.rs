@@ -2112,13 +2112,15 @@ impl BorrowWindowContext for AppContext {
     where
         F: FnOnce(&mut WindowContext) -> T,
     {
-        let mut window = self.windows.remove(&handle)?;
-        let mut window_context = WindowContext::mutable(self, &mut window, handle);
-        let result = f(&mut window_context);
-        if !window_context.removed {
-            self.windows.insert(handle, window);
-        }
-        Some(result)
+        self.update(|cx| {
+            let mut window = cx.windows.remove(&handle)?;
+            let mut window_context = WindowContext::mutable(cx, &mut window, handle);
+            let result = f(&mut window_context);
+            if !window_context.removed {
+                cx.windows.insert(handle, window);
+            }
+            Some(result)
+        })
     }
 
     fn update_window_optional<T, F>(&mut self, handle: AnyWindowHandle, f: F) -> Option<T>
