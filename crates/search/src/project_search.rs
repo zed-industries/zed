@@ -2,6 +2,7 @@ use crate::{
     elements::ButtonSide,
     history::SearchHistory,
     mode::{SearchMode, Side},
+    search_bar::render_nav_button,
     ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
@@ -1322,91 +1323,6 @@ impl ProjectSearchBar {
         }
     }
 
-    fn render_nav_button(
-        &self,
-        icon: &'static str,
-        direction: Direction,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let action: Box<dyn Action>;
-        let tooltip;
-
-        match direction {
-            Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
-                tooltip = "Select Previous Match";
-            }
-            Direction::Next => {
-                action = Box::new(SelectNextMatch);
-                tooltip = "Select Next Match";
-            }
-        };
-        let tooltip_style = theme::current(cx).tooltip.clone();
-
-        enum NavButton {}
-        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let mut style = theme.search.nav_button.style_for(state).clone();
-
-            match direction {
-                Direction::Prev => style.container.border.left = false,
-                Direction::Next => style.container.border.right = false,
-            };
-            let label = Label::new(icon, style.label.clone())
-                .contained()
-                .with_style(style.container.clone());
-            match direction {
-                Direction::Prev => Flex::row()
-                    .with_child(
-                        ButtonSide::left(
-                            style
-                                .clone()
-                                .container
-                                .background_color
-                                .unwrap_or_else(gpui::color::Color::transparent_black),
-                        )
-                        .with_border(style.container.border.width, style.container.border.color)
-                        .contained()
-                        .constrained()
-                        .with_max_width(theme.search.mode_filling_width),
-                    )
-                    .with_child(label)
-                    .constrained()
-                    .with_height(theme.workspace.toolbar.height),
-                Direction::Next => Flex::row()
-                    .with_child(label)
-                    .with_child(
-                        ButtonSide::right(
-                            style
-                                .clone()
-                                .container
-                                .background_color
-                                .unwrap_or_else(gpui::color::Color::transparent_black),
-                        )
-                        .with_border(style.container.border.width, style.container.border.color)
-                        .contained()
-                        .constrained()
-                        .with_max_width(theme.search.mode_filling_width),
-                    )
-                    .constrained()
-                    .with_height(theme.workspace.toolbar.height),
-            }
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            if let Some(search) = this.active_project_search.as_ref() {
-                search.update(cx, |search, cx| search.select_match(direction, cx));
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton>(
-            direction as usize,
-            tooltip.to_string(),
-            Some(action),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
     fn render_option_button_icon(
         &self,
         icon: &'static str,
@@ -1747,6 +1663,18 @@ impl View for ProjectSearchBar {
 
             let semantic_index = SemanticIndex::enabled(cx)
                 .then(|| self.render_search_mode_button(SearchMode::Semantic, cx));
+            let mut nav_button_for_direction = |label, direction| {
+                render_nav_button(
+                    label,
+                    direction,
+                    move |_, this, cx| {
+                        if let Some(search) = this.active_project_search.as_ref() {
+                            search.update(cx, |search, cx| search.select_match(direction, cx));
+                        }
+                    },
+                    cx,
+                )
+            };
             Flex::row()
                 .with_child(
                     Flex::column()
@@ -1755,16 +1683,8 @@ impl View for ProjectSearchBar {
                                 .align_children_center()
                                 .with_child(
                                     Flex::row()
-                                        .with_child(self.render_nav_button(
-                                            "<",
-                                            Direction::Prev,
-                                            cx,
-                                        ))
-                                        .with_child(self.render_nav_button(
-                                            ">",
-                                            Direction::Next,
-                                            cx,
-                                        ))
+                                        .with_child(nav_button_for_direction("<", Direction::Prev))
+                                        .with_child(nav_button_for_direction(">", Direction::Next))
                                         .aligned(),
                                 )
                                 .with_children(matches)
