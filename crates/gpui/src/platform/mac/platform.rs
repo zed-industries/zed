@@ -1,6 +1,6 @@
 use super::{
     event::key_to_native, screen::Screen, status_item::StatusItem, BoolExt as _, Dispatcher,
-    FontSystem, Window,
+    FontSystem, MacWindow,
 };
 use crate::{
     executor,
@@ -594,11 +594,11 @@ impl platform::Platform for MacPlatform {
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn platform::Window> {
-        Box::new(Window::open(handle, options, executor, self.fonts()))
+        Box::new(MacWindow::open(handle, options, executor, self.fonts()))
     }
 
     fn main_window(&self) -> Option<AnyWindowHandle> {
-        Window::main_window()
+        MacWindow::main_window()
     }
 
     fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {

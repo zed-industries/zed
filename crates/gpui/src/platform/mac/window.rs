@@ -423,9 +423,9 @@ impl WindowState {
     }
 }
 
-pub struct Window(Rc<RefCell<WindowState>>);
+pub struct MacWindow(Rc<RefCell<WindowState>>);
 
-impl Window {
+impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         options: platform::WindowOptions,
@@ -636,7 +636,7 @@ impl Window {
     }
 }
 
-impl Drop for Window {
+impl Drop for MacWindow {
     fn drop(&mut self) {
         let this = self.0.borrow();
         let window = this.native_window;
@@ -650,7 +650,7 @@ impl Drop for Window {
     }
 }
 
-impl platform::Window for Window {
+impl platform::Window for MacWindow {
     fn bounds(&self) -> WindowBounds {
         self.0.as_ref().borrow().bounds()
     }
