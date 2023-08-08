@@ -15,7 +15,7 @@ use gpui::{
     actions,
     elements::{
         Canvas, ChildView, Empty, Flex, Image, Label, List, ListOffset, ListState,
-        MouseEventHandler, Orientation, Padding, ParentElement, Stack, Svg,
+        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack, Svg,
     },
     geometry::{
         rect::RectF,
@@ -64,7 +64,7 @@ struct ManageMembers {
     channel_id: u64,
 }
 
-actions!(collab_panel, [ToggleFocus]);
+actions!(collab_panel, [ToggleFocus, Remove, Secondary]);
 
 impl_actions!(
     collab_panel,
@@ -82,7 +82,9 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::select_next);
     cx.add_action(CollabPanel::select_prev);
     cx.add_action(CollabPanel::confirm);
-    cx.add_action(CollabPanel::remove_channel);
+    cx.add_action(CollabPanel::remove);
+    cx.add_action(CollabPanel::remove_channel_action);
+    cx.add_action(CollabPanel::show_inline_context_menu);
     cx.add_action(CollabPanel::new_subchannel);
     cx.add_action(CollabPanel::invite_members);
     cx.add_action(CollabPanel::manage_members);
@@ -113,6 +115,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     workspace: WeakViewHandle<Workspace>,
+    context_menu_on_selected: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -274,7 +277,26 @@ impl CollabPanel {
                             )
                         }
                         ListEntry::Channel(channel) => {
-                            this.render_channel(&*channel, &theme.collab_panel, is_selected, cx)
+                            let channel_row = this.render_channel(
+                                &*channel,
+                                &theme.collab_panel,
+                                is_selected,
+                                cx,
+                            );
+
+                            if is_selected && this.context_menu_on_selected {
+                                Stack::new()
+                                    .with_child(channel_row)
+                                    .with_child(
+                                        ChildView::new(&this.context_menu, cx)
+                                            .aligned()
+                                            .bottom()
+                                            .right(),
+                                    )
+                                    .into_any()
+                            } else {
+                                return channel_row;
+                            }
                         }
                         ListEntry::ChannelInvite(channel) => Self::render_channel_invite(
                             channel.clone(),
@@ -332,6 +354,7 @@ impl CollabPanel {
                 collapsed_sections: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
+                context_menu_on_selected: true,
                 list_state,
             };
 
@@ -1321,6 +1344,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
+
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
                 .with_child(
@@ -1367,7 +1391,7 @@ impl CollabPanel {
             this.join_channel(channel_id, cx);
         })
         .on_click(MouseButton::Right, move |e, this, cx| {
-            this.deploy_channel_context_menu(e.position, channel_id, cx);
+            this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
         })
         .into_any()
     }
@@ -1573,15 +1597,27 @@ impl CollabPanel {
 
     fn deploy_channel_context_menu(
         &mut self,
-        position: Vector2F,
+        position: Option<Vector2F>,
         channel_id: u64,
         cx: &mut ViewContext<Self>,
     ) {
         if self.channel_store.read(cx).is_user_admin(channel_id) {
+            self.context_menu_on_selected = position.is_none();
+
             self.context_menu.update(cx, |context_menu, cx| {
+                context_menu.set_position_mode(if self.context_menu_on_selected {
+                    OverlayPositionMode::Local
+                } else {
+                    OverlayPositionMode::Window
+                });
+
                 context_menu.show(
-                    position,
-                    gpui::elements::AnchorCorner::BottomLeft,
+                    position.unwrap_or_default(),
+                    if self.context_menu_on_selected {
+                        gpui::elements::AnchorCorner::TopRight
+                    } else {
+                        gpui::elements::AnchorCorner::BottomLeft
+                    },
                     vec![
                         ContextMenuItem::action("New Channel", NewChannel { channel_id }),
                         ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
@@ -1591,6 +1627,8 @@ impl CollabPanel {
                     cx,
                 );
             });
+
+            cx.notify();
         }
     }
 
@@ -1755,6 +1793,33 @@ impl CollabPanel {
         self.show_channel_modal(action.channel_id, channel_modal::Mode::ManageMembers, cx);
     }
 
+    // TODO: Make join into a toggle
+    // TODO: Make enter work on channel editor
+    fn remove(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
+        if let Some(channel) = self.selected_channel() {
+            self.remove_channel(channel.id, cx)
+        }
+    }
+
+    fn rename(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {}
+
+    fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
+        let Some(channel) = self.selected_channel() else {
+            return;
+        };
+
+        self.deploy_channel_context_menu(None, channel.id, cx);
+    }
+
+    fn selected_channel(&self) -> Option<&Arc<Channel>> {
+        self.selection
+            .and_then(|ix| self.entries.get(ix))
+            .and_then(|entry| match entry {
+                ListEntry::Channel(channel) => Some(channel),
+                _ => None,
+            })
+    }
+
     fn show_channel_modal(
         &mut self,
         channel_id: ChannelId,
@@ -1788,8 +1853,11 @@ impl CollabPanel {
         .detach();
     }
 
-    fn remove_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
-        let channel_id = action.channel_id;
+    fn remove_channel_action(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
+        self.remove_channel(action.channel_id, cx)
+    }
+
+    fn remove_channel(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.clone();
         if let Some(channel) = channel_store.read(cx).channel_for_id(channel_id) {
             let prompt_message = format!(
@@ -1817,6 +1885,9 @@ impl CollabPanel {
             .detach();
         }
     }
+
+    // Should move to the filter editor if clicking on it
+    // Should move selection to the channel editor if activating it
 
     fn remove_contact(&mut self, user_id: u64, github_login: &str, cx: &mut ViewContext<Self>) {
         let user_store = self.user_store.clone();
@@ -1969,7 +2040,10 @@ impl View for CollabPanel {
                         .with_width(self.size(cx))
                         .into_any(),
                 )
-                .with_child(ChildView::new(&self.context_menu, cx))
+                .with_children(
+                    (!self.context_menu_on_selected)
+                        .then(|| ChildView::new(&self.context_menu, cx)),
+                )
                 .into_any()
         })
         .on_click(MouseButton::Left, |_, _, cx| cx.focus_self())
