@@ -162,15 +162,6 @@ impl TestAppContext {
         WindowHandle::new(window.id())
     }
 
-    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        self.update_window(window_id, |cx| cx.add_view(build_view))
-            .expect("window not found")
-    }
-
     pub fn observe_global<E, F>(&mut self, callback: F) -> Subscription
     where
         E: Any,

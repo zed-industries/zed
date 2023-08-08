@@ -525,9 +525,8 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
     let project = Project::test(fs, [], cx).await;
     let window = cx.add_window(|cx| Workspace::test_new(project, cx));
     let workspace = window.root(cx);
-    let window_id = window.id();
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-    cx.add_view(window_id, |cx| {
+    window.add_view(cx, |cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
         let mut editor = build_editor(buffer.clone(), cx);
         let handle = cx.handle();

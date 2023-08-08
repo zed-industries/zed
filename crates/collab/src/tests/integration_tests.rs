@@ -6441,8 +6441,10 @@ async fn test_basic_following(
         .await
         .unwrap();
 
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let window_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = window_a.root(cx_a);
+    let window_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = window_b.root(cx_b);
 
     // Client A opens some editors.
     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
@@ -6525,7 +6527,7 @@ async fn test_basic_following(
     cx_c.foreground().run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    let workspace_c = client_c.build_workspace(&project_c, cx_c);
+    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
     active_call_c
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
@@ -6543,7 +6545,7 @@ async fn test_basic_following(
     cx_d.foreground().run_until_parked();
     let active_call_d = cx_d.read(ActiveCall::global);
     let project_d = client_d.build_remote_project(project_id, cx_d).await;
-    let workspace_d = client_d.build_workspace(&project_d, cx_d);
+    let workspace_d = client_d.build_workspace(&project_d, cx_d).root(cx_d);
     active_call_d
         .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
         .await
@@ -6870,9 +6872,7 @@ async fn test_basic_following(
     });
 
     // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-    let panel = cx_b.add_view(workspace_b.window_id(), |_| {
-        TestPanel::new(DockPosition::Left)
-    });
+    let panel = window_b.add_view(cx_b, |_| TestPanel::new(DockPosition::Left));
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.add_panel(panel, cx);
         workspace.toggle_panel_focus::<TestPanel>(cx);
@@ -6900,7 +6900,7 @@ async fn test_basic_following(
 
     // Client B activates an item that doesn't implement following,
     // so the previously-opened screen-sharing item gets activated.
-    let unfollowable_item = cx_b.add_view(workspace_b.window_id(), |_| TestItem::new());
+    let unfollowable_item = window_b.add_view(cx_b, |_| TestItem::new());
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
             pane.add_item(Box::new(unfollowable_item), true, true, None, cx)
@@ -7062,10 +7062,10 @@ async fn test_following_tab_order(
         .await
         .unwrap();
 
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
 
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
     let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
 
     let client_b_id = project_a.read_with(cx_a, |project, _| {
@@ -7188,7 +7188,7 @@ async fn test_peers_following_each_other(
         .unwrap();
 
     // Client A opens some editors.
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
     let _editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
@@ -7200,7 +7200,7 @@ async fn test_peers_following_each_other(
         .unwrap();
 
     // Client B opens an editor.
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
     let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
     let _editor_b1 = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -7359,7 +7359,7 @@ async fn test_auto_unfollowing(
         .unwrap();
 
     // Client A opens some editors.
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let _editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
@@ -7370,7 +7370,7 @@ async fn test_auto_unfollowing(
         .unwrap();
 
     // Client B starts following client A.
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
     let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
     let leader_id = project_b.read_with(cx_b, |project, _| {
         project.collaborators().values().next().unwrap().peer_id
@@ -7498,14 +7498,14 @@ async fn test_peers_simultaneously_following_each_other(
 
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
 
     deterministic.run_until_parked();
     let client_a_id = project_b.read_with(cx_b, |project, _| {
@@ -7887,7 +7887,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
 
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     cx_a.foreground().start_waiting();
 
     let _buffer_a = project_a
@@ -7955,7 +7955,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Host editor update the cache version after every cache/view change",
         );
     });
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -8194,8 +8194,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .await
         .unwrap();
 
-    let workspace_a = client_a.build_workspace(&project_a, cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
     cx_a.foreground().start_waiting();
     cx_b.foreground().start_waiting();
 

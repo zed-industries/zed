@@ -850,12 +850,9 @@ mod tests {
             )
         });
         let window = cx.add_window(|_| EmptyView);
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let editor = cx.add_view(window.id(), |cx| {
-            Editor::for_buffer(buffer.clone(), None, cx)
-        });
-
-        let search_bar = cx.add_view(window.id(), |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1234,9 +1231,9 @@ mod tests {
         let window = cx.add_window(|_| EmptyView);
         let window_id = window.id();
 
-        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.add_view(window_id, |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1421,11 +1418,9 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
         let window = cx.add_window(|_| EmptyView);
 
-        let editor = cx.add_view(window.id(), |cx| {
-            Editor::for_buffer(buffer.clone(), None, cx)
-        });
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.add_view(window.id(), |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
