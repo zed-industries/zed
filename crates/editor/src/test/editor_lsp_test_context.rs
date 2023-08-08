@@ -99,7 +99,7 @@ impl<'a> EditorLspTestContext<'a> {
         Self {
             cx: EditorTestContext {
                 cx,
-                window_id: window.window_id(),
+                window: window.into(),
                 editor,
             },
             lsp,

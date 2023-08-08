@@ -6,7 +6,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
     scene::{MouseDown, MouseDrag},
-    AnyElement, Element, View, ViewContext, WeakViewHandle, WindowContext,
+    AnyElement, AnyWindowHandle, Element, View, ViewContext, WeakViewHandle, WindowContext,
 };
 
 const DEAD_ZONE: f32 = 4.;
@@ -21,7 +21,7 @@ enum State<V: View> {
         region: RectF,
     },
     Dragging {
-        window_id: usize,
+        window: AnyWindowHandle,
         position: Vector2F,
         region_offset: Vector2F,
         region: RectF,
@@ -49,14 +49,14 @@ impl<V: View> Clone for State<V> {
                 region,
             },
             State::Dragging {
-                window_id,
+                window,
                 position,
                 region_offset,
                 region,
                 payload,
                 render,
             } => Self::Dragging {
-                window_id: window_id.clone(),
+                window: window.clone(),
                 position: position.clone(),
                 region_offset: region_offset.clone(),
                 region: region.clone(),
@@ -87,16 +87,16 @@ impl<V: View> DragAndDrop<V> {
         self.containers.insert(handle);
     }
 
-    pub fn currently_dragged<T: Any>(&self, window_id: usize) -> Option<(Vector2F, Rc<T>)> {
+    pub fn currently_dragged<T: Any>(&self, window: AnyWindowHandle) -> Option<(Vector2F, Rc<T>)> {
         self.currently_dragged.as_ref().and_then(|state| {
             if let State::Dragging {
                 position,
                 payload,
-                window_id: window_dragged_from,
+                window: window_dragged_from,
                 ..
             } = state
             {
-                if &window_id != window_dragged_from {
+                if &window != window_dragged_from {
                     return None;
                 }
 
@@ -126,9 +126,9 @@ impl<V: View> DragAndDrop<V> {
         cx: &mut WindowContext,
         render: Rc<impl 'static + Fn(&T, &mut ViewContext<V>) -> AnyElement<V>>,
     ) {
-        let window_id = cx.window_id();
+        let window = cx.window();
         cx.update_global(|this: &mut Self, cx| {
-            this.notify_containers_for_window(window_id, cx);
+            this.notify_containers_for_window(window, cx);
 
             match this.currently_dragged.as_ref() {
                 Some(&State::Down {
@@ -141,7 +141,7 @@ impl<V: View> DragAndDrop<V> {
                 }) => {
                     if (event.position - (region.origin() + region_offset)).length() > DEAD_ZONE {
                         this.currently_dragged = Some(State::Dragging {
-                            window_id,
+                            window,
                             region_offset,
                             region,
                             position: event.position,
@@ -163,7 +163,7 @@ impl<V: View> DragAndDrop<V> {
                     ..
                 }) => {
                     this.currently_dragged = Some(State::Dragging {
-                        window_id,
+                        window,
                         region_offset,
                         region,
                         position: event.position,
@@ -188,14 +188,14 @@ impl<V: View> DragAndDrop<V> {
                     State::Down { .. } => None,
                     State::DeadZone { .. } => None,
                     State::Dragging {
-                        window_id,
+                        window,
                         region_offset,
                         position,
                         region,
                         payload,
                         render,
                     } => {
-                        if cx.window_id() != window_id {
+                        if cx.window() != window {
                             return None;
                         }
 
@@ -260,27 +260,27 @@ impl<V: View> DragAndDrop<V> {
 
     pub fn cancel_dragging<P: Any>(&mut self, cx: &mut WindowContext) {
         if let Some(State::Dragging {
-            payload, window_id, ..
+            payload, window, ..
         }) = &self.currently_dragged
         {
             if payload.is::<P>() {
-                let window_id = *window_id;
+                let window = *window;
                 self.currently_dragged = Some(State::Canceled);
-                self.notify_containers_for_window(window_id, cx);
+                self.notify_containers_for_window(window, cx);
             }
         }
     }
 
     fn finish_dragging(&mut self, cx: &mut WindowContext) {
-        if let Some(State::Dragging { window_id, .. }) = self.currently_dragged.take() {
-            self.notify_containers_for_window(window_id, cx);
+        if let Some(State::Dragging { window, .. }) = self.currently_dragged.take() {
+            self.notify_containers_for_window(window, cx);
         }
     }
 
-    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut WindowContext) {
+    fn notify_containers_for_window(&mut self, window: AnyWindowHandle, cx: &mut WindowContext) {
         self.containers.retain(|container| {
             if let Some(container) = container.upgrade(cx) {
-                if container.window_id() == window_id {
+                if container.window() == window {
                     container.update(cx, |_, cx| cx.notify());
                 }
                 true

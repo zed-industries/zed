@@ -37,7 +37,7 @@ use gpui::{
     },
     AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
     ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    WeakViewHandle, WindowContext, WindowHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use itertools::Itertools;
@@ -749,7 +749,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        requesting_window_id: Option<usize>,
+        requesting_window: Option<WindowHandle<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<(
         WeakViewHandle<Workspace>,
@@ -793,55 +793,60 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let window = requesting_window_id.and_then(|window_id| {
-                cx.update(|cx| {
-                    cx.replace_root_view(window_id, |cx| {
-                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-                    })
-                })
-            });
-            let window = window.unwrap_or_else(|| {
-                let window_bounds_override = window_bounds_env_override(&cx);
-                let (bounds, display) = if let Some(bounds) = window_bounds_override {
-                    (Some(bounds), None)
-                } else {
-                    serialized_workspace
-                        .as_ref()
-                        .and_then(|serialized_workspace| {
-                            let display = serialized_workspace.display?;
-                            let mut bounds = serialized_workspace.bounds?;
+            let window = if let Some(window) = requesting_window {
+                window.replace_root(&mut cx, |cx| {
+                    Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                });
+                window
+            } else {
+                {
+                    let window_bounds_override = window_bounds_env_override(&cx);
+                    let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                        (Some(bounds), None)
+                    } else {
+                        serialized_workspace
+                            .as_ref()
+                            .and_then(|serialized_workspace| {
+                                let display = serialized_workspace.display?;
+                                let mut bounds = serialized_workspace.bounds?;
 
-                            // Stored bounds are relative to the containing display.
-                            // So convert back to global coordinates if that screen still exists
-                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                if let Some(screen) = cx.platform().screen_by_id(display) {
-                                    let screen_bounds = screen.bounds();
-                                    window_bounds.set_origin_x(
-                                        window_bounds.origin_x() + screen_bounds.origin_x(),
-                                    );
-                                    window_bounds.set_origin_y(
-                                        window_bounds.origin_y() + screen_bounds.origin_y(),
-                                    );
-                                    bounds = WindowBounds::Fixed(window_bounds);
-                                } else {
-                                    // Screen no longer exists. Return none here.
-                                    return None;
+                                // Stored bounds are relative to the containing display.
+                                // So convert back to global coordinates if that screen still exists
+                                if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                                    if let Some(screen) = cx.platform().screen_by_id(display) {
+                                        let screen_bounds = screen.bounds();
+                                        window_bounds.set_origin_x(
+                                            window_bounds.origin_x() + screen_bounds.origin_x(),
+                                        );
+                                        window_bounds.set_origin_y(
+                                            window_bounds.origin_y() + screen_bounds.origin_y(),
+                                        );
+                                        bounds = WindowBounds::Fixed(window_bounds);
+                                    } else {
+                                        // Screen no longer exists. Return none here.
+                                        return None;
+                                    }
                                 }
-                            }
 
-                            Some((bounds, display))
-                        })
-                        .unzip()
-                };
+                                Some((bounds, display))
+                            })
+                            .unzip()
+                    };
 
-                // Use the serialized workspace to construct the new window
-                cx.add_window(
-                    (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                    |cx| {
-                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-                    },
-                )
-            });
+                    // Use the serialized workspace to construct the new window
+                    cx.add_window(
+                        (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+                        |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        },
+                    )
+                }
+            };
 
             // We haven't yielded the main thread since obtaining the window handle,
             // so the window exists.
@@ -1227,14 +1232,14 @@ impl Workspace {
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
         cx.spawn(|mut cx| async move {
-            let id = cx
-                .window_ids()
+            let window = cx
+                .windows()
                 .into_iter()
-                .find(|&id| cx.window_is_active(id));
-            if let Some(id) = id {
+                .find(|window| window.is_active(&cx).unwrap_or(false));
+            if let Some(window) = window {
                 //This can only get called when the window's project connection has been lost
                 //so we don't need to prompt the user for anything and instead just close the window
-                cx.remove_window(id);
+                window.remove(&mut cx);
             }
         })
         .detach();
@@ -1245,11 +1250,11 @@ impl Workspace {
         _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let window_id = cx.window_id();
+        let window = cx.window();
         let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
-                cx.remove_window(window_id);
+                window.remove(&mut cx);
             }
             Ok(())
         }))
@@ -1261,13 +1266,13 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
-        let window_id = cx.window_id();
+        let window = cx.window();
 
         cx.spawn(|this, mut cx| async move {
             let workspace_count = cx
-                .window_ids()
+                .windows()
                 .into_iter()
-                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+                .filter(|window| window.root_is::<Workspace>())
                 .count();
 
             if let Some(active_call) = active_call {
@@ -1275,11 +1280,11 @@ impl Workspace {
                     && workspace_count == 1
                     && active_call.read_with(&cx, |call, _| call.room().is_some())
                 {
-                    let answer = cx.prompt(
-                        window_id,
+                    let answer = window.prompt(
                         PromptLevel::Warning,
                         "Do you want to leave the current call?",
                         &["Close window and hang up", "Cancel"],
+                        &mut cx,
                     );
 
                     if let Some(mut answer) = answer {
@@ -1385,7 +1390,7 @@ impl Workspace {
         paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let window_id = cx.window_id();
+        let window = cx.window().downcast::<Self>();
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
@@ -1397,15 +1402,15 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            let window_id_to_replace = if let Some(close_task) = close_task {
+            let window_to_replace = if let Some(close_task) = close_task {
                 if !close_task.await? {
                     return Ok(());
                 }
-                Some(window_id)
+                window
             } else {
                 None
             };
-            cx.update(|cx| open_paths(&paths, &app_state, window_id_to_replace, cx))
+            cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))
                 .await?;
             Ok(())
         })
@@ -3176,7 +3181,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -3189,7 +3194,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -3202,7 +3207,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -3822,9 +3827,9 @@ pub fn activate_workspace_for_project(
     cx: &mut AsyncAppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<WeakViewHandle<Workspace>> {
-    for window_id in cx.window_ids() {
-        let handle = cx
-            .update_window(window_id, |cx| {
+    for window in cx.windows() {
+        let handle = window
+            .update(cx, |cx| {
                 if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
                     let project = workspace_handle.read(cx).project.clone();
                     if project.update(cx, &predicate) {
@@ -3851,7 +3856,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
-    requesting_window_id: Option<usize>,
+    requesting_window: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
 ) -> Task<
     Result<(
@@ -3879,7 +3884,7 @@ pub fn open_paths(
         } else {
             Ok(cx
                 .update(|cx| {
-                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx)
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
                 })
                 .await)
         }
@@ -3940,18 +3945,23 @@ pub fn join_remote_project(
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
         let existing_workspace = cx
-            .window_ids()
+            .windows()
             .into_iter()
-            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
-            .find(|workspace| {
-                cx.read_window(workspace.window_id(), |cx| {
-                    workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
+            .find_map(|window| {
+                window.downcast::<Workspace>().and_then(|window| {
+                    window.read_root_with(&cx, |workspace, cx| {
+                        if workspace.project().read(cx).remote_id() == Some(project_id) {
+                            Some(cx.handle().downgrade())
+                        } else {
+                            None
+                        }
+                    })
                 })
-                .unwrap_or(false)
-            });
+            })
+            .flatten();
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
-            existing_workspace.downgrade()
+            existing_workspace
         } else {
             let active_call = cx.read(ActiveCall::global);
             let room = active_call
@@ -3990,7 +4000,7 @@ pub fn join_remote_project(
             workspace.downgrade()
         };
 
-        cx.activate_window(workspace.window_id());
+        workspace.window().activate(&mut cx);
         cx.platform().activate(true);
 
         workspace.update(&mut cx, |workspace, cx| {
@@ -4029,29 +4039,22 @@ pub fn join_remote_project(
 pub fn restart(_: &Restart, cx: &mut AppContext) {
     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
-        let mut workspaces = cx
-            .window_ids()
+        let mut workspace_windows = cx
+            .windows()
             .into_iter()
-            .filter_map(|window_id| {
-                Some(
-                    cx.root_view(window_id)?
-                        .clone()
-                        .downcast::<Workspace>()?
-                        .downgrade(),
-                )
-            })
+            .filter_map(|window| window.downcast::<Workspace>())
             .collect::<Vec<_>>();
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+        workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx.prompt(
-                workspace.window_id(),
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+            let answer = window.prompt(
                 PromptLevel::Info,
                 "Are you sure you want to restart?",
                 &["Restart", "Cancel"],
+                &mut cx,
             );
 
             if let Some(mut answer) = answer {
@@ -4063,14 +4066,13 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for workspace in workspaces {
-            if !workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
-                })?
-                .await?
-            {
-                return Ok(());
+        for window in workspace_windows {
+            if let Some(close) = window.update_root(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
+            }) {
+                if !close.await? {
+                    return Ok(());
+                }
             }
         }
         cx.platform().restart();
@@ -4195,17 +4197,11 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(
-            cx.current_window_title(window.window_id()).as_deref(),
-            Some("one.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
-        assert_eq!(
-            cx.current_window_title(window.window_id()).as_deref(),
-            Some("two.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("two.txt — root1"));
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -4221,10 +4217,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(
-            cx.current_window_title(window.window_id()).as_deref(),
-            Some("one.txt — root1")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -4242,16 +4235,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            cx.current_window_title(window.window_id()).as_deref(),
+            window.current_title(cx).as_deref(),
             Some("one.txt — root1, root2")
         );
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(
-            cx.current_window_title(window.window_id()).as_deref(),
-            Some("one.txt — root2")
-        );
+        assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root2"));
     }
 
     #[gpui::test]
@@ -4285,9 +4275,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window.window_id(), 2 /* cancel */);
+        window.simulate_prompt_answer(2, cx); // cancel
         cx.foreground().run_until_parked();
-        assert!(!cx.has_pending_prompt(window.window_id()));
+        assert!(!window.has_pending_prompt(cx));
         assert!(!task.await.unwrap());
     }
 
@@ -4346,10 +4336,10 @@ mod tests {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(cx.has_pending_prompt(window.window_id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Confirm saving item 1.
-        cx.simulate_prompt_answer(window.window_id(), 0);
+        window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -4360,10 +4350,10 @@ mod tests {
             assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
-        assert!(cx.has_pending_prompt(window.window_id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(window.window_id(), 1);
+        window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -4374,10 +4364,10 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
-        assert!(cx.has_pending_prompt(window.window_id()));
+        assert!(window.has_pending_prompt(cx));
 
         // Confirm saving item 4.
-        cx.simulate_prompt_answer(window.window_id(), 0);
+        window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
 
         // There's a prompt for a path for item 4.
@@ -4480,7 +4470,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(0)]
             );
         });
-        cx.simulate_prompt_answer(window.window_id(), 0);
+        window.simulate_prompt_answer(0, cx);
 
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
@@ -4489,7 +4479,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(2)]
             );
         });
-        cx.simulate_prompt_answer(window.window_id(), 0);
+        window.simulate_prompt_answer(0, cx);
 
         cx.foreground().run_until_parked();
         close.await.unwrap();
@@ -4528,7 +4518,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_window_activation(None);
+        window.simulate_deactivation(cx);
         deterministic.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
 
@@ -4549,12 +4539,12 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_window_activation(Some(window.window_id()));
+        window.simulate_activation(cx);
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_window_activation(None);
+        window.simulate_deactivation(cx);
 
         deterministic.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
@@ -4591,7 +4581,7 @@ mod tests {
         pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
             .await
             .unwrap();
-        assert!(!cx.has_pending_prompt(window.window_id()));
+        assert!(!window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
@@ -4612,7 +4602,7 @@ mod tests {
         let _close_items =
             pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
         deterministic.run_until_parked();
-        assert!(cx.has_pending_prompt(window.window_id()));
+        assert!(window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 

@@ -1568,7 +1568,6 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1599,9 +1598,9 @@ pub mod tests {
         };
         let search_view_id = search_view.id();
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1652,7 +1651,7 @@ pub mod tests {
             );
         });
         cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
+            |mut cx| async move { window.dispatch_action(search_view_id, &ToggleFocus, &mut cx) },
         )
         .detach();
         deterministic.run_until_parked();
@@ -1683,9 +1682,9 @@ pub mod tests {
                 "Search view with mismatching query should be focused after search results are available",
             );
         });
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1713,9 +1712,9 @@ pub mod tests {
             );
         });
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1874,7 +1873,6 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
         workspace.update(cx, |workspace, cx| {
             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
         });
@@ -1889,7 +1887,7 @@ pub mod tests {
                 .expect("Search view expected to appear after new search event trigger")
         });
 
-        let search_bar = cx.add_view(window_id, |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = ProjectSearchBar::new();
             search_bar.set_active_pane_item(Some(&search_view), cx);
             // search_bar.show(cx);

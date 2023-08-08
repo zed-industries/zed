@@ -235,7 +235,7 @@ impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
 
 impl PartialEq for Box<dyn SearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id() && self.window_id() == other.window_id()
+        self.id() == other.id() && self.window() == other.window()
     }
 }
 
@@ -259,7 +259,7 @@ impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
 
 impl PartialEq for Box<dyn WeakSearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id() && self.window_id() == other.window_id()
+        self.id() == other.id() && self.window() == other.window()
     }
 }
 
@@ -267,6 +267,6 @@ impl Eq for Box<dyn WeakSearchableItemHandle> {}
 
 impl std::hash::Hash for Box<dyn WeakSearchableItemHandle> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.id(), self.window_id()).hash(state)
+        (self.id(), self.window().id()).hash(state)
     }
 }
