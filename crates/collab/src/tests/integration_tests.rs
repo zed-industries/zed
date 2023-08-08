@@ -6527,7 +6527,8 @@ async fn test_basic_following(
     cx_c.foreground().run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+    let window_c = client_c.build_workspace(&project_c, cx_c);
+    let workspace_c = window_c.root(cx_c);
     active_call_c
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
@@ -6643,6 +6644,7 @@ async fn test_basic_following(
     }
 
     // Client C closes the project.
+    window_c.remove(cx_c);
     cx_c.drop_last(workspace_c);
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
