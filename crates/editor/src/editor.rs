@@ -7554,7 +7554,7 @@ impl Editor {
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
         count: usize,
-    ) -> Vec<RangeInclusive<u32>> {
+    ) -> Vec<RangeInclusive<DisplayPoint>> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
         let Some((_, ranges)) = self.background_highlights
@@ -7573,24 +7573,27 @@ impl Editor {
             Ok(i) | Err(i) => i,
         };
         let end_ix = count.min(ranges.len());
-        let mut push_region = |start, end| {
+        let mut push_region = |start: Option<Point>, end: Option<Point>| {
             if let (Some(start_display), Some(end_display)) = (start, end) {
-                results.push(start_display..=end_display);
+                results.push(
+                    start_display.to_display_point(display_snapshot)
+                        ..=end_display.to_display_point(display_snapshot),
+                );
             }
         };
-        let mut start_row = None;
-        let mut end_row = None;
+        let mut start_row: Option<Point> = None;
+        let mut end_row: Option<Point> = None;
         for range in &ranges[start_ix..end_ix] {
             if range.start.cmp(&search_range.end, buffer).is_ge() {
                 break;
             }
-            let end = range.end.to_point(buffer).row;
+            let end = range.end.to_point(buffer);
             if let Some(current_row) = &end_row {
-                if end == *current_row {
+                if end.row == current_row.row {
                     continue;
                 }
             }
-            let start = range.start.to_point(buffer).row;
+            let start = range.start.to_point(buffer);
 
             if start_row.is_none() {
                 assert_eq!(end_row, None);
@@ -7599,7 +7602,7 @@ impl Editor {
                 continue;
             }
             if let Some(current_end) = end_row.as_mut() {
-                if start > *current_end + 1 {
+                if start.row > current_end.row + 1 {
                     push_region(start_row, end_row);
                     start_row = Some(start);
                     end_row = Some(end);

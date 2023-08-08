@@ -1117,9 +1117,9 @@ impl EditorElement {
                     bottom: false,
                     left: true,
                 };
-                let mut push_region = |start: u32, end: u32| {
-                    let start_y = y_for_row(start as f32);
-                    let mut end_y = y_for_row(end as f32);
+                let mut push_region = |start: DisplayPoint, end: DisplayPoint| {
+                    let start_y = y_for_row(start.row() as f32);
+                    let mut end_y = y_for_row(end.row() as f32);
                     if end_y - start_y < 1. {
                         end_y = start_y + 1.;
                     }
