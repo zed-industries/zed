@@ -481,51 +481,6 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_nav_button(
-        &self,
-        icon: &'static str,
-        direction: Direction,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let action: Box<dyn Action>;
-        let tooltip;
-        match direction {
-            Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
-                tooltip = "Select Previous Match";
-            }
-            Direction::Next => {
-                action = Box::new(SelectNextMatch);
-                tooltip = "Select Next Match";
-            }
-        };
-        let tooltip_style = theme::current(cx).tooltip.clone();
-
-        enum NavButton {}
-        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let style = theme.search.option_button.inactive_state().style_for(state);
-            Label::new(icon, style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, {
-            move |_, this, cx| match direction {
-                Direction::Prev => this.select_prev_match(&Default::default(), cx),
-                Direction::Next => this.select_next_match(&Default::default(), cx),
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton>(
-            direction as usize,
-            tooltip.to_string(),
-            Some(action),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
     fn render_action_button(
         &self,
         icon: &'static str,
