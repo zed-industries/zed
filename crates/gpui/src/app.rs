@@ -344,22 +344,6 @@ impl AsyncAppContext {
         self.0.borrow().windows().collect()
     }
 
-    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
-        &self,
-        window: AnyWindowHandle,
-        callback: F,
-    ) -> Option<T> {
-        self.0.borrow_mut().read_window(window, callback)
-    }
-
-    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window: AnyWindowHandle,
-        callback: F,
-    ) -> Option<T> {
-        self.0.borrow_mut().update_window(window, callback)
-    }
-
     pub fn debug_elements(&self, window: AnyWindowHandle) -> Option<json::Value> {
         self.0.borrow().read_window(window, |cx| {
             let root_view = cx.window.root_view();
