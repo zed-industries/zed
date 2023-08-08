@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use gpui::{actions, Action, AppContext};
+pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 

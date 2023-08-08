@@ -158,7 +158,7 @@ impl View for BufferSearchBar {
                 mode,
                 is_active,
                 move |_, this, cx| {
-                    //this.activate_search_mode(mode, cx);
+                    this.activate_search_mode(mode, cx);
                 },
                 cx,
             )
@@ -222,12 +222,6 @@ impl View for BufferSearchBar {
                                 SearchOptions::WHOLE_WORD,
                                 cx,
                             ))
-                            /*.with_children(self.render_search_option(
-                                supported_options.regex,
-                                "Regex",
-                                SearchOptions::REGEX,
-                                cx,
-                            ))*/
                             .contained()
                             .with_style(theme.search.option_button_group)
                             .aligned(),
@@ -537,7 +531,19 @@ impl BufferSearchBar {
         )
         .into_any()
     }
-
+    pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        assert_ne!(
+            mode,
+            SearchMode::Semantic,
+            "Semantic search is not supported in buffer search"
+        );
+        if mode == self.current_mode {
+            return;
+        }
+        self.current_mode = mode;
+        let _ = self.update_matches(cx);
+        cx.notify();
+    }
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         let mut propagate_action = true;
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -713,7 +719,7 @@ impl BufferSearchBar {
                 active_searchable_item.clear_matches(cx);
                 let _ = done_tx.send(());
             } else {
-                let query = if true {
+                let query = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
