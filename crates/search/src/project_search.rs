@@ -1155,18 +1155,8 @@ impl ProjectSearchBar {
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
             search_view.update(cx, |this, cx| {
-                let mode = &this.current_mode;
-                let next_text_state = if SemanticIndex::enabled(cx) {
-                    SearchMode::Semantic
-                } else {
-                    SearchMode::Regex
-                };
-
-                let new_mode = match mode {
-                    &SearchMode::Text => next_text_state,
-                    &SearchMode::Semantic => SearchMode::Regex,
-                    SearchMode::Regex => SearchMode::Text,
-                };
+                let new_mode =
+                    crate::mode::next_mode(&this.current_mode, SemanticIndex::enabled(cx));
                 this.activate_search_mode(new_mode, cx);
             })
         }
