@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
-    ModelHandle, Task, WeakModelHandle,
+    executor::Background, AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity,
+    ModelContext, ModelHandle, Task, WeakModelHandle,
 };
 use itertools::Itertools;
 use language::{
@@ -57,6 +57,7 @@ use serde::Serialize;
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
+use smol::channel::Sender;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
@@ -2433,6 +2434,7 @@ impl Project {
                         }
 
                         for buffer in buffers_with_unknown_injections {
+                            dbg!("Reparsing on some thread");
                             buffer.update(cx, |buffer, cx| buffer.reparse(cx));
                         }
                     });
@@ -5014,184 +5016,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
-            let snapshots = self
-                .visible_worktrees(cx)
-                .filter_map(|tree| {
-                    let tree = tree.read(cx).as_local()?;
-                    Some(tree.snapshot())
-                })
-                .collect::<Vec<_>>();
-
-            let background = cx.background().clone();
-            let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
-            if path_count == 0 {
-                return Task::ready(Ok(Default::default()));
-            }
-            let workers = background.num_cpus().min(path_count);
-            let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
-            cx.background()
-                .spawn({
-                    let fs = self.fs.clone();
-                    let background = cx.background().clone();
-                    let query = query.clone();
-                    async move {
-                        let fs = &fs;
-                        let query = &query;
-                        let matching_paths_tx = &matching_paths_tx;
-                        let paths_per_worker = (path_count + workers - 1) / workers;
-                        let snapshots = &snapshots;
-                        background
-                            .scoped(|scope| {
-                                for worker_ix in 0..workers {
-                                    let worker_start_ix = worker_ix * paths_per_worker;
-                                    let worker_end_ix = worker_start_ix + paths_per_worker;
-                                    scope.spawn(async move {
-                                        let mut snapshot_start_ix = 0;
-                                        let mut abs_path = PathBuf::new();
-                                        for snapshot in snapshots {
-                                            let snapshot_end_ix =
-                                                snapshot_start_ix + snapshot.visible_file_count();
-                                            if worker_end_ix <= snapshot_start_ix {
-                                                break;
-                                            } else if worker_start_ix > snapshot_end_ix {
-                                                snapshot_start_ix = snapshot_end_ix;
-                                                continue;
-                                            } else {
-                                                let start_in_snapshot = worker_start_ix
-                                                    .saturating_sub(snapshot_start_ix);
-                                                let end_in_snapshot =
-                                                    cmp::min(worker_end_ix, snapshot_end_ix)
-                                                        - snapshot_start_ix;
-
-                                                for entry in snapshot
-                                                    .files(false, start_in_snapshot)
-                                                    .take(end_in_snapshot - start_in_snapshot)
-                                                {
-                                                    if matching_paths_tx.is_closed() {
-                                                        break;
-                                                    }
-                                                    let matches = if query
-                                                        .file_matches(Some(&entry.path))
-                                                    {
-                                                        abs_path.clear();
-                                                        abs_path.push(&snapshot.abs_path());
-                                                        abs_path.push(&entry.path);
-                                                        if let Some(file) =
-                                                            fs.open_sync(&abs_path).await.log_err()
-                                                        {
-                                                            query.detect(file).unwrap_or(false)
-                                                        } else {
-                                                            false
-                                                        }
-                                                    } else {
-                                                        false
-                                                    };
-
-                                                    if matches {
-                                                        let project_path =
-                                                            (snapshot.id(), entry.path.clone());
-                                                        if matching_paths_tx
-                                                            .send(project_path)
-                                                            .await
-                                                            .is_err()
-                                                        {
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                snapshot_start_ix = snapshot_end_ix;
-                                            }
-                                        }
-                                    });
-                                }
-                            })
-                            .await;
-                    }
-                })
-                .detach();
-
-            let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-            let open_buffers = self
-                .opened_buffers
-                .values()
-                .filter_map(|b| b.upgrade(cx))
-                .collect::<HashSet<_>>();
-            cx.spawn(|this, cx| async move {
-                for buffer in &open_buffers {
-                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                    buffers_tx.send((buffer.clone(), snapshot)).await?;
-                }
-
-                let open_buffers = Rc::new(RefCell::new(open_buffers));
-                while let Some(project_path) = matching_paths_rx.next().await {
-                    if buffers_tx.is_closed() {
-                        break;
-                    }
-
-                    let this = this.clone();
-                    let open_buffers = open_buffers.clone();
-                    let buffers_tx = buffers_tx.clone();
-                    cx.spawn(|mut cx| async move {
-                        if let Some(buffer) = this
-                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                            .await
-                            .log_err()
-                        {
-                            if open_buffers.borrow_mut().insert(buffer.clone()) {
-                                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                                buffers_tx.send((buffer, snapshot)).await?;
-                            }
-                        }
-
-                        Ok::<_, anyhow::Error>(())
-                    })
-                    .detach();
-                }
-
-                Ok::<_, anyhow::Error>(())
-            })
-            .detach_and_log_err(cx);
-
-            let background = cx.background().clone();
-            cx.background().spawn(async move {
-                let query = &query;
-                let mut matched_buffers = Vec::new();
-                for _ in 0..workers {
-                    matched_buffers.push(HashMap::default());
-                }
-                background
-                    .scoped(|scope| {
-                        for worker_matched_buffers in matched_buffers.iter_mut() {
-                            let mut buffers_rx = buffers_rx.clone();
-                            scope.spawn(async move {
-                                while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    let buffer_matches = if query.file_matches(
-                                        snapshot.file().map(|file| file.path().as_ref()),
-                                    ) {
-                                        query
-                                            .search(snapshot.as_rope())
-                                            .await
-                                            .iter()
-                                            .map(|range| {
-                                                snapshot.anchor_before(range.start)
-                                                    ..snapshot.anchor_after(range.end)
-                                            })
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
-                                    if !buffer_matches.is_empty() {
-                                        worker_matched_buffers
-                                            .insert(buffer.clone(), buffer_matches);
-                                    }
-                                }
-                            });
-                        }
-                    })
-                    .await;
-                Ok(matched_buffers.into_iter().flatten().collect())
-            })
+            self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(query.to_proto(project_id));
             cx.spawn(|this, mut cx| async move {
@@ -5221,6 +5046,202 @@ impl Project {
         } else {
             Task::ready(Ok(Default::default()))
         }
+    }
+
+    pub fn search_local(
+        &self,
+        query: SearchQuery,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
+        let snapshots = self
+            .visible_worktrees(cx)
+            .filter_map(|tree| {
+                let tree = tree.read(cx).as_local()?;
+                Some(tree.snapshot())
+            })
+            .collect::<Vec<_>>();
+
+        let background = cx.background().clone();
+        let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+        if path_count == 0 {
+            return Task::ready(Ok(Default::default()));
+        }
+        let workers = background.num_cpus().min(path_count);
+        let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
+        cx.background()
+            .spawn(Self::background_search(
+                cx.background().clone(),
+                self.fs.clone(),
+                workers,
+                query.clone(),
+                path_count,
+                snapshots,
+                matching_paths_tx,
+            ))
+            .detach();
+
+        let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
+        let open_buffers = self
+            .opened_buffers
+            .values()
+            .filter_map(|b| b.upgrade(cx))
+            .collect::<HashSet<_>>();
+        cx.spawn(|this, cx| async move {
+            for buffer in &open_buffers {
+                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                buffers_tx.send((buffer.clone(), snapshot)).await?;
+            }
+
+            let open_buffers = Rc::new(RefCell::new(open_buffers));
+            while let Some(project_path) = matching_paths_rx.next().await {
+                if buffers_tx.is_closed() {
+                    break;
+                }
+
+                let this = this.clone();
+                let open_buffers = open_buffers.clone();
+                let buffers_tx = buffers_tx.clone();
+                cx.spawn(|mut cx| async move {
+                    if let Some(buffer) = this
+                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                        .await
+                        .log_err()
+                    {
+                        if open_buffers.borrow_mut().insert(buffer.clone()) {
+                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                            buffers_tx.send((buffer, snapshot)).await?;
+                        }
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                })
+                .detach();
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+
+        let background = cx.background().clone();
+        cx.background().spawn(async move {
+            let query = &query;
+            let mut matched_buffers = Vec::new();
+            for _ in 0..workers {
+                matched_buffers.push(HashMap::default());
+            }
+            background
+                .scoped(|scope| {
+                    for worker_matched_buffers in matched_buffers.iter_mut() {
+                        let mut buffers_rx = buffers_rx.clone();
+                        scope.spawn(async move {
+                            while let Some((buffer, snapshot)) = buffers_rx.next().await {
+                                let buffer_matches = if query
+                                    .file_matches(snapshot.file().map(|file| file.path().as_ref()))
+                                {
+                                    query
+                                        .search(snapshot.as_rope())
+                                        .await
+                                        .iter()
+                                        .map(|range| {
+                                            snapshot.anchor_before(range.start)
+                                                ..snapshot.anchor_after(range.end)
+                                        })
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                                if !buffer_matches.is_empty() {
+                                    worker_matched_buffers.insert(buffer.clone(), buffer_matches);
+                                }
+                            }
+                        });
+                    }
+                })
+                .await;
+            Ok(matched_buffers.into_iter().flatten().collect())
+        })
+    }
+
+    async fn background_search(
+        background: Arc<Background>,
+        fs: Arc<dyn Fs>,
+        workers: usize,
+        query: SearchQuery,
+        path_count: usize,
+        snapshots: Vec<LocalSnapshot>,
+        matching_paths_tx: Sender<(WorktreeId, Arc<Path>)>,
+    ) {
+        let fs = &fs;
+        let query = &query;
+        let matching_paths_tx = &matching_paths_tx;
+        let snapshots = &snapshots;
+
+        let paths_per_worker = (path_count + workers - 1) / workers;
+        background
+            .scoped(|scope| {
+                for worker_ix in 0..workers {
+                    let worker_start_ix = worker_ix * paths_per_worker;
+                    let worker_end_ix = worker_start_ix + paths_per_worker;
+
+                    // Regex crate uses a thread-safe scratch space pool, which is lock-free for an "owner" thread - the first
+                    // thread that ran a match against a given regex.
+                    // By cloning here instead of taking a reference, we're avoiding locking against a mutex within `regex` itself.
+                    // https://github.com/rust-lang/regex/issues/934
+                    let query = query.clone();
+
+                    scope.spawn(async move {
+                        let mut snapshot_start_ix = 0;
+                        let mut abs_path = PathBuf::new();
+                        for snapshot in snapshots {
+                            let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
+                            if worker_end_ix <= snapshot_start_ix {
+                                break;
+                            } else if worker_start_ix > snapshot_end_ix {
+                                snapshot_start_ix = snapshot_end_ix;
+                                continue;
+                            } else {
+                                let start_in_snapshot =
+                                    worker_start_ix.saturating_sub(snapshot_start_ix);
+                                let end_in_snapshot =
+                                    cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
+
+                                for entry in snapshot
+                                    .files(false, start_in_snapshot)
+                                    .take(end_in_snapshot - start_in_snapshot)
+                                {
+                                    if matching_paths_tx.is_closed() {
+                                        break;
+                                    }
+                                    let matches = if query.file_matches(Some(&entry.path)) {
+                                        abs_path.clear();
+                                        abs_path.push(&snapshot.abs_path());
+                                        abs_path.push(&entry.path);
+                                        if let Some(file) = fs.open_sync(&abs_path).await.log_err()
+                                        {
+                                            query.detect(file).unwrap_or(false)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+
+                                    if matches {
+                                        let project_path = (snapshot.id(), entry.path.clone());
+                                        dbg!("sending a matching path");
+                                        if matching_paths_tx.send(project_path).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                snapshot_start_ix = snapshot_end_ix;
+                            }
+                        }
+                    });
+                }
+            })
+            .await;
     }
 
     // TODO: Wire this up to allow selecting a server?

@@ -536,6 +536,7 @@ impl Buffer {
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        dbg!("set_language");
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
