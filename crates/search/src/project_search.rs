@@ -1,8 +1,7 @@
 use crate::{
-    elements::ButtonSide,
     history::SearchHistory,
-    mode::{SearchMode, Side},
-    search_bar::render_nav_button,
+    mode::SearchMode,
+    search_bar::{render_nav_button, render_search_mode_button},
     ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
@@ -1358,90 +1357,6 @@ impl ProjectSearchBar {
         .into_any()
     }
 
-    fn render_search_mode_button(
-        &self,
-        mode: SearchMode,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = if let Some(search) = self.active_project_search.as_ref() {
-            let search = search.read(cx);
-            search.current_mode == mode
-        } else {
-            false
-        };
-
-        enum SearchModeButton {}
-        MouseEventHandler::<SearchModeButton, _>::new(mode.region_id(), cx, |state, cx| {
-            let theme = theme::current(cx);
-            let mut style = theme
-                .search
-                .mode_button
-                .in_state(is_active)
-                .style_for(state)
-                .clone();
-
-            let label = Label::new(mode.label(), style.text.clone())
-                .contained()
-                .with_style(style.container);
-
-            if let Some(button_side) = mode.button_side() {
-                style.container.border.left = mode.border_left();
-                style.container.border.right = mode.border_right();
-
-                if button_side == Side::Left {
-                    Flex::row()
-                        .align_children_center()
-                        .with_child(
-                            ButtonSide::left(
-                                style
-                                    .container
-                                    .background_color
-                                    .unwrap_or_else(gpui::color::Color::transparent_black),
-                            )
-                            .with_border(style.container.border.width, style.container.border.color)
-                            .contained()
-                            .constrained()
-                            .with_max_width(theme.search.mode_filling_width),
-                        )
-                        .with_child(label)
-                        .into_any()
-                } else {
-                    Flex::row()
-                        .align_children_center()
-                        .with_child(label)
-                        .with_child(
-                            ButtonSide::right(
-                                style
-                                    .container
-                                    .background_color
-                                    .unwrap_or_else(gpui::color::Color::transparent_black),
-                            )
-                            .with_border(style.container.border.width, style.container.border.color)
-                            .contained()
-                            .constrained()
-                            .with_max_width(theme.search.mode_filling_width),
-                        )
-                        .into_any()
-                }
-            } else {
-                label.into_any()
-            }
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.activate_search_mode(mode, cx);
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<SearchModeButton>(
-            mode.region_id(),
-            mode.tooltip_text().to_owned(),
-            Some(mode.activate_action()),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
     fn activate_search_mode(&self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         // Update Current Mode
         if let Some(search_view) = self.active_project_search.as_ref() {
@@ -1660,21 +1575,38 @@ impl View for ProjectSearchBar {
                             .flex(1., false),
                     )
             });
-
-            let semantic_index = SemanticIndex::enabled(cx)
-                .then(|| self.render_search_mode_button(SearchMode::Semantic, cx));
-            let mut nav_button_for_direction = |label, direction| {
-                render_nav_button(
-                    label,
-                    direction,
+            let search_button_for_mode = |mode, cx: &mut ViewContext<ProjectSearchBar>| {
+                let is_active = if let Some(search) = self.active_project_search.as_ref() {
+                    let search = search.read(cx);
+                    search.current_mode == mode
+                } else {
+                    false
+                };
+                render_search_mode_button(
+                    mode,
+                    is_active,
                     move |_, this, cx| {
-                        if let Some(search) = this.active_project_search.as_ref() {
-                            search.update(cx, |search, cx| search.select_match(direction, cx));
-                        }
+                        this.activate_search_mode(mode, cx);
                     },
                     cx,
                 )
             };
+            let semantic_index = SemanticIndex::enabled(cx)
+                .then(|| search_button_for_mode(SearchMode::Semantic, cx));
+            let nav_button_for_direction =
+                |label, direction, cx: &mut ViewContext<ProjectSearchBar>| {
+                    render_nav_button(
+                        label,
+                        direction,
+                        move |_, this, cx| {
+                            if let Some(search) = this.active_project_search.as_ref() {
+                                search.update(cx, |search, cx| search.select_match(direction, cx));
+                            }
+                        },
+                        cx,
+                    )
+                };
+
             Flex::row()
                 .with_child(
                     Flex::column()
@@ -1683,8 +1615,16 @@ impl View for ProjectSearchBar {
                                 .align_children_center()
                                 .with_child(
                                     Flex::row()
-                                        .with_child(nav_button_for_direction("<", Direction::Prev))
-                                        .with_child(nav_button_for_direction(">", Direction::Next))
+                                        .with_child(nav_button_for_direction(
+                                            "<",
+                                            Direction::Prev,
+                                            cx,
+                                        ))
+                                        .with_child(nav_button_for_direction(
+                                            ">",
+                                            Direction::Next,
+                                            cx,
+                                        ))
                                         .aligned(),
                                 )
                                 .with_children(matches)
@@ -1726,9 +1666,9 @@ impl View for ProjectSearchBar {
                         .with_child(
                             Flex::row()
                                 .align_children_center()
-                                .with_child(self.render_search_mode_button(SearchMode::Text, cx))
+                                .with_child(search_button_for_mode(SearchMode::Text, cx))
                                 .with_children(semantic_index)
-                                .with_child(self.render_search_mode_button(SearchMode::Regex, cx))
+                                .with_child(search_button_for_mode(SearchMode::Regex, cx))
                                 .with_child(super::search_bar::render_close_button(
                                     &theme.search,
                                     cx,
