@@ -35,8 +35,8 @@ fn test_update_channels(cx: &mut AppContext) {
         &channel_store,
         &[
             //
-            (0, "a", true),
-            (0, "b", false),
+            (0, "a", false),
+            (0, "b", true),
         ],
         cx,
     );
@@ -65,9 +65,9 @@ fn test_update_channels(cx: &mut AppContext) {
     assert_channels(
         &channel_store,
         &[
-            (0, "a", true),
-            (1, "y", true),
-            (0, "b", false),
+            (0, "a", false),
+            (1, "y", false),
+            (0, "b", true),
             (1, "x", false),
         ],
         cx,
@@ -82,6 +82,7 @@ fn update_channels(
     channel_store.update(cx, |store, cx| store.update_channels(message, cx));
 }
 
+#[track_caller]
 fn assert_channels(
     channel_store: &ModelHandle<ChannelStore>,
     expected_channels: &[(usize, &str, bool)],
