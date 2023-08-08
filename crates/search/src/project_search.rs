@@ -1,5 +1,7 @@
 use crate::{
-    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
+    history::SearchHistory,
+    mode::{SearchMode, Side},
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectNextMatch,
     SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use anyhow::{Context, Result};
@@ -49,16 +51,7 @@ use workspace::{
 
 actions!(
     project_search,
-    [
-        SearchInNew,
-        ToggleFocus,
-        NextField,
-        CycleMode,
-        ToggleFilters,
-        ActivateTextMode,
-        ActivateSemanticMode,
-        ActivateRegexMode
-    ]
+    [SearchInNew, ToggleFocus, NextField, ToggleFilters,]
 );
 
 #[derive(Default)]
@@ -145,77 +138,6 @@ struct SemanticSearchState {
     file_count: usize,
     outstanding_file_count: usize,
     _progress_task: Task<()>,
-}
-
-// TODO: Update the default search mode to get from config
-#[derive(Copy, Clone, Default, PartialEq)]
-enum SearchMode {
-    #[default]
-    Text,
-    Semantic,
-    Regex,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum Side {
-    Left,
-    Right,
-}
-
-impl SearchMode {
-    fn label(&self) -> &'static str {
-        match self {
-            SearchMode::Text => "Text",
-            SearchMode::Semantic => "Semantic",
-            SearchMode::Regex => "Regex",
-        }
-    }
-
-    fn region_id(&self) -> usize {
-        match self {
-            SearchMode::Text => 3,
-            SearchMode::Semantic => 4,
-            SearchMode::Regex => 5,
-        }
-    }
-
-    fn tooltip_text(&self) -> &'static str {
-        match self {
-            SearchMode::Text => "Activate Text Search",
-            SearchMode::Semantic => "Activate Semantic Search",
-            SearchMode::Regex => "Activate Regex Search",
-        }
-    }
-
-    fn activate_action(&self) -> Box<dyn Action> {
-        match self {
-            SearchMode::Text => Box::new(ActivateTextMode),
-            SearchMode::Semantic => Box::new(ActivateSemanticMode),
-            SearchMode::Regex => Box::new(ActivateRegexMode),
-        }
-    }
-
-    fn border_left(&self) -> bool {
-        match self {
-            SearchMode::Text => false,
-            _ => true,
-        }
-    }
-
-    fn border_right(&self) -> bool {
-        match self {
-            SearchMode::Regex => false,
-            _ => true,
-        }
-    }
-
-    fn button_side(&self) -> Option<Side> {
-        match self {
-            SearchMode::Text => Some(Side::Left),
-            SearchMode::Semantic => None,
-            SearchMode::Regex => Some(Side::Right),
-        }
-    }
 }
 
 pub struct ProjectSearchBar {

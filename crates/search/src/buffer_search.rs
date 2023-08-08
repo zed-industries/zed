@@ -1,6 +1,6 @@
 use crate::{
-    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectAllMatches,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
+    history::SearchHistory, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -50,7 +50,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::previous_history_query);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
 fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
