@@ -125,13 +125,6 @@ impl TestAppContext {
         }
     }
 
-    pub fn window<V: View>(&self, window_id: usize) -> Option<WindowHandle<V>> {
-        self.cx
-            .borrow()
-            .read_window(window_id, |cx| cx.window())
-            .flatten()
-    }
-
     pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
         window_id: usize,
