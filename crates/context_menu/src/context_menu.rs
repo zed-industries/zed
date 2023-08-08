@@ -218,12 +218,12 @@ impl ContextMenu {
             if let Some(ContextMenuItem::Item { action, .. }) = self.items.get(ix) {
                 match action {
                     ContextMenuItemAction::Action(action) => {
-                        let window_id = cx.window_id();
+                        let window = cx.window();
                         let view_id = self.parent_view_id;
                         let action = action.boxed_clone();
                         cx.app_context()
                             .spawn(|mut cx| async move {
-                                cx.dispatch_action(window_id, view_id, action.as_ref())
+                                cx.dispatch_action(window, view_id, action.as_ref())
                             })
                             .detach_and_log_err(cx);
                     }
@@ -480,17 +480,13 @@ impl ContextMenu {
                             .on_down(MouseButton::Left, |_, _, _| {}) // Capture these events
                             .on_click(MouseButton::Left, move |_, menu, cx| {
                                 menu.cancel(&Default::default(), cx);
-                                let window_id = cx.window_id();
+                                let window = cx.window();
                                 match &action {
                                     ContextMenuItemAction::Action(action) => {
                                         let action = action.boxed_clone();
                                         cx.app_context()
                                             .spawn(|mut cx| async move {
-                                                cx.dispatch_action(
-                                                    window_id,
-                                                    view_id,
-                                                    action.as_ref(),
-                                                )
+                                                cx.dispatch_action(window, view_id, action.as_ref())
                                             })
                                             .detach_and_log_err(cx);
                                     }

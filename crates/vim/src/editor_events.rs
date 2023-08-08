@@ -1,6 +1,6 @@
 use crate::Vim;
 use editor::{EditorBlurred, EditorFocused, EditorReleased};
-use gpui::{AppContext, BorrowWindowContext};
+use gpui::AppContext;
 
 pub fn init(cx: &mut AppContext) {
     cx.subscribe_global(focused).detach();
@@ -10,7 +10,7 @@ pub fn init(cx: &mut AppContext) {
 
 fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
     if let Some(previously_active_editor) = Vim::read(cx).active_editor.clone() {
-        cx.update_window(previously_active_editor.window_id(), |cx| {
+        previously_active_editor.window().update(cx, |cx| {
             Vim::update(cx, |vim, cx| {
                 vim.update_active_editor(cx, |previously_active_editor, cx| {
                     vim.unhook_vim_settings(previously_active_editor, cx)
@@ -19,7 +19,7 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
         });
     }
 
-    cx.update_window(editor.window_id(), |cx| {
+    editor.window().update(cx, |cx| {
         Vim::update(cx, |vim, cx| {
             vim.set_active_editor(editor.clone(), cx);
         });
@@ -27,7 +27,7 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
 }
 
 fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
-    cx.update_window(editor.window_id(), |cx| {
+    editor.window().update(cx, |cx| {
         Vim::update(cx, |vim, cx| {
             if let Some(previous_editor) = vim.active_editor.clone() {
                 if previous_editor == editor.clone() {
@@ -41,7 +41,7 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
 }
 
 fn released(EditorReleased(editor): &EditorReleased, cx: &mut AppContext) {
-    cx.update_window(editor.window_id(), |cx| {
+    editor.window().update(cx, |cx| {
         cx.update_default_global(|vim: &mut Vim, _| {
             if let Some(previous_editor) = vim.active_editor.clone() {
                 if previous_editor == editor.clone() {

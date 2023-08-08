@@ -72,8 +72,8 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<A: Action>(&mut self, window_id: usize, action: A) {
-        self.update_window(window_id, |window| {
+    pub fn dispatch_action<A: Action>(&mut self, window: AnyWindowHandle, action: A) {
+        self.update_window(window, |window| {
             window.dispatch_action(window.focused_view_id(), &action);
         })
         .expect("window not found");
@@ -81,10 +81,10 @@ impl TestAppContext {
 
     pub fn available_actions(
         &self,
-        window_id: usize,
+        window: AnyWindowHandle,
         view_id: usize,
     ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
-        self.read_window(window_id, |cx| cx.available_actions(view_id))
+        self.read_window(window, |cx| cx.available_actions(view_id))
             .unwrap_or_default()
     }
 
@@ -127,18 +127,18 @@ impl TestAppContext {
 
     pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
-        window_id: usize,
+        window: AnyWindowHandle,
         callback: F,
     ) -> Option<T> {
-        self.cx.borrow().read_window(window_id, callback)
+        self.cx.borrow().read_window(window, callback)
     }
 
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         callback: F,
     ) -> Option<T> {
-        self.cx.borrow_mut().update_window(window_id, callback)
+        self.cx.borrow_mut().update_window(window, callback)
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -317,36 +317,36 @@ impl BorrowAppContext for TestAppContext {
 impl BorrowWindowContext for TestAppContext {
     type Result<T> = T;
 
-    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
         self.cx
             .borrow()
-            .read_window(window_id, f)
+            .read_window(window, f)
             .expect("window was closed")
     }
 
-    fn read_window_optional<T, F>(&self, window_id: usize, f: F) -> Option<T>
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
     where
         F: FnOnce(&WindowContext) -> Option<T>,
     {
-        BorrowWindowContext::read_window(self, window_id, f)
+        BorrowWindowContext::read_window(self, window, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         f: F,
     ) -> T {
         self.cx
             .borrow_mut()
-            .update_window(window_id, f)
+            .update_window(window, f)
             .expect("window was closed")
     }
 
-    fn update_window_optional<T, F>(&mut self, window_id: usize, f: F) -> Option<T>
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
     where
         F: FnOnce(&mut WindowContext) -> Option<T>,
     {
-        BorrowWindowContext::update_window(self, window_id, f)
+        BorrowWindowContext::update_window(self, window, f)
     }
 }
 

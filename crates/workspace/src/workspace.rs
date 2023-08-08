@@ -1250,11 +1250,11 @@ impl Workspace {
         _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let window_id = cx.window_id();
+        let window = cx.window();
         let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
-                cx.remove_window(window_id);
+                cx.remove_window(window);
             }
             Ok(())
         }))
@@ -1266,7 +1266,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
-        let window_id = cx.window_id();
+        let window = cx.window();
 
         cx.spawn(|this, mut cx| async move {
             let workspace_count = cx
@@ -1281,7 +1281,7 @@ impl Workspace {
                     && active_call.read_with(&cx, |call, _| call.room().is_some())
                 {
                     let answer = cx.prompt(
-                        window_id,
+                        window,
                         PromptLevel::Warning,
                         "Do you want to leave the current call?",
                         &["Close window and hang up", "Cancel"],
@@ -1390,7 +1390,7 @@ impl Workspace {
         paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let window = cx.window::<Self>();
+        let window = cx.window().downcast::<Self>();
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
@@ -3181,7 +3181,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -3194,7 +3194,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -3207,7 +3207,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
                 Some(
-                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
                         .to_string(),
                 )
             });
@@ -4000,7 +4000,7 @@ pub fn join_remote_project(
             workspace.downgrade()
         };
 
-        cx.activate_window(workspace.window_id());
+        cx.activate_window(workspace.window());
         cx.platform().activate(true);
 
         workspace.update(&mut cx, |workspace, cx| {
@@ -4049,9 +4049,9 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         // prompt in the active window before switching to a different window.
         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
             let answer = cx.prompt(
-                window.id(),
+                window.into(),
                 PromptLevel::Info,
                 "Are you sure you want to restart?",
                 &["Restart", "Cancel"],

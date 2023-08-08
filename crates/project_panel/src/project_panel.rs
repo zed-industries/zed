@@ -1726,7 +1726,7 @@ impl ClipboardEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AnyWindowHandle, TestAppContext, ViewHandle};
+    use gpui::{AnyWindowHandle, TestAppContext, ViewHandle, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
@@ -1872,7 +1872,6 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -1894,7 +1893,7 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2225,7 +2224,6 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2247,7 +2245,7 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2402,7 +2400,6 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         toggle_expand_dir(&panel, "src/test", cx);
@@ -2419,7 +2416,7 @@ mod tests {
                 "          third.rs"
             ]
         );
-        ensure_single_file_is_opened(window_id, &workspace, "test/first.rs", cx);
+        ensure_single_file_is_opened(window, "test/first.rs", cx);
 
         submit_deletion(window.into(), &panel, cx);
         assert_eq!(
@@ -2446,9 +2443,9 @@ mod tests {
                 "          third.rs"
             ]
         );
-        ensure_single_file_is_opened(window_id, &workspace, "test/second.rs", cx);
+        ensure_single_file_is_opened(window, "test/second.rs", cx);
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             let active_items = workspace
                 .read(cx)
                 .panes()
@@ -2493,7 +2490,6 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "src/", cx);
@@ -2504,7 +2500,7 @@ mod tests {
             &["v src  <== selected", "    > test"]
         );
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2535,7 +2531,7 @@ mod tests {
             &["v src", "    > test  <== selected"]
         );
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2585,7 +2581,7 @@ mod tests {
             ],
         );
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2882,13 +2878,11 @@ mod tests {
     }
 
     fn ensure_single_file_is_opened(
-        window_id: usize,
-        workspace: &ViewHandle<Workspace>,
+        window: WindowHandle<Workspace>,
         expected_path: &str,
         cx: &mut TestAppContext,
     ) {
-        cx.read_window(window_id, |cx| {
-            let workspace = workspace.read(cx);
+        window.update_root(cx, |workspace, cx| {
             let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
             let worktree_id = WorktreeId::from_usize(worktrees[0].id());

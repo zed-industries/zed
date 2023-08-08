@@ -1568,7 +1568,6 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1599,9 +1598,9 @@ pub mod tests {
         };
         let search_view_id = search_view.id();
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1651,9 +1650,9 @@ pub mod tests {
                 "Search view should be focused after mismatching query had been used in search",
             );
         });
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1683,9 +1682,9 @@ pub mod tests {
                 "Search view with mismatching query should be focused after search results are available",
             );
         });
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1713,9 +1712,9 @@ pub mod tests {
             );
         });
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {

@@ -179,13 +179,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
             let app_state = workspace.app_state().clone();
             let markdown = app_state.languages.language_for_name("JSON");
-            let window_id = cx.window_id();
+            let window = cx.window();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
-                let content = to_string_pretty(
-                    &cx.debug_elements(window_id)
-                        .ok_or_else(|| anyhow!("could not debug elements for {window_id}"))?,
-                )
+                let content = to_string_pretty(&cx.debug_elements(window).ok_or_else(|| {
+                    anyhow!("could not debug elements for window {}", window.id())
+                })?)
                 .unwrap();
                 workspace
                     .update(&mut cx, |workspace, cx| {
@@ -416,9 +415,9 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         // prompt in the active window before switching to a different window.
         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
             let answer = cx.prompt(
-                window.id(),
+                window.into(),
                 PromptLevel::Info,
                 "Are you sure you want to quit?",
                 &["Quit", "Cancel"],
@@ -716,8 +715,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
-        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AnyWindowHandle,
+        AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;
@@ -1317,11 +1316,10 @@ mod tests {
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1376,7 +1374,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_and_clone(
@@ -1412,10 +1410,9 @@ mod tests {
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1465,7 +1462,6 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.id();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1487,7 +1483,7 @@ mod tests {
             (editor.downgrade(), buffer)
         });
 
-        cx.dispatch_action(window_id, pane::SplitRight);
+        cx.dispatch_action(window.into(), pane::SplitRight);
         let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
@@ -1497,7 +1493,7 @@ mod tests {
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
@@ -1505,7 +1501,7 @@ mod tests {
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
@@ -2063,11 +2059,10 @@ mod tests {
         cx.foreground().run_until_parked();
 
         let window = cx.add_window(|_| TestView);
-        let window_id = window.id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2094,7 +2089,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &B), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2117,7 +2112,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &B), ("[", &ActivatePrevItem)],
             line!(),
@@ -2125,7 +2120,7 @@ mod tests {
 
         #[track_caller]
         fn assert_key_bindings_for<'a>(
-            window_id: usize,
+            window: AnyWindowHandle,
             cx: &TestAppContext,
             actions: Vec<(&'static str, &'a dyn Action)>,
             line: u32,
@@ -2133,7 +2128,7 @@ mod tests {
             for (key, action) in actions {
                 // assert that...
                 assert!(
-                    cx.available_actions(window_id, 0)
+                    cx.available_actions(window, 0)
                         .into_iter()
                         .any(|(_, bound_action, b)| {
                             // action names match...
@@ -2234,11 +2229,10 @@ mod tests {
         cx.foreground().run_until_parked();
 
         let window = cx.add_window(|_| TestView);
-        let window_id = window.id();
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2264,7 +2258,12 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        assert_key_bindings_for(window_id, cx, vec![("k", &ActivatePreviousPane)], line!());
+        assert_key_bindings_for(
+            window.into(),
+            cx,
+            vec![("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
         // Test modifying the base, while retaining the users keymap
         fs.save(
@@ -2282,11 +2281,11 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        assert_key_bindings_for(window_id, cx, vec![("[", &ActivatePrevItem)], line!());
+        assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
 
         #[track_caller]
         fn assert_key_bindings_for<'a>(
-            window_id: usize,
+            window: AnyWindowHandle,
             cx: &TestAppContext,
             actions: Vec<(&'static str, &'a dyn Action)>,
             line: u32,
@@ -2294,7 +2293,7 @@ mod tests {
             for (key, action) in actions {
                 // assert that...
                 assert!(
-                    cx.available_actions(window_id, 0)
+                    cx.available_actions(window, 0)
                         .into_iter()
                         .any(|(_, bound_action, b)| {
                             // action names match...

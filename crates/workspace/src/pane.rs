@@ -1917,8 +1917,8 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
                 move |_, _: &mut V, cx| {
-                    let window_id = cx.window_id();
-                    cx.app_context().focus(window_id, Some(child_view_id))
+                    let window = cx.window();
+                    cx.app_context().focus(window, Some(child_view_id))
                 },
             ),
         );

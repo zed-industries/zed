@@ -1,6 +1,6 @@
 use gpui::{
     elements::{Empty, Label},
-    AnyElement, Element, Entity, Subscription, View, ViewContext, BorrowWindowContext
+    AnyElement, Element, Entity, Subscription, View, ViewContext,
 };
 use settings::SettingsStore;
 use workspace::{item::ItemHandle, StatusItemView};
@@ -20,7 +20,7 @@ impl ModeIndicator {
             if let Some(mode_indicator) = handle.upgrade(cx) {
                 match event {
                     VimEvent::ModeChanged { mode } => {
-                        cx.update_window(mode_indicator.window_id(), |cx| {
+                        mode_indicator.window().update(cx, |cx| {
                             mode_indicator.update(cx, move |mode_indicator, cx| {
                                 mode_indicator.set_mode(mode, cx);
                             })

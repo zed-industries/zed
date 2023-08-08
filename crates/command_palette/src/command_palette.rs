@@ -80,11 +80,11 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let window_id = cx.window_id();
         let view_id = self.focused_view_id;
+        let window = cx.window();
         cx.spawn(move |picker, mut cx| async move {
             let actions = cx
-                .available_actions(window_id, view_id)
+                .available_actions(window, view_id)
                 .into_iter()
                 .filter_map(|(name, action, bindings)| {
                     let filtered = cx.read(|cx| {
@@ -162,13 +162,13 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if !self.matches.is_empty() {
-            let window_id = cx.window_id();
+            let window = cx.window();
             let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
             let action = self.actions.remove(action_ix).action;
             cx.app_context()
                 .spawn(move |mut cx| async move {
-                    cx.dispatch_action(window_id, focused_view_id, action.as_ref())
+                    cx.dispatch_action(window, focused_view_id, action.as_ref())
                 })
                 .detach_and_log_err(cx);
         }

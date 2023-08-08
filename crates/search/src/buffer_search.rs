@@ -1229,8 +1229,6 @@ mod tests {
         );
         let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
         let window = cx.add_window(|_| EmptyView);
-        let window_id = window.id();
-
         let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
         let search_bar = window.add_view(cx, |cx| {
@@ -1249,12 +1247,13 @@ mod tests {
             search_bar.activate_current_match(cx);
         });
 
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Initially, the editor should not be focused"
             );
         });
+
         let initial_selections = editor.update(cx, |editor, cx| {
             let initial_selections = editor.selections.display_ranges(cx);
             assert_eq!(
@@ -1271,7 +1270,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1295,7 +1294,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectNextMatch"
@@ -1324,7 +1323,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1348,7 +1347,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectPrevMatch"
@@ -1384,7 +1383,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Should not switch focus to editor if SelectAllMatches does not find any matches"
