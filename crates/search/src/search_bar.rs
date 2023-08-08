@@ -13,12 +13,12 @@ use crate::{
 };
 
 pub(super) fn render_close_button<V: View>(
+    tooltip: &'static str,
     theme: &theme::Search,
     cx: &mut ViewContext<V>,
     on_click: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     dismiss_action: Option<Box<dyn Action>>,
 ) -> AnyElement<V> {
-    let tooltip = "Dismiss Buffer Search";
     let tooltip_style = theme::current(cx).tooltip.clone();
 
     enum CloseButton {}

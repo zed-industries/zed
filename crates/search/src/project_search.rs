@@ -1626,6 +1626,7 @@ impl View for ProjectSearchBar {
                                 .with_children(semantic_index)
                                 .with_child(search_button_for_mode(SearchMode::Regex, cx))
                                 .with_child(super::search_bar::render_close_button(
+                                    "Dismiss Project Search",
                                     &theme.search,
                                     cx,
                                     |_, this, cx| {

@@ -288,6 +288,7 @@ impl View for BufferSearchBar {
                         .with_child(search_button_for_mode(SearchMode::Text, cx))
                         .with_child(search_button_for_mode(SearchMode::Regex, cx))
                         .with_child(super::search_bar::render_close_button(
+                            "Dismiss Buffer Search",
                             &theme.search,
                             cx,
                             |_, this, cx| this.dismiss(&Default::default(), cx),
