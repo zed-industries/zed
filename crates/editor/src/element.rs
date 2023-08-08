@@ -1137,7 +1137,6 @@ impl EditorElement {
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,
-                        &theme,
                     );
                 for row in background_ranges {
                     let start = row.start();

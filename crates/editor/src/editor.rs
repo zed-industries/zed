@@ -7554,7 +7554,6 @@ impl Editor {
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
         count: usize,
-        theme: &Theme,
     ) -> Vec<RangeInclusive<u32>> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
