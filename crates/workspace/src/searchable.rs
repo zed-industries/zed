@@ -235,7 +235,7 @@ impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
 
 impl PartialEq for Box<dyn SearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id() && self.window_id() == other.window_id()
+        self.id() == other.id() && self.window() == other.window()
     }
 }
 

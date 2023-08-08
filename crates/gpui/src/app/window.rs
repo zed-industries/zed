@@ -152,11 +152,11 @@ impl BorrowWindowContext for WindowContext<'_> {
         }
     }
 
-    fn read_window_optional<T, F>(&self, window_id: AnyWindowHandle, f: F) -> Option<T>
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
     where
         F: FnOnce(&WindowContext) -> Option<T>,
     {
-        BorrowWindowContext::read_window(self, window_id, f)
+        BorrowWindowContext::read_window(self, window, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
@@ -208,10 +208,6 @@ impl<'a> WindowContext<'a> {
 
     pub fn remove_window(&mut self) {
         self.removed = true;
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window_handle.id()
     }
 
     pub fn window(&self) -> AnyWindowHandle {

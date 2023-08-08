@@ -6,6 +6,7 @@ use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::geometry::vector::Vector2F;
+use gpui::AnyWindowHandle;
 use gpui::{
     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -250,7 +251,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn id(&self) -> usize;
-    fn window_id(&self) -> usize;
+    fn window(&self) -> AnyWindowHandle;
     fn as_any(&self) -> &AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -542,8 +543,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.id()
     }
 
-    fn window_id(&self) -> usize {
-        self.window_id()
+    fn window(&self) -> AnyWindowHandle {
+        AnyViewHandle::window(self)
     }
 
     fn as_any(&self) -> &AnyViewHandle {

@@ -255,10 +255,10 @@ impl TerminalPanel {
                     .clone();
                 let working_directory =
                     crate::get_working_directory(workspace, cx, working_directory_strategy);
-                let window_id = cx.window_id();
+                let window = cx.window();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, window_id, cx)
+                        .create_terminal(working_directory, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.add_view(|cx| {

@@ -833,7 +833,7 @@ impl AppContext {
         &mut self,
         callback: F,
     ) -> Option<T> {
-        self.main_window()
+        self.active_window()
             .and_then(|window| window.update(self, callback))
     }
 
@@ -1093,7 +1093,7 @@ impl AppContext {
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let mut available_in_window = false;
         let action_id = action.id();
-        if let Some(window) = self.main_window() {
+        if let Some(window) = self.active_window() {
             available_in_window = self
                 .read_window(window, |cx| {
                     if let Some(focused_view_id) = cx.focused_view_id() {
@@ -1436,7 +1436,7 @@ impl AppContext {
         window
     }
 
-    pub fn main_window(&self) -> Option<AnyWindowHandle> {
+    pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.main_window_id().and_then(|main_window_id| {
             self.windows
                 .get(&main_window_id)
@@ -2997,10 +2997,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         WeakViewHandle::new(self.window_handle, self.view_id)
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_handle.id()
-    }
-
     pub fn window(&self) -> AnyWindowHandle {
         self.window_handle
     }
@@ -4136,10 +4132,6 @@ impl<T: View> ViewHandle<T> {
 
     pub fn into_any(self) -> AnyViewHandle {
         self.any_handle
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window.id()
     }
 
     pub fn window(&self) -> AnyWindowHandle {

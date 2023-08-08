@@ -931,11 +931,11 @@ pub fn dock_default_item_factory(
         .clone();
     let working_directory = get_working_directory(workspace, cx, strategy);
 
-    let window_id = cx.window_id();
+    let window = cx.window();
     let terminal = workspace
         .project()
         .update(cx, |project, cx| {
-            project.create_terminal(working_directory, window_id, cx)
+            project.create_terminal(working_directory, window, cx)
         })
         .notify_err(workspace, cx)?;
 
