@@ -1,8 +1,8 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AnyWindowHandle, AppContext, Element,
-    MouseState, ViewContext,
+    actions, anyhow::anyhow, elements::*, keymap_matcher::Keystroke, Action, AnyWindowHandle,
+    AppContext, Element, MouseState, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::cmp;
@@ -83,9 +83,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         let view_id = self.focused_view_id;
         let window = cx.window();
         cx.spawn(move |picker, mut cx| async move {
-            let actions = cx
-                .available_actions(window, view_id)
+            let actions = window
+                .available_actions(view_id, &cx)
                 .into_iter()
+                .flatten()
                 .filter_map(|(name, action, bindings)| {
                     let filtered = cx.read(|cx| {
                         if cx.has_global::<CommandPaletteFilter>() {
@@ -168,7 +169,9 @@ impl PickerDelegate for CommandPaletteDelegate {
             let action = self.actions.remove(action_ix).action;
             cx.app_context()
                 .spawn(move |mut cx| async move {
-                    cx.dispatch_action(window, focused_view_id, action.as_ref())
+                    window
+                        .dispatch_action(focused_view_id, action.as_ref(), &mut cx)
+                        .ok_or_else(|| anyhow!("window was closed"))
                 })
                 .detach_and_log_err(cx);
         }

@@ -312,11 +312,11 @@ impl ContactList {
                     .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                 {
-                    cx.prompt(
-                        window,
+                    window.prompt(
                         PromptLevel::Info,
                         &format!("Failed to remove contact: {}", e),
                         &["Ok"],
+                        &mut cx,
                     );
                 }
             }

@@ -344,29 +344,6 @@ impl AsyncAppContext {
         self.0.borrow().windows().collect()
     }
 
-    pub fn dispatch_action(
-        &mut self,
-        window: AnyWindowHandle,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Result<()> {
-        self.0
-            .borrow_mut()
-            .update_window(window, |cx| {
-                cx.dispatch_action(Some(view_id), action);
-            })
-            .ok_or_else(|| anyhow!("window not found"))
-    }
-
-    pub fn available_actions(
-        &self,
-        window: AnyWindowHandle,
-        view_id: usize,
-    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
-        self.read_window(window, |cx| cx.available_actions(view_id))
-            .unwrap_or_default()
-    }
-
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -385,21 +362,6 @@ impl AsyncAppContext {
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
         self.update(|cx| cx.add_window(window_options, build_root_view))
-    }
-
-    pub fn activate_window(&mut self, window: AnyWindowHandle) {
-        self.update_window(window, |cx| cx.activate_window());
-    }
-
-    // TODO: Can we eliminate this method and move it to WindowContext then call it with update_window?s
-    pub fn prompt(
-        &mut self,
-        window: AnyWindowHandle,
-        level: PromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> Option<oneshot::Receiver<usize>> {
-        self.update_window(window, |cx| cx.prompt(level, msg, answers))
     }
 
     pub fn platform(&self) -> Arc<dyn Platform> {
@@ -4058,6 +4020,39 @@ impl AnyWindowHandle {
             let root_element = cx.window.rendered_views.get(&root_view.id())?;
             root_element.debug(cx).log_err()
         })
+    }
+
+    pub fn activate<C: BorrowWindowContext>(&mut self, cx: &mut C) -> C::Result<()> {
+        self.update(cx, |cx| cx.activate_window())
+    }
+
+    pub fn prompt<C: BorrowWindowContext>(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+        cx: &mut C,
+    ) -> C::Result<oneshot::Receiver<usize>> {
+        self.update(cx, |cx| cx.prompt(level, msg, answers))
+    }
+
+    pub fn dispatch_action<C: BorrowWindowContext>(
+        &self,
+        view_id: usize,
+        action: &dyn Action,
+        cx: &mut C,
+    ) -> C::Result<()> {
+        self.update(cx, |cx| {
+            cx.dispatch_action(Some(view_id), action);
+        })
+    }
+
+    pub fn available_actions<C: BorrowWindowContext>(
+        &self,
+        view_id: usize,
+        cx: &C,
+    ) -> C::Result<Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)>> {
+        self.read_with(cx, |cx| cx.available_actions(view_id))
     }
 
     #[cfg(any(test, feature = "test-support"))]

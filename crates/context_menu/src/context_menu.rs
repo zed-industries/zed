@@ -1,5 +1,5 @@
 use gpui::{
-    anyhow,
+    anyhow::{self, anyhow},
     elements::*,
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
@@ -223,7 +223,9 @@ impl ContextMenu {
                         let action = action.boxed_clone();
                         cx.app_context()
                             .spawn(|mut cx| async move {
-                                cx.dispatch_action(window, view_id, action.as_ref())
+                                window
+                                    .dispatch_action(view_id, action.as_ref(), &mut cx)
+                                    .ok_or_else(|| anyhow!("window was closed"))
                             })
                             .detach_and_log_err(cx);
                     }
@@ -486,7 +488,13 @@ impl ContextMenu {
                                         let action = action.boxed_clone();
                                         cx.app_context()
                                             .spawn(|mut cx| async move {
-                                                cx.dispatch_action(window, view_id, action.as_ref())
+                                                window
+                                                    .dispatch_action(
+                                                        view_id,
+                                                        action.as_ref(),
+                                                        &mut cx,
+                                                    )
+                                                    .ok_or_else(|| anyhow!("window was closed"))
                                             })
                                             .detach_and_log_err(cx);
                                     }

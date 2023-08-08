@@ -534,8 +534,11 @@ impl View for PanelButtons {
                                         let view_id = this.workspace.id();
                                         let tooltip_action = tooltip_action.boxed_clone();
                                         cx.spawn(|_, mut cx| async move {
-                                            cx.dispatch_action(window, view_id, &*tooltip_action)
-                                                .ok();
+                                            window.dispatch_action(
+                                                view_id,
+                                                &*tooltip_action,
+                                                &mut cx,
+                                            );
                                         })
                                         .detach();
                                     }

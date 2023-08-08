@@ -416,11 +416,11 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
         if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
-            let answer = cx.prompt(
-                window.into(),
+            let answer = window.prompt(
                 PromptLevel::Info,
                 "Are you sure you want to quit?",
                 &["Quit", "Cancel"],
+                &mut cx,
             );
 
             if let Some(mut answer) = answer {

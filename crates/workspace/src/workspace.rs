@@ -1280,11 +1280,11 @@ impl Workspace {
                     && workspace_count == 1
                     && active_call.read_with(&cx, |call, _| call.room().is_some())
                 {
-                    let answer = cx.prompt(
-                        window,
+                    let answer = window.prompt(
                         PromptLevel::Warning,
                         "Do you want to leave the current call?",
                         &["Close window and hang up", "Cancel"],
+                        &mut cx,
                     );
 
                     if let Some(mut answer) = answer {
@@ -4000,7 +4000,7 @@ pub fn join_remote_project(
             workspace.downgrade()
         };
 
-        cx.activate_window(workspace.window());
+        workspace.window().activate(&mut cx);
         cx.platform().activate(true);
 
         workspace.update(&mut cx, |workspace, cx| {
@@ -4049,12 +4049,12 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         // prompt in the active window before switching to a different window.
         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
-            let answer = cx.prompt(
-                window.into(),
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+            let answer = window.prompt(
                 PromptLevel::Info,
                 "Are you sure you want to restart?",
                 &["Restart", "Cancel"],
+                &mut cx,
             );
 
             if let Some(mut answer) = answer {

@@ -1599,7 +1599,7 @@ pub mod tests {
         let search_view_id = search_view.id();
 
         cx.spawn(|mut cx| async move {
-            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
         })
         .detach();
         deterministic.run_until_parked();
@@ -1650,9 +1650,9 @@ pub mod tests {
                 "Search view should be focused after mismatching query had been used in search",
             );
         });
-        cx.spawn(|mut cx| async move {
-            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
-        })
+        cx.spawn(
+            |mut cx| async move { window.dispatch_action(search_view_id, &ToggleFocus, &mut cx) },
+        )
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1683,7 +1683,7 @@ pub mod tests {
             );
         });
         cx.spawn(|mut cx| async move {
-            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
         })
         .detach();
         deterministic.run_until_parked();
@@ -1713,7 +1713,7 @@ pub mod tests {
         });
 
         cx.spawn(|mut cx| async move {
-            cx.dispatch_action(window.into(), search_view_id, &ToggleFocus)
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
         })
         .detach();
         deterministic.run_until_parked();
