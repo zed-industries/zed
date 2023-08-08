@@ -39,7 +39,6 @@ bitflags! {
         const NONE = 0b000;
         const WHOLE_WORD = 0b001;
         const CASE_SENSITIVE = 0b010;
-        const REGEX = 0b100;
     }
 }
 
@@ -68,7 +67,6 @@ impl SearchOptions {
         let mut options = SearchOptions::NONE;
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
-        options.set(SearchOptions::REGEX, query.is_regex());
         options
     }
 }

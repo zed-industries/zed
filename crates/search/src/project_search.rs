@@ -736,15 +736,9 @@ impl ProjectSearchView {
                 }).detach_and_log_err(cx);
             }
             SearchMode::Regex => {
-                if !self.is_option_enabled(SearchOptions::REGEX) {
-                    self.toggle_search_option(SearchOptions::REGEX);
-                }
                 self.semantic_state = None;
             }
             SearchMode::Text => {
-                if self.is_option_enabled(SearchOptions::REGEX) {
-                    self.toggle_search_option(SearchOptions::REGEX);
-                }
                 self.semantic_state = None;
             }
         }
@@ -992,7 +986,7 @@ impl ProjectSearchView {
                     return None;
                 }
             };
-        if self.search_options.contains(SearchOptions::REGEX) {
+        if self.current_mode == SearchMode::Regex {
             match SearchQuery::regex(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1011,6 +1005,7 @@ impl ProjectSearchView {
                 }
             }
         } else {
+            debug_assert_ne!(self.current_mode, SearchMode::Semantic);
             Some(SearchQuery::text(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1138,9 +1133,6 @@ impl ProjectSearchView {
         }
 
         cx.propagate_action();
-    }
-    fn is_option_enabled(&self, option: SearchOptions) -> bool {
-        self.search_options.contains(option)
     }
 }
 

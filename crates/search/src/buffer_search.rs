@@ -209,12 +209,12 @@ impl View for BufferSearchBar {
                                 SearchOptions::WHOLE_WORD,
                                 cx,
                             ))
-                            .with_children(self.render_search_option(
+                            /*.with_children(self.render_search_option(
                                 supported_options.regex,
                                 "Regex",
                                 SearchOptions::REGEX,
                                 cx,
-                            ))
+                            ))*/
                             .contained()
                             .with_style(theme.search.option_button_group)
                             .aligned(),
@@ -697,7 +697,7 @@ impl BufferSearchBar {
                 active_searchable_item.clear_matches(cx);
                 let _ = done_tx.send(());
             } else {
-                let query = if self.search_options.contains(SearchOptions::REGEX) {
+                let query = if true {
                     match SearchQuery::regex(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),

@@ -66,7 +66,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 
                     if query.is_empty() {
                         search_bar.set_search_options(
-                            SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX,
+                            SearchOptions::CASE_SENSITIVE, // | SearchOptions::REGEX,
                             cx,
                         );
                     }

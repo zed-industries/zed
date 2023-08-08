@@ -2,7 +2,7 @@ use gpui::Action;
 
 use crate::{ActivateRegexMode, ActivateSemanticMode, ActivateTextMode};
 // TODO: Update the default search mode to get from config
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub(crate) enum SearchMode {
     #[default]
     Text,
