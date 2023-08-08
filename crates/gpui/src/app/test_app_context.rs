@@ -156,17 +156,16 @@ impl TestAppContext {
         self.cx.borrow_mut().add_model(build_model)
     }
 
-    pub fn add_window<T, F>(&mut self, build_root_view: F) -> WindowHandle<T>
+    pub fn add_window<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
+        V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
     {
         let window = self
             .cx
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
-        self.simulate_window_activation(Some(window.id()));
-
+        window.simulate_activation(self);
         WindowHandle::new(window.id())
     }
 
@@ -319,25 +318,6 @@ impl TestAppContext {
             handler();
         }
         self.platform_window_mut(window_id).resize_handlers = handlers;
-    }
-
-    pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
-        self.cx.borrow_mut().update(|cx| {
-            let other_window_ids = cx
-                .windows
-                .keys()
-                .filter(|window_id| Some(**window_id) != to_activate)
-                .copied()
-                .collect::<Vec<_>>();
-
-            for window_id in other_window_ids {
-                cx.window_changed_active_status(window_id, false)
-            }
-
-            if let Some(to_activate) = to_activate {
-                cx.window_changed_active_status(to_activate, true)
-            }
-        });
     }
 
     pub fn is_window_edited(&self, window_id: usize) -> bool {

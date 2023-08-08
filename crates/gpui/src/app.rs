@@ -4087,6 +4087,29 @@ impl AnyWindowHandle {
     pub fn remove<C: BorrowWindowContext>(&self, cx: &mut C) -> C::Result<()> {
         self.update(cx, |cx| cx.remove_window())
     }
+
+    pub fn simulate_activation(&self, cx: &mut TestAppContext) {
+        self.update(cx, |cx| {
+            let other_window_ids = cx
+                .windows
+                .keys()
+                .filter(|window_id| **window_id != self.window_id)
+                .copied()
+                .collect::<Vec<_>>();
+
+            for window_id in other_window_ids {
+                cx.window_changed_active_status(window_id, false)
+            }
+
+            cx.window_changed_active_status(self.window_id, true)
+        });
+    }
+
+    pub fn simulate_deactivation(&self, cx: &mut TestAppContext) {
+        self.update(cx, |cx| {
+            cx.window_changed_active_status(self.window_id, false);
+        })
+    }
 }
 
 #[repr(transparent)]
@@ -6726,25 +6749,25 @@ mod tests {
             [("window 2", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_2.id()));
+        window_2.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 3", false), ("window 2", true)]
         );
 
-        cx.simulate_window_activation(Some(window_1.id()));
+        window_1.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 2", false), ("window 1", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.id()));
+        window_3.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 1", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.id()));
+        window_3.simulate_activation(cx);
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 

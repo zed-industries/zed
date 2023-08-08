@@ -4530,7 +4530,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_window_activation(None);
+        window.simulate_deactivation(cx);
         deterministic.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
 
@@ -4551,12 +4551,12 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_window_activation(Some(window.id()));
+        window.simulate_activation(cx);
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_window_activation(None);
+        window.simulate_deactivation(cx);
 
         deterministic.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
