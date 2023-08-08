@@ -178,6 +178,29 @@ impl View for BufferSearchBar {
                     )
                 })
             };
+        let match_count = self
+            .active_searchable_item
+            .as_ref()
+            .and_then(|searchable_item| {
+                if self.query(cx).is_empty() {
+                    return None;
+                }
+                let matches = self
+                    .searchable_items_with_matches
+                    .get(&searchable_item.downgrade())?;
+                let message = if let Some(match_ix) = self.active_match_index {
+                    format!("{}/{}", match_ix + 1, matches.len())
+                } else {
+                    "No matches".to_string()
+                };
+
+                Some(
+                    Label::new(message, theme.search.match_index.text.clone())
+                        .contained()
+                        .with_style(theme.search.match_index.container)
+                        .aligned(),
+                )
+            });
         Flex::row()
             .with_child(
                 Flex::column()
@@ -190,25 +213,7 @@ impl View for BufferSearchBar {
                                     .with_child(self.render_nav_button(">", Direction::Next, cx))
                                     .aligned(),
                             )
-                            .with_children(self.active_searchable_item.as_ref().and_then(
-                                |searchable_item| {
-                                    let matches = self
-                                        .searchable_items_with_matches
-                                        .get(&searchable_item.downgrade())?;
-                                    let message = if let Some(match_ix) = self.active_match_index {
-                                        format!("{}/{}", match_ix + 1, matches.len())
-                                    } else {
-                                        "No matches".to_string()
-                                    };
-
-                                    Some(
-                                        Label::new(message, theme.search.match_index.text.clone())
-                                            .contained()
-                                            .with_style(theme.search.match_index.container)
-                                            .aligned(),
-                                    )
-                                },
-                            ))
+                            .with_children(match_count)
                             .aligned()
                             .left()
                             .top()
@@ -765,6 +770,7 @@ impl BufferSearchBar {
                 self.active_match_index.take();
                 active_searchable_item.clear_matches(cx);
                 let _ = done_tx.send(());
+                cx.notify();
             } else {
                 let query = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
