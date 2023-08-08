@@ -444,9 +444,9 @@ type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> b
 
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
-    views: HashMap<(usize, usize), Box<dyn AnyView>>,
-    views_metadata: HashMap<(usize, usize), ViewMetadata>,
-    windows: HashMap<usize, Window>,
+    views: HashMap<(AnyWindowHandle, usize), Box<dyn AnyView>>,
+    views_metadata: HashMap<(AnyWindowHandle, usize), ViewMetadata>,
+    windows: HashMap<AnyWindowHandle, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
@@ -727,12 +727,12 @@ impl AppContext {
     }
 
     pub fn view_ui_name(&self, window: AnyWindowHandle, view_id: usize) -> Option<&'static str> {
-        Some(self.views.get(&(window.id(), view_id))?.ui_name())
+        Some(self.views.get(&(window, view_id))?.ui_name())
     }
 
     pub fn view_type_id(&self, window: AnyWindowHandle, view_id: usize) -> Option<TypeId> {
         self.views_metadata
-            .get(&(window.id(), view_id))
+            .get(&(window, view_id))
             .map(|metadata| metadata.type_id)
     }
 
@@ -758,7 +758,7 @@ impl AppContext {
         handle: AnyWindowHandle,
         callback: F,
     ) -> Option<T> {
-        let window = self.windows.get(&handle.id())?;
+        let window = self.windows.get(&handle)?;
         let window_context = WindowContext::immutable(self, &window, handle);
         Some(callback(&window_context))
     }
@@ -1033,7 +1033,7 @@ impl AppContext {
                     if let Some(focused_view_id) = cx.focused_view_id() {
                         for view_id in cx.ancestors(focused_view_id) {
                             if let Some(view_metadata) =
-                                cx.views_metadata.get(&(cx.window_handle.id(), view_id))
+                                cx.views_metadata.get(&(cx.window_handle, view_id))
                             {
                                 if let Some(actions) = cx.actions.get(&view_metadata.type_id) {
                                     if actions.contains_key(&action_id) {
@@ -1259,13 +1259,12 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
+            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
             let platform_window =
                 this.platform
-                    .open_window(window_id, window_options, this.foreground.clone());
-            let handle = WindowHandle::<V>::new(window_id);
-            let window = this.build_window(handle, platform_window, build_root_view);
-            this.windows.insert(window_id, window);
+                    .open_window(handle.into(), window_options, this.foreground.clone());
+            let window = this.build_window(handle.into(), platform_window, build_root_view);
+            this.windows.insert(handle.into(), window);
             handle
         })
     }
@@ -1276,29 +1275,25 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
-            let platform_window = this.platform.add_status_item(window_id);
-            let handle = WindowHandle::<V>::new(window_id);
-            let window = this.build_window(handle, platform_window, build_root_view);
-            this.windows.insert(window_id, window);
+            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
+            let platform_window = this.platform.add_status_item(handle.into());
+            let window = this.build_window(handle.into(), platform_window, build_root_view);
+            this.windows.insert(handle.into(), window);
             handle.update_root(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
             handle
         })
     }
 
-    pub fn build_window<H, V, F>(
+    pub fn build_window<V, F>(
         &mut self,
-        handle: H,
+        handle: AnyWindowHandle,
         mut platform_window: Box<dyn platform::Window>,
         build_root_view: F,
     ) -> Window
     where
-        H: Into<AnyWindowHandle>,
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
-        let handle: AnyWindowHandle = handle.into();
-
         {
             let mut app = self.upgrade();
 
@@ -1371,21 +1366,15 @@ impl AppContext {
     }
 
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.platform.main_window_id().and_then(|main_window_id| {
-            self.windows
-                .get(&main_window_id)
-                .map(|window| AnyWindowHandle::new(main_window_id, window.root_view().type_id()))
-        })
+        self.platform.main_window()
     }
 
     pub fn windows(&self) -> impl '_ + Iterator<Item = AnyWindowHandle> {
-        self.windows.iter().map(|(window_id, window)| {
-            AnyWindowHandle::new(*window_id, window.root_view().type_id())
-        })
+        self.windows.keys().copied()
     }
 
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window.id(), handle.view_id)) {
+        if let Some(view) = self.views.get(&(handle.window, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
             panic!("circular view reference for type {}", type_name::<T>());
@@ -1437,13 +1426,13 @@ impl AppContext {
                     .push_back(Effect::ModelRelease { model_id, model });
             }
 
-            for (window_id, view_id) in dropped_views {
+            for (window, view_id) in dropped_views {
                 self.subscriptions.remove(view_id);
                 self.observations.remove(view_id);
-                self.views_metadata.remove(&(window_id, view_id));
-                let mut view = self.views.remove(&(window_id, view_id)).unwrap();
+                self.views_metadata.remove(&(window, view_id));
+                let mut view = self.views.remove(&(window, view_id)).unwrap();
                 view.release(self);
-                if let Some(window) = self.windows.get_mut(&window_id) {
+                if let Some(window) = self.windows.get_mut(&window) {
                     window.parents.remove(&view_id);
                     window
                         .invalidation
@@ -1571,7 +1560,7 @@ impl AppContext {
                         }
 
                         Effect::ResizeWindow { window } => {
-                            if let Some(window) = self.windows.get_mut(&window.id()) {
+                            if let Some(window) = self.windows.get_mut(&window) {
                                 window
                                     .invalidation
                                     .get_or_insert(WindowInvalidation::default());
@@ -1696,15 +1685,14 @@ impl AppContext {
                                         for old_ancestor in old_ancestors.iter().copied() {
                                             if !new_ancestors.contains(&old_ancestor) {
                                                 if let Some(mut view) =
-                                                    cx.views.remove(&(window.id(), old_ancestor))
+                                                    cx.views.remove(&(window, old_ancestor))
                                                 {
                                                     view.focus_out(
                                                         focused_view_id,
                                                         cx,
                                                         old_ancestor,
                                                     );
-                                                    cx.views
-                                                        .insert((window.id(), old_ancestor), view);
+                                                    cx.views.insert((window, old_ancestor), view);
                                                 }
                                             }
                                         }
@@ -1713,15 +1701,14 @@ impl AppContext {
                                         for new_ancestor in new_ancestors.iter().copied() {
                                             if !old_ancestors.contains(&new_ancestor) {
                                                 if let Some(mut view) =
-                                                    cx.views.remove(&(window.id(), new_ancestor))
+                                                    cx.views.remove(&(window, new_ancestor))
                                                 {
                                                     view.focus_in(
                                                         focused_view_id,
                                                         cx,
                                                         new_ancestor,
                                                     );
-                                                    cx.views
-                                                        .insert((window.id(), new_ancestor), view);
+                                                    cx.views.insert((window, new_ancestor), view);
                                                 }
                                             }
                                         }
@@ -1730,9 +1717,7 @@ impl AppContext {
                                         // there isn't any pending focus, focus the root view.
                                         let root_view_id = cx.window.root_view().id();
                                         if focused_view_id != root_view_id
-                                            && !cx
-                                                .views
-                                                .contains_key(&(window.id(), focused_view_id))
+                                            && !cx.views.contains_key(&(window, focused_view_id))
                                             && !focus_effects.contains_key(&window.id())
                                         {
                                             focus_effects.insert(
@@ -1837,13 +1822,13 @@ impl AppContext {
         observed_window: AnyWindowHandle,
         observed_view_id: usize,
     ) {
-        let view_key = (observed_window.id(), observed_view_id);
+        let view_key = (observed_window, observed_view_id);
         if let Some((view, mut view_metadata)) = self
             .views
             .remove(&view_key)
             .zip(self.views_metadata.remove(&view_key))
         {
-            if let Some(window) = self.windows.get_mut(&observed_window.id()) {
+            if let Some(window) = self.windows.get_mut(&observed_window) {
                 window
                     .invalidation
                     .get_or_insert_with(Default::default)
@@ -1924,7 +1909,7 @@ impl AppContext {
             let focused_id = match effect {
                 FocusEffect::View { view_id, .. } => {
                     if let Some(view_id) = view_id {
-                        if cx.views.contains_key(&(window.id(), view_id)) {
+                        if cx.views.contains_key(&(window, view_id)) {
                             Some(view_id)
                         } else {
                             Some(cx.root_view().id())
@@ -1949,9 +1934,9 @@ impl AppContext {
             if focus_changed {
                 if let Some(blurred_id) = blurred_id {
                     for view_id in cx.ancestors(blurred_id).collect::<Vec<_>>() {
-                        if let Some(mut view) = cx.views.remove(&(window.id(), view_id)) {
+                        if let Some(mut view) = cx.views.remove(&(window, view_id)) {
                             view.focus_out(blurred_id, cx, view_id);
-                            cx.views.insert((window.id(), view_id), view);
+                            cx.views.insert((window, view_id), view);
                         }
                     }
 
@@ -1963,9 +1948,9 @@ impl AppContext {
             if focus_changed || effect.is_forced() {
                 if let Some(focused_id) = focused_id {
                     for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
-                        if let Some(mut view) = cx.views.remove(&(window.id(), view_id)) {
+                        if let Some(mut view) = cx.views.remove(&(window, view_id)) {
                             view.focus_in(focused_id, cx, view_id);
-                            cx.views.insert((window.id(), view_id), view);
+                            cx.views.insert((window, view_id), view);
                         }
                     }
 
@@ -1991,7 +1976,7 @@ impl AppContext {
         mut callback: WindowShouldCloseSubscriptionCallback,
     ) {
         let mut app = self.upgrade();
-        if let Some(window) = self.windows.get_mut(&window.id()) {
+        if let Some(window) = self.windows.get_mut(&window) {
             window
                 .platform_window
                 .on_should_close(Box::new(move || app.update(|cx| callback(cx))))
@@ -2127,15 +2112,13 @@ impl BorrowWindowContext for AppContext {
     where
         F: FnOnce(&mut WindowContext) -> T,
     {
-        self.update(|app_context| {
-            let mut window = app_context.windows.remove(&handle.id())?;
-            let mut window_context = WindowContext::mutable(app_context, &mut window, handle);
-            let result = f(&mut window_context);
-            if !window_context.removed {
-                app_context.windows.insert(handle.id(), window);
-            }
-            Some(result)
-        })
+        let mut window = self.windows.remove(&handle)?;
+        let mut window_context = WindowContext::mutable(self, &mut window, handle);
+        let result = f(&mut window_context);
+        if !window_context.removed {
+            self.windows.insert(handle, window);
+        }
+        Some(result)
     }
 
     fn update_window_optional<T, F>(&mut self, handle: AnyWindowHandle, f: F) -> Option<T>
@@ -2590,7 +2573,7 @@ where
         } else {
             let focused_type = cx
                 .views_metadata
-                .get(&(cx.window_handle.id(), focused_id))
+                .get(&(cx.window_handle, focused_id))
                 .unwrap()
                 .type_id;
             AnyViewHandle::new(
@@ -2610,7 +2593,7 @@ where
         } else {
             let blurred_type = cx
                 .views_metadata
-                .get(&(cx.window_handle.id(), blurred_id))
+                .get(&(cx.window_handle, blurred_id))
                 .unwrap()
                 .type_id;
             AnyViewHandle::new(
@@ -3413,7 +3396,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
         let mut contexts = Vec::new();
         let mut handler_depth = None;
         for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(window.id(), view_id)) {
+            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     if actions.contains_key(&action.id()) {
                         handler_depth = Some(i);
@@ -3873,10 +3856,7 @@ impl<V> Copy for WindowHandle<V> {}
 impl<V: View> WindowHandle<V> {
     fn new(window_id: usize) -> Self {
         WindowHandle {
-            any_handle: AnyWindowHandle {
-                window_id,
-                root_view_type: TypeId::of::<V>(),
-            },
+            any_handle: AnyWindowHandle::new(window_id, TypeId::of::<V>()),
             root_view_type: PhantomData,
         }
     }
@@ -4240,7 +4220,7 @@ impl AnyViewHandle {
         view_type: TypeId,
         ref_counts: Arc<Mutex<RefCounts>>,
     ) -> Self {
-        ref_counts.lock().inc_view(window.id(), view_id);
+        ref_counts.lock().inc_view(window, view_id);
 
         #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
@@ -4308,7 +4288,7 @@ impl AnyViewHandle {
 
     pub fn debug_json<'a, 'b>(&self, cx: &'b WindowContext<'a>) -> serde_json::Value {
         cx.views
-            .get(&(self.window.id(), self.view_id))
+            .get(&(self.window, self.view_id))
             .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
     }
 }
@@ -4338,9 +4318,7 @@ impl<T> PartialEq<ViewHandle<T>> for AnyViewHandle {
 
 impl Drop for AnyViewHandle {
     fn drop(&mut self) {
-        self.ref_counts
-            .lock()
-            .dec_view(self.window.id(), self.view_id);
+        self.ref_counts.lock().dec_view(self.window, self.view_id);
         #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()

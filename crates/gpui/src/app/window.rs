@@ -235,9 +235,9 @@ impl<'a> WindowContext<'a> {
         F: FnOnce(&mut dyn AnyView, &mut Self) -> T,
     {
         let handle = self.window_handle;
-        let mut view = self.views.remove(&(handle.id(), view_id))?;
+        let mut view = self.views.remove(&(handle, view_id))?;
         let result = f(view.as_mut(), self);
-        self.views.insert((handle.id(), view_id), view);
+        self.views.insert((handle, view_id), view);
         Some(result)
     }
 
@@ -389,7 +389,7 @@ impl<'a> WindowContext<'a> {
         let mut contexts = Vec::new();
         let mut handler_depths_by_action_id = HashMap::<TypeId, usize>::default();
         for (depth, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(handle.id(), view_id)) {
+            if let Some(view_metadata) = self.views_metadata.get(&(handle, view_id)) {
                 contexts.push(view_metadata.keymap_context.clone());
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     handler_depths_by_action_id
@@ -440,7 +440,7 @@ impl<'a> WindowContext<'a> {
                 .ancestors(focused_view_id)
                 .filter_map(|view_id| {
                     self.views_metadata
-                        .get(&(handle.id(), view_id))
+                        .get(&(handle, view_id))
                         .map(|view| (view_id, view.keymap_context.clone()))
                 })
                 .collect();
@@ -850,9 +850,9 @@ impl<'a> WindowContext<'a> {
         let handle = self.window_handle;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
-                if let Some(mut view) = self.views.remove(&(handle.id(), view_id)) {
+                if let Some(mut view) = self.views.remove(&(handle, view_id)) {
                     let handled = view.key_down(event, self, view_id);
-                    self.views.insert((handle.id(), view_id), view);
+                    self.views.insert((handle, view_id), view);
                     if handled {
                         return true;
                     }
@@ -869,9 +869,9 @@ impl<'a> WindowContext<'a> {
         let handle = self.window_handle;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
-                if let Some(mut view) = self.views.remove(&(handle.id(), view_id)) {
+                if let Some(mut view) = self.views.remove(&(handle, view_id)) {
                     let handled = view.key_up(event, self, view_id);
-                    self.views.insert((handle.id(), view_id), view);
+                    self.views.insert((handle, view_id), view);
                     if handled {
                         return true;
                     }
@@ -888,9 +888,9 @@ impl<'a> WindowContext<'a> {
         let handle = self.window_handle;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
-                if let Some(mut view) = self.views.remove(&(handle.id(), view_id)) {
+                if let Some(mut view) = self.views.remove(&(handle, view_id)) {
                     let handled = view.modifiers_changed(event, self, view_id);
-                    self.views.insert((handle.id(), view_id), view);
+                    self.views.insert((handle, view_id), view);
                     if handled {
                         return true;
                     }
@@ -929,10 +929,10 @@ impl<'a> WindowContext<'a> {
         let view_id = params.view_id;
         let mut view = self
             .views
-            .remove(&(handle.id(), view_id))
+            .remove(&(handle, view_id))
             .ok_or_else(|| anyhow!("view not found"))?;
         let element = view.render(self, view_id);
-        self.views.insert((handle.id(), view_id), view);
+        self.views.insert((handle, view_id), view);
         Ok(element)
     }
 
@@ -1190,13 +1190,13 @@ impl<'a> WindowContext<'a> {
             let mut keymap_context = KeymapContext::default();
             view.update_keymap_context(&mut keymap_context, cx.app_context());
             self.views_metadata.insert(
-                (handle.id(), view_id),
+                (handle, view_id),
                 ViewMetadata {
                     type_id: TypeId::of::<T>(),
                     keymap_context,
                 },
             );
-            self.views.insert((handle.id(), view_id), Box::new(view));
+            self.views.insert((handle, view_id), Box::new(view));
             self.window
                 .invalidation
                 .get_or_insert_with(Default::default)

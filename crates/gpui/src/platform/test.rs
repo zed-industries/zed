@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap_matcher::KeymapMatcher,
-    Action, ClipboardItem, Menu,
+    Action, AnyWindowHandle, ClipboardItem, Menu,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -102,7 +102,7 @@ pub struct Platform {
     fonts: Arc<dyn super::FontSystem>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     cursor: Mutex<CursorStyle>,
-    active_window_id: Arc<Mutex<Option<usize>>>,
+    active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
 }
 
 impl Platform {
@@ -112,7 +112,7 @@ impl Platform {
             fonts: Arc::new(super::current::FontSystem::new()),
             current_clipboard_item: Default::default(),
             cursor: Mutex::new(CursorStyle::Arrow),
-            active_window_id: Default::default(),
+            active_window: Default::default(),
         }
     }
 }
@@ -146,30 +146,30 @@ impl super::Platform for Platform {
 
     fn open_window(
         &self,
-        id: usize,
+        handle: AnyWindowHandle,
         options: super::WindowOptions,
         _executor: Rc<super::executor::Foreground>,
     ) -> Box<dyn super::Window> {
-        *self.active_window_id.lock() = Some(id);
+        *self.active_window.lock() = Some(handle);
         Box::new(Window::new(
-            id,
+            handle,
             match options.bounds {
                 WindowBounds::Maximized | WindowBounds::Fullscreen => vec2f(1024., 768.),
                 WindowBounds::Fixed(rect) => rect.size(),
             },
-            self.active_window_id.clone(),
+            self.active_window.clone(),
         ))
     }
 
-    fn main_window_id(&self) -> Option<usize> {
-        self.active_window_id.lock().clone()
+    fn main_window(&self) -> Option<AnyWindowHandle> {
+        self.active_window.lock().clone()
     }
 
-    fn add_status_item(&self, id: usize) -> Box<dyn crate::platform::Window> {
+    fn add_status_item(&self, handle: AnyWindowHandle) -> Box<dyn crate::platform::Window> {
         Box::new(Window::new(
-            id,
+            handle,
             vec2f(24., 24.),
-            self.active_window_id.clone(),
+            self.active_window.clone(),
         ))
     }
 
@@ -256,7 +256,7 @@ impl super::Screen for Screen {
 }
 
 pub struct Window {
-    id: usize,
+    handle: AnyWindowHandle,
     pub(crate) size: Vector2F,
     scale_factor: f32,
     current_scene: Option<crate::Scene>,
@@ -270,13 +270,17 @@ pub struct Window {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
-    active_window_id: Arc<Mutex<Option<usize>>>,
+    active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
 }
 
 impl Window {
-    pub fn new(id: usize, size: Vector2F, active_window_id: Arc<Mutex<Option<usize>>>) -> Self {
+    pub fn new(
+        handle: AnyWindowHandle,
+        size: Vector2F,
+        active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    ) -> Self {
         Self {
-            id,
+            handle,
             size,
             event_handlers: Default::default(),
             resize_handlers: Default::default(),
@@ -290,7 +294,7 @@ impl Window {
             title: None,
             edited: false,
             pending_prompts: Default::default(),
-            active_window_id,
+            active_window,
         }
     }
 
@@ -342,7 +346,7 @@ impl super::Window for Window {
     }
 
     fn activate(&self) {
-        *self.active_window_id.lock() = Some(self.id);
+        *self.active_window.lock() = Some(self.handle);
     }
 
     fn set_title(&mut self, title: &str) {

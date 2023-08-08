@@ -13,6 +13,7 @@ use crate::{
         Event, InputHandler, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
         MouseButtonEvent, MouseMovedEvent, Scene, WindowBounds, WindowKind,
     },
+    AnyWindowHandle,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -282,7 +283,7 @@ struct InsertText {
 }
 
 struct WindowState {
-    id: usize,
+    handle: AnyWindowHandle,
     native_window: id,
     kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
@@ -426,7 +427,7 @@ pub struct Window(Rc<RefCell<WindowState>>);
 
 impl Window {
     pub fn open(
-        id: usize,
+        handle: AnyWindowHandle,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
@@ -504,7 +505,7 @@ impl Window {
             assert!(!native_view.is_null());
 
             let window = Self(Rc::new(RefCell::new(WindowState {
-                id,
+                handle,
                 native_window,
                 kind: options.kind,
                 event_callback: None,
@@ -621,13 +622,13 @@ impl Window {
         }
     }
 
-    pub fn main_window_id() -> Option<usize> {
+    pub fn main_window() -> Option<AnyWindowHandle> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
             if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
-                let id = get_window_state(&*main_window).borrow().id;
-                Some(id)
+                let handle = get_window_state(&*main_window).borrow().handle;
+                Some(handle)
             } else {
                 None
             }
@@ -881,7 +882,7 @@ impl platform::Window for Window {
 
     fn is_topmost_for_position(&self, position: Vector2F) -> bool {
         let self_borrow = self.0.borrow();
-        let self_id = self_borrow.id;
+        let self_id = self_borrow.handle;
 
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -898,7 +899,7 @@ impl platform::Window for Window {
             let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
             let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
             if is_panel == YES || is_window == YES {
-                let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
+                let topmost_window_id = get_window_state(&*top_most_window).borrow().handle;
                 topmost_window_id == self_id
             } else {
                 // Someone else's window is on top

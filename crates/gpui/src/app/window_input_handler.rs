@@ -23,7 +23,7 @@ impl WindowInputHandler {
         let mut app = self.app.try_borrow_mut().ok()?;
         self.window.update_optional(&mut *app, |cx| {
             let view_id = cx.window.focused_view_id?;
-            let view = cx.views.get(&(self.window.id(), view_id))?;
+            let view = cx.views.get(&(self.window, view_id))?;
             let result = f(view.as_ref(), &cx);
             Some(result)
         })

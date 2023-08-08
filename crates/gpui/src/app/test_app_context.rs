@@ -159,7 +159,7 @@ impl TestAppContext {
             .borrow_mut()
             .add_window(Default::default(), build_root_view);
         window.simulate_activation(self);
-        WindowHandle::new(window.id())
+        window
     }
 
     pub fn observe_global<E, F>(&mut self, callback: F) -> Subscription
@@ -516,7 +516,7 @@ impl AnyWindowHandle {
         cx: &'a mut TestAppContext,
     ) -> std::cell::RefMut<'a, platform::test::Window> {
         std::cell::RefMut::map(cx.cx.borrow_mut(), |state| {
-            let window = state.windows.get_mut(&self.window_id).unwrap();
+            let window = state.windows.get_mut(&self).unwrap();
             let test_window = window
                 .platform_window
                 .as_any_mut()
