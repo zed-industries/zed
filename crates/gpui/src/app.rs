@@ -411,10 +411,6 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_window(window_options, build_root_view))
     }
 
-    pub fn remove_window(&mut self, window: AnyWindowHandle) {
-        self.update_window(window, |cx| cx.remove_window());
-    }
-
     pub fn activate_window(&mut self, window: AnyWindowHandle) {
         self.update_window(window, |cx| cx.activate_window());
     }

@@ -1254,7 +1254,7 @@ impl Workspace {
         let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
-                cx.remove_window(window);
+                window.remove(&mut cx);
             }
             Ok(())
         }))
