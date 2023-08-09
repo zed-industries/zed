@@ -1,3 +1,4 @@
+use crate::Status;
 use crate::{Client, Subscription, User, UserStore};
 use anyhow::anyhow;
 use anyhow::Result;
@@ -21,7 +22,7 @@ pub struct ChannelStore {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
-    _maintain_user: Task<()>,
+    _watch_connection_status: Task<()>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,15 +58,16 @@ impl ChannelStore {
         let rpc_subscription =
             client.add_message_handler(cx.handle(), Self::handle_update_channels);
 
-        let mut current_user = user_store.read(cx).watch_current_user();
-        let maintain_user = cx.spawn_weak(|this, mut cx| async move {
-            while let Some(current_user) = current_user.next().await {
-                if current_user.is_none() {
+        let mut connection_status = client.status();
+        let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
+            while let Some(status) = connection_status.next().await {
+                if matches!(status, Status::ConnectionLost | Status::SignedOut) {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
                             this.channels.clear();
                             this.channel_invitations.clear();
                             this.channel_participants.clear();
+                            this.channels_with_admin_privileges.clear();
                             this.outgoing_invites.clear();
                             cx.notify();
                         });
@@ -84,7 +86,7 @@ impl ChannelStore {
             client,
             user_store,
             _rpc_subscription: rpc_subscription,
-            _maintain_user: maintain_user,
+            _watch_connection_status: watch_connection_status,
         }
     }
 

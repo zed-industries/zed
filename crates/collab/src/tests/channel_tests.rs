@@ -1,8 +1,11 @@
-use crate::tests::{room_participants, RoomParticipants, TestServer};
+use crate::{
+    rpc::RECONNECT_TIMEOUT,
+    tests::{room_participants, RoomParticipants, TestServer},
+};
 use call::ActiveCall;
 use client::{Channel, ChannelMembership, User};
 use gpui::{executor::Deterministic, TestAppContext};
-use rpc::proto;
+use rpc::{proto, RECEIVE_TIMEOUT};
 use std::sync::Arc;
 
 #[gpui::test]
@@ -49,7 +52,9 @@ async fn test_core_channels(
                     depth: 1,
                 })
             ]
-        )
+        );
+        assert!(channels.is_user_admin(channel_a_id));
+        assert!(channels.is_user_admin(channel_b_id));
     });
 
     client_b
@@ -84,6 +89,7 @@ async fn test_core_channels(
             })]
         )
     });
+
     let members = client_a
         .channel_store()
         .update(cx_a, |store, cx| {
@@ -128,7 +134,6 @@ async fn test_core_channels(
                     id: channel_a_id,
                     name: "channel-a".to_string(),
                     parent_id: None,
-
                     depth: 0,
                 }),
                 Arc::new(Channel {
@@ -138,7 +143,9 @@ async fn test_core_channels(
                     depth: 1,
                 })
             ]
-        )
+        );
+        assert!(!channels.is_user_admin(channel_a_id));
+        assert!(!channels.is_user_admin(channel_b_id));
     });
 
     let channel_c_id = client_a
@@ -280,6 +287,30 @@ async fn test_core_channels(
     client_b
         .channel_store()
         .read_with(cx_b, |channels, _| assert_eq!(channels.channels(), &[]));
+
+    // When disconnected, client A sees no channels.
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    client_a.channel_store().read_with(cx_a, |channels, _| {
+        assert_eq!(channels.channels(), &[]);
+        assert!(!channels.is_user_admin(channel_a_id));
+    });
+
+    server.allow_connections();
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    client_a.channel_store().read_with(cx_a, |channels, _| {
+        assert_eq!(
+            channels.channels(),
+            &[Arc::new(Channel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                parent_id: None,
+                depth: 0,
+            })]
+        );
+        assert!(channels.is_user_admin(channel_a_id));
+    });
 }
 
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {

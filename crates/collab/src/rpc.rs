@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, ChannelId, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{self, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -541,8 +541,7 @@ impl Server {
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_initial_channels_update(
-                    channels_for_user.channels,
-                    channels_for_user.channel_participants,
+                    channels_for_user,
                     channel_invites
                 ))?;
 
@@ -2537,13 +2536,12 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
 }
 
 fn build_initial_channels_update(
-    channels: Vec<db::Channel>,
-    channel_participants: HashMap<db::ChannelId, Vec<UserId>>,
+    channels: ChannelsForUser,
     channel_invites: Vec<db::Channel>,
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
-    for channel in channels {
+    for channel in channels.channels {
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
@@ -2551,7 +2549,7 @@ fn build_initial_channels_update(
         });
     }
 
-    for (channel_id, participants) in channel_participants {
+    for (channel_id, participants) in channels.channel_participants {
         update
             .channel_participants
             .push(proto::ChannelParticipants {
@@ -2559,6 +2557,18 @@ fn build_initial_channels_update(
                 participant_user_ids: participants.into_iter().map(|id| id.to_proto()).collect(),
             });
     }
+
+    update
+        .channel_permissions
+        .extend(
+            channels
+                .channels_with_admin_privileges
+                .into_iter()
+                .map(|id| proto::ChannelPermission {
+                    channel_id: id.to_proto(),
+                    is_admin: true,
+                }),
+        );
 
     for channel in channel_invites {
         update.channel_invitations.push(proto::Channel {
