@@ -1,9 +1,9 @@
 use crate::{
     history::SearchHistory,
-    mode::SearchMode,
+    mode::{next_mode, SearchMode},
     search_bar::{render_nav_button, render_search_mode_button},
-    NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches, SelectNextMatch,
-    SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -51,6 +51,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::handle_editor_cancel);
     cx.add_action(BufferSearchBar::next_history_query);
     cx.add_action(BufferSearchBar::previous_history_query);
+    cx.add_action(BufferSearchBar::cycle_mode);
+    cx.add_action(BufferSearchBar::cycle_mode_on_pane);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -802,6 +804,26 @@ impl BufferSearchBar {
 
         if let Some(new_query) = self.search_history.previous().map(str::to_string) {
             let _ = self.search(&new_query, Some(self.search_options), cx);
+        }
+    }
+    fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
+        self.activate_search_mode(next_mode(&self.current_mode, false), cx);
+    }
+    fn cycle_mode_on_pane(pane: &mut Pane, action: &CycleMode, cx: &mut ViewContext<Pane>) {
+        let mut should_propagate = true;
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| {
+                if bar.show(cx) {
+                    should_propagate = false;
+                    bar.cycle_mode(action, cx);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
 }
