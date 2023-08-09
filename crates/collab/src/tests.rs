@@ -541,45 +541,50 @@ impl TestClient {
         &self,
         project: &ModelHandle<Project>,
         cx: &mut TestAppContext,
-    ) -> ViewHandle<Workspace> {
-        struct WorkspaceContainer {
-            workspace: Option<WeakViewHandle<Workspace>>,
-        }
+        // <<<<<<< HEAD
+        //     ) -> ViewHandle<Workspace> {
+        //         struct WorkspaceContainer {
+        //             workspace: Option<WeakViewHandle<Workspace>>,
+        //         }
 
-        impl Entity for WorkspaceContainer {
-            type Event = ();
-        }
+        //         impl Entity for WorkspaceContainer {
+        //             type Event = ();
+        //         }
 
-        impl View for WorkspaceContainer {
-            fn ui_name() -> &'static str {
-                "WorkspaceContainer"
-            }
+        //         impl View for WorkspaceContainer {
+        //             fn ui_name() -> &'static str {
+        //                 "WorkspaceContainer"
+        //             }
 
-            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-                if let Some(workspace) = self
-                    .workspace
-                    .as_ref()
-                    .and_then(|workspace| workspace.upgrade(cx))
-                {
-                    ChildView::new(&workspace, cx).into_any()
-                } else {
-                    Empty::new().into_any()
-                }
-            }
-        }
+        //             fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        //                 if let Some(workspace) = self
+        //                     .workspace
+        //                     .as_ref()
+        //                     .and_then(|workspace| workspace.upgrade(cx))
+        //                 {
+        //                     ChildView::new(&workspace, cx).into_any()
+        //                 } else {
+        //                     Empty::new().into_any()
+        //                 }
+        //             }
+        //         }
 
-        // We use a workspace container so that we don't need to remove the window in order to
-        // drop the workspace and we can use a ViewHandle instead.
-        let window = cx.add_window(|_| WorkspaceContainer { workspace: None });
-        let container = window.root(cx);
-        let workspace = window.add_view(cx, |cx| {
-            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
-        });
-        container.update(cx, |container, cx| {
-            container.workspace = Some(workspace.downgrade());
-            cx.notify();
-        });
-        workspace
+        //         // We use a workspace container so that we don't need to remove the window in order to
+        //         // drop the workspace and we can use a ViewHandle instead.
+        //         let window = cx.add_window(|_| WorkspaceContainer { workspace: None });
+        //         let container = window.root(cx);
+        //         let workspace = window.add_view(cx, |cx| {
+        //             Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        //         });
+        //         container.update(cx, |container, cx| {
+        //             container.workspace = Some(workspace.downgrade());
+        //             cx.notify();
+        //         });
+        //         workspace
+        // =======
+    ) -> WindowHandle<Workspace> {
+        cx.add_window(|cx| Workspace::test_new(project.clone(), cx))
+        // >>>>>>> main
     }
 }
 

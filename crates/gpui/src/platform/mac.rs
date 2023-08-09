@@ -21,7 +21,7 @@ pub use fonts::FontSystem;
 use platform::{MacForegroundPlatform, MacPlatform};
 pub use renderer::Surface;
 use std::{ops::Range, rc::Rc, sync::Arc};
-use window::Window;
+use window::MacWindow;
 
 use crate::executor;
 

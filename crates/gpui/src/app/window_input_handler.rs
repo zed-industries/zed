@@ -2,11 +2,11 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use pathfinder_geometry::rect::RectF;
 
-use crate::{platform::InputHandler, window::WindowContext, AnyView, AppContext};
+use crate::{platform::InputHandler, window::WindowContext, AnyView, AnyWindowHandle, AppContext};
 
 pub struct WindowInputHandler {
     pub app: Rc<RefCell<AppContext>>,
-    pub window_id: usize,
+    pub window: AnyWindowHandle,
 }
 
 impl WindowInputHandler {
@@ -21,13 +21,12 @@ impl WindowInputHandler {
         //
         // See https://github.com/zed-industries/community/issues/444
         let mut app = self.app.try_borrow_mut().ok()?;
-        app.update_window(self.window_id, |cx| {
+        self.window.update_optional(&mut *app, |cx| {
             let view_id = cx.window.focused_view_id?;
-            let view = cx.views.get(&(self.window_id, view_id))?;
+            let view = cx.views.get(&(self.window, view_id))?;
             let result = f(view.as_ref(), &cx);
             Some(result)
         })
-        .flatten()
     }
 
     fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
@@ -35,11 +34,12 @@ impl WindowInputHandler {
         F: FnOnce(&mut dyn AnyView, &mut WindowContext, usize) -> T,
     {
         let mut app = self.app.try_borrow_mut().ok()?;
-        app.update_window(self.window_id, |cx| {
-            let view_id = cx.window.focused_view_id?;
-            cx.update_any_view(view_id, |view, cx| f(view, cx, view_id))
-        })
-        .flatten()
+        self.window
+            .update(&mut *app, |cx| {
+                let view_id = cx.window.focused_view_id?;
+                cx.update_any_view(view_id, |view, cx| f(view, cx, view_id))
+            })
+            .flatten()
     }
 }
 
@@ -83,9 +83,8 @@ impl InputHandler for WindowInputHandler {
     }
 
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        self.app
-            .borrow()
-            .read_window(self.window_id, |cx| cx.rect_for_text_range(range_utf16))
-            .flatten()
+        self.window.read_optional_with(&*self.app.borrow(), |cx| {
+            cx.rect_for_text_range(range_utf16)
+        })
     }
 }

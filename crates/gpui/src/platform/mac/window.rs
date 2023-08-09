@@ -13,6 +13,7 @@ use crate::{
         Event, InputHandler, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
         MouseButtonEvent, MouseMovedEvent, Scene, WindowBounds, WindowKind,
     },
+    AnyWindowHandle,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -282,7 +283,7 @@ struct InsertText {
 }
 
 struct WindowState {
-    id: usize,
+    handle: AnyWindowHandle,
     native_window: id,
     kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
@@ -422,11 +423,11 @@ impl WindowState {
     }
 }
 
-pub struct Window(Rc<RefCell<WindowState>>);
+pub struct MacWindow(Rc<RefCell<WindowState>>);
 
-impl Window {
+impl MacWindow {
     pub fn open(
-        id: usize,
+        handle: AnyWindowHandle,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
@@ -504,7 +505,7 @@ impl Window {
             assert!(!native_view.is_null());
 
             let window = Self(Rc::new(RefCell::new(WindowState {
-                id,
+                handle,
                 native_window,
                 kind: options.kind,
                 event_callback: None,
@@ -621,13 +622,13 @@ impl Window {
         }
     }
 
-    pub fn main_window_id() -> Option<usize> {
+    pub fn main_window() -> Option<AnyWindowHandle> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
             if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
-                let id = get_window_state(&*main_window).borrow().id;
-                Some(id)
+                let handle = get_window_state(&*main_window).borrow().handle;
+                Some(handle)
             } else {
                 None
             }
@@ -635,7 +636,7 @@ impl Window {
     }
 }
 
-impl Drop for Window {
+impl Drop for MacWindow {
     fn drop(&mut self) {
         let this = self.0.borrow();
         let window = this.native_window;
@@ -649,7 +650,7 @@ impl Drop for Window {
     }
 }
 
-impl platform::Window for Window {
+impl platform::Window for MacWindow {
     fn bounds(&self) -> WindowBounds {
         self.0.as_ref().borrow().bounds()
     }
@@ -881,7 +882,7 @@ impl platform::Window for Window {
 
     fn is_topmost_for_position(&self, position: Vector2F) -> bool {
         let self_borrow = self.0.borrow();
-        let self_id = self_borrow.id;
+        let self_handle = self_borrow.handle;
 
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -898,8 +899,8 @@ impl platform::Window for Window {
             let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
             let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
             if is_panel == YES || is_window == YES {
-                let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
-                topmost_window_id == self_id
+                let topmost_window = get_window_state(&*top_most_window).borrow().handle;
+                topmost_window == self_handle
             } else {
                 // Someone else's window is on top
                 false
@@ -1086,7 +1087,10 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 button: MouseButton::Left,
                 modifiers: Modifiers { ctrl: true, .. },
                 ..
-            }) => return,
+            }) => {
+                window_state_borrow.synthetic_drag_counter += 1;
+                return;
+            }
 
             _ => None,
         };

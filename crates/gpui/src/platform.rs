@@ -19,7 +19,7 @@ use crate::{
     },
     keymap_matcher::KeymapMatcher,
     text_layout::{LineLayout, RunStyle},
-    Action, ClipboardItem, Menu, Scene,
+    Action, AnyWindowHandle, ClipboardItem, Menu, Scene,
 };
 use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
@@ -58,13 +58,13 @@ pub trait Platform: Send + Sync {
 
     fn open_window(
         &self,
-        id: usize,
+        handle: AnyWindowHandle,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
-    fn main_window_id(&self) -> Option<usize>;
+    fn main_window(&self) -> Option<AnyWindowHandle>;
 
-    fn add_status_item(&self, id: usize) -> Box<dyn Window>;
+    fn add_status_item(&self, handle: AnyWindowHandle) -> Box<dyn Window>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;

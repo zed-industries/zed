@@ -102,7 +102,7 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
         }
@@ -310,7 +310,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params).await;
+        RustLspAdapter.process_diagnostics(&mut params);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

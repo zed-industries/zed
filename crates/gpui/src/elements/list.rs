@@ -4,8 +4,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    AnyElement, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
-    ViewContext,
+    AnyElement, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder, SizeConstraint,
+    View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -255,7 +255,7 @@ impl<V: View> Element<V> for List<V> {
         visible_bounds: RectF,
         scroll_top: &mut ListOffset,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         scene.push_layer(Some(visible_bounds));
@@ -647,7 +647,7 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::Empty, geometry::vector::vec2f, Entity};
+    use crate::{elements::Empty, geometry::vector::vec2f, Entity, PaintContext};
     use rand::prelude::*;
     use std::env;
 
@@ -988,7 +988,7 @@ mod tests {
             _: RectF,
             _: &mut (),
             _: &mut V,
-            _: &mut ViewContext<V>,
+            _: &mut PaintContext<V>,
         ) {
             unimplemented!()
         }

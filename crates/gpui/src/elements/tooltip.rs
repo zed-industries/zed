@@ -6,8 +6,8 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint, Task, View,
-    ViewContext,
+    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
+    Task, View, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -194,7 +194,7 @@ impl<V: View> Element<V> for Tooltip<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx);

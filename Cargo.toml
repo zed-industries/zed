@@ -79,6 +79,7 @@ resolver = "2"
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
 ctor = { version = "0.1" }
+derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
 globset = { version = "0.4" }
