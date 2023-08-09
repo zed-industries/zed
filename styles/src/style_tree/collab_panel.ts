@@ -8,6 +8,7 @@ import {
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
 import channel_modal from "./channel_modal"
+import { icon_button, toggleable_icon_button } from "../component/icon_button"
 
 
 export default function contacts_panel(): any {
@@ -51,19 +52,7 @@ export default function contacts_panel(): any {
         },
     }
 
-    const headerButton = toggleable({
-        base: {
-            color: foreground(layer, "on"),
-            button_width: 28,
-            icon_width: 16,
-        },
-        state: {
-            active: {
-                background: background(layer, "active"),
-                corner_radius: 8,
-            }
-        }
-    })
+    const headerButton = toggleable_icon_button(theme, {})
 
     return {
         channel_modal: channel_modal(),

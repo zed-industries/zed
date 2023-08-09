@@ -1103,9 +1103,12 @@ impl CollabPanel {
         enum AddContact {}
         let button = match section {
             Section::ActiveCall => Some(
-                MouseEventHandler::<AddContact, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::<AddContact, Self>::new(0, cx, |state, _| {
                     render_icon_button(
-                        theme.collab_panel.leave_call_button.in_state(is_selected),
+                        theme
+                            .collab_panel
+                            .leave_call_button
+                            .style_for(is_selected, state),
                         "icons/radix/exit.svg",
                     )
                 })
@@ -1122,9 +1125,12 @@ impl CollabPanel {
                 ),
             ),
             Section::Contacts => Some(
-                MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |state, _| {
                     render_icon_button(
-                        theme.collab_panel.add_contact_button.in_state(is_selected),
+                        theme
+                            .collab_panel
+                            .add_contact_button
+                            .style_for(is_selected, state),
                         "icons/plus_16.svg",
                     )
                 })
@@ -1141,9 +1147,12 @@ impl CollabPanel {
                 ),
             ),
             Section::Channels => Some(
-                MouseEventHandler::<AddChannel, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::<AddChannel, Self>::new(0, cx, |state, _| {
                     render_icon_button(
-                        theme.collab_panel.add_contact_button.in_state(is_selected),
+                        theme
+                            .collab_panel
+                            .add_contact_button
+                            .style_for(is_selected, state),
                         "icons/plus_16.svg",
                     )
                 })

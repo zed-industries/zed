@@ -192,11 +192,11 @@ CREATE TABLE "channels" (
     "created_at" TIMESTAMP NOT NULL DEFAULT now
 );
 
-CREATE TABLE "channel_parents" (
-    "child_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "parent_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    PRIMARY KEY(child_id, parent_id)
+CREATE TABLE "channel_paths" (
+    "id_path" TEXT NOT NULL PRIMARY KEY,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE
 );
+CREATE INDEX "index_channel_paths_on_channel_id" ON "channel_paths" ("channel_id");
 
 CREATE TABLE "channel_members" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
