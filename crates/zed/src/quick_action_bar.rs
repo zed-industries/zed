@@ -6,17 +6,17 @@ use gpui::{
 };
 
 use search::{buffer_search, BufferSearchBar};
-use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView, Workspace};
+use workspace::{item::ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 
 pub struct QuickActionBar {
-    workspace: ViewHandle<Workspace>,
+    pane: ViewHandle<Pane>,
     active_item: Option<Box<dyn ItemHandle>>,
 }
 
 impl QuickActionBar {
-    pub fn new(workspace: ViewHandle<Workspace>) -> Self {
+    pub fn new(pane: ViewHandle<Pane>) -> Self {
         Self {
-            workspace,
+            pane,
             active_item: None,
         }
     }
@@ -60,23 +60,40 @@ impl View for QuickActionBar {
         ));
 
         if editor.read(cx).buffer().read(cx).is_singleton() {
+            let buffer_search_bar = self
+                .pane
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>();
+            let search_bar_shown = buffer_search_bar
+                .as_ref()
+                .map(|bar| !bar.read(cx).is_dismissed())
+                .unwrap_or(false);
+
             let search_action = buffer_search::Deploy { focus: true };
 
-            // TODO kb: this opens the search bar in a differently focused pane (should be the same) + should be toggleable
-            let pane = self.workspace.read(cx).active_pane().clone();
             bar = bar.with_child(render_quick_action_bar_button(
                 1,
                 "icons/magnifying_glass_12.svg",
-                false,
+                search_bar_shown,
                 (
-                    "Search in buffer".to_string(),
+                    "Toggle buffer search".to_string(),
                     Some(Box::new(search_action.clone())),
                 ),
                 cx,
-                move |_, cx| {
-                    pane.update(cx, |pane, cx| {
-                        BufferSearchBar::deploy(pane, &search_action, cx);
-                    });
+                move |this, cx| {
+                    if search_bar_shown {
+                        if let Some(buffer_search_bar) = buffer_search_bar.as_ref() {
+                            buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                                buffer_search_bar.dismiss(&buffer_search::Dismiss, cx);
+                            });
+                        }
+                    } else {
+                        this.pane.update(cx, |pane, cx| {
+                            BufferSearchBar::deploy(pane, &search_action, cx);
+                        });
+                    }
                 },
             ));
         }
@@ -130,7 +147,6 @@ impl ToolbarItemView for QuickActionBar {
     ) -> ToolbarItemLocation {
         match active_pane_item {
             Some(active_item) => {
-                dbg!("@@@@@@@@@@ TODO kb", active_item.id());
                 self.active_item = Some(active_item.boxed_clone());
                 ToolbarItemLocation::PrimaryRight { flex: None }
             }
