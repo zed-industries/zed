@@ -954,9 +954,9 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         .await
         .unwrap();
 
-    let (channels, _) = db.get_channels_for_user(a_id).await.unwrap();
+    let result = db.get_channels_for_user(a_id).await.unwrap();
     assert_eq!(
-        channels,
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -996,9 +996,9 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
         ]
     );
 
-    let (channels, _) = db.get_channels_for_user(b_id).await.unwrap();
+    let result = db.get_channels_for_user(b_id).await.unwrap();
     assert_eq!(
-        channels,
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -1029,9 +1029,9 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
     let set_channel_admin = db.set_channel_member_admin(zed_id, a_id, b_id, true).await;
     assert!(set_channel_admin.is_ok());
 
-    let (channels, _) = db.get_channels_for_user(b_id).await.unwrap();
+    let result = db.get_channels_for_user(b_id).await.unwrap();
     assert_eq!(
-        channels,
+        result.channels,
         vec![
             Channel {
                 id: zed_id,

@@ -1,6 +1,5 @@
-use util::http::FakeHttpClient;
-
 use super::*;
+use util::http::FakeHttpClient;
 
 #[gpui::test]
 fn test_update_channels(cx: &mut AppContext) {
@@ -25,6 +24,10 @@ fn test_update_channels(cx: &mut AppContext) {
                     parent_id: None,
                 },
             ],
+            channel_permissions: vec![proto::ChannelPermission {
+                channel_id: 1,
+                is_admin: true,
+            }],
             ..Default::default()
         },
         cx,
@@ -64,7 +67,7 @@ fn test_update_channels(cx: &mut AppContext) {
             (0, "a", false),
             (1, "y", false),
             (0, "b", true),
-            (1, "x", false),
+            (1, "x", true),
         ],
         cx,
     );

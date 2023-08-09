@@ -529,7 +529,7 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, invite_code, (channels, channel_participants), channel_invites) = future::try_join4(
+            let (contacts, invite_code, channels_for_user, channel_invites) = future::try_join4(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_invite_code_for_user(user_id),
                 this.app_state.db.get_channels_for_user(user_id),
@@ -540,7 +540,11 @@ impl Server {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
-                this.peer.send(connection_id, build_initial_channels_update(channels, channel_participants, channel_invites))?;
+                this.peer.send(connection_id, build_initial_channels_update(
+                    channels_for_user.channels,
+                    channels_for_user.channel_participants,
+                    channel_invites
+                ))?;
 
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
@@ -2364,22 +2368,36 @@ async fn respond_to_channel_invite(
         .remove_channel_invitations
         .push(channel_id.to_proto());
     if request.accept {
-        let (channels, participants) = db.get_channels_for_user(session.user_id).await?;
+        let result = db.get_channels_for_user(session.user_id).await?;
         update
             .channels
-            .extend(channels.into_iter().map(|channel| proto::Channel {
+            .extend(result.channels.into_iter().map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
                 parent_id: channel.parent_id.map(ChannelId::to_proto),
             }));
         update
             .channel_participants
-            .extend(participants.into_iter().map(|(channel_id, user_ids)| {
-                proto::ChannelParticipants {
-                    channel_id: channel_id.to_proto(),
-                    participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
-                }
-            }));
+            .extend(
+                result
+                    .channel_participants
+                    .into_iter()
+                    .map(|(channel_id, user_ids)| proto::ChannelParticipants {
+                        channel_id: channel_id.to_proto(),
+                        participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
+                    }),
+            );
+        update
+            .channel_permissions
+            .extend(
+                result
+                    .channels_with_admin_privileges
+                    .into_iter()
+                    .map(|channel_id| proto::ChannelPermission {
+                        channel_id: channel_id.to_proto(),
+                        is_admin: true,
+                    }),
+            );
     }
     session.peer.send(session.connection_id, update)?;
     response.send(proto::Ack {})?;

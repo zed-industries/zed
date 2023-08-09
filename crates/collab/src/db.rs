@@ -3442,10 +3442,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_channels_for_user(
-        &self,
-        user_id: UserId,
-    ) -> Result<(Vec<Channel>, HashMap<ChannelId, Vec<UserId>>)> {
+    pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
         self.transaction(|tx| async move {
             let tx = tx;
 
@@ -3461,6 +3458,11 @@ impl Database {
             let parents_by_child_id = self
                 .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
                 .await?;
+
+            let channels_with_admin_privileges = channel_memberships
+                .iter()
+                .filter_map(|membership| membership.admin.then_some(membership.channel_id))
+                .collect();
 
             let mut channels = Vec::with_capacity(parents_by_child_id.len());
             {
@@ -3484,7 +3486,7 @@ impl Database {
                 UserId,
             }
 
-            let mut participants_by_channel: HashMap<ChannelId, Vec<UserId>> = HashMap::default();
+            let mut channel_participants: HashMap<ChannelId, Vec<UserId>> = HashMap::default();
             {
                 let mut rows = room_participant::Entity::find()
                     .inner_join(room::Entity)
@@ -3497,14 +3499,15 @@ impl Database {
                     .await?;
                 while let Some(row) = rows.next().await {
                     let row: (ChannelId, UserId) = row?;
-                    participants_by_channel
-                        .entry(row.0)
-                        .or_default()
-                        .push(row.1)
+                    channel_participants.entry(row.0).or_default().push(row.1)
                 }
             }
 
-            Ok((channels, participants_by_channel))
+            Ok(ChannelsForUser {
+                channels,
+                channel_participants,
+                channels_with_admin_privileges,
+            })
         })
         .await
     }
@@ -4070,6 +4073,13 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub parent_id: Option<ChannelId>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ChannelsForUser {
+    pub channels: Vec<Channel>,
+    pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+    pub channels_with_admin_privileges: HashSet<ChannelId>,
 }
 
 fn random_invite_code() -> String {
