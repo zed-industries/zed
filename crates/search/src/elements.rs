@@ -5,7 +5,7 @@ use gpui::geometry::rect::RectF;
 use gpui::geometry::vector::IntoVector2F;
 use gpui::json::{self, ToJson};
 use gpui::{scene::Path, LayoutContext};
-use gpui::{Element, SceneBuilder, View, ViewContext};
+use gpui::{Element, PaintContext, SceneBuilder, View, ViewContext};
 
 type CreatePath = fn(RectF, Color) -> Path;
 type AdjustBorder = fn(RectF, f32) -> RectF;
@@ -106,7 +106,7 @@ impl<V: View> Element<V> for ButtonSide {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut ViewContext<V>,
+        _: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let mut bounds = bounds;
         if let Some((border_width, border_color)) = self.border.as_ref() {
