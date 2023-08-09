@@ -5,6 +5,8 @@ pub mod only_instance;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod quick_action_bar;
+
 use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
@@ -30,6 +32,7 @@ use gpui::{
 pub use lsp;
 pub use project;
 use project_panel::ProjectPanel;
+use quick_action_bar::QuickActionBar;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
@@ -255,12 +258,16 @@ pub fn initialize_workspace(
         workspace_handle.update(&mut cx, |workspace, cx| {
             let workspace_handle = cx.handle();
             cx.subscribe(&workspace_handle, {
+                let workspace_handle = workspace_handle.clone();
                 move |workspace, _, event, cx| {
                     if let workspace::Event::PaneAdded(pane) = event {
                         pane.update(cx, |pane, cx| {
                             pane.toolbar().update(cx, |toolbar, cx| {
                                 let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                                 toolbar.add_item(breadcrumbs, cx);
+                                let quick_action_bar =
+                                    cx.add_view(|_| QuickActionBar::new(workspace_handle.clone()));
+                                toolbar.add_item(quick_action_bar, cx);
                                 let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                                 toolbar.add_item(buffer_search_bar, cx);
                                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());

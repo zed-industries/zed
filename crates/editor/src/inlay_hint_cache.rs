@@ -380,7 +380,7 @@ impl InlayHintCache {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.version += 1;
         self.update_tasks.clear();
         self.hints.clear();

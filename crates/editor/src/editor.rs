@@ -302,10 +302,11 @@ actions!(
         Hover,
         Format,
         ToggleSoftWrap,
+        ToggleInlays,
         RevealInFinder,
         CopyPath,
         CopyRelativePath,
-        CopyHighlightJson
+        CopyHighlightJson,
     ]
 );
 
@@ -446,6 +447,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::toggle_soft_wrap);
+    cx.add_action(Editor::toggle_inlays);
     cx.add_action(Editor::reveal_in_finder);
     cx.add_action(Editor::copy_path);
     cx.add_action(Editor::copy_relative_path);
@@ -1238,6 +1240,7 @@ enum GotoDefinitionKind {
 
 #[derive(Debug, Clone)]
 enum InlayRefreshReason {
+    Toggled(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
@@ -2669,12 +2672,40 @@ impl Editor {
         }
     }
 
+    pub fn toggle_inlays(&mut self, _: &ToggleInlays, cx: &mut ViewContext<Self>) {
+        self.inlay_hint_cache.enabled = !self.inlay_hint_cache.enabled;
+        self.refresh_inlays(
+            InlayRefreshReason::Toggled(self.inlay_hint_cache.enabled),
+            cx,
+        )
+    }
+
+    pub fn inlays_enabled(&self) -> bool {
+        self.inlay_hint_cache.enabled
+    }
+
     fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
         if self.project.is_none() || self.mode != EditorMode::Full {
             return;
         }
 
         let (invalidate_cache, required_languages) = match reason {
+            InlayRefreshReason::Toggled(enabled) => {
+                if enabled {
+                    (InvalidationStrategy::RefreshRequested, None)
+                } else {
+                    self.inlay_hint_cache.clear();
+                    self.splice_inlay_hints(
+                        self.visible_inlay_hints(cx)
+                            .iter()
+                            .map(|inlay| inlay.id)
+                            .collect(),
+                        Vec::new(),
+                        cx,
+                    );
+                    return;
+                }
+            }
             InlayRefreshReason::SettingsChange(new_settings) => {
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,

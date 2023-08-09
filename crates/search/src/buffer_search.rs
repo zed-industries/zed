@@ -553,7 +553,7 @@ impl BufferSearchBar {
         .into_any()
     }
 
-    fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
+    pub fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         let mut propagate_action = true;
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
