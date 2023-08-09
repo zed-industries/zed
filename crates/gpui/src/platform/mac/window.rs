@@ -1086,7 +1086,10 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 button: MouseButton::Left,
                 modifiers: Modifiers { ctrl: true, .. },
                 ..
-            }) => return,
+            }) => {
+                window_state_borrow.synthetic_drag_counter += 1;
+                return;
+            }
 
             _ => None,
         };
