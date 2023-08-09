@@ -52,7 +52,61 @@ export default function contacts_panel(): any {
         },
     }
 
-    const headerButton = toggleable_icon_button(theme, {})
+    const headerButton = toggleable({
+        state: {
+            inactive: interactive({
+                base: {
+                    corner_radius: 6,
+                    padding: {
+                        top: 2,
+                        bottom: 2,
+                        left: 4,
+                        right: 4,
+                    },
+                    icon_width: 14,
+                    icon_height: 14,
+                    button_width: 20,
+                    button_height: 16,
+                    color: foreground(layer, "on"),
+                },
+                state: {
+                    default: {
+                    },
+                    hovered: {
+                        background: background(layer, "base", "hovered"),
+                    },
+                    clicked: {
+                        background: background(layer, "base", "pressed"),
+                    },
+                },
+            }),
+            active: interactive({
+                base: {
+                    corner_radius: 6,
+                    padding: {
+                        top: 2,
+                        bottom: 2,
+                        left: 4,
+                        right: 4,
+                    },
+                    icon_width: 14,
+                    icon_height: 14,
+                    button_width: 20,
+                    button_height: 16,
+                    color: foreground(layer, "on"),
+                },
+                state: {
+                    default: {
+                        background: background(layer, "base", "active"),
+                    },
+                    clicked: {
+                        background: background(layer, "base", "active"),
+                    },
+                },
+            }),
+        },
+    })
+
 
     return {
         channel_modal: channel_modal(),
@@ -154,9 +208,6 @@ export default function contacts_panel(): any {
                         ...text(layer, "mono", "active", { size: "sm" }),
                         background: background(layer, "active"),
                     },
-                    hovered: {
-                        background: background(layer, "hovered"),
-                    },
                     clicked: {
                         background: background(layer, "pressed"),
                     },
@@ -196,22 +247,21 @@ export default function contacts_panel(): any {
                     },
                 },
                 state: {
-                    hovered: {
-                        background: background(layer, "hovered"),
-                    },
                     clicked: {
                         background: background(layer, "pressed"),
                     },
                 },
             }),
             state: {
+                inactive: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
                 active: {
                     default: {
                         ...text(layer, "mono", "active", { size: "sm" }),
                         background: background(layer, "active"),
-                    },
-                    hovered: {
-                        background: background(layer, "hovered"),
                     },
                     clicked: {
                         background: background(layer, "pressed"),
