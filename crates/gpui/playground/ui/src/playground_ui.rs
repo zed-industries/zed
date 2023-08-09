@@ -1,19 +1,19 @@
 #![allow(dead_code, unused_variables)]
 
+use frame::{length::auto, *};
 use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
-use node::{length::auto, *};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
 use tokens::{margin::m4, text::lg};
 
 mod color;
-mod node;
+mod frame;
 mod themes;
 mod tokens;
 
 #[derive(Element, Clone, Default)]
 pub struct Playground<V: View>(PhantomData<V>);
 
-impl<V: View> Node<V> {}
+impl<V: View> Frame<V> {}
 
 impl<V: View> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {

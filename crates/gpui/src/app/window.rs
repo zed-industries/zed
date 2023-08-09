@@ -16,7 +16,7 @@ use crate::{
     Action, AnyView, AnyViewHandle, AnyWindowHandle, AppContext, BorrowAppContext,
     BorrowWindowContext, Effect, Element, Entity, Handle, LayoutContext, MouseRegion,
     MouseRegionId, PaintContext, SceneBuilder, Subscription, View, ViewContext, ViewHandle,
-    WindowHandle, WindowInvalidation,
+    WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};

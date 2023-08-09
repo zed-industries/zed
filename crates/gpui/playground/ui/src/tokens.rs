@@ -10,7 +10,7 @@ pub mod color {
 }
 
 pub mod text {
-    use crate::node::length::{rems, Rems};
+    use crate::frame::length::{rems, Rems};
 
     pub fn xs() -> Rems {
         rems(0.75)
@@ -54,7 +54,7 @@ pub mod text {
 }
 
 pub mod padding {
-    use crate::node::length::{rems, Rems};
+    use crate::frame::length::{rems, Rems};
 
     pub fn p1() -> Rems {
         rems(0.25)
@@ -110,7 +110,7 @@ pub mod padding {
 }
 
 pub mod margin {
-    use crate::node::length::{rems, Rems};
+    use crate::frame::length::{rems, Rems};
 
     pub fn m1() -> Rems {
         rems(0.25)

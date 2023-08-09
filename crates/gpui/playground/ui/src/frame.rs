@@ -24,19 +24,19 @@ use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
 
 use crate::color::Rgba;
 
-pub struct Node<V: View> {
-    style: NodeStyle,
+pub struct Frame<V: View> {
+    style: FrameStyle,
     children: Vec<AnyElement<V>>,
     id: Option<Cow<'static, str>>,
 }
 
-pub fn column<V: View>() -> Node<V> {
-    Node::default()
+pub fn column<V: View>() -> Frame<V> {
+    Frame::default()
 }
 
-pub fn row<V: View>() -> Node<V> {
-    Node {
-        style: NodeStyle {
+pub fn row<V: View>() -> Frame<V> {
+    Frame {
+        style: FrameStyle {
             axis: Axis3d::X,
             ..Default::default()
         },
@@ -44,9 +44,9 @@ pub fn row<V: View>() -> Node<V> {
     }
 }
 
-pub fn stack<V: View>() -> Node<V> {
-    Node {
-        style: NodeStyle {
+pub fn stack<V: View>() -> Frame<V> {
+    Frame {
+        style: FrameStyle {
             axis: Axis3d::Z,
             ..Default::default()
         },
@@ -54,7 +54,7 @@ pub fn stack<V: View>() -> Node<V> {
     }
 }
 
-impl<V: View> Default for Node<V> {
+impl<V: View> Default for Frame<V> {
     fn default() -> Self {
         Self {
             style: Default::default(),
@@ -64,8 +64,8 @@ impl<V: View> Default for Node<V> {
     }
 }
 
-impl<V: View> Element<V> for Node<V> {
-    type LayoutState = NodeLayout;
+impl<V: View> Element<V> for Frame<V> {
+    type LayoutState = FrameLayout;
     type PaintState = ();
 
     fn layout(
@@ -88,7 +88,7 @@ impl<V: View> Element<V> for Node<V> {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut NodeLayout,
+        layout: &mut FrameLayout,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
@@ -205,7 +205,7 @@ impl<V: View> Element<V> for Node<V> {
         cx: &ViewContext<V>,
     ) -> Value {
         json!({
-            "type": "Node",
+            "type": "Frame",
             "bounds": bounds.to_json(),
             // TODO!
             // "children": self.content.iter().map(|child| child.debug(view, cx)).collect::<Vec<Value>>()
@@ -217,7 +217,7 @@ impl<V: View> Element<V> for Node<V> {
     }
 }
 
-impl<V: View> Node<V> {
+impl<V: View> Frame<V> {
     pub fn id(mut self, id: impl Into<Cow<'static, str>>) -> Self {
         self.id = Some(id.into());
         self
@@ -321,10 +321,10 @@ impl<V: View> Node<V> {
         rem_pixels: f32,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> NodeLayout {
+    ) -> FrameLayout {
         let cross_axis = primary_axis.rotate();
         let total_flex = self.style.flex();
-        let mut layout = NodeLayout {
+        let mut layout = FrameLayout {
             size: Default::default(),
             padding: self.style.padding.fixed_pixels(rem_pixels),
             margins: self.style.margins.fixed_pixels(rem_pixels),
@@ -372,7 +372,7 @@ impl<V: View> Node<V> {
 
         for child in &mut self.children {
             if let Some(child_flex) = child
-                .metadata::<NodeStyle>()
+                .metadata::<FrameStyle>()
                 .map(|style| style.flex().get(primary_axis))
             {
                 if child_flex > 0. {
@@ -391,7 +391,7 @@ impl<V: View> Node<V> {
         // Distribute the remaining length among the flexible children.
         for child in &mut self.children {
             if let Some(child_flex) = child
-                .metadata::<NodeStyle>()
+                .metadata::<FrameStyle>()
                 .map(|style| style.flex().get(primary_axis))
             {
                 if child_flex > 0. {
@@ -564,7 +564,7 @@ struct Interactive<Style> {
 }
 
 #[derive(Clone, Default)]
-pub struct NodeStyle {
+pub struct FrameStyle {
     axis: Axis3d,
     wrap: bool,
     align: Alignment,
@@ -584,7 +584,7 @@ pub struct NodeStyle {
     shadows: Vec<Shadow>,
 }
 
-impl NodeStyle {
+impl FrameStyle {
     fn flex(&self) -> Vector2F {
         self.size.flex() + self.padding.flex() + self.margins.flex()
     }
@@ -1129,7 +1129,7 @@ pub struct Text {
     )>,
 }
 
-pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
+pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Frame<V> {
     row().child(Text {
         text: text.into(),
         ..Default::default()
@@ -1137,7 +1137,7 @@ pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Node<V> {
 }
 
 #[derive(Default, Debug)]
-pub struct NodeLayout {
+pub struct FrameLayout {
     size: Vector2F,
     padding: Edges<f32>,
     borders: Edges<f32>,
@@ -1457,7 +1457,7 @@ impl Vector2FExt for Vector2F {
 }
 
 trait ElementExt<V: View> {
-    fn margin_left(self, margin_left: impl Into<Length>) -> Node<V>
+    fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>
     where
         Self: Element<V> + Sized,
     {
@@ -1470,7 +1470,7 @@ where
     V: View,
     E: Element<V>,
 {
-    fn margin_left(self, margin_left: impl Into<Length>) -> Node<V>
+    fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>
     where
         Self: Sized,
     {
