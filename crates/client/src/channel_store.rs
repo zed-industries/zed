@@ -58,16 +58,20 @@ impl ChannelStore {
             client.add_message_handler(cx.handle(), Self::handle_update_channels);
 
         let mut current_user = user_store.read(cx).watch_current_user();
-        let maintain_user = cx.spawn(|this, mut cx| async move {
+        let maintain_user = cx.spawn_weak(|this, mut cx| async move {
             while let Some(current_user) = current_user.next().await {
                 if current_user.is_none() {
-                    this.update(&mut cx, |this, cx| {
-                        this.channels.clear();
-                        this.channel_invitations.clear();
-                        this.channel_participants.clear();
-                        this.outgoing_invites.clear();
-                        cx.notify();
-                    });
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.channels.clear();
+                            this.channel_invitations.clear();
+                            this.channel_participants.clear();
+                            this.outgoing_invites.clear();
+                            cx.notify();
+                        });
+                    } else {
+                        break;
+                    }
                 }
             }
         });
