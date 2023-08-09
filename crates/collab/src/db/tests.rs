@@ -962,43 +962,36 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
-                user_is_admin: true,
             },
             Channel {
                 id: crdb_id,
                 name: "crdb".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: true,
             },
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: true,
             },
             Channel {
                 id: replace_id,
                 name: "replace".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: true,
             },
             Channel {
                 id: rust_id,
                 name: "rust".to_string(),
                 parent_id: None,
-                user_is_admin: true,
             },
             Channel {
                 id: cargo_id,
                 name: "cargo".to_string(),
                 parent_id: Some(rust_id),
-                user_is_admin: true,
             },
             Channel {
                 id: cargo_ra_id,
                 name: "cargo-ra".to_string(),
                 parent_id: Some(cargo_id),
-                user_is_admin: true,
             }
         ]
     );
@@ -1011,25 +1004,21 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
-                user_is_admin: false,
             },
             Channel {
                 id: crdb_id,
                 name: "crdb".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
             Channel {
                 id: replace_id,
                 name: "replace".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
         ]
     );
@@ -1048,25 +1037,21 @@ test_both_dbs!(test_channels_postgres, test_channels_sqlite, db, {
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
-                user_is_admin: true,
             },
             Channel {
                 id: crdb_id,
                 name: "crdb".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
             Channel {
                 id: replace_id,
                 name: "replace".to_string(),
                 parent_id: Some(zed_id),
-                user_is_admin: false,
             },
         ]
     );
@@ -1293,6 +1278,66 @@ test_both_dbs!(
                 },
             ]
         );
+    }
+);
+
+test_both_dbs!(
+    test_channel_renames_postgres,
+    test_channel_renames_sqlite,
+    db,
+    {
+        db.create_server("test").await.unwrap();
+
+        let user_1 = db
+            .create_user(
+                "user1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user1".into(),
+                    github_user_id: 5,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+
+        let user_2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user2".into(),
+                    github_user_id: 6,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+
+        let zed_id = db.create_root_channel("zed", "1", user_1).await.unwrap();
+
+        db.rename_channel(zed_id, user_1, "#zed-archive")
+            .await
+            .unwrap();
+
+        let zed_archive_id = zed_id;
+
+        let (channel, _) = db
+            .get_channel(zed_archive_id, user_1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(channel.name, "zed-archive");
+
+        let non_permissioned_rename = db
+            .rename_channel(zed_archive_id, user_2, "hacked-lol")
+            .await;
+        assert!(non_permissioned_rename.is_err());
+
+        let bad_name_rename = db.rename_channel(zed_id, user_1, "#").await;
+        assert!(bad_name_rename.is_err())
     }
 );
 

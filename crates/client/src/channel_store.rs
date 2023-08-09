@@ -16,6 +16,7 @@ pub struct ChannelStore {
     channels: Vec<Arc<Channel>>,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
+    channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
@@ -28,7 +29,6 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub parent_id: Option<ChannelId>,
-    pub user_is_admin: bool,
     pub depth: usize,
 }
 
@@ -79,6 +79,7 @@ impl ChannelStore {
             channels: vec![],
             channel_invitations: vec![],
             channel_participants: Default::default(),
+            channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
             client,
             user_store,
@@ -100,17 +101,18 @@ impl ChannelStore {
     }
 
     pub fn is_user_admin(&self, mut channel_id: ChannelId) -> bool {
-        while let Some(channel) = self.channel_for_id(channel_id) {
-            if channel.user_is_admin {
+        loop {
+            if self.channels_with_admin_privileges.contains(&channel_id) {
                 return true;
             }
-            if let Some(parent_id) = channel.parent_id {
-                channel_id = parent_id;
-            } else {
-                break;
+            if let Some(channel) = self.channel_for_id(channel_id) {
+                if let Some(parent_id) = channel.parent_id {
+                    channel_id = parent_id;
+                    continue;
+                }
             }
+            return false;
         }
-        false
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -228,6 +230,22 @@ impl ChannelStore {
         })
     }
 
+    pub fn rename(
+        &mut self,
+        channel_id: ChannelId,
+        new_name: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let name = new_name.to_string();
+        cx.spawn(|_this, _cx| async move {
+            client
+                .request(proto::RenameChannel { channel_id, name })
+                .await?;
+            Ok(())
+        })
+    }
+
     pub fn respond_to_channel_invite(
         &mut self,
         channel_id: ChannelId,
@@ -315,6 +333,8 @@ impl ChannelStore {
             .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
         self.channel_participants
             .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
+        self.channels_with_admin_privileges
+            .retain(|channel_id| !payload.remove_channels.contains(channel_id));
 
         for channel in payload.channel_invitations {
             if let Some(existing_channel) = self
@@ -324,7 +344,6 @@ impl ChannelStore {
             {
                 let existing_channel = Arc::make_mut(existing_channel);
                 existing_channel.name = channel.name;
-                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
@@ -333,7 +352,6 @@ impl ChannelStore {
                 Arc::new(Channel {
                     id: channel.id,
                     name: channel.name,
-                    user_is_admin: false,
                     parent_id: None,
                     depth: 0,
                 }),
@@ -344,7 +362,6 @@ impl ChannelStore {
             if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
                 let existing_channel = Arc::make_mut(existing_channel);
                 existing_channel.name = channel.name;
-                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
@@ -357,7 +374,6 @@ impl ChannelStore {
                         Arc::new(Channel {
                             id: channel.id,
                             name: channel.name,
-                            user_is_admin: channel.user_is_admin,
                             parent_id: Some(parent_id),
                             depth,
                         }),
@@ -369,11 +385,20 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
-                        user_is_admin: channel.user_is_admin,
                         parent_id: None,
                         depth: 0,
                     }),
                 );
+            }
+        }
+
+        for permission in payload.channel_permissions {
+            if permission.is_admin {
+                self.channels_with_admin_privileges
+                    .insert(permission.channel_id);
+            } else {
+                self.channels_with_admin_privileges
+                    .remove(&permission.channel_id);
             }
         }
 

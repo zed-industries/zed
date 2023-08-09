@@ -64,11 +64,22 @@ struct ManageMembers {
     channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct RenameChannel {
+    channel_id: u64,
+}
+
 actions!(collab_panel, [ToggleFocus, Remove, Secondary]);
 
 impl_actions!(
     collab_panel,
-    [RemoveChannel, NewChannel, InviteMembers, ManageMembers]
+    [
+        RemoveChannel,
+        NewChannel,
+        InviteMembers,
+        ManageMembers,
+        RenameChannel
+    ]
 );
 
 const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
@@ -83,16 +94,19 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::select_prev);
     cx.add_action(CollabPanel::confirm);
     cx.add_action(CollabPanel::remove);
-    cx.add_action(CollabPanel::remove_channel_action);
+    cx.add_action(CollabPanel::remove_selected_channel);
     cx.add_action(CollabPanel::show_inline_context_menu);
     cx.add_action(CollabPanel::new_subchannel);
     cx.add_action(CollabPanel::invite_members);
     cx.add_action(CollabPanel::manage_members);
+    cx.add_action(CollabPanel::rename_selected_channel);
+    cx.add_action(CollabPanel::rename_channel);
 }
 
-#[derive(Debug, Default)]
-pub struct ChannelEditingState {
-    parent_id: Option<u64>,
+#[derive(Debug)]
+pub enum ChannelEditingState {
+    Create { parent_id: Option<u64> },
+    Rename { channel_id: u64 },
 }
 
 pub struct CollabPanel {
@@ -581,18 +595,31 @@ impl CollabPanel {
                     executor.clone(),
                 ));
                 if let Some(state) = &self.channel_editing_state {
-                    if state.parent_id.is_none() {
+                    if matches!(state, ChannelEditingState::Create { parent_id: None }) {
                         self.entries.push(ListEntry::ChannelEditor { depth: 0 });
                     }
                 }
                 for mat in matches {
                     let channel = &channels[mat.candidate_id];
-                    self.entries.push(ListEntry::Channel(channel.clone()));
-                    if let Some(state) = &self.channel_editing_state {
-                        if state.parent_id == Some(channel.id) {
+
+                    match &self.channel_editing_state {
+                        Some(ChannelEditingState::Create { parent_id })
+                            if *parent_id == Some(channel.id) =>
+                        {
+                            self.entries.push(ListEntry::Channel(channel.clone()));
                             self.entries.push(ListEntry::ChannelEditor {
                                 depth: channel.depth + 1,
                             });
+                        }
+                        Some(ChannelEditingState::Rename { channel_id })
+                            if *channel_id == channel.id =>
+                        {
+                            self.entries.push(ListEntry::ChannelEditor {
+                                depth: channel.depth + 1,
+                            });
+                        }
+                        _ => {
+                            self.entries.push(ListEntry::Channel(channel.clone()));
                         }
                     }
                 }
@@ -1065,15 +1092,15 @@ impl CollabPanel {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<(ChannelEditingState, String)> {
-        let result = self
-            .channel_editing_state
-            .take()
-            .map(|state| (state, self.channel_name_editor.read(cx).text(cx)));
-
-        self.channel_name_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
-
-        result
+        if let Some(state) = self.channel_editing_state.take() {
+            self.channel_name_editor.update(cx, |editor, cx| {
+                let name = editor.text(cx);
+                editor.set_text("", cx);
+                Some((state, name))
+            })
+        } else {
+            None
+        }
     }
 
     fn render_header(
@@ -1646,6 +1673,7 @@ impl CollabPanel {
                         ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
                         ContextMenuItem::action("Manage members", ManageMembers { channel_id }),
                         ContextMenuItem::action("Invite members", InviteMembers { channel_id }),
+                        ContextMenuItem::action("Rename Channel", RenameChannel { channel_id }),
                     ],
                     cx,
                 );
@@ -1702,6 +1730,10 @@ impl CollabPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        if self.confirm_channel_edit(cx) {
+            return;
+        }
+
         if let Some(selection) = self.selection {
             if let Some(entry) = self.entries.get(selection) {
                 match entry {
@@ -1747,30 +1779,38 @@ impl CollabPanel {
                     ListEntry::Channel(channel) => {
                         self.join_channel(channel.id, cx);
                     }
-                    ListEntry::ChannelEditor { .. } => {
-                        self.confirm_channel_edit(cx);
-                    }
                     _ => {}
                 }
             }
-        } else {
-            self.confirm_channel_edit(cx);
         }
     }
 
-    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<'_, '_, CollabPanel>) {
+    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<'_, '_, CollabPanel>) -> bool {
         if let Some((editing_state, channel_name)) = self.take_editing_state(cx) {
-            let create_channel = self.channel_store.update(cx, |channel_store, _| {
-                channel_store.create_channel(&channel_name, editing_state.parent_id)
-            });
-
+            match editing_state {
+                ChannelEditingState::Create { parent_id } => {
+                    let request = self.channel_store.update(cx, |channel_store, _| {
+                        channel_store.create_channel(&channel_name, parent_id)
+                    });
+                    cx.foreground()
+                        .spawn(async move {
+                            request.await?;
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+                ChannelEditingState::Rename { channel_id } => {
+                    self.channel_store
+                        .update(cx, |channel_store, cx| {
+                            channel_store.rename(channel_id, &channel_name, cx)
+                        })
+                        .detach();
+                }
+            }
             self.update_entries(false, cx);
-
-            cx.foreground()
-                .spawn(async move {
-                    create_channel.await.log_err();
-                })
-                .detach();
+            true
+        } else {
+            false
         }
     }
 
@@ -1804,14 +1844,14 @@ impl CollabPanel {
     }
 
     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
-        self.channel_editing_state = Some(ChannelEditingState { parent_id: None });
+        self.channel_editing_state = Some(ChannelEditingState::Create { parent_id: None });
         self.update_entries(true, cx);
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
     }
 
     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
-        self.channel_editing_state = Some(ChannelEditingState {
+        self.channel_editing_state = Some(ChannelEditingState::Create {
             parent_id: Some(action.channel_id),
         });
         self.update_entries(true, cx);
@@ -1835,7 +1875,33 @@ impl CollabPanel {
         }
     }
 
-    fn rename(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {}
+    fn rename_selected_channel(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+        if let Some(channel) = self.selected_channel() {
+            self.rename_channel(
+                &RenameChannel {
+                    channel_id: channel.id,
+                },
+                cx,
+            );
+        }
+    }
+
+    fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
+        if let Some(channel) = self
+            .channel_store
+            .read(cx)
+            .channel_for_id(action.channel_id)
+        {
+            self.channel_editing_state = Some(ChannelEditingState::Rename {
+                channel_id: action.channel_id,
+            });
+            self.channel_name_editor.update(cx, |editor, cx| {
+                editor.set_text(channel.name.clone(), cx);
+                editor.select_all(&Default::default(), cx);
+            });
+            self.update_entries(true, cx);
+        }
+    }
 
     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
         let Some(channel) = self.selected_channel() else {
@@ -1887,7 +1953,7 @@ impl CollabPanel {
         .detach();
     }
 
-    fn remove_channel_action(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
+    fn remove_selected_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
         self.remove_channel(action.channel_id, cx)
     }
 

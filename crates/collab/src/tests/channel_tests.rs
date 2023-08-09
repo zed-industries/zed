@@ -40,14 +40,12 @@ async fn test_core_channels(
                     id: channel_a_id,
                     name: "channel-a".to_string(),
                     parent_id: None,
-                    user_is_admin: true,
                     depth: 0,
                 }),
                 Arc::new(Channel {
                     id: channel_b_id,
                     name: "channel-b".to_string(),
                     parent_id: Some(channel_a_id),
-                    user_is_admin: true,
                     depth: 1,
                 })
             ]
@@ -82,7 +80,6 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-                user_is_admin: false,
                 depth: 0,
             })]
         )
@@ -131,14 +128,13 @@ async fn test_core_channels(
                     id: channel_a_id,
                     name: "channel-a".to_string(),
                     parent_id: None,
-                    user_is_admin: false,
+
                     depth: 0,
                 }),
                 Arc::new(Channel {
                     id: channel_b_id,
                     name: "channel-b".to_string(),
                     parent_id: Some(channel_a_id),
-                    user_is_admin: false,
                     depth: 1,
                 })
             ]
@@ -162,21 +158,18 @@ async fn test_core_channels(
                     id: channel_a_id,
                     name: "channel-a".to_string(),
                     parent_id: None,
-                    user_is_admin: false,
                     depth: 0,
                 }),
                 Arc::new(Channel {
                     id: channel_b_id,
                     name: "channel-b".to_string(),
                     parent_id: Some(channel_a_id),
-                    user_is_admin: false,
                     depth: 1,
                 }),
                 Arc::new(Channel {
                     id: channel_c_id,
                     name: "channel-c".to_string(),
                     parent_id: Some(channel_b_id),
-                    user_is_admin: false,
                     depth: 2,
                 }),
             ]
@@ -204,21 +197,18 @@ async fn test_core_channels(
                     id: channel_a_id,
                     name: "channel-a".to_string(),
                     parent_id: None,
-                    user_is_admin: true,
                     depth: 0,
                 }),
                 Arc::new(Channel {
                     id: channel_b_id,
                     name: "channel-b".to_string(),
                     parent_id: Some(channel_a_id),
-                    user_is_admin: false,
                     depth: 1,
                 }),
                 Arc::new(Channel {
                     id: channel_c_id,
                     name: "channel-c".to_string(),
                     parent_id: Some(channel_b_id),
-                    user_is_admin: false,
                     depth: 2,
                 }),
             ]
@@ -244,7 +234,7 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-                user_is_admin: true,
+
                 depth: 0,
             })]
         )
@@ -256,7 +246,7 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-                user_is_admin: true,
+
                 depth: 0,
             })]
         )
@@ -281,7 +271,6 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 parent_id: None,
-                user_is_admin: true,
                 depth: 0,
             })]
         )
@@ -395,7 +384,6 @@ async fn test_channel_room(
                 id: zed_id,
                 name: "zed".to_string(),
                 parent_id: None,
-                user_is_admin: false,
                 depth: 0,
             })]
         )
@@ -617,7 +605,7 @@ async fn test_permissions_update_while_invited(
                 id: rust_id,
                 name: "rust".to_string(),
                 parent_id: None,
-                user_is_admin: false,
+
                 depth: 0,
             })],
         );
@@ -643,11 +631,67 @@ async fn test_permissions_update_while_invited(
                 id: rust_id,
                 name: "rust".to_string(),
                 parent_id: None,
-                user_is_admin: true,
+
                 depth: 0,
             })],
         );
 
         assert_eq!(channels.channels(), &[],);
+    });
+}
+
+#[gpui::test]
+async fn test_channel_rename(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let rust_id = server
+        .make_channel("rust", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .await;
+
+    // Rename the channel
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.rename(rust_id, "#rust-archive", cx)
+        })
+        .await
+        .unwrap();
+
+    let rust_archive_id = rust_id;
+    deterministic.run_until_parked();
+
+    // Client A sees the channel with its new name.
+    client_a.channel_store().read_with(cx_a, |channels, _| {
+        assert_eq!(
+            channels.channels(),
+            &[Arc::new(Channel {
+                id: rust_archive_id,
+                name: "rust-archive".to_string(),
+                parent_id: None,
+
+                depth: 0,
+            })],
+        );
+    });
+
+    // Client B sees the channel with its new name.
+    client_b.channel_store().read_with(cx_b, |channels, _| {
+        assert_eq!(
+            channels.channels(),
+            &[Arc::new(Channel {
+                id: rust_archive_id,
+                name: "rust-archive".to_string(),
+                parent_id: None,
+
+                depth: 0,
+            })],
+        );
     });
 }

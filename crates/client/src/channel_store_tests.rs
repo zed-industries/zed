@@ -18,13 +18,11 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 1,
                     name: "b".to_string(),
                     parent_id: None,
-                    user_is_admin: true,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     parent_id: None,
-                    user_is_admin: false,
                 },
             ],
             ..Default::default()
@@ -49,13 +47,11 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 3,
                     name: "x".to_string(),
                     parent_id: Some(1),
-                    user_is_admin: false,
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     parent_id: Some(2),
-                    user_is_admin: false,
                 },
             ],
             ..Default::default()
@@ -92,7 +88,7 @@ fn assert_channels(
         let actual = store
             .channels()
             .iter()
-            .map(|c| (c.depth, c.name.as_str(), c.user_is_admin))
+            .map(|c| (c.depth, c.name.as_str(), store.is_user_admin(c.id)))
             .collect::<Vec<_>>();
         assert_eq!(actual, expected_channels);
     });

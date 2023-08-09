@@ -3155,7 +3155,7 @@ impl Database {
         live_kit_room: &str,
         creator_id: UserId,
     ) -> Result<ChannelId> {
-        let name = name.trim().trim_start_matches('#');
+        let name = Self::sanitize_channel_name(name)?;
         self.transaction(move |tx| async move {
             if let Some(parent) = parent {
                 self.check_user_is_channel_admin(parent, creator_id, &*tx)
@@ -3303,6 +3303,39 @@ impl Database {
         .await
     }
 
+    fn sanitize_channel_name(name: &str) -> Result<&str> {
+        let new_name = name.trim().trim_start_matches('#');
+        if new_name == "" {
+            Err(anyhow!("channel name can't be blank"))?;
+        }
+        Ok(new_name)
+    }
+
+    pub async fn rename_channel(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        new_name: &str,
+    ) -> Result<String> {
+        self.transaction(move |tx| async move {
+            let new_name = Self::sanitize_channel_name(new_name)?.to_string();
+
+            self.check_user_is_channel_admin(channel_id, user_id, &*tx)
+                .await?;
+
+            channel::ActiveModel {
+                id: ActiveValue::Unchanged(channel_id),
+                name: ActiveValue::Set(new_name.clone()),
+                ..Default::default()
+            }
+            .update(&*tx)
+            .await?;
+
+            Ok(new_name)
+        })
+        .await
+    }
+
     pub async fn respond_to_channel_invite(
         &self,
         channel_id: ChannelId,
@@ -3400,7 +3433,6 @@ impl Database {
                 .map(|channel| Channel {
                     id: channel.id,
                     name: channel.name,
-                    user_is_admin: false,
                     parent_id: None,
                 })
                 .collect();
@@ -3426,10 +3458,6 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let admin_channel_ids = channel_memberships
-                .iter()
-                .filter_map(|m| m.admin.then_some(m.channel_id))
-                .collect::<HashSet<_>>();
             let parents_by_child_id = self
                 .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
                 .await?;
@@ -3445,7 +3473,6 @@ impl Database {
                     channels.push(Channel {
                         id: row.id,
                         name: row.name,
-                        user_is_admin: admin_channel_ids.contains(&row.id),
                         parent_id: parents_by_child_id.get(&row.id).copied().flatten(),
                     });
                 }
@@ -3758,15 +3785,14 @@ impl Database {
                     .one(&*tx)
                     .await?;
 
-                let (user_is_admin, is_accepted) = channel_membership
-                    .map(|membership| (membership.admin, membership.accepted))
-                    .unwrap_or((false, false));
+                let is_accepted = channel_membership
+                    .map(|membership| membership.accepted)
+                    .unwrap_or(false);
 
                 Ok(Some((
                     Channel {
                         id: channel.id,
                         name: channel.name,
-                        user_is_admin,
                         parent_id: None,
                     },
                     is_accepted,
@@ -4043,7 +4069,6 @@ pub struct NewUserResult {
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
-    pub user_is_admin: bool,
     pub parent_id: Option<ChannelId>,
 }
 

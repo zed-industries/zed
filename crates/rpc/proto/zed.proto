@@ -141,6 +141,7 @@ message Envelope {
         GetChannelMembers get_channel_members = 128;
         GetChannelMembersResponse get_channel_members_response = 129;
         SetChannelMemberAdmin set_channel_member_admin = 130;
+        RenameChannel rename_channel = 131;
     }
 }
 
@@ -874,6 +875,12 @@ message UpdateChannels {
     repeated Channel channel_invitations = 3;
     repeated uint64 remove_channel_invitations = 4;
     repeated ChannelParticipants channel_participants = 5;
+    repeated ChannelPermission channel_permissions = 6;
+}
+
+message ChannelPermission {
+    uint64 channel_id = 1;
+    bool is_admin = 2;
 }
 
 message ChannelParticipants {
@@ -933,6 +940,11 @@ message SetChannelMemberAdmin {
     uint64 channel_id = 1;
     uint64 user_id = 2;
     bool admin = 3;
+}
+
+message RenameChannel {
+    uint64 channel_id = 1;
+    string name = 2;
 }
 
 message RespondToChannelInvite {
@@ -1303,8 +1315,7 @@ message Nonce {
 message Channel {
     uint64 id = 1;
     string name = 2;
-    bool user_is_admin = 3;
-    optional uint64 parent_id = 4;
+    optional uint64 parent_id = 3;
 }
 
 message Contact {

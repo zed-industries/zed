@@ -247,6 +247,7 @@ impl Server {
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_admin)
+            .add_request_handler(rename_channel)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -2151,7 +2152,6 @@ async fn create_channel(
         id: id.to_proto(),
         name: request.name,
         parent_id: request.parent_id,
-        user_is_admin: false,
     });
 
     let user_ids_to_notify = if let Some(parent_id) = parent_id {
@@ -2165,7 +2165,10 @@ async fn create_channel(
         for connection_id in connection_pool.user_connection_ids(user_id) {
             let mut update = update.clone();
             if user_id == session.user_id {
-                update.channels[0].user_is_admin = true;
+                update.channel_permissions.push(proto::ChannelPermission {
+                    channel_id: id.to_proto(),
+                    is_admin: true,
+                });
             }
             session.peer.send(connection_id, update)?;
         }
@@ -2224,7 +2227,6 @@ async fn invite_channel_member(
         id: channel.id.to_proto(),
         name: channel.name,
         parent_id: None,
-        user_is_admin: false,
     });
     for connection_id in session
         .connection_pool()
@@ -2283,18 +2285,9 @@ async fn set_channel_member_admin(
 
     let mut update = proto::UpdateChannels::default();
     if has_accepted {
-        update.channels.push(proto::Channel {
-            id: channel.id.to_proto(),
-            name: channel.name,
-            parent_id: None,
-            user_is_admin: request.admin,
-        });
-    } else {
-        update.channel_invitations.push(proto::Channel {
-            id: channel.id.to_proto(),
-            name: channel.name,
-            parent_id: None,
-            user_is_admin: request.admin,
+        update.channel_permissions.push(proto::ChannelPermission {
+            channel_id: channel.id.to_proto(),
+            is_admin: request.admin,
         });
     }
 
@@ -2307,6 +2300,38 @@ async fn set_channel_member_admin(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn rename_channel(
+    request: proto::RenameChannel,
+    response: Response<proto::RenameChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let new_name = db
+        .rename_channel(channel_id, session.user_id, &request.name)
+        .await?;
+
+    response.send(proto::Ack {})?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(proto::Channel {
+        id: request.channel_id,
+        name: new_name,
+        parent_id: None,
+    });
+
+    let member_ids = db.get_channel_members(channel_id).await?;
+
+    let connection_pool = session.connection_pool().await;
+    for member_id in member_ids {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
     Ok(())
 }
 
@@ -2345,7 +2370,6 @@ async fn respond_to_channel_invite(
             .extend(channels.into_iter().map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
-                user_is_admin: channel.user_is_admin,
                 parent_id: channel.parent_id.map(ChannelId::to_proto),
             }));
         update
@@ -2505,7 +2529,6 @@ fn build_initial_channels_update(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            user_is_admin: channel.user_is_admin,
             parent_id: channel.parent_id.map(|id| id.to_proto()),
         });
     }
@@ -2523,7 +2546,6 @@ fn build_initial_channels_update(
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            user_is_admin: false,
             parent_id: None,
         });
     }
