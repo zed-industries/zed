@@ -2,7 +2,8 @@ use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use serde_json::json;
 
@@ -61,7 +62,7 @@ impl<V: View> Element<V> for Expanded<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx);

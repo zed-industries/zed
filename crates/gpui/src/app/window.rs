@@ -15,7 +15,8 @@ use crate::{
     util::post_inc,
     Action, AnyView, AnyViewHandle, AnyWindowHandle, AppContext, BorrowAppContext,
     BorrowWindowContext, Effect, Element, Entity, Handle, LayoutContext, MouseRegion,
-    MouseRegionId, SceneBuilder, Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
+    MouseRegionId, PaintContext, SceneBuilder, Subscription, View, ViewContext, ViewHandle,
+    WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -1428,7 +1429,7 @@ impl<V: View> Element<V> for ChildView {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             rendered_view

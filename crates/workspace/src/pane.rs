@@ -25,8 +25,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    LayoutContext, ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    LayoutContext, ModelHandle, MouseRegion, PaintContext, Quad, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1900,7 +1900,7 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let background = theme::current(cx).editor.background;
 

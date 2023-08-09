@@ -5,7 +5,8 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 
 pub struct ConstrainedBox<V: View> {
@@ -156,7 +157,7 @@ impl<V: View> Element<V> for ConstrainedBox<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         scene.paint_layer(Some(visible_bounds), |scene| {
             self.child

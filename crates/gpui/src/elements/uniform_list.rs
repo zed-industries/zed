@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    AnyElement, LayoutContext, MouseRegion, SceneBuilder, View, ViewContext,
+    AnyElement, LayoutContext, MouseRegion, PaintContext, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -278,7 +278,7 @@ impl<V: View> Element<V> for UniformList<V> {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
 

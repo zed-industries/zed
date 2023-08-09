@@ -10,7 +10,8 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, Border, CursorRegion, Quad},
-    AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -214,7 +215,7 @@ impl<V: View> Element<V> for Container<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
             bounds.origin() + vec2f(self.style.margin.left, self.style.margin.top),
