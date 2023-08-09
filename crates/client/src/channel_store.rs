@@ -7,7 +7,6 @@ use futures::Future;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, TypedEnvelope};
-use std::mem;
 use std::sync::Arc;
 
 pub type ChannelId = u64;
@@ -319,10 +318,9 @@ impl ChannelStore {
                 .iter_mut()
                 .find(|c| c.id == channel.id)
             {
-                util::make_arc_mut(existing_channel, |new_existing_channel| {
-                    new_existing_channel.name = channel.name;
-                    new_existing_channel.user_is_admin = channel.user_is_admin;
-                });
+                let existing_channel = Arc::make_mut(existing_channel);
+                existing_channel.name = channel.name;
+                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
@@ -340,10 +338,9 @@ impl ChannelStore {
 
         for channel in payload.channels {
             if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
-                util::make_arc_mut(existing_channel, |new_existing_channel| {
-                    new_existing_channel.name = channel.name;
-                    new_existing_channel.user_is_admin = channel.user_is_admin;
-                });
+                let existing_channel = Arc::make_mut(existing_channel);
+                existing_channel.name = channel.name;
+                existing_channel.user_is_admin = channel.user_is_admin;
                 continue;
             }
 
