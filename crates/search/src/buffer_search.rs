@@ -214,6 +214,7 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
+        let icon_style = theme.search.editor_icon.clone();
         Flex::row()
             .with_child(
                 Flex::column()
@@ -242,6 +243,13 @@ impl View for BufferSearchBar {
                         Flex::row()
                             .with_child(
                                 Flex::row()
+                                    .align_children_center()
+                                    .with_child(
+                                        Svg::for_style(icon_style.icon)
+                                            .contained()
+                                            .with_style(icon_style.container)
+                                            .constrained(),
+                                    )
                                     .with_child(
                                         ChildView::new(&self.query_editor, cx)
                                             .aligned()
