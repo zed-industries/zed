@@ -33,6 +33,7 @@ pub mod legacy {
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn icon_suffix(&self) -> Option<&str>;
+    fn extension_or_hidden_file_name(&self) -> Option<&str>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -60,6 +61,7 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
+    /// Returns a suffix of the path that is used to determine which file icon to use
     fn icon_suffix(&self) -> Option<&str> {
         let file_name = self.as_ref().file_name()?.to_str()?;
 
@@ -69,8 +71,16 @@ impl<T: AsRef<Path>> PathExt for T {
 
         self.as_ref()
             .extension()
-            .map(|extension| extension.to_str())
-            .flatten()
+            .and_then(|extension| extension.to_str())
+    }
+
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
+    fn extension_or_hidden_file_name(&self) -> Option<&str> {
+        if let Some(extension) = self.as_ref().extension() {
+            return extension.to_str();
+        }
+
+        self.as_ref().file_name()?.to_str()?.split('.').last()
     }
 }
 
@@ -294,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path_suffix() {
+    fn test_icon_suffix() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
         assert_eq!(path.icon_suffix(), Some("rs"));
@@ -314,5 +324,28 @@ mod tests {
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
         assert_eq!(path.icon_suffix(), Some("eslintrc.js"));
+    }
+
+    #[test]
+    fn test_extension_or_hidden_file_name() {
+        // No dots in name
+        let path = Path::new("/a/b/c/file_name.rs");
+        assert_eq!(path.extension_or_hidden_file_name(), Some("rs"));
+
+        // Single dot in name
+        let path = Path::new("/a/b/c/file.name.rs");
+        assert_eq!(path.extension_or_hidden_file_name(), Some("rs"));
+
+        // Multiple dots in name
+        let path = Path::new("/a/b/c/long.file.name.rs");
+        assert_eq!(path.extension_or_hidden_file_name(), Some("rs"));
+
+        // Hidden file, no extension
+        let path = Path::new("/a/b/c/.gitignore");
+        assert_eq!(path.extension_or_hidden_file_name(), Some("gitignore"));
+
+        // Hidden file, with extension
+        let path = Path::new("/a/b/c/.eslintrc.js");
+        assert_eq!(path.extension_or_hidden_file_name(), Some("js"));
     }
 }

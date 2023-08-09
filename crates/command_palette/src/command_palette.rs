@@ -1,8 +1,8 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Element, MouseState,
-    ViewContext,
+    actions, anyhow::anyhow, elements::*, keymap_matcher::Keystroke, Action, AnyWindowHandle,
+    AppContext, Element, MouseState, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::cmp;
@@ -28,7 +28,7 @@ pub struct CommandPaletteDelegate {
 pub enum Event {
     Dismissed,
     Confirmed {
-        window_id: usize,
+        window: AnyWindowHandle,
         focused_view_id: usize,
         action: Box<dyn Action>,
     },
@@ -80,12 +80,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let window_id = cx.window_id();
         let view_id = self.focused_view_id;
+        let window = cx.window();
         cx.spawn(move |picker, mut cx| async move {
-            let actions = cx
-                .available_actions(window_id, view_id)
+            let actions = window
+                .available_actions(view_id, &cx)
                 .into_iter()
+                .flatten()
                 .filter_map(|(name, action, bindings)| {
                     let filtered = cx.read(|cx| {
                         if cx.has_global::<CommandPaletteFilter>() {
@@ -162,13 +163,15 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if !self.matches.is_empty() {
-            let window_id = cx.window_id();
+            let window = cx.window();
             let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
             let action = self.actions.remove(action_ix).action;
             cx.app_context()
                 .spawn(move |mut cx| async move {
-                    cx.dispatch_action(window_id, focused_view_id, action.as_ref())
+                    window
+                        .dispatch_action(focused_view_id, action.as_ref(), &mut cx)
+                        .ok_or_else(|| anyhow!("window was closed"))
                 })
                 .detach_and_log_err(cx);
         }
@@ -297,8 +300,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
-        let editor = cx.add_view(window_id, |cx| {
+        let editor = window.add_view(cx, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);
             editor

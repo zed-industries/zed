@@ -20,11 +20,11 @@ pub fn init(cx: &mut AppContext) {
                 {
                     status_indicator = Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
                 }
-            } else if let Some((window_id, _)) = status_indicator.take() {
-                cx.update_window(window_id, |cx| cx.remove_window());
+            } else if let Some(window) = status_indicator.take() {
+                window.update(cx, |cx| cx.remove_window());
             }
-        } else if let Some((window_id, _)) = status_indicator.take() {
-            cx.update_window(window_id, |cx| cx.remove_window());
+        } else if let Some(window) = status_indicator.take() {
+            window.update(cx, |cx| cx.remove_window());
         }
     })
     .detach();

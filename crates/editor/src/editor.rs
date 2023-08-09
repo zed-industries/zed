@@ -28,6 +28,7 @@ use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use convert_case::{Case, Casing};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -89,7 +90,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -231,6 +232,13 @@ actions!(
         SortLinesCaseInsensitive,
         ReverseLines,
         ShuffleLines,
+        ConvertToUpperCase,
+        ConvertToLowerCase,
+        ConvertToTitleCase,
+        ConvertToSnakeCase,
+        ConvertToKebabCase,
+        ConvertToUpperCamelCase,
+        ConvertToLowerCamelCase,
         Transpose,
         Cut,
         Copy,
@@ -353,6 +361,13 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::sort_lines_case_insensitive);
     cx.add_action(Editor::reverse_lines);
     cx.add_action(Editor::shuffle_lines);
+    cx.add_action(Editor::convert_to_upper_case);
+    cx.add_action(Editor::convert_to_lower_case);
+    cx.add_action(Editor::convert_to_title_case);
+    cx.add_action(Editor::convert_to_snake_case);
+    cx.add_action(Editor::convert_to_kebab_case);
+    cx.add_action(Editor::convert_to_upper_camel_case);
+    cx.add_action(Editor::convert_to_lower_camel_case);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -4306,6 +4321,97 @@ impl Editor {
         });
     }
 
+    pub fn convert_to_upper_case(&mut self, _: &ConvertToUpperCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_uppercase())
+    }
+
+    pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_lowercase())
+    }
+
+    pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Title))
+    }
+
+    pub fn convert_to_snake_case(&mut self, _: &ConvertToSnakeCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Snake))
+    }
+
+    pub fn convert_to_kebab_case(&mut self, _: &ConvertToKebabCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Kebab))
+    }
+
+    pub fn convert_to_upper_camel_case(
+        &mut self,
+        _: &ConvertToUpperCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::UpperCamel))
+    }
+
+    pub fn convert_to_lower_camel_case(
+        &mut self,
+        _: &ConvertToLowerCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Camel))
+    }
+
+    fn manipulate_text<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&str) -> String,
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        let mut selection_adjustment = 0i32;
+
+        for selection in self.selections.all::<usize>(cx) {
+            let selection_is_empty = selection.is_empty();
+
+            let (start, end) = if selection_is_empty {
+                let word_range = movement::surrounding_word(
+                    &display_map,
+                    selection.start.to_display_point(&display_map),
+                );
+                let start = word_range.start.to_offset(&display_map, Bias::Left);
+                let end = word_range.end.to_offset(&display_map, Bias::Left);
+                (start, end)
+            } else {
+                (selection.start, selection.end)
+            };
+
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            let old_length = text.len() as i32;
+            let text = callback(&text);
+
+            new_selections.push(Selection {
+                start: (start as i32 - selection_adjustment) as usize,
+                end: ((start + text.len()) as i32 - selection_adjustment) as usize,
+                goal: SelectionGoal::None,
+                ..selection
+            });
+
+            selection_adjustment += old_length - text.len() as i32;
+
+            edits.push((start..end, text));
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -7440,6 +7546,78 @@ impl Editor {
             results.push((start..end, color))
         }
 
+        results
+    }
+
+    pub fn background_highlight_row_ranges<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        count: usize,
+    ) -> Vec<RangeInclusive<DisplayPoint>> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((_, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        let mut push_region = |start: Option<Point>, end: Option<Point>| {
+            if let (Some(start_display), Some(end_display)) = (start, end) {
+                results.push(
+                    start_display.to_display_point(display_snapshot)
+                        ..=end_display.to_display_point(display_snapshot),
+                );
+            }
+        };
+        let mut start_row: Option<Point> = None;
+        let mut end_row: Option<Point> = None;
+        if ranges.len() > count {
+            return vec![];
+        }
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let end = range.end.to_point(buffer);
+            if let Some(current_row) = &end_row {
+                if end.row == current_row.row {
+                    continue;
+                }
+            }
+            let start = range.start.to_point(buffer);
+
+            if start_row.is_none() {
+                assert_eq!(end_row, None);
+                start_row = Some(start);
+                end_row = Some(end);
+                continue;
+            }
+            if let Some(current_end) = end_row.as_mut() {
+                if start.row > current_end.row + 1 {
+                    push_region(start_row, end_row);
+                    start_row = Some(start);
+                    end_row = Some(end);
+                } else {
+                    // Merge two hunks.
+                    *current_end = end;
+                }
+            } else {
+                unreachable!();
+            }
+        }
+        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
+        push_region(start_row, end_row);
         results
     }
 

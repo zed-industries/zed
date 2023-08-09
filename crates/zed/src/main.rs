@@ -14,7 +14,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task, ViewContext};
+use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, Request};
 use language::{LanguageRegistry, Point};
 use log::LevelFilter;
@@ -43,7 +43,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::Bias;
-use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
 use util::{
     channel::ReleaseChannel,
     http::{self, HttpClient},
@@ -56,7 +55,7 @@ use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
+use workspace::AppState;
 use zed::{
     assets::Assets,
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -920,35 +919,6 @@ async fn handle_cli_connection(
             }
         }
     }
-}
-
-pub fn dock_default_item_factory(
-    workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Box<dyn ItemHandle>> {
-    let strategy = settings::get::<TerminalSettings>(cx)
-        .working_directory
-        .clone();
-    let working_directory = get_working_directory(workspace, cx, strategy);
-
-    let window_id = cx.window_id();
-    let terminal = workspace
-        .project()
-        .update(cx, |project, cx| {
-            project.create_terminal(working_directory, window_id, cx)
-        })
-        .notify_err(workspace, cx)?;
-
-    let terminal_view = cx.add_view(|cx| {
-        TerminalView::new(
-            terminal,
-            workspace.weak_handle(),
-            workspace.database_id(),
-            cx,
-        )
-    });
-
-    Some(Box::new(terminal_view))
 }
 
 pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {

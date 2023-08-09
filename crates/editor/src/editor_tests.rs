@@ -525,9 +525,8 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
     let project = Project::test(fs, [], cx).await;
     let window = cx.add_window(|cx| Workspace::test_new(project, cx));
     let workspace = window.root(cx);
-    let window_id = window.window_id();
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-    cx.add_view(window_id, |cx| {
+    window.add_view(cx, |cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
         let mut editor = build_editor(buffer.clone(), cx);
         let handle = cx.handle();
@@ -1290,7 +1289,8 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+    let window = cx.window;
+    window.simulate_resize(vec2f(100., 4. * line_height), &mut cx);
 
     cx.set_state(
         &r#"ˇone
@@ -1401,7 +1401,8 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(1000., 4. * line_height + 0.5));
+    let window = cx.window;
+    window.simulate_resize(vec2f(1000., 4. * line_height + 0.5), &mut cx);
 
     cx.set_state(
         &r#"ˇone
@@ -1439,7 +1440,8 @@ async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+    let window = cx.window;
+    window.simulate_resize(vec2f(100., 4. * line_height), &mut cx);
 
     cx.set_state(
         &r#"
@@ -2692,6 +2694,84 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         bb
         ccc
         ddddˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_manipulate_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test convert_to_upper_case()
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // Test convert_to_lower_case()
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_case(&ConvertToLowerCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // From here on out, test more complex cases of manipulate_text()
+
+    // Test no selection case - should affect words cursors are in
+    // Cursor at beginning, middle, and end of word
+    cx.set_state(indoc! {"
+        ˇhello big beauˇtiful worldˇ
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLOˇ» big «BEAUTIFULˇ» «WORLDˇ»
+    "});
+
+    // Test multiple selections on a single line and across multiple lines
+    cx.set_state(indoc! {"
+        «Theˇ» quick «brown
+        foxˇ» jumps «overˇ»
+        the «lazyˇ» dog
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «THEˇ» quick «BROWN
+        FOXˇ» jumps «OVERˇ»
+        the «LAZYˇ» dog
+    "});
+
+    // Test case where text length grows
+    cx.set_state(indoc! {"
+        «tschüßˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_case(&ConvertToUpperCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «TSCHÜSSˇ»
+    "});
+
+    // Test to make sure we don't crash when text shrinks
+    cx.set_state(indoc! {"
+        aaa_bbbˇ
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaBbbˇ»
+    "});
+
+    // Test to make sure we all aware of the fact that each word can grow and shrink
+    // Final selections should be aware of this fact
+    cx.set_state(indoc! {"
+        aaa_bˇbb bbˇb_ccc ˇccc_ddd
+    "});
+    cx.update_editor(|e, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaBbbˇ» «bbbCccˇ» «cccDddˇ»
     "});
 }
 

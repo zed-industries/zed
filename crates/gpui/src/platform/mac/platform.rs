@@ -1,12 +1,12 @@
 use super::{
     event::key_to_native, screen::Screen, status_item::StatusItem, BoolExt as _, Dispatcher,
-    FontSystem, Window,
+    FontSystem, MacWindow,
 };
 use crate::{
     executor,
     keymap_matcher::KeymapMatcher,
     platform::{self, AppVersion, CursorStyle, Event},
-    Action, ClipboardItem, Menu, MenuItem,
+    Action, AnyWindowHandle, ClipboardItem, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -590,18 +590,18 @@ impl platform::Platform for MacPlatform {
 
     fn open_window(
         &self,
-        id: usize,
+        handle: AnyWindowHandle,
         options: platform::WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn platform::Window> {
-        Box::new(Window::open(id, options, executor, self.fonts()))
+        Box::new(MacWindow::open(handle, options, executor, self.fonts()))
     }
 
-    fn main_window_id(&self) -> Option<usize> {
-        Window::main_window_id()
+    fn main_window(&self) -> Option<AnyWindowHandle> {
+        MacWindow::main_window()
     }
 
-    fn add_status_item(&self, _id: usize) -> Box<dyn platform::Window> {
+    fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
         Box::new(StatusItem::add(self.fonts()))
     }
 

@@ -619,7 +619,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.into(), Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
@@ -632,8 +632,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.into(), SelectNext);
+        cx.dispatch_action(window.into(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -674,7 +674,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.into(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -706,8 +706,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.into(), SelectNext);
+        cx.dispatch_action(window.into(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -758,7 +758,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        cx.dispatch_action(window.window_id(), Toggle);
+        cx.dispatch_action(window.into(), Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
 
         let file_query = &first_file_name[..3];
@@ -790,8 +790,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.window_id(), SelectNext);
-        cx.dispatch_action(window.window_id(), Confirm);
+        cx.dispatch_action(window.into(), SelectNext);
+        cx.dispatch_action(window.into(), Confirm);
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
@@ -1168,7 +1168,6 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1186,7 +1185,7 @@ mod tests {
             "fir",
             1,
             "first.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1201,7 +1200,7 @@ mod tests {
             "sec",
             1,
             "second.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1223,7 +1222,7 @@ mod tests {
             "thi",
             1,
             "third.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1255,7 +1254,7 @@ mod tests {
             "sec",
             1,
             "second.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1294,7 +1293,7 @@ mod tests {
             "thi",
             1,
             "third.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1376,7 +1375,6 @@ mod tests {
 
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
-        let window_id = window.window_id();
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);
@@ -1411,7 +1409,7 @@ mod tests {
             "sec",
             1,
             "second.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1433,7 +1431,7 @@ mod tests {
             "fir",
             1,
             "first.rs",
-            window_id,
+            window.into(),
             &workspace,
             &deterministic,
             cx,
@@ -1465,12 +1463,12 @@ mod tests {
         input: &str,
         expected_matches: usize,
         expected_editor_title: &str,
-        window_id: usize,
+        window: gpui::AnyWindowHandle,
         workspace: &ViewHandle<Workspace>,
         deterministic: &gpui::executor::Deterministic,
         cx: &mut gpui::TestAppContext,
     ) -> Vec<FoundPath> {
-        cx.dispatch_action(window_id, Toggle);
+        cx.dispatch_action(window, Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
             .update(cx, |finder, cx| {
@@ -1487,8 +1485,8 @@ mod tests {
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
+        cx.dispatch_action(window, SelectNext);
+        cx.dispatch_action(window, Confirm);
         deterministic.run_until_parked();
         active_pane
             .condition(cx, |pane, _| pane.active_item().is_some())
