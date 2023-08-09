@@ -695,6 +695,7 @@ impl ProjectSearchView {
         match mode {
             SearchMode::Semantic => {
                 let has_permission = self.semantic_permissioned(cx);
+                self.active_match_index = None;
                 cx.spawn(|this, mut cx| async move {
                     let has_permission = has_permission.await?;
 
@@ -740,11 +741,9 @@ impl ProjectSearchView {
                     anyhow::Ok(())
                 }).detach_and_log_err(cx);
             }
-            SearchMode::Regex => {
+            SearchMode::Regex | SearchMode::Text => {
                 self.semantic_state = None;
-            }
-            SearchMode::Text => {
-                self.semantic_state = None;
+                self.active_match_index = None;
             }
         }
         cx.notify();
