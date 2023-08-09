@@ -197,7 +197,7 @@ impl CollabPanel {
                     if !query.is_empty() {
                         this.selection.take();
                     }
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                     if !query.is_empty() {
                         this.selection = this
                             .entries
@@ -220,7 +220,7 @@ impl CollabPanel {
             cx.subscribe(&channel_name_editor, |this, _, event, cx| {
                 if let editor::Event::Blurred = event {
                     this.take_editing_state(cx);
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                     cx.notify();
                 }
             })
@@ -358,7 +358,7 @@ impl CollabPanel {
                 list_state,
             };
 
-            this.update_entries(cx);
+            this.update_entries(false, cx);
 
             // Update the dock position when the setting changes.
             let mut old_dock_position = this.position(cx);
@@ -376,13 +376,18 @@ impl CollabPanel {
 
             let active_call = ActiveCall::global(cx);
             this.subscriptions
-                .push(cx.observe(&this.user_store, |this, _, cx| this.update_entries(cx)));
+                .push(cx.observe(&this.user_store, |this, _, cx| {
+                    this.update_entries(false, cx)
+                }));
             this.subscriptions
-                .push(cx.observe(&this.channel_store, |this, _, cx| this.update_entries(cx)));
+                .push(cx.observe(&this.channel_store, |this, _, cx| {
+                    this.update_entries(false, cx)
+                }));
             this.subscriptions
-                .push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
-            this.subscriptions
-                .push(cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(cx)));
+                .push(cx.observe(&active_call, |this, _, cx| this.update_entries(false, cx)));
+            this.subscriptions.push(
+                cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(false, cx)),
+            );
 
             this
         })
@@ -434,7 +439,7 @@ impl CollabPanel {
         );
     }
 
-    fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_entries(&mut self, select_editor: bool, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
@@ -743,12 +748,21 @@ impl CollabPanel {
             }
         }
 
-        if let Some(prev_selected_entry) = prev_selected_entry {
-            self.selection.take();
+        if select_editor {
             for (ix, entry) in self.entries.iter().enumerate() {
-                if *entry == prev_selected_entry {
+                if matches!(*entry, ListEntry::ChannelEditor { .. }) {
                     self.selection = Some(ix);
                     break;
+                }
+            }
+        } else {
+            if let Some(prev_selected_entry) = prev_selected_entry {
+                self.selection.take();
+                for (ix, entry) in self.entries.iter().enumerate() {
+                    if *entry == prev_selected_entry {
+                        self.selection = Some(ix);
+                        break;
+                    }
                 }
             }
         }
@@ -1643,7 +1657,7 @@ impl CollabPanel {
             });
         }
 
-        self.update_entries(cx);
+        self.update_entries(false, cx);
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -1724,17 +1738,28 @@ impl CollabPanel {
                     ListEntry::Channel(channel) => {
                         self.join_channel(channel.id, cx);
                     }
+                    ListEntry::ChannelEditor { .. } => {
+                        self.confirm_channel_edit(cx);
+                    }
                     _ => {}
                 }
             }
-        } else if let Some((editing_state, channel_name)) = self.take_editing_state(cx) {
+        } else {
+            self.confirm_channel_edit(cx);
+        }
+    }
+
+    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<'_, '_, CollabPanel>) {
+        if let Some((editing_state, channel_name)) = self.take_editing_state(cx) {
             let create_channel = self.channel_store.update(cx, |channel_store, _| {
                 channel_store.create_channel(&channel_name, editing_state.parent_id)
             });
 
+            self.update_entries(false, cx);
+
             cx.foreground()
                 .spawn(async move {
-                    create_channel.await.ok();
+                    create_channel.await.log_err();
                 })
                 .detach();
         }
@@ -1746,7 +1771,7 @@ impl CollabPanel {
         } else {
             self.collapsed_sections.push(section);
         }
-        self.update_entries(cx);
+        self.update_entries(false, cx);
     }
 
     fn leave_call(cx: &mut ViewContext<Self>) {
@@ -1771,7 +1796,7 @@ impl CollabPanel {
 
     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
         self.channel_editing_state = Some(ChannelEditingState { parent_id: None });
-        self.update_entries(cx);
+        self.update_entries(true, cx);
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
     }
@@ -1780,7 +1805,7 @@ impl CollabPanel {
         self.channel_editing_state = Some(ChannelEditingState {
             parent_id: Some(action.channel_id),
         });
-        self.update_entries(cx);
+        self.update_entries(true, cx);
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
     }
