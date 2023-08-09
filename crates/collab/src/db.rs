@@ -1,7 +1,7 @@
 mod access_token;
 mod channel;
 mod channel_member;
-mod channel_parent;
+mod channel_path;
 mod contact;
 mod follower;
 mod language_server;
@@ -3169,12 +3169,34 @@ impl Database {
             .insert(&*tx)
             .await?;
 
+            let channel_paths_stmt;
             if let Some(parent) = parent {
-                channel_parent::ActiveModel {
-                    child_id: ActiveValue::Set(channel.id),
-                    parent_id: ActiveValue::Set(parent),
-                }
-                .insert(&*tx)
+                let sql = r#"
+                    INSERT INTO channel_paths
+                    (id_path, channel_id)
+                    SELECT
+                        id_path || $1 || '/', $2
+                    FROM
+                        channel_paths
+                    WHERE
+                        channel_id = $3
+                "#;
+                channel_paths_stmt = Statement::from_sql_and_values(
+                    self.pool.get_database_backend(),
+                    sql,
+                    [
+                        channel.id.to_proto().into(),
+                        channel.id.to_proto().into(),
+                        parent.to_proto().into(),
+                    ],
+                );
+                tx.execute(channel_paths_stmt).await?;
+            } else {
+                channel_path::Entity::insert(channel_path::ActiveModel {
+                    channel_id: ActiveValue::Set(channel.id),
+                    id_path: ActiveValue::Set(format!("/{}/", channel.id)),
+                })
+                .exec(&*tx)
                 .await?;
             }
 
@@ -3213,9 +3235,9 @@ impl Database {
             // Don't remove descendant channels that have additional parents.
             let mut channels_to_remove = self.get_channel_descendants([channel_id], &*tx).await?;
             {
-                let mut channels_to_keep = channel_parent::Entity::find()
+                let mut channels_to_keep = channel_path::Entity::find()
                     .filter(
-                        channel_parent::Column::ChildId
+                        channel_path::Column::ChannelId
                             .is_in(
                                 channels_to_remove
                                     .keys()
@@ -3223,15 +3245,15 @@ impl Database {
                                     .filter(|&id| id != channel_id),
                             )
                             .and(
-                                channel_parent::Column::ParentId
-                                    .is_not_in(channels_to_remove.keys().copied()),
+                                channel_path::Column::IdPath
+                                    .not_like(&format!("%/{}/%", channel_id)),
                             ),
                     )
                     .stream(&*tx)
                     .await?;
                 while let Some(row) = channels_to_keep.next().await {
                     let row = row?;
-                    channels_to_remove.remove(&row.child_id);
+                    channels_to_remove.remove(&row.channel_id);
                 }
             }
 
@@ -3631,40 +3653,21 @@ impl Database {
         channel_id: ChannelId,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<ChannelId>> {
-        let sql = format!(
-            r#"
-            WITH RECURSIVE channel_tree(child_id, parent_id) AS (
-                    SELECT CAST(NULL as INTEGER) as child_id, root_ids.column1 as parent_id
-                    FROM (VALUES ({})) as root_ids
-                UNION
-                    SELECT channel_parents.child_id, channel_parents.parent_id
-                    FROM channel_parents, channel_tree
-                    WHERE channel_parents.child_id = channel_tree.parent_id
-            )
-            SELECT DISTINCT channel_tree.parent_id
-            FROM channel_tree
-            "#,
-            channel_id
-        );
-
-        #[derive(FromQueryResult, Debug, PartialEq)]
-        pub struct ChannelParent {
-            pub parent_id: ChannelId,
-        }
-
-        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-
-        let mut channel_ids_stream = channel_parent::Entity::find()
-            .from_raw_sql(stmt)
-            .into_model::<ChannelParent>()
-            .stream(&*tx)
+        let paths = channel_path::Entity::find()
+            .filter(channel_path::Column::ChannelId.eq(channel_id))
+            .all(tx)
             .await?;
-
-        let mut channel_ids = vec![];
-        while let Some(channel_id) = channel_ids_stream.next().await {
-            channel_ids.push(channel_id?.parent_id);
+        let mut channel_ids = Vec::new();
+        for path in paths {
+            for id in path.id_path.trim_matches('/').split('/') {
+                if let Ok(id) = id.parse() {
+                    let id = ChannelId::from_proto(id);
+                    if let Err(ix) = channel_ids.binary_search(&id) {
+                        channel_ids.insert(ix, id);
+                    }
+                }
+            }
         }
-
         Ok(channel_ids)
     }
 
@@ -3687,38 +3690,38 @@ impl Database {
 
         let sql = format!(
             r#"
-            WITH RECURSIVE channel_tree(child_id, parent_id) AS (
-                    SELECT root_ids.column1 as child_id, CAST(NULL as INTEGER) as parent_id
-                    FROM (VALUES {values}) as root_ids
-                UNION
-                    SELECT channel_parents.child_id, channel_parents.parent_id
-                    FROM channel_parents, channel_tree
-                    WHERE channel_parents.parent_id = channel_tree.child_id
-            )
-            SELECT channel_tree.child_id, channel_tree.parent_id
-            FROM channel_tree
-            ORDER BY child_id, parent_id IS NOT NULL
-            "#,
+            SELECT
+                descendant_paths.*
+            FROM
+                channel_paths parent_paths, channel_paths descendant_paths
+            WHERE
+                parent_paths.channel_id IN ({values}) AND
+                descendant_paths.id_path LIKE (parent_paths.id_path || '%')
+        "#
         );
-
-        #[derive(FromQueryResult, Debug, PartialEq)]
-        pub struct ChannelParent {
-            pub child_id: ChannelId,
-            pub parent_id: Option<ChannelId>,
-        }
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
 
         let mut parents_by_child_id = HashMap::default();
-        let mut parents = channel_parent::Entity::find()
+        let mut paths = channel_path::Entity::find()
             .from_raw_sql(stmt)
-            .into_model::<ChannelParent>()
             .stream(tx)
             .await?;
 
-        while let Some(parent) = parents.next().await {
-            let parent = parent?;
-            parents_by_child_id.insert(parent.child_id, parent.parent_id);
+        while let Some(path) = paths.next().await {
+            let path = path?;
+            let ids = path.id_path.trim_matches('/').split('/');
+            let mut parent_id = None;
+            for id in ids {
+                if let Ok(id) = id.parse() {
+                    let id = ChannelId::from_proto(id);
+                    if id == path.channel_id {
+                        break;
+                    }
+                    parent_id = Some(id);
+                }
+            }
+            parents_by_child_id.insert(path.channel_id, parent_id);
         }
 
         Ok(parents_by_child_id)
