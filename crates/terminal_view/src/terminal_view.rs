@@ -112,11 +112,11 @@ impl TerminalView {
         let working_directory =
             get_working_directory(workspace, cx, strategy.working_directory.clone());
 
-        let window_id = cx.window_id();
+        let window = cx.window();
         let terminal = workspace
             .project()
             .update(cx, |project, cx| {
-                project.create_terminal(working_directory, window_id, cx)
+                project.create_terminal(working_directory, window, cx)
             })
             .notify_err(workspace, cx);
 
@@ -741,7 +741,7 @@ impl Item for TerminalView {
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        let window_id = cx.window_id();
+        let window = cx.window();
         cx.spawn(|pane, mut cx| async move {
             let cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
@@ -762,7 +762,7 @@ impl Item for TerminalView {
                 });
 
             let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, window_id, cx)
+                project.create_terminal(cwd, window, cx)
             })?;
             Ok(pane.update(&mut cx, |_, cx| {
                 cx.add_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
@@ -1070,7 +1070,9 @@ mod tests {
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
 
         (project, workspace)
     }

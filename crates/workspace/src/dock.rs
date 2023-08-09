@@ -203,7 +203,7 @@ impl Dock {
     pub fn panel_index_for_ui_name(&self, ui_name: &str, cx: &AppContext) -> Option<usize> {
         self.panel_entries.iter().position(|entry| {
             let panel = entry.panel.as_any();
-            cx.view_ui_name(panel.window_id(), panel.id()) == Some(ui_name)
+            cx.view_ui_name(panel.window(), panel.id()) == Some(ui_name)
         })
     }
 
@@ -530,16 +530,15 @@ impl View for PanelButtons {
                                     tooltip_action.as_ref().map(|action| action.boxed_clone());
                                 move |_, this, cx| {
                                     if let Some(tooltip_action) = &tooltip_action {
-                                        let window_id = cx.window_id();
+                                        let window = cx.window();
                                         let view_id = this.workspace.id();
                                         let tooltip_action = tooltip_action.boxed_clone();
                                         cx.spawn(|_, mut cx| async move {
-                                            cx.dispatch_action(
-                                                window_id,
+                                            window.dispatch_action(
                                                 view_id,
                                                 &*tooltip_action,
-                                            )
-                                            .ok();
+                                                &mut cx,
+                                            );
                                         })
                                         .detach();
                                     }

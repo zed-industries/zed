@@ -1,36 +1,28 @@
-(struct_item
-    (visibility_modifier)? @context
-    "struct" @context
-    name: (_) @name) @item
+(
+    [(line_comment) (attribute_item)]* @context
+    .
+    [
+        (struct_item
+            name: (_) @name)
 
-(enum_item
-    (visibility_modifier)? @context
-    "enum" @context
-    name: (_) @name) @item
+        (enum_item
+            name: (_) @name)
 
-(impl_item
-    "impl" @context
-    trait: (_)? @name
-    "for"? @context
-    type: (_) @name) @item
+        (impl_item
+            trait: (_)? @name
+            "for"? @name
+            type: (_) @name)
 
-(trait_item
-    (visibility_modifier)? @context
-    "trait" @context
-    name: (_) @name) @item
+        (trait_item
+            name: (_) @name)
 
-(function_item
-    (visibility_modifier)? @context
-    (function_modifiers)? @context
-    "fn" @context
-    name: (_) @name) @item
+        (function_item
+            name: (_) @name
+            body: (block
+                "{" @keep
+                "}" @keep) @collapse)
 
-(function_signature_item
-    (visibility_modifier)? @context
-    (function_modifiers)? @context
-    "fn" @context
-    name: (_) @name) @item
-
-(macro_definition
-    . "macro_rules!" @context
-    name: (_) @name) @item
+        (macro_definition
+            name: (_) @name)
+        ] @item
+    )

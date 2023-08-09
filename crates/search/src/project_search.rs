@@ -1,15 +1,14 @@
 use crate::{
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectNextMatch,
+    SelectPrevMatch, ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
 };
-use anyhow::Result;
+use anyhow::Context;
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
-use globset::{Glob, GlobMatcher};
 use gpui::{
     actions,
     elements::*,
@@ -18,7 +17,12 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, Entry, Project};
+use postage::stream::Stream;
+use project::{
+    search::{PathMatcher, SearchQuery},
+    Entry, Project,
+};
+use semantic_index::SemanticIndex;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -36,7 +40,10 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
-actions!(project_search, [SearchInNew, ToggleFocus, NextField]);
+actions!(
+    project_search,
+    [SearchInNew, ToggleFocus, NextField, ToggleSemanticSearch]
+);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -49,6 +56,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
+    cx.add_action(ProjectSearchBar::next_history_query);
+    cx.add_action(ProjectSearchBar::previous_history_query);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
@@ -76,6 +85,7 @@ struct ProjectSearch {
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     search_id: usize,
+    search_history: SearchHistory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -89,6 +99,7 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
+    semantic: Option<SemanticSearchState>,
     search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
@@ -96,6 +107,12 @@ pub struct ProjectSearchView {
     query_editor_was_focused: bool,
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
+}
+
+struct SemanticSearchState {
+    file_count: usize,
+    outstanding_file_count: usize,
+    _progress_task: Task<()>,
 }
 
 pub struct ProjectSearchBar {
@@ -117,6 +134,7 @@ impl ProjectSearch {
             match_ranges: Default::default(),
             active_query: None,
             search_id: 0,
+            search_history: SearchHistory::default(),
         }
     }
 
@@ -130,6 +148,7 @@ impl ProjectSearch {
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
             search_id: self.search_id,
+            search_history: self.search_history.clone(),
         })
     }
 
@@ -138,6 +157,7 @@ impl ProjectSearch {
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
         self.search_id += 1;
+        self.search_history.add(query.as_str().to_string());
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
@@ -150,6 +170,58 @@ impl ProjectSearch {
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
                     excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
+                })
+            });
+
+            while let Some(match_range) = match_ranges.next().await {
+                this.update(&mut cx, |this, cx| {
+                    this.match_ranges.push(match_range);
+                    while let Ok(Some(match_range)) = match_ranges.try_next() {
+                        this.match_ranges.push(match_range);
+                    }
+                    cx.notify();
+                });
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.pending_search.take();
+                cx.notify();
+            });
+
+            None
+        }));
+        cx.notify();
+    }
+
+    fn semantic_search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
+        let search = SemanticIndex::global(cx).map(|index| {
+            index.update(cx, |semantic_index, cx| {
+                semantic_index.search_project(
+                    self.project.clone(),
+                    query.as_str().to_owned(),
+                    10,
+                    query.files_to_include().to_vec(),
+                    query.files_to_exclude().to_vec(),
+                    cx,
+                )
+            })
+        });
+        self.search_id += 1;
+        self.match_ranges.clear();
+        self.search_history.add(query.as_str().to_string());
+        self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+            let results = search?.await.log_err()?;
+
+            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+                this.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.clear(cx);
+
+                    let matches = results
+                        .into_iter()
+                        .map(|result| (result.buffer, vec![result.range.start..result.range.start]))
+                        .collect();
+
+                    excerpts.stream_excerpts_with_context_lines(matches, 3, cx)
                 })
             });
 
@@ -195,13 +267,67 @@ impl View for ProjectSearchView {
             enum Status {}
 
             let theme = theme::current(cx).clone();
-            let text = if self.query_editor.read(cx).text(cx).is_empty() {
-                ""
-            } else if model.pending_search.is_some() {
-                "Searching..."
+            let text = if model.pending_search.is_some() {
+                Cow::Borrowed("Searching...")
+            } else if let Some(semantic) = &self.semantic {
+                if semantic.outstanding_file_count > 0 {
+                    Cow::Owned(format!(
+                        "Indexing. {} of {}...",
+                        semantic.file_count - semantic.outstanding_file_count,
+                        semantic.file_count
+                    ))
+                } else {
+                    Cow::Borrowed("Indexing complete")
+                }
+            } else if self.query_editor.read(cx).text(cx).is_empty() {
+                Cow::Borrowed("")
             } else {
-                "No results"
+                Cow::Borrowed("No results")
             };
+
+            let previous_query_keystrokes =
+                cx.binding_for_action(&PreviousHistoryQuery {})
+                    .map(|binding| {
+                        binding
+                            .keystrokes()
+                            .iter()
+                            .map(|k| k.to_string())
+                            .collect::<Vec<_>>()
+                    });
+            let next_query_keystrokes =
+                cx.binding_for_action(&NextHistoryQuery {}).map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                });
+            let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
+                (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
+                    format!(
+                        "Search ({}/{} for previous/next query)",
+                        previous_query_keystrokes.join(" "),
+                        next_query_keystrokes.join(" ")
+                    )
+                }
+                (None, Some(next_query_keystrokes)) => {
+                    format!(
+                        "Search ({} for next query)",
+                        next_query_keystrokes.join(" ")
+                    )
+                }
+                (Some(previous_query_keystrokes), None) => {
+                    format!(
+                        "Search ({} for previous query)",
+                        previous_query_keystrokes.join(" ")
+                    )
+                }
+                (None, None) => String::new(),
+            };
+            self.query_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(new_placeholder_text, cx);
+            });
+
             MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
                 Label::new(text, theme.search.results_status.clone())
                     .aligned()
@@ -490,6 +616,7 @@ impl ProjectSearchView {
             model,
             query_editor,
             results_editor,
+            semantic: None,
             search_options: options,
             panels_with_errors: HashSet::new(),
             active_match_index: None,
@@ -509,8 +636,7 @@ impl ProjectSearchView {
         if !dir_entry.is_dir() {
             return;
         }
-        let filter_path = dir_entry.path.join("**");
-        let Some(filter_str) = filter_path.to_str() else { return; };
+        let Some(filter_str) = dir_entry.path.to_str() else { return; };
 
         let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
@@ -577,6 +703,16 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(semantic) = &mut self.semantic {
+            if semantic.outstanding_file_count > 0 {
+                return;
+            }
+            if let Some(query) = self.build_search_query(cx) {
+                self.model
+                    .update(cx, |model, cx| model.semantic_search(query, cx));
+            }
+        }
+
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
@@ -585,7 +721,7 @@ impl ProjectSearchView {
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
         let included_files =
-            match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
+            match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
                     self.panels_with_errors.remove(&InputPanel::Include);
                     included_files
@@ -597,7 +733,7 @@ impl ProjectSearchView {
                 }
             };
         let excluded_files =
-            match Self::load_glob_set(&self.excluded_files_editor.read(cx).text(cx)) {
+            match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
                 Ok(excluded_files) => {
                     self.panels_with_errors.remove(&InputPanel::Exclude);
                     excluded_files
@@ -637,11 +773,14 @@ impl ProjectSearchView {
         }
     }
 
-    fn load_glob_set(text: &str) -> Result<Vec<GlobMatcher>> {
+    fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
         text.split(',')
             .map(str::trim)
-            .filter(|glob_str| !glob_str.is_empty())
-            .map(|glob_str| anyhow::Ok(Glob::new(glob_str)?.compile_matcher()))
+            .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
+            .map(|maybe_glob_str| {
+                PathMatcher::new(maybe_glob_str)
+                    .with_context(|| format!("parsing {maybe_glob_str} as path matcher"))
+            })
             .collect()
     }
 
@@ -654,6 +793,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
+                let range_to_select = editor.range_for_match(&range_to_select);
                 editor.unfold_ranges([range_to_select.clone()], false, true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range_to_select])
@@ -695,8 +835,12 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
+                    let range_to_select = match_ranges
+                        .first()
+                        .clone()
+                        .map(|range| editor.range_for_match(range));
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_ranges(match_ranges.first().cloned())
+                        s.select_ranges(range_to_select)
                     });
                 }
                 editor.highlight_background::<Self>(
@@ -873,7 +1017,63 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.search_options.toggle(option);
+                search_view.semantic = None;
                 search_view.search(cx);
+            });
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn toggle_semantic_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                if search_view.semantic.is_some() {
+                    search_view.semantic = None;
+                } else if let Some(semantic_index) = SemanticIndex::global(cx) {
+                    // TODO: confirm that it's ok to send this project
+                    search_view.search_options = SearchOptions::none();
+
+                    let project = search_view.model.read(cx).project.clone();
+                    let index_task = semantic_index.update(cx, |semantic_index, cx| {
+                        semantic_index.index_project(project, cx)
+                    });
+
+                    cx.spawn(|search_view, mut cx| async move {
+                        let (files_to_index, mut files_remaining_rx) = index_task.await?;
+
+                        search_view.update(&mut cx, |search_view, cx| {
+                            cx.notify();
+                            search_view.semantic = Some(SemanticSearchState {
+                                file_count: files_to_index,
+                                outstanding_file_count: files_to_index,
+                                _progress_task: cx.spawn(|search_view, mut cx| async move {
+                                    while let Some(count) = files_remaining_rx.recv().await {
+                                        search_view
+                                            .update(&mut cx, |search_view, cx| {
+                                                if let Some(semantic_search_state) =
+                                                    &mut search_view.semantic
+                                                {
+                                                    semantic_search_state.outstanding_file_count =
+                                                        count;
+                                                    cx.notify();
+                                                    if count == 0 {
+                                                        return;
+                                                    }
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                            });
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+                cx.notify();
             });
             cx.notify();
             true
@@ -959,11 +1159,88 @@ impl ProjectSearchBar {
         .into_any()
     }
 
+    fn render_semantic_search_button(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let tooltip_style = theme::current(cx).tooltip.clone();
+        let is_active = if let Some(search) = self.active_project_search.as_ref() {
+            let search = search.read(cx);
+            search.semantic.is_some()
+        } else {
+            false
+        };
+
+        let region_id = 3;
+
+        MouseEventHandler::<Self, _>::new(region_id, cx, |state, cx| {
+            let theme = theme::current(cx);
+            let style = theme
+                .search
+                .option_button
+                .in_state(is_active)
+                .style_for(state);
+            Label::new("Semantic", style.text.clone())
+                .contained()
+                .with_style(style.container)
+        })
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_semantic_search(cx);
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self>(
+            region_id,
+            format!("Toggle Semantic Search"),
+            Some(Box::new(ToggleSemanticSearch)),
+            tooltip_style,
+            cx,
+        )
+        .into_any()
+    }
+
     fn is_option_enabled(&self, option: SearchOptions, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
             search.read(cx).search_options.contains(option)
         } else {
             false
+        }
+    }
+
+    fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                let new_query = search_view.model.update(cx, |model, _| {
+                    if let Some(new_query) = model.search_history.next().map(str::to_string) {
+                        new_query
+                    } else {
+                        model.search_history.reset_selection();
+                        String::new()
+                    }
+                });
+                search_view.set_query(&new_query, cx);
+            });
+        }
+    }
+
+    fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                if search_view.query_editor.read(cx).text(cx).is_empty() {
+                    if let Some(new_query) = search_view
+                        .model
+                        .read(cx)
+                        .search_history
+                        .current()
+                        .map(str::to_string)
+                    {
+                        search_view.set_query(&new_query, cx);
+                        return;
+                    }
+                }
+
+                if let Some(new_query) = search_view.model.update(cx, |model, _| {
+                    model.search_history.previous().map(str::to_string)
+                }) {
+                    search_view.set_query(&new_query, cx);
+                }
+            });
         }
     }
 }
@@ -1048,8 +1325,14 @@ impl View for ProjectSearchBar {
                                 .with_child(self.render_nav_button(">", Direction::Next, cx))
                                 .aligned(),
                         )
-                        .with_child(
-                            Flex::row()
+                        .with_child({
+                            let row = if SemanticIndex::enabled(cx) {
+                                Flex::row().with_child(self.render_semantic_search_button(cx))
+                            } else {
+                                Flex::row()
+                            };
+
+                            let row = row
                                 .with_child(self.render_option_button(
                                     "Case",
                                     SearchOptions::CASE_SENSITIVE,
@@ -1067,8 +1350,10 @@ impl View for ProjectSearchBar {
                                 ))
                                 .contained()
                                 .with_style(theme.search.option_button_group)
-                                .aligned(),
-                        )
+                                .aligned();
+
+                            row
+                        })
                         .contained()
                         .with_margin_bottom(row_spacing),
                 )
@@ -1139,6 +1424,7 @@ pub mod tests {
     use editor::DisplayPoint;
     use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
+    use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::SettingsStore;
     use std::sync::Arc;
@@ -1161,7 +1447,9 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
-        let (_, search_view) = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx));
+        let search_view = cx
+            .add_window(|cx| ProjectSearchView::new(search.clone(), cx))
+            .root(cx);
 
         search_view.update(cx, |search_view, cx| {
             search_view
@@ -1278,7 +1566,8 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1309,9 +1598,9 @@ pub mod tests {
         };
         let search_view_id = search_view.id();
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1362,7 +1651,7 @@ pub mod tests {
             );
         });
         cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
+            |mut cx| async move { window.dispatch_action(search_view_id, &ToggleFocus, &mut cx) },
         )
         .detach();
         deterministic.run_until_parked();
@@ -1393,9 +1682,9 @@ pub mod tests {
                 "Search view with mismatching query should be focused after search results are available",
             );
         });
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1423,9 +1712,9 @@ pub mod tests {
             );
         });
 
-        cx.spawn(
-            |mut cx| async move { cx.dispatch_action(window_id, search_view_id, &ToggleFocus) },
-        )
+        cx.spawn(|mut cx| async move {
+            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+        })
         .detach();
         deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
@@ -1462,7 +1751,9 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
 
         let active_item = cx.read(|cx| {
             workspace
@@ -1540,7 +1831,7 @@ pub mod tests {
             search_view.included_files_editor.update(cx, |editor, cx| {
                 assert_eq!(
                     editor.display_text(cx),
-                    a_dir_entry.path.join("**").display().to_string(),
+                    a_dir_entry.path.to_str().unwrap(),
                     "New search in directory should have included dir entry path"
                 );
             });
@@ -1564,6 +1855,193 @@ pub mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_search_query_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        workspace.update(cx, |workspace, cx| {
+            ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+        });
+
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        let search_bar = window.add_view(cx, |cx| {
+            let mut search_bar = ProjectSearchBar::new();
+            search_bar.set_active_pane_item(Some(&search_view), cx);
+            // search_bar.show(cx);
+            search_bar
+        });
+
+        // Add 3 search items into the history + another unsubmitted one.
+        search_view.update(cx, |search_view, cx| {
+            search_view.search_options = SearchOptions::CASE_SENSITIVE;
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            search_view.query_editor.update(cx, |query_editor, cx| {
+                query_editor.set_text("JUST_TEXT_INPUT", cx)
+            });
+        });
+        cx.foreground().run_until_parked();
+
+        // Ensure that the latest input with search settings is active.
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view.query_editor.read(cx).text(cx),
+                "JUST_TEXT_INPUT"
+            );
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next history query after the latest should set the query to the empty string.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // First previous query for empty current query should set the query to the latest submitted one.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Further previous items should go over the history in reverse order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Previous items should never go behind the first history item.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next items should go over the history in the original order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
+            search_view.search(cx);
+        });
+        cx.foreground().run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // New search input should add another entry to history and move the selection to the end of the history.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+            assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+    }
+
     pub fn init_test(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
         let fonts = cx.font_cache();
@@ -1573,6 +2051,7 @@ pub mod tests {
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
             cx.set_global(ActiveSearches::default());
+            settings::register::<SemanticIndexSettings>(cx);
 
             theme::init((), cx);
             cx.update_global::<SettingsStore, _, _>(|store, _| {

@@ -202,7 +202,7 @@ where
                 self.position = D::default();
             }
 
-            let mut entry = self.stack.last_mut().unwrap();
+            let entry = self.stack.last_mut().unwrap();
             if !descending {
                 if entry.index == 0 {
                     self.stack.pop();
@@ -438,6 +438,7 @@ where
                 } => {
                     if ascending {
                         entry.index += 1;
+                        entry.position = self.position.clone();
                     }
 
                     for (child_tree, child_summary) in child_trees[entry.index..]

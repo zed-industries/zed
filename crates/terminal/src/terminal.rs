@@ -53,7 +53,7 @@ use gpui::{
     keymap_matcher::Keystroke,
     platform::{Modifiers, MouseButton, MouseMovedEvent, TouchPhase},
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
-    AppContext, ClipboardItem, Entity, ModelContext, Task,
+    AnyWindowHandle, AppContext, ClipboardItem, Entity, ModelContext, Task,
 };
 
 use crate::mappings::{
@@ -78,7 +78,7 @@ lazy_static! {
     // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
     static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
-    static ref WORD_REGEX: RegexSearch = RegexSearch::new("[\\w.:/@-~]+").unwrap();
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.:/@\-~]+"#).unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
@@ -404,7 +404,7 @@ impl TerminalBuilder {
         mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
-        window_id: usize,
+        window: AnyWindowHandle,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = match shell.clone() {
@@ -462,7 +462,7 @@ impl TerminalBuilder {
         let pty = match tty::new(
             &pty_config,
             TerminalSize::default().into(),
-            window_id as u64,
+            window.id() as u64,
         ) {
             Ok(pty) => pty,
             Err(error) => {

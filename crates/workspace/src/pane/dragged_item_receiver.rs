@@ -28,11 +28,11 @@ where
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let drag_position = if (pane.can_drop)(drag_and_drop, cx) {
         drag_and_drop
-            .currently_dragged::<DraggedItem>(cx.window_id())
+            .currently_dragged::<DraggedItem>(cx.window())
             .map(|(drag_position, _)| drag_position)
             .or_else(|| {
                 drag_and_drop
-                    .currently_dragged::<ProjectEntryId>(cx.window_id())
+                    .currently_dragged::<ProjectEntryId>(cx.window())
                     .map(|(drag_position, _)| drag_position)
             })
     } else {
@@ -91,10 +91,10 @@ where
                 let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
 
                 if drag_and_drop
-                    .currently_dragged::<DraggedItem>(cx.window_id())
+                    .currently_dragged::<DraggedItem>(cx.window())
                     .is_some()
                     || drag_and_drop
-                        .currently_dragged::<ProjectEntryId>(cx.window_id())
+                        .currently_dragged::<ProjectEntryId>(cx.window())
                         .is_some()
                 {
                     cx.notify();
@@ -122,11 +122,11 @@ pub fn handle_dropped_item<V: View>(
     }
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let action = if let Some((_, dragged_item)) =
-        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id())
+        drag_and_drop.currently_dragged::<DraggedItem>(cx.window())
     {
         Action::Move(dragged_item.pane.clone(), dragged_item.handle.id())
     } else if let Some((_, project_entry)) =
-        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id())
+        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window())
     {
         Action::Open(*project_entry)
     } else {

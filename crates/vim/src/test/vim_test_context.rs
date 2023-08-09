@@ -43,6 +43,10 @@ impl<'a> VimTestContext<'a> {
                     toolbar.add_item(project_search_bar, cx);
                 })
             });
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                let vim_mode_indicator = cx.add_view(ModeIndicator::new);
+                status_bar.add_right_item(vim_mode_indicator, cx);
+            });
         });
 
         Self { cx }
@@ -81,8 +85,8 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
-        let window_id = self.window_id;
-        self.update_window(window_id, |cx| {
+        let window = self.window;
+        window.update(self.cx.cx.cx, |cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, false, cx);
             })

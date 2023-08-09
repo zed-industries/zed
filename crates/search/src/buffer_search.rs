@@ -1,6 +1,6 @@
 use crate::{
-    SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleWholeWord,
+    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -46,6 +46,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
     cx.add_action(BufferSearchBar::select_all_matches_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
+    cx.add_action(BufferSearchBar::next_history_query);
+    cx.add_action(BufferSearchBar::previous_history_query);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
@@ -65,7 +67,7 @@ fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContex
 }
 
 pub struct BufferSearchBar {
-    pub query_editor: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
@@ -76,6 +78,7 @@ pub struct BufferSearchBar {
     default_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
+    search_history: SearchHistory,
 }
 
 impl Entity for BufferSearchBar {
@@ -105,6 +108,48 @@ impl View for BufferSearchBar {
             .as_ref()
             .map(|active_searchable_item| active_searchable_item.supported_options())
             .unwrap_or_default();
+
+        let previous_query_keystrokes =
+            cx.binding_for_action(&PreviousHistoryQuery {})
+                .map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                });
+        let next_query_keystrokes = cx.binding_for_action(&NextHistoryQuery {}).map(|binding| {
+            binding
+                .keystrokes()
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+        });
+        let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
+            (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
+                format!(
+                    "Search ({}/{} for previous/next query)",
+                    previous_query_keystrokes.join(" "),
+                    next_query_keystrokes.join(" ")
+                )
+            }
+            (None, Some(next_query_keystrokes)) => {
+                format!(
+                    "Search ({} for next query)",
+                    next_query_keystrokes.join(" ")
+                )
+            }
+            (Some(previous_query_keystrokes), None) => {
+                format!(
+                    "Search ({} for previous query)",
+                    previous_query_keystrokes.join(" ")
+                )
+            }
+            (None, None) => String::new(),
+        };
+        self.query_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(new_placeholder_text, cx);
+        });
 
         Flex::row()
             .with_child(
@@ -258,6 +303,7 @@ impl BufferSearchBar {
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
+            search_history: SearchHistory::default(),
         }
     }
 
@@ -341,7 +387,7 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<()> {
         let options = options.unwrap_or(self.default_options);
-        if query != self.query_editor.read(cx).text(cx) || self.search_options != options {
+        if query != self.query(cx) || self.search_options != options {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
@@ -674,7 +720,7 @@ impl BufferSearchBar {
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) -> oneshot::Receiver<()> {
         let (done_tx, done_rx) = oneshot::channel();
-        let query = self.query_editor.read(cx).text(cx);
+        let query = self.query(cx);
         self.pending_search.take();
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
@@ -707,6 +753,7 @@ impl BufferSearchBar {
                     )
                 };
 
+                let query_text = query.as_str().to_string();
                 let matches = active_searchable_item.find_matches(query, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
@@ -720,6 +767,7 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(cx);
+                            this.search_history.add(query_text);
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -753,6 +801,28 @@ impl BufferSearchBar {
             cx.notify();
         }
     }
+
+    fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.search_history.next().map(str::to_string) {
+            let _ = self.search(&new_query, Some(self.search_options), cx);
+        } else {
+            self.search_history.reset_selection();
+            let _ = self.search("", Some(self.search_options), cx);
+        }
+    }
+
+    fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
+        if self.query(cx).is_empty() {
+            if let Some(new_query) = self.search_history.current().map(str::to_string) {
+                let _ = self.search(&new_query, Some(self.search_options), cx);
+                return;
+            }
+        }
+
+        if let Some(new_query) = self.search_history.previous().map(str::to_string) {
+            let _ = self.search(&new_query, Some(self.search_options), cx);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -779,11 +849,10 @@ mod tests {
                 cx,
             )
         });
-        let (window_id, _root_view) = cx.add_window(|_| EmptyView);
+        let window = cx.add_window(|_| EmptyView);
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
-
-        let search_bar = cx.add_view(window_id, |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1159,11 +1228,10 @@ mod tests {
             "Should pick a query with multiple results"
         );
         let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
-        let (window_id, _root_view) = cx.add_window(|_| EmptyView);
+        let window = cx.add_window(|_| EmptyView);
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
-
-        let search_bar = cx.add_view(window_id, |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1179,12 +1247,13 @@ mod tests {
             search_bar.activate_current_match(cx);
         });
 
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Initially, the editor should not be focused"
             );
         });
+
         let initial_selections = editor.update(cx, |editor, cx| {
             let initial_selections = editor.selections.display_ranges(cx);
             assert_eq!(
@@ -1201,7 +1270,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1225,7 +1294,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectNextMatch"
@@ -1254,7 +1323,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1278,7 +1347,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectPrevMatch"
@@ -1314,7 +1383,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Should not switch focus to editor if SelectAllMatches does not find any matches"
@@ -1331,6 +1400,156 @@ mod tests {
                 search_bar.active_match_index.is_none(),
                 "For no matches, there should be no active match index"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_query_history(cx: &mut TestAppContext) {
+        crate::project_search::tests::init_test(cx);
+
+        let buffer_text = r#"
+        A regular expression (shortened as regex or regexp;[1] also referred to as
+        rational expression[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+        .unindent();
+        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let window = cx.add_window(|_| EmptyView);
+
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = window.add_view(cx, |cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        // Add 3 search items into the history.
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("a", None, cx))
+            .await
+            .unwrap();
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("b", None, cx))
+            .await
+            .unwrap();
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("c", Some(SearchOptions::CASE_SENSITIVE), cx)
+            })
+            .await
+            .unwrap();
+        // Ensure that the latest search is active.
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next history query after the latest should set the query to the empty string.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // First previous query for empty current query should set the query to the latest.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Further previous items should go over the history in reverse order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Previous items should never go behind the first history item.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "a");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "a");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        // Next items should go over the history in the original order.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
+        });
+
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("ba", None, cx))
+            .await
+            .unwrap();
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "ba");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+
+        // New search input should add another entry to history and move the selection to the end of the history.
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "ba");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.next_history_query(&NextHistoryQuery, cx);
+        });
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
     }
 }

@@ -114,11 +114,7 @@ fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
 
 //Convenience method to convert from a GPUI color to an alacritty Rgb
 pub fn to_alac_rgb(color: Color) -> AlacRgb {
-    AlacRgb {
-        r: color.r,
-        g: color.g,
-        b: color.g,
-    }
+    AlacRgb::new(color.r, color.g, color.g)
 }
 
 #[cfg(test)]

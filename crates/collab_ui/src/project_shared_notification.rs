@@ -26,7 +26,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 
             for screen in cx.platform().screens() {
                 let screen_bounds = screen.bounds();
-                let (window_id, _) = cx.add_window(
+                let window = cx.add_window(
                     WindowOptions {
                         bounds: WindowBounds::Fixed(RectF::new(
                             screen_bounds.upper_right() - vec2f(PADDING + window_size.x(), PADDING),
@@ -52,20 +52,20 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
-                    .push(window_id);
+                    .push(window);
             }
         }
         room::Event::RemoteProjectUnshared { project_id } => {
-            if let Some(window_ids) = notification_windows.remove(&project_id) {
-                for window_id in window_ids {
-                    cx.update_window(window_id, |cx| cx.remove_window());
+            if let Some(windows) = notification_windows.remove(&project_id) {
+                for window in windows {
+                    window.remove(cx);
                 }
             }
         }
         room::Event::Left => {
-            for (_, window_ids) in notification_windows.drain() {
-                for window_id in window_ids {
-                    cx.update_window(window_id, |cx| cx.remove_window());
+            for (_, windows) in notification_windows.drain() {
+                for window in windows {
+                    window.remove(cx);
                 }
             }
         }

@@ -14,7 +14,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task, ViewContext};
+use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, Request};
 use language::{LanguageRegistry, Point};
 use log::LevelFilter;
@@ -43,8 +43,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::Bias;
-use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
 use util::{
+    channel::ReleaseChannel,
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };
@@ -55,7 +55,7 @@ use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
+use workspace::AppState;
 use zed::{
     assets::Assets,
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -136,7 +136,7 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = NodeRuntime::instance(http.clone(), cx.background().to_owned());
+        let node_runtime = NodeRuntime::instance(http.clone());
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -157,7 +157,7 @@ fn main() {
         project_panel::init(Assets, cx);
         diagnostics::init(cx);
         search::init(cx);
-        vector_store::init(fs.clone(), http.clone(), languages.clone(), cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
@@ -415,21 +415,40 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
     panic::set_hook(Box::new(move |info| {
         let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
         if prior_panic_count > 0 {
-            std::panic::resume_unwind(Box::new(()));
+            // Give the panic-ing thread time to write the panic file
+            loop {
+                std::thread::yield_now();
+            }
+        }
+
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .unwrap_or_else(|| "Box<Any>".to_string());
+
+        if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+            let location = info.location().unwrap();
+            let backtrace = Backtrace::new();
+            eprintln!(
+                "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
+                thread_name,
+                payload,
+                location.file(),
+                location.line(),
+                location.column(),
+                backtrace,
+            );
+            std::process::exit(-1);
         }
 
         let app_version = ZED_APP_VERSION
             .or_else(|| platform.app_version().ok())
             .map_or("dev".to_string(), |v| v.to_string());
-
-        let thread = thread::current();
-        let thread = thread.name().unwrap_or("<unnamed>");
-
-        let payload = info.payload();
-        let payload = None
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
-            .or_else(|| payload.downcast_ref::<String>().map(|s| s.clone()))
-            .unwrap_or_else(|| "Box<Any>".to_string());
 
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
@@ -447,7 +466,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
         }
 
         let panic_data = Panic {
-            thread: thread.into(),
+            thread: thread_name.into(),
             payload: payload.into(),
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
@@ -717,7 +736,7 @@ async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()>
 }
 
 #[cfg(not(debug_assertions))]
-fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {}
+fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
 
 fn connect_to_cli(
     server_name: &str,
@@ -900,35 +919,6 @@ async fn handle_cli_connection(
             }
         }
     }
-}
-
-pub fn dock_default_item_factory(
-    workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Box<dyn ItemHandle>> {
-    let strategy = settings::get::<TerminalSettings>(cx)
-        .working_directory
-        .clone();
-    let working_directory = get_working_directory(workspace, cx, strategy);
-
-    let window_id = cx.window_id();
-    let terminal = workspace
-        .project()
-        .update(cx, |project, cx| {
-            project.create_terminal(working_directory, window_id, cx)
-        })
-        .notify_err(workspace, cx)?;
-
-    let terminal_view = cx.add_view(|cx| {
-        TerminalView::new(
-            terminal,
-            workspace.weak_handle(),
-            workspace.database_id(),
-            cx,
-        )
-    });
-
-    Some(Box::new(terminal_view))
 }
 
 pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {

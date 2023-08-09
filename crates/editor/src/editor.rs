@@ -28,6 +28,7 @@ use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use convert_case::{Case, Casing};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -89,7 +90,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -231,6 +232,13 @@ actions!(
         SortLinesCaseInsensitive,
         ReverseLines,
         ShuffleLines,
+        ConvertToUpperCase,
+        ConvertToLowerCase,
+        ConvertToTitleCase,
+        ConvertToSnakeCase,
+        ConvertToKebabCase,
+        ConvertToUpperCamelCase,
+        ConvertToLowerCamelCase,
         Transpose,
         Cut,
         Copy,
@@ -353,6 +361,13 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::sort_lines_case_insensitive);
     cx.add_action(Editor::reverse_lines);
     cx.add_action(Editor::shuffle_lines);
+    cx.add_action(Editor::convert_to_upper_case);
+    cx.add_action(Editor::convert_to_lower_case);
+    cx.add_action(Editor::convert_to_title_case);
+    cx.add_action(Editor::convert_to_snake_case);
+    cx.add_action(Editor::convert_to_kebab_case);
+    cx.add_action(Editor::convert_to_upper_camel_case);
+    cx.add_action(Editor::convert_to_lower_camel_case);
     cx.add_action(Editor::delete_to_previous_word_start);
     cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
@@ -543,6 +558,7 @@ pub struct Editor {
     show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
+    show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -1375,6 +1391,7 @@ impl Editor {
             show_local_selections: true,
             mode,
             show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -1537,7 +1554,7 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
-    fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
             return range.start..range.start;
         }
@@ -4219,7 +4236,7 @@ impl Editor {
         _: &SortLinesCaseSensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort())
+        self.manipulate_lines(cx, |lines| lines.sort())
     }
 
     pub fn sort_lines_case_insensitive(
@@ -4227,7 +4244,7 @@ impl Editor {
         _: &SortLinesCaseInsensitive,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_lines(cx, |text| text.sort_by_key(|line| line.to_lowercase()))
+        self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
@@ -4265,19 +4282,19 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
-            let mut text = text.split("\n").collect_vec();
+            let mut lines = text.split("\n").collect_vec();
 
-            let text_len = text.len();
-            callback(&mut text);
+            let lines_len = lines.len();
+            callback(&mut lines);
 
             // This is a current limitation with selections.
             // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
             debug_assert!(
-                text.len() == text_len,
+                lines.len() == lines_len,
                 "callback should not change the number of lines"
             );
 
-            edits.push((start_point..end_point, text.join("\n")));
+            edits.push((start_point..end_point, lines.join("\n")));
             let start_anchor = buffer.anchor_after(start_point);
             let end_anchor = buffer.anchor_before(end_point);
 
@@ -4289,6 +4306,97 @@ impl Editor {
                 goal: SelectionGoal::None,
                 reversed: selection.reversed,
             });
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
+    pub fn convert_to_upper_case(&mut self, _: &ConvertToUpperCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_uppercase())
+    }
+
+    pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_lowercase())
+    }
+
+    pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Title))
+    }
+
+    pub fn convert_to_snake_case(&mut self, _: &ConvertToSnakeCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Snake))
+    }
+
+    pub fn convert_to_kebab_case(&mut self, _: &ConvertToKebabCase, cx: &mut ViewContext<Self>) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Kebab))
+    }
+
+    pub fn convert_to_upper_camel_case(
+        &mut self,
+        _: &ConvertToUpperCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::UpperCamel))
+    }
+
+    pub fn convert_to_lower_camel_case(
+        &mut self,
+        _: &ConvertToLowerCamelCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| text.to_case(Case::Camel))
+    }
+
+    fn manipulate_text<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
+    where
+        Fn: FnMut(&str) -> String,
+    {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        let mut selection_adjustment = 0i32;
+
+        for selection in self.selections.all::<usize>(cx) {
+            let selection_is_empty = selection.is_empty();
+
+            let (start, end) = if selection_is_empty {
+                let word_range = movement::surrounding_word(
+                    &display_map,
+                    selection.start.to_display_point(&display_map),
+                );
+                let start = word_range.start.to_offset(&display_map, Bias::Left);
+                let end = word_range.end.to_offset(&display_map, Bias::Left);
+                (start, end)
+            } else {
+                (selection.start, selection.end)
+            };
+
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            let old_length = text.len() as i32;
+            let text = callback(&text);
+
+            new_selections.push(Selection {
+                start: (start as i32 - selection_adjustment) as usize,
+                end: ((start + text.len()) as i32 - selection_adjustment) as usize,
+                goal: SelectionGoal::None,
+                ..selection
+            });
+
+            selection_adjustment += old_length - text.len() as i32;
+
+            edits.push((start..end, text));
         }
 
         self.transact(cx, |this, cx| {
@@ -6374,8 +6482,8 @@ impl Editor {
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
+            let range = self.range_for_match(&range);
             if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
-                let range = self.range_for_match(&range);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
@@ -6392,7 +6500,6 @@ impl Editor {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
                         pane.update(cx, |pane, _| pane.disable_history());
-                        let range = target_editor.range_for_match(&range);
                         target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
@@ -7188,6 +7295,10 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
+
         let settings = self.buffer.read(cx).settings_at(0, cx);
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
@@ -7242,6 +7353,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_gutter);
         cx.notify();
     }
 
@@ -7430,6 +7546,78 @@ impl Editor {
             results.push((start..end, color))
         }
 
+        results
+    }
+
+    pub fn background_highlight_row_ranges<T: 'static>(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        count: usize,
+    ) -> Vec<RangeInclusive<DisplayPoint>> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        let Some((_, ranges)) = self.background_highlights
+            .get(&TypeId::of::<T>()) else {
+                return vec![];
+            };
+
+        let start_ix = match ranges.binary_search_by(|probe| {
+            let cmp = probe.end.cmp(&search_range.start, buffer);
+            if cmp.is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }) {
+            Ok(i) | Err(i) => i,
+        };
+        let mut push_region = |start: Option<Point>, end: Option<Point>| {
+            if let (Some(start_display), Some(end_display)) = (start, end) {
+                results.push(
+                    start_display.to_display_point(display_snapshot)
+                        ..=end_display.to_display_point(display_snapshot),
+                );
+            }
+        };
+        let mut start_row: Option<Point> = None;
+        let mut end_row: Option<Point> = None;
+        if ranges.len() > count {
+            return vec![];
+        }
+        for range in &ranges[start_ix..] {
+            if range.start.cmp(&search_range.end, buffer).is_ge() {
+                break;
+            }
+            let end = range.end.to_point(buffer);
+            if let Some(current_row) = &end_row {
+                if end.row == current_row.row {
+                    continue;
+                }
+            }
+            let start = range.start.to_point(buffer);
+
+            if start_row.is_none() {
+                assert_eq!(end_row, None);
+                start_row = Some(start);
+                end_row = Some(end);
+                continue;
+            }
+            if let Some(current_end) = end_row.as_mut() {
+                if start.row > current_end.row + 1 {
+                    push_region(start_row, end_row);
+                    start_row = Some(start);
+                    end_row = Some(end);
+                } else {
+                    // Merge two hunks.
+                    *current_end = end;
+                }
+            } else {
+                unreachable!();
+            }
+        }
+        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
+        push_region(start_row, end_row);
         results
     }
 

@@ -1,5 +1,5 @@
 use crate::Project;
-use gpui::{ModelContext, ModelHandle, WeakModelHandle};
+use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
 use std::path::PathBuf;
 use terminal::{Terminal, TerminalBuilder, TerminalSettings};
 
@@ -11,7 +11,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        window_id: usize,
+        window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<ModelHandle<Terminal>> {
         if self.is_remote() {
@@ -27,7 +27,7 @@ impl Project {
                 settings.env.clone(),
                 Some(settings.blinking.clone()),
                 settings.alternate_scroll,
-                window_id,
+                window,
             )
             .map(|builder| {
                 let terminal_handle = cx.add_model(|cx| builder.subscribe(cx));
