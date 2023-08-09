@@ -10,8 +10,8 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, SceneBuilder,
-    SizeConstraint, View, ViewContext,
+    AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
+    SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde_json::json;
 use std::{marker::PhantomData, ops::Range};
@@ -256,7 +256,7 @@ impl<Tag, V: View> Element<V> for MouseEventHandler<Tag, V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         if self.above {
             self.child

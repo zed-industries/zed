@@ -48,7 +48,7 @@ impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let weak_self = cx.weak_handle();
         let pane = cx.add_view(|cx| {
-            let window_id = cx.window_id();
+            let window = cx.window();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
@@ -60,7 +60,7 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.on_can_drop(move |drag_and_drop, cx| {
                 drag_and_drop
-                    .currently_dragged::<DraggedItem>(window_id)
+                    .currently_dragged::<DraggedItem>(window)
                     .map_or(false, |(_, item)| {
                         item.handle.act_as::<TerminalView>(cx).is_some()
                     })
@@ -255,10 +255,10 @@ impl TerminalPanel {
                     .clone();
                 let working_directory =
                     crate::get_working_directory(workspace, cx, working_directory_strategy);
-                let window_id = cx.window_id();
+                let window = cx.window();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, window_id, cx)
+                        .create_terminal(working_directory, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.add_view(|cx| {

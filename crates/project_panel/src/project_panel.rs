@@ -1415,7 +1415,7 @@ impl ProjectPanel {
 
             if cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
                 .is_some()
                 && dragged_entry_destination
                     .as_ref()
@@ -1459,7 +1459,7 @@ impl ProjectPanel {
         .on_up(MouseButton::Left, move |_, this, cx| {
             if let Some((_, dragged_entry)) = cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
             {
                 this.move_entry(
                     *dragged_entry,
@@ -1472,7 +1472,7 @@ impl ProjectPanel {
         .on_move(move |_, this, cx| {
             if cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window())
                 .is_some()
             {
                 this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
@@ -1726,7 +1726,7 @@ impl ClipboardEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, ViewHandle};
+    use gpui::{AnyWindowHandle, TestAppContext, ViewHandle, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
@@ -1780,7 +1780,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1868,7 +1870,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -1890,7 +1893,7 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2219,7 +2222,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
@@ -2241,7 +2245,7 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2319,7 +2323,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
@@ -2392,7 +2398,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         toggle_expand_dir(&panel, "src/test", cx);
@@ -2409,9 +2416,9 @@ mod tests {
                 "          third.rs"
             ]
         );
-        ensure_single_file_is_opened(window_id, &workspace, "test/first.rs", cx);
+        ensure_single_file_is_opened(window, "test/first.rs", cx);
 
-        submit_deletion(window_id, &panel, cx);
+        submit_deletion(window.into(), &panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -2422,7 +2429,7 @@ mod tests {
             ],
             "Project panel should have no deleted file, no other file is selected in it"
         );
-        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+        ensure_no_open_items_and_panes(window.into(), &workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
         panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
@@ -2436,9 +2443,9 @@ mod tests {
                 "          third.rs"
             ]
         );
-        ensure_single_file_is_opened(window_id, &workspace, "test/second.rs", cx);
+        ensure_single_file_is_opened(window, "test/second.rs", cx);
 
-        cx.update_window(window_id, |cx| {
+        window.update(cx, |cx| {
             let active_items = workspace
                 .read(cx)
                 .panes()
@@ -2454,13 +2461,13 @@ mod tests {
                 .expect("Open item should be an editor");
             open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
         });
-        submit_deletion(window_id, &panel, cx);
+        submit_deletion(window.into(), &panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v src", "    v test", "          third.rs"],
             "Project panel should have no deleted file, with one last file remaining"
         );
-        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+        ensure_no_open_items_and_panes(window.into(), &workspace, cx);
     }
 
     #[gpui::test]
@@ -2481,7 +2488,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "src/", cx);
@@ -2492,7 +2500,7 @@ mod tests {
             &["v src  <== selected", "    > test"]
         );
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2523,7 +2531,7 @@ mod tests {
             &["v src", "    > test  <== selected"]
         );
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2573,7 +2581,7 @@ mod tests {
             ],
         );
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let panel = panel.read(cx);
             assert!(panel.filename_editor.is_focused(cx));
         });
@@ -2627,7 +2635,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         let new_search_events_count = Arc::new(AtomicUsize::new(0));
@@ -2714,7 +2724,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
@@ -2866,13 +2878,11 @@ mod tests {
     }
 
     fn ensure_single_file_is_opened(
-        window_id: usize,
-        workspace: &ViewHandle<Workspace>,
+        window: WindowHandle<Workspace>,
         expected_path: &str,
         cx: &mut TestAppContext,
     ) {
-        cx.read_window(window_id, |cx| {
-            let workspace = workspace.read(cx);
+        window.update_root(cx, |workspace, cx| {
             let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
             let worktree_id = WorktreeId::from_usize(worktrees[0].id());
@@ -2894,12 +2904,12 @@ mod tests {
     }
 
     fn submit_deletion(
-        window_id: usize,
+        window: AnyWindowHandle,
         panel: &ViewHandle<ProjectPanel>,
         cx: &mut TestAppContext,
     ) {
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts before the deletion"
         );
         panel.update(cx, |panel, cx| {
@@ -2909,27 +2919,27 @@ mod tests {
                 .detach_and_log_err(cx);
         });
         assert!(
-            cx.has_pending_prompt(window_id),
+            window.has_pending_prompt(cx),
             "Should have a prompt after the deletion"
         );
-        cx.simulate_prompt_answer(window_id, 0);
+        window.simulate_prompt_answer(0, cx);
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts after prompt was replied to"
         );
         cx.foreground().run_until_parked();
     }
 
     fn ensure_no_open_items_and_panes(
-        window_id: usize,
+        window: AnyWindowHandle,
         workspace: &ViewHandle<Workspace>,
         cx: &mut TestAppContext,
     ) {
         assert!(
-            !cx.has_pending_prompt(window_id),
+            !window.has_pending_prompt(cx),
             "Should have no prompts after deletion operation closes the file"
         );
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             let open_project_paths = workspace
                 .read(cx)
                 .panes()

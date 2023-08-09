@@ -305,18 +305,18 @@ impl ContactList {
             github_login
         );
         let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
-        let window_id = cx.window_id();
+        let window = cx.window();
         cx.spawn(|_, mut cx| async move {
             if answer.next().await == Some(0) {
                 if let Err(e) = user_store
                     .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                 {
-                    cx.prompt(
-                        window_id,
+                    window.prompt(
                         PromptLevel::Info,
                         &format!("Failed to remove contact: {}", e),
                         &["Ok"],
+                        &mut cx,
                     );
                 }
             }
