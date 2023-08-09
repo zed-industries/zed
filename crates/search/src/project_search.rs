@@ -685,6 +685,10 @@ impl ProjectSearchView {
     }
 
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        let previous_mode = self.current_mode;
+        if previous_mode == mode {
+            return;
+        }
         self.model.update(cx, |model, _| model.kill_search());
         self.current_mode = mode;
 
@@ -722,7 +726,8 @@ impl ProjectSearchView {
                         } else {
                             this.update(&mut cx, |this, cx| {
                                 this.semantic_permissioned = Some(false);
-                                this.activate_search_mode(SearchMode::Regex, cx);
+                                debug_assert_ne!(previous_mode, SearchMode::Semantic, "Tried to re-enable semantic search mode after user modal was rejected");
+                                this.activate_search_mode(previous_mode, cx);
                             })?;
                             return anyhow::Ok(());
                         }
