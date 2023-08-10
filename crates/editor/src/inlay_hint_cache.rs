@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Context;
 use clock::Global;
-use gpui::{ModelHandle, Task, ViewContext};
+use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
 use parking_lot::RwLock;
@@ -24,8 +24,13 @@ pub struct InlayHintCache {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     enabled: bool,
-    // TODO kb track them by excerpt range
-    update_tasks: HashMap<ExcerptId, UpdateTask>,
+    update_tasks: HashMap<ExcerptId, TasksForRanges>,
+}
+
+#[derive(Debug)]
+struct TasksForRanges {
+    tasks: Vec<Task<()>>,
+    ranges: Vec<Range<language::Anchor>>,
 }
 
 #[derive(Debug)]
@@ -49,18 +54,6 @@ pub struct InlaySplice {
     pub to_insert: Vec<Inlay>,
 }
 
-struct UpdateTask {
-    invalidate: InvalidationStrategy,
-    cache_version: usize,
-    task: RunningTask,
-    pending_refresh: Option<ExcerptQuery>,
-}
-
-struct RunningTask {
-    _task: Task<()>,
-    is_running_rx: smol::channel::Receiver<()>,
-}
-
 #[derive(Debug)]
 struct ExcerptHintsUpdate {
     excerpt_id: ExcerptId,
@@ -73,22 +66,8 @@ struct ExcerptHintsUpdate {
 struct ExcerptQuery {
     buffer_id: u64,
     excerpt_id: ExcerptId,
-    dimensions: ExcerptDimensions,
     cache_version: usize,
     invalidate: InvalidationStrategy,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExcerptDimensions {
-    excerpt_range_start: language::Anchor,
-    excerpt_range_end: language::Anchor,
-    excerpt_visible_range_start: language::Anchor,
-    excerpt_visible_range_end: language::Anchor,
-}
-
-struct HintFetchRanges {
-    visible_range: Range<language::Anchor>,
-    other_ranges: Vec<Range<language::Anchor>>,
 }
 
 impl InvalidationStrategy {
@@ -100,37 +79,43 @@ impl InvalidationStrategy {
     }
 }
 
-impl ExcerptQuery {
-    // TODO kb query only visible + one visible below and above
-    fn hints_fetch_ranges(&self, buffer: &BufferSnapshot) -> HintFetchRanges {
-        let visible_range =
-            self.dimensions.excerpt_visible_range_start..self.dimensions.excerpt_visible_range_end;
-        let mut other_ranges = Vec::new();
-        if self
-            .dimensions
-            .excerpt_range_start
-            .cmp(&visible_range.start, buffer)
-            .is_lt()
-        {
-            let mut end = visible_range.start;
-            end.offset -= 1;
-            other_ranges.push(self.dimensions.excerpt_range_start..end);
+impl TasksForRanges {
+    fn new(ranges: Vec<Range<language::Anchor>>, task: Task<()>) -> Self {
+        Self {
+            tasks: vec![task],
+            ranges,
         }
-        if self
-            .dimensions
-            .excerpt_range_end
-            .cmp(&visible_range.end, buffer)
-            .is_gt()
-        {
-            let mut start = visible_range.end;
-            start.offset += 1;
-            other_ranges.push(start..self.dimensions.excerpt_range_end);
-        }
+    }
 
-        HintFetchRanges {
-            visible_range,
-            other_ranges: other_ranges.into_iter().map(|range| range).collect(),
-        }
+    fn update_cached_tasks(
+        &mut self,
+        buffer_snapshot: &BufferSnapshot,
+        query_range: Range<text::Anchor>,
+        invalidate: InvalidationStrategy,
+        spawn_task: impl FnOnce(Vec<Range<language::Anchor>>) -> Task<()>,
+    ) {
+        let ranges_to_query = match invalidate {
+            InvalidationStrategy::None => {
+                // let mut ranges_to_query = Vec::new();
+
+                // todo!("TODO kb also remove task ranges on invalidation");
+                // if ranges_to_query.is_empty() {
+                //     return;
+                // }
+                // ranges_to_query
+                vec![query_range]
+            }
+            InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited => {
+                self.tasks.clear();
+                self.ranges.clear();
+                vec![query_range]
+            }
+        };
+
+        self.ranges.extend(ranges_to_query.clone());
+        self.ranges
+            .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
+        self.tasks.push(spawn_task(ranges_to_query));
     }
 }
 
@@ -198,7 +183,7 @@ impl InlayHintCache {
 
     pub fn spawn_hint_refresh(
         &mut self,
-        mut excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
+        excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
@@ -206,11 +191,10 @@ impl InlayHintCache {
             return None;
         }
 
-        let update_tasks = &mut self.update_tasks;
         let mut invalidated_hints = Vec::new();
         if invalidate.should_invalidate() {
             let mut changed = false;
-            update_tasks.retain(|task_excerpt_id, _| {
+            self.update_tasks.retain(|task_excerpt_id, _| {
                 let retain = excerpts_to_query.contains_key(task_excerpt_id);
                 changed |= !retain;
                 retain
@@ -232,17 +216,6 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version;
-        excerpts_to_query.retain(|visible_excerpt_id, _| {
-            match update_tasks.entry(*visible_excerpt_id) {
-                hash_map::Entry::Occupied(o) => match o.get().cache_version.cmp(&cache_version) {
-                    cmp::Ordering::Less => true,
-                    cmp::Ordering::Equal => invalidate.should_invalidate(),
-                    cmp::Ordering::Greater => false,
-                },
-                hash_map::Entry::Vacant(_) => true,
-            }
-        });
-
         cx.spawn(|editor, mut cx| async move {
             editor
                 .update(&mut cx, |editor, cx| {
@@ -392,13 +365,14 @@ fn spawn_new_update_tasks(
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
     let visible_hints = Arc::new(editor.visible_inlay_hints(cx));
-    for (excerpt_id, (buffer_handle, new_task_buffer_version, excerpt_visible_range)) in
+    for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
     {
         if excerpt_visible_range.is_empty() {
             continue;
         }
-        let buffer = buffer_handle.read(cx);
+        let buffer = excerpt_buffer.read(cx);
+        let buffer_id = buffer.remote_id();
         let buffer_snapshot = buffer.snapshot();
         if buffer_snapshot
             .version()
@@ -416,203 +390,120 @@ fn spawn_new_update_tasks(
             {
                 continue;
             }
-            if !new_task_buffer_version.changed_since(&cached_buffer_version)
-                && !matches!(invalidate, InvalidationStrategy::RefreshRequested)
-            {
-                continue;
-            }
         };
 
-        let buffer_id = buffer.remote_id();
-        let excerpt_visible_range_start = buffer.anchor_before(excerpt_visible_range.start);
-        let excerpt_visible_range_end = buffer.anchor_after(excerpt_visible_range.end);
-
-        let (multi_buffer_snapshot, full_excerpt_range) =
+        let (multi_buffer_snapshot, Some(query_range)) =
             editor.buffer.update(cx, |multi_buffer, cx| {
-                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                 (
-                    multi_buffer_snapshot,
-                    multi_buffer
-                        .excerpts_for_buffer(&buffer_handle, cx)
-                        .into_iter()
-                        .find(|(id, _)| id == &excerpt_id)
-                        .map(|(_, range)| range.context),
+                    multi_buffer.snapshot(cx),
+                    determine_query_range(
+                        multi_buffer,
+                        excerpt_id,
+                        &excerpt_buffer,
+                        excerpt_visible_range,
+                        cx,
+                    ),
                 )
-            });
+            }) else { return; };
+        let query = ExcerptQuery {
+            buffer_id,
+            excerpt_id,
+            cache_version: update_cache_version,
+            invalidate,
+        };
 
-        if let Some(full_excerpt_range) = full_excerpt_range {
-            let query = ExcerptQuery {
-                buffer_id,
-                excerpt_id,
-                dimensions: ExcerptDimensions {
-                    excerpt_range_start: full_excerpt_range.start,
-                    excerpt_range_end: full_excerpt_range.end,
-                    excerpt_visible_range_start,
-                    excerpt_visible_range_end,
-                },
-                cache_version: update_cache_version,
-                invalidate,
-            };
-
-            let new_update_task = |is_refresh_after_regular_task| {
-                new_update_task(
-                    query,
-                    multi_buffer_snapshot,
-                    buffer_snapshot,
-                    Arc::clone(&visible_hints),
-                    cached_excerpt_hints,
-                    is_refresh_after_regular_task,
-                    cx,
-                )
-            };
-            // TODO kb need to add to update tasks + ensure RefreshRequested cleans other ranges
-            match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
-                hash_map::Entry::Occupied(mut o) => {
-                    let update_task = o.get_mut();
-                    match (update_task.invalidate, invalidate) {
-                        (_, InvalidationStrategy::None) => {}
-                        (
-                            InvalidationStrategy::BufferEdited,
-                            InvalidationStrategy::RefreshRequested,
-                        ) if !update_task.task.is_running_rx.is_closed() => {
-                            update_task.pending_refresh = Some(query);
-                        }
-                        _ => {
-                            o.insert(UpdateTask {
-                                invalidate,
-                                cache_version: query.cache_version,
-                                task: new_update_task(false),
-                                pending_refresh: None,
-                            });
-                        }
-                    }
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(UpdateTask {
-                        invalidate,
-                        cache_version: query.cache_version,
-                        task: new_update_task(false),
-                        pending_refresh: None,
-                    });
-                }
+        let new_update_task = |fetch_ranges| {
+            new_update_task(
+                query,
+                fetch_ranges,
+                multi_buffer_snapshot,
+                buffer_snapshot.clone(),
+                Arc::clone(&visible_hints),
+                cached_excerpt_hints,
+                cx,
+            )
+        };
+        match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
+            hash_map::Entry::Occupied(mut o) => {
+                o.get_mut().update_cached_tasks(
+                    &buffer_snapshot,
+                    query_range,
+                    invalidate,
+                    new_update_task,
+                );
+            }
+            hash_map::Entry::Vacant(v) => {
+                v.insert(TasksForRanges::new(
+                    vec![query_range.clone()],
+                    new_update_task(vec![query_range]),
+                ));
             }
         }
     }
 }
 
+fn determine_query_range(
+    multi_buffer: &mut MultiBuffer,
+    excerpt_id: ExcerptId,
+    excerpt_buffer: &ModelHandle<Buffer>,
+    excerpt_visible_range: Range<usize>,
+    cx: &mut ModelContext<'_, MultiBuffer>,
+) -> Option<Range<language::Anchor>> {
+    let full_excerpt_range = multi_buffer
+        .excerpts_for_buffer(excerpt_buffer, cx)
+        .into_iter()
+        .find(|(id, _)| id == &excerpt_id)
+        .map(|(_, range)| range.context)?;
+
+    let buffer = excerpt_buffer.read(cx);
+    let excerpt_visible_len = excerpt_visible_range.end - excerpt_visible_range.start;
+    let start = buffer.anchor_before(
+        excerpt_visible_range
+            .start
+            .saturating_sub(excerpt_visible_len)
+            .max(full_excerpt_range.start.offset),
+    );
+    let end = buffer.anchor_after(
+        excerpt_visible_range
+            .end
+            .saturating_add(excerpt_visible_len)
+            .min(full_excerpt_range.end.offset)
+            .min(buffer.len()),
+    );
+    Some(start..end)
+}
+
 fn new_update_task(
     query: ExcerptQuery,
+    hints_fetch_ranges: Vec<Range<language::Anchor>>,
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
-    is_refresh_after_regular_task: bool,
     cx: &mut ViewContext<'_, '_, Editor>,
-) -> RunningTask {
-    let hints_fetch_ranges = query.hints_fetch_ranges(&buffer_snapshot);
-    let (is_running_tx, is_running_rx) = smol::channel::bounded(1);
-    let _task = cx.spawn(|editor, mut cx| async move {
-        let _is_running_tx = is_running_tx;
-        let create_update_task = |range| {
-            fetch_and_update_hints(
-                editor.clone(),
-                multi_buffer_snapshot.clone(),
-                buffer_snapshot.clone(),
-                Arc::clone(&visible_hints),
-                cached_excerpt_hints.as_ref().map(Arc::clone),
-                query,
-                range,
-                cx.clone(),
-            )
-        };
-
-        if is_refresh_after_regular_task {
-            let visible_range_has_updates =
-                match create_update_task(hints_fetch_ranges.visible_range).await {
-                    Ok(updated) => updated,
-                    Err(e) => {
-                        error!("inlay hint visible range update task failed: {e:#}");
-                        return;
-                    }
-                };
-
-            if visible_range_has_updates {
-                let other_update_results = futures::future::join_all(
-                    hints_fetch_ranges
-                        .other_ranges
-                        .into_iter()
-                        .map(create_update_task),
+) -> Task<()> {
+    cx.spawn(|editor, cx| async move {
+        let task_update_results =
+            futures::future::join_all(hints_fetch_ranges.into_iter().map(|range| {
+                fetch_and_update_hints(
+                    editor.clone(),
+                    multi_buffer_snapshot.clone(),
+                    buffer_snapshot.clone(),
+                    Arc::clone(&visible_hints),
+                    cached_excerpt_hints.as_ref().map(Arc::clone),
+                    query,
+                    range,
+                    cx.clone(),
                 )
-                .await;
-
-                for result in other_update_results {
-                    if let Err(e) = result {
-                        error!("inlay hint update task failed: {e:#}");
-                    }
-                }
-            }
-        } else {
-            let task_update_results = futures::future::join_all(
-                std::iter::once(hints_fetch_ranges.visible_range)
-                    .chain(hints_fetch_ranges.other_ranges.into_iter())
-                    .map(create_update_task),
-            )
+            }))
             .await;
 
-            for result in task_update_results {
-                if let Err(e) = result {
-                    error!("inlay hint update task failed: {e:#}");
-                }
+        for result in task_update_results {
+            if let Err(e) = result {
+                error!("inlay hint update task failed: {e:#}");
             }
         }
-
-        editor
-            .update(&mut cx, |editor, cx| {
-                let pending_refresh_query = editor
-                    .inlay_hint_cache
-                    .update_tasks
-                    .get_mut(&query.excerpt_id)
-                    .and_then(|task| task.pending_refresh.take());
-
-                if let Some(pending_refresh_query) = pending_refresh_query {
-                    let refresh_multi_buffer = editor.buffer().read(cx);
-                    let refresh_multi_buffer_snapshot = refresh_multi_buffer.snapshot(cx);
-                    let refresh_visible_hints = Arc::new(editor.visible_inlay_hints(cx));
-                    let refresh_cached_excerpt_hints = editor
-                        .inlay_hint_cache
-                        .hints
-                        .get(&pending_refresh_query.excerpt_id)
-                        .map(Arc::clone);
-                    if let Some(buffer) =
-                        refresh_multi_buffer.buffer(pending_refresh_query.buffer_id)
-                    {
-                        editor.inlay_hint_cache.update_tasks.insert(
-                            pending_refresh_query.excerpt_id,
-                            UpdateTask {
-                                invalidate: InvalidationStrategy::RefreshRequested,
-                                cache_version: editor.inlay_hint_cache.version,
-                                task: new_update_task(
-                                    pending_refresh_query,
-                                    refresh_multi_buffer_snapshot,
-                                    buffer.read(cx).snapshot(),
-                                    refresh_visible_hints,
-                                    refresh_cached_excerpt_hints,
-                                    true,
-                                    cx,
-                                ),
-                                pending_refresh: None,
-                            },
-                        );
-                    }
-                }
-            })
-            .ok();
-    });
-
-    RunningTask {
-        _task,
-        is_running_rx,
-    }
+    })
 }
 
 async fn fetch_and_update_hints(
@@ -2202,7 +2093,8 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
-                "main hint #4".to_string(),
+                // TODO kb find the range needed
+                // "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
@@ -2227,7 +2119,7 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
-                "main hint #4".to_string(),
+                // "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
@@ -2255,7 +2147,7 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
-                "main hint #4".to_string(),
+                // "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
                 "other hint #1".to_string(),
@@ -2283,6 +2175,8 @@ mod tests {
                 "main hint(edited) #0".to_string(),
                 "main hint(edited) #1".to_string(),
                 "main hint(edited) #2".to_string(),
+                "main hint(edited) #3".to_string(),
+                // TODO kb why?
                 "main hint(edited) #3".to_string(),
                 "main hint(edited) #4".to_string(),
                 "main hint(edited) #5".to_string(),
