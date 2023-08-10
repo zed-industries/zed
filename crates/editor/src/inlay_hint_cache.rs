@@ -24,6 +24,7 @@ pub struct InlayHintCache {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     enabled: bool,
+    // TODO kb track them by excerpt range
     update_tasks: HashMap<ExcerptId, UpdateTask>,
 }
 
@@ -100,6 +101,7 @@ impl InvalidationStrategy {
 }
 
 impl ExcerptQuery {
+    // TODO kb query only visible + one visible below and above
     fn hints_fetch_ranges(&self, buffer: &BufferSnapshot) -> HintFetchRanges {
         let visible_range =
             self.dimensions.excerpt_visible_range_start..self.dimensions.excerpt_visible_range_end;
@@ -168,7 +170,6 @@ impl InlayHintCache {
                     );
                     if new_splice.is_some() {
                         self.version += 1;
-                        self.update_tasks.clear();
                         self.allowed_hint_kinds = new_allowed_hint_kinds;
                     }
                     ControlFlow::Break(new_splice)
@@ -464,6 +465,7 @@ fn spawn_new_update_tasks(
                     cx,
                 )
             };
+            // TODO kb need to add to update tasks + ensure RefreshRequested cleans other ranges
             match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
                 hash_map::Entry::Occupied(mut o) => {
                     let update_task = o.get_mut();
