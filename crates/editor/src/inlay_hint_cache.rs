@@ -20,10 +20,10 @@ use language::language_settings::InlayHintSettings;
 use util::post_inc;
 
 pub struct InlayHintCache {
-    pub hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
-    pub allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
-    pub version: usize,
-    pub enabled: bool,
+    hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
+    allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
+    version: usize,
+    enabled: bool,
     update_tasks: HashMap<ExcerptId, UpdateTask>,
 }
 
@@ -32,7 +32,7 @@ pub struct CachedExcerptHints {
     version: usize,
     buffer_version: Global,
     buffer_id: u64,
-    pub hints: Vec<(InlayId, InlayHint)>,
+    hints: Vec<(InlayId, InlayHint)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -367,6 +367,19 @@ impl InlayHintCache {
         self.version += 1;
         self.update_tasks.clear();
         self.hints.clear();
+    }
+
+    pub fn hints(&self) -> Vec<InlayHint> {
+        let mut hints = Vec::new();
+        for excerpt_hints in self.hints.values() {
+            let excerpt_hints = excerpt_hints.read();
+            hints.extend(excerpt_hints.hints.iter().map(|(_, hint)| hint).cloned());
+        }
+        hints
+    }
+
+    pub fn version(&self) -> usize {
+        self.version
     }
 }
 

@@ -7953,7 +7953,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, edits_made,
+            inlay_cache.version(),
+            edits_made,
             "Host editor update the cache version after every cache/view change",
         );
     });
@@ -7976,7 +7977,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, edits_made,
+            inlay_cache.version(),
+            edits_made,
             "Guest editor update the cache version after every cache/view change"
         );
     });
@@ -7996,7 +7998,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Host should get hints from the 1st edit and 1st LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version, edits_made);
+        assert_eq!(inlay_cache.version(), edits_made);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
@@ -8010,7 +8012,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version, edits_made);
+        assert_eq!(inlay_cache.version(), edits_made);
     });
 
     editor_a.update(cx_a, |editor, cx| {
@@ -8035,7 +8037,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 4th query was made by guest (but not applied) due to cache invalidation logic"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version, edits_made);
+        assert_eq!(inlay_cache.version(), edits_made);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
@@ -8051,7 +8053,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             "Guest should get hints from 3rd edit, 6th LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version, edits_made);
+        assert_eq!(inlay_cache.version(), edits_made);
     });
 
     fake_language_server
@@ -8077,7 +8079,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, edits_made,
+            inlay_cache.version(),
+            edits_made,
             "Host should accepted all edits and bump its cache version every time"
         );
     });
@@ -8098,7 +8101,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version,
+            inlay_cache.version(),
             edits_made,
             "Guest should accepted all edits and bump its cache version every time"
         );
@@ -8264,7 +8267,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, 0,
+            inlay_cache.version(),
+            0,
             "Host should not increment its cache version due to no changes",
         );
     });
@@ -8279,7 +8283,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, edits_made,
+            inlay_cache.version(),
+            edits_made,
             "Guest editor update the cache version after every cache/view change"
         );
     });
@@ -8296,7 +8301,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, 0,
+            inlay_cache.version(),
+            0,
             "Host should not increment its cache version due to no changes",
         );
     });
@@ -8311,7 +8317,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
-            inlay_cache.version, edits_made,
+            inlay_cache.version(),
+            edits_made,
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
@@ -8343,13 +8350,10 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {
     let mut labels = Vec::new();
-    for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
-        let excerpt_hints = excerpt_hints.read();
-        for (_, inlay) in excerpt_hints.hints.iter() {
-            match &inlay.label {
-                project::InlayHintLabel::String(s) => labels.push(s.to_string()),
-                _ => unreachable!(),
-            }
+    for hint in editor.inlay_hint_cache().hints() {
+        match hint.label {
+            project::InlayHintLabel::String(s) => labels.push(s),
+            _ => unreachable!(),
         }
     }
     labels
