@@ -151,6 +151,7 @@ export default function workspace(): any {
                 },
             }),
             toggleable_tool: toggleable_icon_button(theme, {
+                margin: { left: 8 },
                 active_color: "accent",
             }),
             padding: { left: 8, right: 8, top: 4, bottom: 4 },

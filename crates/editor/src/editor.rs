@@ -1240,7 +1240,7 @@ enum GotoDefinitionKind {
 
 #[derive(Debug, Clone)]
 enum InlayRefreshReason {
-    Toggled(bool),
+    Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
@@ -2673,11 +2673,10 @@ impl Editor {
     }
 
     pub fn toggle_inlays(&mut self, _: &ToggleInlays, cx: &mut ViewContext<Self>) {
-        self.inlay_hint_cache.enabled = !self.inlay_hint_cache.enabled;
         self.refresh_inlays(
-            InlayRefreshReason::Toggled(self.inlay_hint_cache.enabled),
+            InlayRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
             cx,
-        )
+        );
     }
 
     pub fn inlays_enabled(&self) -> bool {
@@ -2690,7 +2689,8 @@ impl Editor {
         }
 
         let (invalidate_cache, required_languages) = match reason {
-            InlayRefreshReason::Toggled(enabled) => {
+            InlayRefreshReason::Toggle(enabled) => {
+                self.inlay_hint_cache.enabled = enabled;
                 if enabled {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
@@ -2805,6 +2805,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, cx| {
             display_map.splice_inlays(to_remove, to_insert, cx);
         });
+        cx.notify();
     }
 
     fn trigger_on_type_formatting(

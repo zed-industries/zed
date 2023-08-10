@@ -45,10 +45,7 @@ impl View for QuickActionBar {
             0,
             "icons/hamburger_15.svg",
             inlays_enabled,
-            (
-                "Toggle inlays".to_string(),
-                Some(Box::new(editor::ToggleInlays)),
-            ),
+            ("Inlays".to_string(), Some(Box::new(editor::ToggleInlays))),
             cx,
             |this, cx| {
                 if let Some(editor) = this.active_editor() {
@@ -78,7 +75,8 @@ impl View for QuickActionBar {
                 "icons/magnifying_glass_12.svg",
                 search_bar_shown,
                 (
-                    "Toggle buffer search".to_string(),
+                    "Buffer search".to_string(),
+                    // TODO kb no keybinding is shown for search + toggle inlays does not update icon color
                     Some(Box::new(search_action.clone())),
                 ),
                 cx,
@@ -132,6 +130,8 @@ fn render_quick_action_bar_button<
             .constrained()
             .with_width(style.button_width)
             .with_height(style.button_width)
+            .contained()
+            .with_style(style.container)
     })
     .with_cursor_style(CursorStyle::PointingHand)
     .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx))
