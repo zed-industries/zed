@@ -561,7 +561,7 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,

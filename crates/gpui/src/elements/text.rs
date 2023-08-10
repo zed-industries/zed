@@ -8,7 +8,7 @@ use crate::{
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
     AppContext, Element, FontCache, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    TextLayoutCache, View, ViewContext,
+    TextLayoutCache, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -70,7 +70,7 @@ impl Text {
     }
 }
 
-impl<V: View> Element<V> for Text {
+impl<V: 'static> Element<V> for Text {
     type LayoutState = LayoutState;
     type PaintState = ();
 

@@ -67,8 +67,8 @@ impl Window {
         build_view: F,
     ) -> Self
     where
-        F: FnOnce(&mut ViewContext<V>) -> V,
         V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
     {
         let titlebar_height = platform_window.titlebar_height();
         let appearance = platform_window.appearance();
@@ -242,14 +242,11 @@ impl<'a> WindowContext<'a> {
         Some(result)
     }
 
-    pub(crate) fn update_view<T, S>(
+    pub(crate) fn update_view<V: 'static, S>(
         &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
+        handle: &ViewHandle<V>,
+        update: &mut dyn FnMut(&mut V, &mut ViewContext<V>) -> S,
+    ) -> S {
         self.update_any_view(handle.view_id, |view, cx| {
             let mut cx = ViewContext::mutable(cx, handle.view_id);
             update(
@@ -1393,7 +1390,7 @@ impl ChildView {
     }
 }
 
-impl<V: View> Element<V> for ChildView {
+impl<V: 'static> Element<V> for ChildView {
     type LayoutState = ();
     type PaintState = ();
 

@@ -1218,7 +1218,7 @@ impl CollabTitlebarItem {
         style
     }
 
-    fn render_face<V: View>(
+    fn render_face<V: 'static>(
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,

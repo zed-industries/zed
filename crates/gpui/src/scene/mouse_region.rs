@@ -1,4 +1,4 @@
-use crate::{platform::MouseButton, window::WindowContext, EventContext, View, ViewContext};
+use crate::{platform::MouseButton, window::WindowContext, EventContext, ViewContext};
 use collections::HashMap;
 use pathfinder_geometry::rect::RectF;
 use smallvec::SmallVec;
@@ -64,7 +64,7 @@ impl MouseRegion {
 
     pub fn on_down<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDown, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_down(button, handler);
@@ -73,7 +73,7 @@ impl MouseRegion {
 
     pub fn on_up<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseUp, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_up(button, handler);
@@ -82,7 +82,7 @@ impl MouseRegion {
 
     pub fn on_click<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_click(button, handler);
@@ -91,7 +91,7 @@ impl MouseRegion {
 
     pub fn on_click_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_click_out(button, handler);
@@ -100,7 +100,7 @@ impl MouseRegion {
 
     pub fn on_down_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDownOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_down_out(button, handler);
@@ -109,7 +109,7 @@ impl MouseRegion {
 
     pub fn on_up_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseUpOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_up_out(button, handler);
@@ -118,7 +118,7 @@ impl MouseRegion {
 
     pub fn on_drag<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDrag, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_drag(button, handler);
@@ -127,7 +127,7 @@ impl MouseRegion {
 
     pub fn on_hover<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseHover, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_hover(handler);
@@ -136,7 +136,7 @@ impl MouseRegion {
 
     pub fn on_move<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseMove, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_move(handler);
@@ -145,7 +145,7 @@ impl MouseRegion {
 
     pub fn on_move_out<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseMoveOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_move_out(handler);
@@ -154,7 +154,7 @@ impl MouseRegion {
 
     pub fn on_scroll<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseScrollWheel, &mut V, &mut EventContext<V>) + 'static,
     {
         self.handlers = self.handlers.on_scroll(handler);
@@ -310,7 +310,7 @@ impl HandlerSet {
 
     pub fn on_move<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseMove, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::move_disc(), None,
@@ -332,7 +332,7 @@ impl HandlerSet {
 
     pub fn on_move_out<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseMoveOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::move_out_disc(), None,
@@ -354,7 +354,7 @@ impl HandlerSet {
 
     pub fn on_down<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDown, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::down_disc(), Some(button),
@@ -376,7 +376,7 @@ impl HandlerSet {
 
     pub fn on_up<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseUp, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::up_disc(), Some(button),
@@ -398,7 +398,7 @@ impl HandlerSet {
 
     pub fn on_click<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::click_disc(), Some(button),
@@ -420,7 +420,7 @@ impl HandlerSet {
 
     pub fn on_click_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseClickOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::click_out_disc(), Some(button),
@@ -442,7 +442,7 @@ impl HandlerSet {
 
     pub fn on_down_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDownOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::down_out_disc(), Some(button),
@@ -464,7 +464,7 @@ impl HandlerSet {
 
     pub fn on_up_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseUpOut, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::up_out_disc(), Some(button),
@@ -486,7 +486,7 @@ impl HandlerSet {
 
     pub fn on_drag<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseDrag, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::drag_disc(), Some(button),
@@ -508,7 +508,7 @@ impl HandlerSet {
 
     pub fn on_hover<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseHover, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::hover_disc(), None,
@@ -530,7 +530,7 @@ impl HandlerSet {
 
     pub fn on_scroll<V, F>(mut self, handler: F) -> Self
     where
-        V: View,
+        V: 'static,
         F: Fn(MouseScrollWheel, &mut V, &mut EventContext<V>) + 'static,
     {
         self.insert(MouseEvent::scroll_wheel_disc(), None,

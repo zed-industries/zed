@@ -2,14 +2,14 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    AnyElement, Element, View, ViewContext,
+    AnyElement, Element, ViewContext,
 };
 use std::sync::Arc;
 
 enum Dismiss {}
 enum Button {}
 
-pub fn render_user_notification<F, V>(
+pub fn render_user_notification<F, V: 'static>(
     user: Arc<User>,
     title: &'static str,
     body: Option<&'static str>,
@@ -19,7 +19,6 @@ pub fn render_user_notification<F, V>(
 ) -> AnyElement<V>
 where
     F: 'static + Fn(&mut V, &mut ViewContext<V>),
-    V: View,
 {
     let theme = theme::current(cx).clone();
     let theme = &theme.contact_notification;

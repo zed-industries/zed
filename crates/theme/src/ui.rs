@@ -10,7 +10,7 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, Element, EventContext, MouseState, View, ViewContext,
+    Action, Element, EventContext, MouseState, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -37,7 +37,7 @@ pub fn checkbox<Tag, V, F>(
 ) -> MouseEventHandler<Tag, V>
 where
     Tag: 'static,
-    V: View,
+    V: 'static,
     F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
 {
     let label = Label::new(label, style.label.text.clone())
@@ -57,7 +57,7 @@ pub fn checkbox_with_label<Tag, D, V, F>(
 where
     Tag: 'static,
     D: Element<V>,
-    V: View,
+    V: 'static,
     F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
 {
     MouseEventHandler::new(id, cx, |state, _| {
@@ -93,7 +93,7 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
+pub fn svg<V: 'static>(style: &SvgStyle) -> ConstrainedBox<V> {
     Svg::new(style.asset.clone())
         .with_color(style.color)
         .constrained()
@@ -107,11 +107,11 @@ pub struct IconStyle {
     pub container: ContainerStyle,
 }
 
-pub fn icon<V: View>(style: &IconStyle) -> Container<V> {
+pub fn icon<V: 'static>(style: &IconStyle) -> Container<V> {
     svg(&style.icon).contained().with_style(style.container)
 }
 
-pub fn keystroke_label<V: View>(
+pub fn keystroke_label<V: 'static>(
     label_text: &'static str,
     label_style: &ContainedText,
     keystroke_style: &ContainedText,
@@ -147,7 +147,7 @@ pub fn cta_button<Tag, L, V, F>(
 where
     Tag: 'static,
     L: Into<Cow<'static, str>>,
-    V: View,
+    V: 'static,
     F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
     MouseEventHandler::<Tag, V>::new(0, cx, |state, _| {
@@ -186,9 +186,9 @@ pub fn modal<Tag, V, I, D, F>(
 ) -> impl Element<V>
 where
     Tag: 'static,
-    V: View,
     I: Into<Cow<'static, str>>,
     D: Element<V>,
+    V: 'static,
     F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;

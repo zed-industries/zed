@@ -1320,7 +1320,7 @@ impl ProjectPanel {
         }
     }
 
-    fn render_entry_visual_element<V: View>(
+    fn render_entry_visual_element<V: 'static>(
         details: &EntryDetails,
         editor: Option<&ViewHandle<Editor>>,
         padding: f32,
