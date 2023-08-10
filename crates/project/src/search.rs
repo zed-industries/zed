@@ -158,7 +158,7 @@ impl SearchQuery {
     pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
         if self.as_str().is_empty() {
             return Ok(false);
-        }Osiewicz
+        }
 
         match self {
             Self::Text { search, .. } => {
