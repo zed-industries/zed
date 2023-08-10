@@ -20,9 +20,9 @@ export default function search(): any {
             right: 12,
         },
         padding: {
-            top: 3,
-            bottom: 3,
-            left: 10,
+            top: 4,
+            bottom: 4,
+            left: 4,
             right: 4,
         },
     }
@@ -46,8 +46,8 @@ export default function search(): any {
                     ...text(theme.highest, "mono", "on"),
                     background: background(theme.highest, "on"),
                     corner_radius: 2,
-                    border: border(theme.highest, "on"),
-
+                    margin: { right: 2 },
+                    border: { width: 0, color: foreground(theme.highest, "variant") },
                     padding: {
                         bottom: 6,
                         left: 6,
@@ -59,25 +59,26 @@ export default function search(): any {
                     hovered: {
                         ...text(theme.highest, "mono", "on", "hovered"),
                         background: background(theme.highest, "on", "hovered"),
-                        border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
                         ...text(theme.highest, "mono", "on", "pressed"),
                         background: background(theme.highest, "on", "pressed"),
-                        border: border(theme.highest, "on", "pressed"),
                     },
                 },
             }),
             state: {
                 active: {
                     default: {
-                        ...text(theme.highest, "mono", "accent"),
+                        background: background(theme.highest, "accent", "hovered"),
+                        border: border(theme.highest, "on"),
                     },
                     hovered: {
                         ...text(theme.highest, "mono", "accent", "hovered"),
+                        border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
                         ...text(theme.highest, "mono", "accent", "pressed"),
+                        border: border(theme.highest, "on", "pressed"),
                     },
                 },
             },
