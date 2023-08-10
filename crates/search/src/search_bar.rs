@@ -65,11 +65,6 @@ pub(super) fn render_nav_button<V: View>(
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme.search.nav_button.style_for(state).clone();
-
-        match direction {
-            Direction::Prev => style.container.border.left = false,
-            Direction::Next => style.container.border.right = false,
-        };
         let label = Label::new(icon, style.label.clone())
             .contained()
             .with_style(style.container.clone());
@@ -110,13 +105,7 @@ pub(super) fn render_nav_button<V: View>(
                 .with_height(theme.workspace.toolbar.height),
         }
     })
-    .on_click(
-        MouseButton::Left,
-        on_click, /*move |_, this, cx| {
-                  if let Some(search) = this.active_project_search.as_ref() {
-                      search.update(cx, |search, cx| search.select_match(direction, cx));
-                      }*/
-    )
+    .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)
     .with_tooltip::<NavButton>(
         direction as usize,

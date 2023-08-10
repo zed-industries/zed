@@ -1616,7 +1616,6 @@ impl View for ProjectSearchBar {
                         )
                         .with_children(filters)
                         .contained()
-                        .with_style(theme.search.container)
                         .aligned()
                         .top()
                         .flex(1., false),
@@ -1643,7 +1642,6 @@ impl View for ProjectSearchBar {
                                 .constrained()
                                 .with_height(theme.workspace.toolbar.height)
                                 .contained()
-                                .with_style(theme.search.container)
                                 .aligned()
                                 .right()
                                 .top()
@@ -1659,7 +1657,7 @@ impl View for ProjectSearchBar {
                         .flex(1., true),
                 )
                 .contained()
-                .with_uniform_padding(theme.workspace.toolbar.height / 3.)
+                .with_style(theme.search.container)
                 .flex_float()
                 .into_any_named("project search")
         } else {
@@ -1693,7 +1691,7 @@ impl ToolbarItemView for ProjectSearchBar {
             .as_ref()
             .map(|search| {
                 let offset = search.read(cx).filters_enabled as usize;
-                2 + offset
+                3 + offset
             })
             .unwrap_or_else(|| 2)
     }
