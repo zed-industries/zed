@@ -65,6 +65,7 @@ pub(super) fn render_nav_button<V: View>(
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme.search.nav_button.style_for(state).clone();
+        style.container.corner_radius = 0.;
         let label = Label::new(icon, style.label.clone())
             .contained()
             .with_style(style.container.clone());
@@ -124,13 +125,6 @@ pub(crate) fn render_search_mode_button<V: View>(
     cx: &mut ViewContext<V>,
 ) -> AnyElement<V> {
     let tooltip_style = theme::current(cx).tooltip.clone();
-    // let is_active = if let Some(search) = self.active_project_search.as_ref() {
-    //     let search = search.read(cx);
-    //     search.current_mode == mode
-    // } else {
-    //     false
-    // };
-
     enum SearchModeButton {}
     MouseEventHandler::<SearchModeButton, _>::new(mode.region_id(), cx, |state, cx| {
         let theme = theme::current(cx);
