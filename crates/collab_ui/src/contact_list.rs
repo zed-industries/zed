@@ -1345,7 +1345,7 @@ impl View for ContactList {
                         })
                         .with_tooltip::<AddContact>(
                             0,
-                            "Search for new contact".into(),
+                            "Search for new contact",
                             None,
                             theme.tooltip.clone(),
                             cx,
