@@ -24,49 +24,63 @@ pub struct ThemeColors {
 
 impl ThemeColors {
     pub fn base(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.base.lerp(level)
     }
+
     pub fn surface(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.surface.lerp(level)
     }
+
     pub fn overlay(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.overlay.lerp(level)
     }
+
     pub fn muted(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.muted.lerp(level)
     }
+
     pub fn subtle(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.subtle.lerp(level)
     }
+
     pub fn text(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.text.lerp(level)
     }
+
     pub fn highlight_low(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.highlight_low.lerp(level)
     }
+
     pub fn highlight_med(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.highlight_med.lerp(level)
     }
+
     pub fn highlight_high(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.highlight_high.lerp(level)
     }
+
     pub fn success(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.success.lerp(level)
     }
+
     pub fn warning(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.warning.lerp(level)
     }
+
     pub fn error(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.error.lerp(level)
     }
+
     pub fn inserted(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.inserted.lerp(level)
     }
+
     pub fn deleted(&self, level: f32) -> Hsla {
         self.deleted.lerp(level)
     }
+
     pub fn modified(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
+        self.modified.lerp(level)
     }
 }
 

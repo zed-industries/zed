@@ -657,6 +657,15 @@ impl Size<Rems> {
     }
 }
 
+impl From<Length> for Size<Length> {
+    fn from(value: Length) -> Self {
+        Self {
+            width: value,
+            height: value,
+        }
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct Edges<T> {
     top: T,

@@ -3,7 +3,7 @@
 use frame::{length::auto, *};
 use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
-use themes::ThemeColors;
+use themes::{rose_pine, ThemeColors};
 use tokens::{margin::m4, text::lg};
 
 mod color;
@@ -18,12 +18,14 @@ impl<V: View> Frame<V> {}
 
 impl<V: View> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
-        column()
+        workspace(&rose_pine::dawn())
     }
 }
 
 fn workspace<V: View>(theme: &ThemeColors) -> impl Element<V> {
     column()
+        .size(auto())
+        .fill(theme.base(0.1))
         .child(title_bar(theme))
         .child(stage(theme))
         .child(status_bar(theme))

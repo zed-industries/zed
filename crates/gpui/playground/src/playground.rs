@@ -1,6 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
-use gpui::{AnyElement, Element, Entity, View};
+use gpui::{
+    platform::{TitlebarOptions, WindowOptions},
+    AnyElement, Element, Entity, View,
+};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -9,7 +12,16 @@ fn main() {
 
     gpui::App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(Default::default(), |_| Playground::default());
+        cx.add_window(
+            WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |_| Playground::default(),
+        );
     });
 }
 
