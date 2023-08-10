@@ -5014,37 +5014,39 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
+    ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
+        // Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
-            let request = self.client.request(query.to_proto(project_id));
-            cx.spawn(|this, mut cx| async move {
-                let response = request.await?;
-                let mut result = HashMap::default();
-                for location in response.locations {
-                    let target_buffer = this
-                        .update(&mut cx, |this, cx| {
-                            this.wait_for_remote_buffer(location.buffer_id, cx)
-                        })
-                        .await?;
-                    let start = location
-                        .start
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing target start"))?;
-                    let end = location
-                        .end
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing target end"))?;
-                    result
-                        .entry(target_buffer)
-                        .or_insert(Vec::new())
-                        .push(start..end)
-                }
-                Ok(result)
-            })
+            unimplemented!();
+            // let request = self.client.request(query.to_proto(project_id));
+            // cx.spawn(|this, mut cx| async move {
+            //     let response = request.await?;
+            //     let mut result = HashMap::default();
+            //     for location in response.locations {
+            //         let target_buffer = this
+            //             .update(&mut cx, |this, cx| {
+            //                 this.wait_for_remote_buffer(location.buffer_id, cx)
+            //             })
+            //             .await?;
+            //         let start = location
+            //             .start
+            //             .and_then(deserialize_anchor)
+            //             .ok_or_else(|| anyhow!("missing target start"))?;
+            //         let end = location
+            //             .end
+            //             .and_then(deserialize_anchor)
+            //             .ok_or_else(|| anyhow!("missing target end"))?;
+            //         result
+            //             .entry(target_buffer)
+            //             .or_insert(Vec::new())
+            //             .push(start..end)
+            //     }
+            //     Ok(result)
+            // })
         } else {
-            Task::ready(Ok(Default::default()))
+            unimplemented!();
         }
     }
 
@@ -5052,7 +5054,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
+    ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
@@ -5064,7 +5066,9 @@ impl Project {
         let background = cx.background().clone();
         let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
         if path_count == 0 {
-            return Task::ready(Ok(Default::default()));
+            // HACK
+            let (_, rx) = smol::channel::bounded(1024);
+            return rx;
         }
         let workers = background.num_cpus().min(path_count);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
@@ -5083,43 +5087,47 @@ impl Project {
         let buffers_rx = self.read_open_buffers_yeet(matching_paths_rx, cx);
 
         let background = cx.background().clone();
-        cx.background().spawn(async move {
-            let query = &query;
-            let mut matched_buffers = Vec::new();
-            for _ in 0..workers {
-                matched_buffers.push(HashMap::default());
-            }
-            background
-                .scoped(|scope| {
-                    for worker_matched_buffers in matched_buffers.iter_mut() {
-                        let mut buffers_rx = buffers_rx.clone();
-                        scope.spawn(async move {
-                            while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                let buffer_matches = if query
-                                    .file_matches(snapshot.file().map(|file| file.path().as_ref()))
-                                {
-                                    query
-                                        .search(snapshot.as_rope())
-                                        .await
-                                        .iter()
-                                        .map(|range| {
-                                            snapshot.anchor_before(range.start)
-                                                ..snapshot.anchor_after(range.end)
-                                        })
-                                        .collect()
-                                } else {
-                                    Vec::new()
-                                };
-                                if !buffer_matches.is_empty() {
-                                    worker_matched_buffers.insert(buffer.clone(), buffer_matches);
+        let (result_tx, result_rx) = smol::channel::bounded(1024);
+        cx.background()
+            .spawn(async move {
+                let query = &query;
+                background
+                    .scoped(|scope| {
+                        for _ in 0..workers {
+                            let mut buffers_rx = buffers_rx.clone();
+                            let result_tx = result_tx.clone();
+                            scope.spawn(async move {
+                                // println!("before loop 3: about to await on buffers_rx for the first time");
+                                while let Some((buffer, snapshot)) = buffers_rx.next().await {
+                                    // println!("loop 3: background range querying");
+                                    let buffer_matches = if query.file_matches(
+                                        snapshot.file().map(|file| file.path().as_ref()),
+                                    ) {
+                                        query
+                                            .search(snapshot.as_rope())
+                                            .await
+                                            .iter()
+                                            .map(|range| {
+                                                snapshot.anchor_before(range.start)
+                                                    ..snapshot.anchor_after(range.end)
+                                            })
+                                            .collect()
+                                    } else {
+                                        Vec::new()
+                                    };
+                                    if !buffer_matches.is_empty() {
+                                        result_tx.send((buffer.clone(), buffer_matches)).await;
+                                        // worker_matched_buffers.insert(buffer.clone(), buffer_matches);
+                                    }
                                 }
-                            }
-                        });
-                    }
-                })
-                .await;
-            Ok(matched_buffers.into_iter().flatten().collect())
-        })
+                            });
+                        }
+                    })
+                    .await;
+                // Ok(matched_buffers.into_iter().flatten().collect())
+            })
+            .detach();
+        result_rx
     }
 
     async fn background_search(
@@ -5188,7 +5196,7 @@ impl Project {
 
                                     if matches {
                                         let project_path = (snapshot.id(), entry.path.clone());
-                                        dbg!("sending a matching path");
+                                        // println!("background worker: sending a matching path");
                                         if matching_paths_tx.send(project_path).await.is_err() {
                                             break;
                                         }
@@ -5297,7 +5305,9 @@ impl Project {
             }
 
             let open_buffers = Rc::new(RefCell::new(open_buffers));
+            // println!("foreground before loop 2: about the call await on matching_paths_rx for the first time");
             while let Some(project_path) = matching_paths_rx.next().await {
+                // println!("foreground loop 2: opening buffers");
                 if buffers_tx.is_closed() {
                     break;
                 }
@@ -5313,6 +5323,7 @@ impl Project {
                     {
                         if open_buffers.borrow_mut().insert(buffer.clone()) {
                             let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                            // println!("foreground loop 2: sending buffer and snapshot");
                             buffers_tx.send((buffer, snapshot)).await?;
                         }
                     }
@@ -6913,17 +6924,17 @@ impl Project {
     ) -> Result<proto::SearchProjectResponse> {
         let peer_id = envelope.original_sender_id()?;
         let query = SearchQuery::from_proto(envelope.payload)?;
-        let result = this
-            .update(&mut cx, |this, cx| this.search(query, cx))
-            .await?;
+        let mut result = this.update(&mut cx, |this, cx| this.search(query, cx));
 
-        this.update(&mut cx, |this, cx| {
+        cx.spawn(|mut cx| async move {
             let mut locations = Vec::new();
-            for (buffer, ranges) in result {
+            while let Some((buffer, ranges)) = result.next().await {
                 for range in ranges {
                     let start = serialize_anchor(&range.start);
                     let end = serialize_anchor(&range.end);
-                    let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
+                    let buffer_id = this.update(&mut cx, |this, cx| {
+                        this.create_buffer_for_peer(&buffer, peer_id, cx)
+                    });
                     locations.push(proto::Location {
                         buffer_id,
                         start: Some(start),
@@ -6933,6 +6944,7 @@ impl Project {
             }
             Ok(proto::SearchProjectResponse { locations })
         })
+        .await
     }
 
     async fn handle_open_buffer_for_symbol(

@@ -788,59 +788,65 @@ impl MultiBuffer {
 
     pub fn stream_excerpts_with_context_lines(
         &mut self,
-        excerpts: Vec<(ModelHandle<Buffer>, Vec<Range<text::Anchor>>)>,
+        buffer: ModelHandle<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
-    ) -> (Task<()>, mpsc::Receiver<Range<Anchor>>) {
+    ) -> mpsc::Receiver<Range<Anchor>> {
         let (mut tx, rx) = mpsc::channel(256);
-        let task = cx.spawn(|this, mut cx| async move {
-            for (buffer, ranges) in excerpts {
-                let (buffer_id, buffer_snapshot) =
-                    buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+        cx.spawn(|this, mut cx| async move {
+            let (buffer_id, buffer_snapshot) =
+                buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+            println!("got buffer snapshot and id");
 
-                let mut excerpt_ranges = Vec::new();
-                let mut range_counts = Vec::new();
-                cx.background()
-                    .scoped(|scope| {
-                        scope.spawn(async {
-                            let (ranges, counts) =
-                                build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                            excerpt_ranges = ranges;
-                            range_counts = counts;
-                        });
-                    })
-                    .await;
-
-                let mut ranges = ranges.into_iter();
-                let mut range_counts = range_counts.into_iter();
-                for excerpt_ranges in excerpt_ranges.chunks(100) {
-                    let excerpt_ids = this.update(&mut cx, |this, cx| {
-                        this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+            let mut excerpt_ranges = Vec::new();
+            let mut range_counts = Vec::new();
+            cx.background()
+                .scoped(|scope| {
+                    scope.spawn(async {
+                        let (ranges, counts) =
+                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                        excerpt_ranges = ranges;
+                        range_counts = counts;
                     });
+                })
+                .await;
+            println!("built excerpt ranges");
 
-                    for (excerpt_id, range_count) in
-                        excerpt_ids.into_iter().zip(range_counts.by_ref())
-                    {
-                        for range in ranges.by_ref().take(range_count) {
-                            let start = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: range.start,
-                            };
-                            let end = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: range.end,
-                            };
-                            if tx.send(start..end).await.is_err() {
-                                break;
-                            }
+            let mut ranges = ranges.into_iter();
+            let mut range_counts = range_counts.into_iter();
+            for excerpt_ranges in excerpt_ranges.chunks(100) {
+                dbg!();
+                let excerpt_ids = this.update(&mut cx, |this, cx| {
+                    this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+                });
+                dbg!();
+
+                for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
+                {
+                    dbg!();
+                    for range in ranges.by_ref().take(range_count) {
+                        let start = Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: range.start,
+                        };
+                        let end = Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: range.end,
+                        };
+                        println!("sending");
+                        if tx.send(start..end).await.is_err() {
+                            break;
                         }
                     }
                 }
             }
-        });
-        (task, rx)
+        })
+        .detach();
+
+        rx
     }
 
     pub fn push_excerpts<O>(
