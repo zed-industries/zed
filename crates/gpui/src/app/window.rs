@@ -940,7 +940,9 @@ impl<'a> WindowContext<'a> {
     pub fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
         let window_size = self.window.platform_window.content_size();
         let root_view_id = self.window.root_view().id();
+
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+
         let mut new_parents = HashMap::default();
         let mut views_to_notify_if_ancestors_change = HashMap::default();
         rendered_root.layout(

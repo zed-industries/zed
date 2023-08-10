@@ -9,11 +9,14 @@ path = "src/playground_ui.rs"
 crate-type = ["dylib"]
 
 [dependencies]
-derive_more = "0.99.17"
+collections = { path = "../../../collections" }
+util = { path = "../../../util" }
 gpui = { path = "../.." }
+derive_more = "0.99.17"
 log.workspace = true
 optional_struct = "0.3.1"
 smallvec.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../..", features = ["test-support"] }

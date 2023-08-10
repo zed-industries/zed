@@ -28,6 +28,7 @@ pub struct Frame<V: View> {
     style: FrameStyle,
     children: Vec<AnyElement<V>>,
     id: Option<Cow<'static, str>>,
+    before_paint: Option<Box<dyn FnMut(RectF, &mut FrameLayout, &mut PaintContext<V>)>>,
 }
 
 pub fn column<V: View>() -> Frame<V> {
@@ -60,6 +61,7 @@ impl<V: View> Default for Frame<V> {
             style: Default::default(),
             children: Default::default(),
             id: None,
+            before_paint: None,
         }
     }
 }
@@ -79,7 +81,6 @@ impl<V: View> Element<V> for Frame<V> {
         } else {
             todo!()
         };
-
         (layout.size.max(constraint.min), layout)
     }
 
@@ -92,22 +93,21 @@ impl<V: View> Element<V> for Frame<V> {
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        dbg!(self.id_string());
-        dbg!(bounds.origin(), bounds.size());
+        if let Some(before_paint) = &mut self.before_paint {
+            before_paint(bounds, layout, cx);
+        }
 
-        let bounds_center = dbg!(bounds.size()) / 2.;
+        let bounds_center = bounds.size() / 2.;
         let bounds_target = bounds_center + (bounds_center * self.style.align.0);
-        let layout_center = dbg!(layout.size) / 2.;
+        let layout_center = layout.size / 2.;
         let layout_target = layout_center + layout_center * self.style.align.0;
         let delta = bounds_target - layout_target;
 
         let aligned_bounds = RectF::new(bounds.origin() + delta, layout.size);
-        dbg!(aligned_bounds.origin(), aligned_bounds.size());
         let margined_bounds = RectF::from_points(
             aligned_bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
             aligned_bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
         );
-        dbg!(margined_bounds.origin(), margined_bounds.size());
 
         // Paint drop shadow
         for shadow in &self.style.shadows {
@@ -236,6 +236,11 @@ impl<V: View> Frame<V> {
         self.children
             .extend(children.into_iter().map(|child| child.into_any()));
         self
+    }
+
+    pub fn size(self, size: impl Into<Size<Length>>) -> Self {
+        let size = size.into();
+        self.width(size.width).height(size.height)
     }
 
     pub fn width(mut self, width: impl Into<Length>) -> Self {
@@ -508,8 +513,15 @@ impl<V: View> Frame<V> {
             }
         }
 
-        dbg!(self.id_string());
-        dbg!(layout)
+        layout
+    }
+
+    fn before_paint<H>(mut self, handler: H) -> Self
+    where
+        H: 'static + FnMut(RectF, &mut FrameLayout, &mut PaintContext<V>),
+    {
+        self.before_paint = Some(Box::new(handler));
+        self
     }
 }
 
@@ -599,7 +611,7 @@ struct TextStyle {
 }
 
 #[derive(Add, Default, Clone)]
-struct Size<T> {
+pub struct Size<T> {
     width: T,
     height: T,
 }
@@ -1478,12 +1490,12 @@ where
     }
 }
 
-pub fn view<F, E>(mut function: F) -> ViewFn
+pub fn view<F, E>(mut render: F) -> ViewFn
 where
     F: 'static + FnMut(&mut ViewContext<ViewFn>) -> E,
     E: Element<ViewFn>,
 {
-    ViewFn(Box::new(move |cx| (function)(cx).into_any()))
+    ViewFn(Box::new(move |cx| (render)(cx).into_any()))
 }
 
 pub struct ViewFn(Box<dyn FnMut(&mut ViewContext<ViewFn>) -> AnyElement<ViewFn>>);
@@ -1508,8 +1520,8 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn test_layout(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_| {
+    fn test_frame_layout(cx: &mut TestAppContext) {
+        cx.add_window(|_| {
             view(|_| {
                 let theme = rose_pine::dawn();
                 column()
@@ -1520,32 +1532,25 @@ mod tests {
                         row()
                             .width(auto())
                             .height(rems(10.))
-                            .fill(theme.foam)
                             .justify(1.)
-                            .child(row().width(rems(10.)).height(auto()).fill(theme.gold)),
+                            .child(
+                                row()
+                                    .width(rems(10.))
+                                    .height(auto())
+                                    .fill(theme.surface(1.)),
+                            )
+                            .before_paint(|bounds, layout, cx| {
+                                assert_eq!(bounds.origin(), vec2f(0., 0.));
+                                assert_eq!(layout.size.x(), cx.window_size().x());
+                                assert_eq!(layout.size.y(), rems(10.).to_pixels(cx.rem_pixels()));
+                            }),
                     )
                     .child(row())
-            });
-        });
-
-        window.update(cx, |cx| {
-            let root = cx.root_element();
-            dbg!(root.debug(cx).unwrap());
-        });
-
-        // tree.layout(
-        //     SizeConstraint::strict(vec2f(100., 100.)),
-        //     &mut (),
-        //     LayoutContext::test(),
-        // );
-
-        // LayoutContext::new(
-        //     cx,
-        //     new_parents,
-        //     views_to_notify_if_ancestors_change,
-        //     refreshing,
-        // )
-
-        // tree.layout(SizeConstraint::strict(vec2f(100., 100.)), &mut (), cx)
+                    .before_paint(|bounds, layout, cx| {
+                        assert_eq!(layout.size, cx.window_size());
+                    })
+            })
+        })
+        .remove(cx);
     }
 }

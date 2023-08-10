@@ -3,6 +3,7 @@
 use frame::{length::auto, *};
 use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
+use themes::ThemeColors;
 use tokens::{margin::m4, text::lg};
 
 mod color;
@@ -19,6 +20,25 @@ impl<V: View> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
         column()
     }
+}
+
+fn workspace<V: View>(theme: &ThemeColors) -> impl Element<V> {
+    column()
+        .child(title_bar(theme))
+        .child(stage(theme))
+        .child(status_bar(theme))
+}
+
+fn title_bar<V: View>(theme: &ThemeColors) -> impl Element<V> {
+    row().fill(theme.surface(1.0))
+}
+
+fn stage<V: View>(theme: &ThemeColors) -> impl Element<V> {
+    row().fill(theme.surface(0.9))
+}
+
+fn status_bar<V: View>(theme: &ThemeColors) -> impl Element<V> {
+    row().fill(theme.surface(0.1))
 }
 
 pub trait DialogDelegate<V: View>: 'static {}
@@ -112,6 +132,36 @@ where
         row().child(text(self.label.clone())).into_any()
     }
 }
+
+// impl<V, D, F> Button<V, D, F>
+// where
+//     V: View,
+//     F: ClickHandler<V, D>,
+// {
+//     fn render(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> impl Element<V> {
+//         // TODO! Handle click etc
+//         row()
+//             .fill(theme.colors.primary(5))
+//             .child(text(self.label.clone()).text_color(theme.colors.on_primary()))
+//     }
+// }
+
+// struct Tab<V> {
+//     active: bool,
+// }
+
+// impl<V> Tab<V>
+// where
+//     V: View,
+// {
+//     fn tab(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> impl Element<V> {
+//         let theme = todo!();
+//         // TODO! Handle click etc
+//         row()
+//             .fill(theme.colors.neutral(6))
+//             .child(text(self.label.clone()).text_color(theme.colors.on_neutral()))
+//     }
+// }
 
 impl<V: View> Button<V, (), ()> {
     fn data<D>(self, data: D) -> Button<V, D, ()>

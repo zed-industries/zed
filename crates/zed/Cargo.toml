@@ -92,7 +92,7 @@ postage.workspace = true
 rand.workspace = true
 regex.workspace = true
 rsa = "0.4"
-rust-embed = { version = "6.3", features = ["include-exclude"] }
+rust-embed = { version = "6.8.1" }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

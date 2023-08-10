@@ -44,7 +44,7 @@ pub use test_app_context::{ContextHandle, TestAppContext};
 use window_input_handler::WindowInputHandler;
 
 use crate::{
-    elements::{AnyElement, AnyRootElement, Empty, RootElement},
+    elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
     fonts::TextStyle,
     json,
@@ -55,7 +55,7 @@ use crate::{
     },
     util::post_inc,
     window::{Window, WindowContext},
-    AssetCache, AssetSource, ClipboardItem, Element, FontCache, MouseRegionId,
+    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId,
 };
 
 use self::ref_counts::RefCounts;
@@ -126,16 +126,6 @@ pub trait View: Entity + Sized {
         _: Option<Range<usize>>,
         _: &mut ViewContext<Self>,
     ) {
-    }
-}
-
-impl Entity for () {
-    type Event = ();
-}
-
-impl View for () {
-    fn render(&mut self, _: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self> {
-        Empty::new().into_any()
     }
 }
 
@@ -2155,7 +2145,7 @@ struct ViewMetadata {
     keymap_context: KeymapContext,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct WindowInvalidation {
     pub updated: HashSet<usize>,
     pub removed: Vec<usize>,

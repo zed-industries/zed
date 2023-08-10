@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 
+use std::{num::ParseIntError, ops::Range};
+
 use smallvec::SmallVec;
 
-pub fn rgb(hex: u32) -> Rgba {
+pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let b = (hex & 0xFF) as f32 / 255.0;
-    Rgba { r, g, b, a: 1.0 }
+    Rgba { r, g, b, a: 1.0 }.into()
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -15,6 +17,22 @@ pub struct Rgba {
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+pub trait Lerp {
+    fn lerp(&self, level: f32) -> Hsla;
+}
+
+impl Lerp for Range<Hsla> {
+    fn lerp(&self, level: f32) -> Hsla {
+        let level = level.clamp(0., 1.);
+        Hsla {
+            h: self.start.h + (level * (self.end.h - self.start.h)),
+            s: self.start.s + (level * (self.end.s - self.start.s)),
+            l: self.start.l + (level * (self.end.l - self.start.l)),
+            a: self.start.a + (level * (self.end.a - self.start.a)),
+        }
+    }
 }
 
 impl From<Hsla> for Rgba {
@@ -47,18 +65,39 @@ impl From<Hsla> for Rgba {
     }
 }
 
+impl TryFrom<&'_ str> for Rgba {
+    type Error = ParseIntError;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        let r = u8::from_str_radix(&value[1..3], 16)? as f32 / 255.0;
+        let g = u8::from_str_radix(&value[3..5], 16)? as f32 / 255.0;
+        let b = u8::from_str_radix(&value[5..7], 16)? as f32 / 255.0;
+        let a = if value.len() > 7 {
+            u8::from_str_radix(&value[7..9], 16)? as f32 / 255.0
+        } else {
+            1.0
+        };
+
+        Ok(Rgba { r, g, b, a })
+    }
+}
+
 impl Into<gpui::color::Color> for Rgba {
     fn into(self) -> gpui::color::Color {
         gpui::color::rgba(self.r, self.g, self.b, self.a)
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Hsla {
-    h: f32,
-    s: f32,
-    l: f32,
-    a: f32,
+    pub h: f32,
+    pub s: f32,
+    pub l: f32,
+    pub a: f32,
+}
+
+pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
+    Hsla { h, s, l, a }
 }
 
 impl From<Rgba> for Hsla {
@@ -100,6 +139,13 @@ impl From<Rgba> for Hsla {
 }
 
 impl Hsla {
+    /// Scales the saturation and lightness by the given values, clamping at 1.0.
+    pub fn scale_sl(mut self, s: f32, l: f32) -> Self {
+        self.s = (self.s * s).clamp(0., 1.);
+        self.l = (self.l * l).clamp(0., 1.);
+        self
+    }
+
     /// Increases the saturation of the color by a certain amount, with a max
     /// value of 1.0.
     pub fn saturate(mut self, amount: f32) -> Self {
