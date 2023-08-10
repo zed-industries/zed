@@ -104,7 +104,7 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content<V: View>(
+    fn tab_content<V: 'static>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,

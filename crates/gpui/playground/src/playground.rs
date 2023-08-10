@@ -1,11 +1,17 @@
-use std::ops::{Deref, DerefMut};
-
 use gpui::{
     platform::{TitlebarOptions, WindowOptions},
     AnyElement, Element, Entity, View,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
+use std::ops::{Deref, DerefMut};
+
+// dymod! {
+//     #[path = "../ui/src/playground_ui.rs"]
+//     pub mod ui {
+//         // fn workspace<V>(theme: &ThemeColors) -> impl Element<V>;
+//     }
+// }
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");

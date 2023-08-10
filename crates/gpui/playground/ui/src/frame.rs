@@ -24,18 +24,18 @@ use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
 
 use crate::color::Rgba;
 
-pub struct Frame<V: View> {
+pub struct Frame<V> {
     style: FrameStyle,
     children: Vec<AnyElement<V>>,
     id: Option<Cow<'static, str>>,
     before_paint: Option<Box<dyn FnMut(RectF, &mut FrameLayout, &mut PaintContext<V>)>>,
 }
 
-pub fn column<V: View>() -> Frame<V> {
+pub fn column<V>() -> Frame<V> {
     Frame::default()
 }
 
-pub fn row<V: View>() -> Frame<V> {
+pub fn row<V>() -> Frame<V> {
     Frame {
         style: FrameStyle {
             axis: Axis3d::X,
@@ -45,7 +45,7 @@ pub fn row<V: View>() -> Frame<V> {
     }
 }
 
-pub fn stack<V: View>() -> Frame<V> {
+pub fn stack<V>() -> Frame<V> {
     Frame {
         style: FrameStyle {
             axis: Axis3d::Z,
@@ -55,7 +55,7 @@ pub fn stack<V: View>() -> Frame<V> {
     }
 }
 
-impl<V: View> Default for Frame<V> {
+impl<V> Default for Frame<V> {
     fn default() -> Self {
         Self {
             style: Default::default(),
@@ -66,7 +66,7 @@ impl<V: View> Default for Frame<V> {
     }
 }
 
-impl<V: View> Element<V> for Frame<V> {
+impl<V: 'static> Element<V> for Frame<V> {
     type LayoutState = FrameLayout;
     type PaintState = ();
 
@@ -217,7 +217,7 @@ impl<V: View> Element<V> for Frame<V> {
     }
 }
 
-impl<V: View> Frame<V> {
+impl<V: 'static> Frame<V> {
     pub fn id(mut self, id: impl Into<Cow<'static, str>>) -> Self {
         self.id = Some(id.into());
         self
@@ -1150,7 +1150,7 @@ pub struct Text {
     )>,
 }
 
-pub fn text<V: View>(text: impl Into<Cow<'static, str>>) -> Frame<V> {
+pub fn text<V: 'static>(text: impl Into<Cow<'static, str>>) -> Frame<V> {
     row().child(Text {
         text: text.into(),
         ..Default::default()
@@ -1165,7 +1165,7 @@ pub struct FrameLayout {
     margins: Edges<f32>,
 }
 
-impl<V: View> Element<V> for Text {
+impl<V: 'static> Element<V> for Text {
     type LayoutState = TextLayout;
     type PaintState = ();
 
@@ -1477,7 +1477,7 @@ impl Vector2FExt for Vector2F {
     }
 }
 
-trait ElementExt<V: View> {
+trait ElementExt<V: 'static> {
     fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>
     where
         Self: Element<V> + Sized,
@@ -1488,7 +1488,7 @@ trait ElementExt<V: View> {
 
 impl<V, E> ElementExt<V> for E
 where
-    V: View,
+    V: 'static,
     E: Element<V>,
 {
     fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>

@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_variables)]
 
 use frame::{length::auto, *};
-use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
+use gpui::{AnyElement, Element, LayoutContext, ViewContext};
 use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
 use themes::{rose_pine, ThemeColors};
 use tokens::{margin::m4, text::lg};
@@ -12,17 +12,17 @@ mod themes;
 mod tokens;
 
 #[derive(Element, Clone, Default)]
-pub struct Playground<V: View>(PhantomData<V>);
+pub struct Playground<V: 'static>(PhantomData<V>);
 
-impl<V: View> Frame<V> {}
+impl<V> Frame<V> {}
 
-impl<V: View> Playground<V> {
+impl<V> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
         workspace(&rose_pine::dawn())
     }
 }
 
-fn workspace<V: View>(theme: &ThemeColors) -> impl Element<V> {
+fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     column()
         .size(auto())
         .fill(theme.base(0.1))
@@ -31,24 +31,24 @@ fn workspace<V: View>(theme: &ThemeColors) -> impl Element<V> {
         .child(status_bar(theme))
 }
 
-fn title_bar<V: View>(theme: &ThemeColors) -> impl Element<V> {
+fn title_bar<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     row().fill(theme.surface(1.0))
 }
 
-fn stage<V: View>(theme: &ThemeColors) -> impl Element<V> {
+fn stage<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     row().fill(theme.surface(0.9))
 }
 
-fn status_bar<V: View>(theme: &ThemeColors) -> impl Element<V> {
+fn status_bar<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     row().fill(theme.surface(0.1))
 }
 
-pub trait DialogDelegate<V: View>: 'static {}
+pub trait DialogDelegate<V>: 'static {}
 
-impl<V: View> DialogDelegate<V> for () {}
+impl<V> DialogDelegate<V> for () {}
 
 #[derive(Element)]
-pub struct Dialog<V: View, D: DialogDelegate<V>> {
+pub struct Dialog<V: 'static, D: DialogDelegate<V>> {
     title: Cow<'static, str>,
     description: Cow<'static, str>,
     delegate: Option<Rc<RefCell<D>>>,
@@ -56,7 +56,7 @@ pub struct Dialog<V: View, D: DialogDelegate<V>> {
     view_type: PhantomData<V>,
 }
 
-pub fn dialog<V: View>(
+pub fn dialog<V>(
     title: impl Into<Cow<'static, str>>,
     description: impl Into<Cow<'static, str>>,
 ) -> Dialog<V, ()> {
@@ -69,7 +69,7 @@ pub fn dialog<V: View>(
     }
 }
 
-impl<V: View, D: DialogDelegate<V>> Dialog<V, D> {
+impl<V, D: DialogDelegate<V>> Dialog<V, D> {
     pub fn delegate(mut self, delegate: D) -> Dialog<V, D> {
         let old_delegate = self.delegate.replace(Rc::new(RefCell::new(delegate)));
         debug_assert!(old_delegate.is_none(), "delegate already set");
@@ -91,7 +91,7 @@ impl<V: View, D: DialogDelegate<V>> Dialog<V, D> {
 }
 
 #[derive(Element)]
-struct Button<V: View, D: 'static, H: ClickHandler<V, D>> {
+struct Button<V: 'static, D: 'static, H: ClickHandler<V, D>> {
     label: Cow<'static, str>,
     click_handler: Option<H>,
     data: Option<D>,
@@ -102,7 +102,7 @@ pub trait ClickHandler<V, D>: 'static {
     fn handle(&self, view: &mut V, data: &D, cx: &mut ViewContext<V>);
 }
 
-impl<V: View, M, F: 'static + Fn(&mut V, &M, &mut ViewContext<V>)> ClickHandler<V, M> for F {
+impl<V, M, F: 'static + Fn(&mut V, &M, &mut ViewContext<V>)> ClickHandler<V, M> for F {
     fn handle(&self, view: &mut V, data: &M, cx: &mut ViewContext<V>) {
         self(view, data, cx)
     }
@@ -112,10 +112,7 @@ impl<V, D> ClickHandler<V, D> for () {
     fn handle(&self, view: &mut V, data: &D, cx: &mut ViewContext<V>) {}
 }
 
-fn button<V>(label: impl Into<Cow<'static, str>>) -> Button<V, (), ()>
-where
-    V: View,
-{
+fn button<V>(label: impl Into<Cow<'static, str>>) -> Button<V, (), ()> {
     Button {
         label: label.into(),
         click_handler: None,
@@ -126,7 +123,6 @@ where
 
 impl<V, D, F> Button<V, D, F>
 where
-    V: View,
     F: ClickHandler<V, D>,
 {
     fn render(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> AnyElement<V> {
@@ -137,7 +133,7 @@ where
 
 // impl<V, D, F> Button<V, D, F>
 // where
-//     V: View,
+//     V,
 //     F: ClickHandler<V, D>,
 // {
 //     fn render(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> impl Element<V> {
@@ -154,7 +150,7 @@ where
 
 // impl<V> Tab<V>
 // where
-//     V: View,
+//     V,
 // {
 //     fn tab(&mut self, _: &mut V, _: &mut LayoutContext<V>) -> impl Element<V> {
 //         let theme = todo!();
@@ -165,7 +161,7 @@ where
 //     }
 // }
 
-impl<V: View> Button<V, (), ()> {
+impl<V> Button<V, (), ()> {
     fn data<D>(self, data: D) -> Button<V, D, ()>
     where
         D: 'static,
@@ -179,7 +175,7 @@ impl<V: View> Button<V, (), ()> {
     }
 }
 
-impl<V: View, D> Button<V, D, ()> {
+impl<V, D> Button<V, D, ()> {
     fn click<H>(self, handler: H) -> Button<V, D, H>
     where
         H: 'static + ClickHandler<V, D>,
@@ -193,7 +189,7 @@ impl<V: View, D> Button<V, D, ()> {
     }
 }
 
-impl<V: View, D: DialogDelegate<V>> Dialog<V, D> {
+impl<V, D: DialogDelegate<V>> Dialog<V, D> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> AnyElement<V> {
         column()
             .child(text(self.title.clone()).text_size(lg()))

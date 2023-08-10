@@ -6,7 +6,7 @@ use crate::{
     },
     json::{json, ToJson},
     scene, Border, Element, ImageData, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    View, ViewContext,
+    ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -57,7 +57,7 @@ impl Image {
     }
 }
 
-impl<V: View> Element<V> for Image {
+impl<V: 'static> Element<V> for Image {
     type LayoutState = Option<Arc<ImageData>>;
     type PaintState = ();
 

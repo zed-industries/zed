@@ -1,11 +1,11 @@
 use gpui::{AnyElement, Element, LayoutContext, View, ViewContext};
 
 #[derive(Element, Clone, Default)]
-pub struct Playground<V: View>(PhantomData<V>);
+pub struct Playground<V>(PhantomData<V>);
 
 // example layout design here: https://www.figma.com/file/5QLTmxjO0xQpDD3CD4hR6T/Untitled?type=design&node-id=0%3A1&mode=design&t=SoJieVVIvDDDKagv-1
 
-impl<V: View> Playground<V> {
+impl<V> Playground<V> {
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
         col() // fullscreen container with header and main in it
             .width(flex(1.))

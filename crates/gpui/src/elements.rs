@@ -43,7 +43,7 @@ use json::ToJson;
 use smallvec::SmallVec;
 use std::{any::Any, borrow::Cow, mem, ops::Range};
 
-pub trait Element<V: View>: 'static {
+pub trait Element<V: 'static>: 'static {
     type LayoutState;
     type PaintState;
 
@@ -232,7 +232,7 @@ trait AnyElementState<V> {
     fn metadata(&self) -> Option<&dyn Any>;
 }
 
-enum ElementState<V: View, E: Element<V>> {
+enum ElementState<V: 'static, E: Element<V>> {
     Empty,
     Init {
         element: E,
@@ -253,7 +253,7 @@ enum ElementState<V: View, E: Element<V>> {
     },
 }
 
-impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
+impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -427,18 +427,18 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
     }
 }
 
-impl<V: View, E: Element<V>> Default for ElementState<V, E> {
+impl<V, E: Element<V>> Default for ElementState<V, E> {
     fn default() -> Self {
         Self::Empty
     }
 }
 
-pub struct AnyElement<V: View> {
+pub struct AnyElement<V> {
     state: Box<dyn AnyElementState<V>>,
     name: Option<Cow<'static, str>>,
 }
 
-impl<V: View> AnyElement<V> {
+impl<V> AnyElement<V> {
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -506,7 +506,7 @@ impl<V: View> AnyElement<V> {
     }
 }
 
-impl<V: View> Element<V> for AnyElement<V> {
+impl<V: 'static> Element<V> for AnyElement<V> {
     type LayoutState = ();
     type PaintState = ();
 
@@ -564,12 +564,12 @@ impl<V: View> Element<V> for AnyElement<V> {
     }
 }
 
-pub struct RootElement<V: View> {
+pub struct RootElement<V> {
     element: AnyElement<V>,
     view: WeakViewHandle<V>,
 }
 
-impl<V: View> RootElement<V> {
+impl<V> RootElement<V> {
     pub fn new(element: AnyElement<V>, view: WeakViewHandle<V>) -> Self {
         Self { element, view }
     }
@@ -677,7 +677,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
     }
 }
 
-pub trait ParentElement<'a, V: View>: Extend<AnyElement<V>> + Sized {
+pub trait ParentElement<'a, V: 'static>: Extend<AnyElement<V>> + Sized {
     fn add_children<E: Element<V>>(&mut self, children: impl IntoIterator<Item = E>) {
         self.extend(children.into_iter().map(|child| child.into_any()));
     }
@@ -697,7 +697,12 @@ pub trait ParentElement<'a, V: View>: Extend<AnyElement<V>> + Sized {
     }
 }
 
-impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<AnyElement<V>> {}
+impl<'a, V, T> ParentElement<'a, V> for T
+where
+    V: 'static,
+    T: Extend<AnyElement<V>>,
+{
+}
 
 pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
     if max_size.x().is_infinite() && max_size.y().is_infinite() {

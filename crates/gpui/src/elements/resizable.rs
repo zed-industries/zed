@@ -8,7 +8,7 @@ use crate::{
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
     AnyElement, Axis, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder,
-    SizeConstraint, View, ViewContext,
+    SizeConstraint, ViewContext,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -69,7 +69,7 @@ impl HandleSide {
     }
 }
 
-pub struct Resizable<V: View> {
+pub struct Resizable<V> {
     child: AnyElement<V>,
     handle_side: HandleSide,
     handle_size: f32,
@@ -78,7 +78,7 @@ pub struct Resizable<V: View> {
 
 const DEFAULT_HANDLE_SIZE: f32 = 4.0;
 
-impl<V: View> Resizable<V> {
+impl<V: 'static> Resizable<V> {
     pub fn new(
         child: AnyElement<V>,
         handle_side: HandleSide,
@@ -105,7 +105,7 @@ impl<V: View> Resizable<V> {
     }
 }
 
-impl<V: View> Element<V> for Resizable<V> {
+impl<V: 'static> Element<V> for Resizable<V> {
     type LayoutState = SizeConstraint;
     type PaintState = ();
 

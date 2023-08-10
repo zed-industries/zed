@@ -281,7 +281,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = ast.ident;
 
-    let placeholder_view_generics: Generics = parse_quote! { <V: View> };
+    let placeholder_view_generics: Generics = parse_quote! { <V> };
     let placeholder_view_type_name: Ident = parse_quote! { V };
     let view_type_name: Ident;
     let impl_generics: syn::ImplGenerics<'_>;
