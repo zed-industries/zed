@@ -797,7 +797,6 @@ impl MultiBuffer {
         cx.spawn(|this, mut cx| async move {
             let (buffer_id, buffer_snapshot) =
                 buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
-            println!("got buffer snapshot and id");
 
             let mut excerpt_ranges = Vec::new();
             let mut range_counts = Vec::new();
@@ -811,20 +810,16 @@ impl MultiBuffer {
                     });
                 })
                 .await;
-            println!("built excerpt ranges");
 
             let mut ranges = ranges.into_iter();
             let mut range_counts = range_counts.into_iter();
             for excerpt_ranges in excerpt_ranges.chunks(100) {
-                dbg!();
                 let excerpt_ids = this.update(&mut cx, |this, cx| {
                     this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
                 });
-                dbg!();
 
                 for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
                 {
-                    dbg!();
                     for range in ranges.by_ref().take(range_count) {
                         let start = Anchor {
                             buffer_id: Some(buffer_id),
@@ -836,7 +831,6 @@ impl MultiBuffer {
                             excerpt_id: excerpt_id.clone(),
                             text_anchor: range.end,
                         };
-                        println!("sending");
                         if tx.send(start..end).await.is_err() {
                             break;
                         }

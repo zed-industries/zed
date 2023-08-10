@@ -161,9 +161,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-            dbg!("Waiting for santa to come through a chimney");
             let mut matches = search;
-            dbg!("Oh look, a gift");
             let this = this.upgrade(&cx)?;
             // let mut matches = matches.into_iter().collect::<Vec<_>>();
             this.update(&mut cx, |this, cx| {

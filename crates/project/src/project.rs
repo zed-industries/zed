@@ -2434,7 +2434,6 @@ impl Project {
                         }
 
                         for buffer in buffers_with_unknown_injections {
-                            dbg!("Reparsing on some thread");
                             buffer.update(cx, |buffer, cx| buffer.reparse(cx));
                         }
                     });
@@ -5097,9 +5096,7 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             let result_tx = result_tx.clone();
                             scope.spawn(async move {
-                                // println!("before loop 3: about to await on buffers_rx for the first time");
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    // println!("loop 3: background range querying");
                                     let buffer_matches = if query.file_matches(
                                         snapshot.file().map(|file| file.path().as_ref()),
                                     ) {
@@ -5196,7 +5193,6 @@ impl Project {
 
                                     if matches {
                                         let project_path = (snapshot.id(), entry.path.clone());
-                                        // println!("background worker: sending a matching path");
                                         if matching_paths_tx.send(project_path).await.is_err() {
                                             break;
                                         }
@@ -5305,9 +5301,7 @@ impl Project {
             }
 
             let open_buffers = Rc::new(RefCell::new(open_buffers));
-            // println!("foreground before loop 2: about the call await on matching_paths_rx for the first time");
             while let Some(project_path) = matching_paths_rx.next().await {
-                // println!("foreground loop 2: opening buffers");
                 if buffers_tx.is_closed() {
                     break;
                 }
@@ -5323,7 +5317,6 @@ impl Project {
                     {
                         if open_buffers.borrow_mut().insert(buffer.clone()) {
                             let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            // println!("foreground loop 2: sending buffer and snapshot");
                             buffers_tx.send((buffer, snapshot)).await?;
                         }
                     }
