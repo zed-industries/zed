@@ -4,7 +4,9 @@ mod panel_settings;
 
 use anyhow::Result;
 use call::ActiveCall;
-use client::{proto::PeerId, Channel, ChannelId, ChannelStore, Client, Contact, User, UserStore};
+use client::{
+    proto::PeerId, Channel, ChannelEvent, ChannelId, ChannelStore, Client, Contact, User, UserStore,
+};
 use contact_finder::build_contact_finder;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
@@ -105,8 +107,23 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
 
 #[derive(Debug)]
 pub enum ChannelEditingState {
-    Create { parent_id: Option<u64> },
-    Rename { channel_id: u64 },
+    Create {
+        parent_id: Option<u64>,
+        pending_name: Option<String>,
+    },
+    Rename {
+        channel_id: u64,
+        pending_name: Option<String>,
+    },
+}
+
+impl ChannelEditingState {
+    fn pending_name(&self) -> Option<&str> {
+        match self {
+            ChannelEditingState::Create { pending_name, .. } => pending_name.as_deref(),
+            ChannelEditingState::Rename { pending_name, .. } => pending_name.as_deref(),
+        }
+    }
 }
 
 pub struct CollabPanel {
@@ -211,7 +228,7 @@ impl CollabPanel {
                     if !query.is_empty() {
                         this.selection.take();
                     }
-                    this.update_entries(false, cx);
+                    this.update_entries(true, cx);
                     if !query.is_empty() {
                         this.selection = this
                             .entries
@@ -233,6 +250,11 @@ impl CollabPanel {
 
             cx.subscribe(&channel_name_editor, |this, _, event, cx| {
                 if let editor::Event::Blurred = event {
+                    if let Some(state) = &this.channel_editing_state {
+                        if state.pending_name().is_some() {
+                            return;
+                        }
+                    }
                     this.take_editing_state(cx);
                     this.update_entries(false, cx);
                     cx.notify();
@@ -391,17 +413,35 @@ impl CollabPanel {
             let active_call = ActiveCall::global(cx);
             this.subscriptions
                 .push(cx.observe(&this.user_store, |this, _, cx| {
-                    this.update_entries(false, cx)
+                    this.update_entries(true, cx)
                 }));
             this.subscriptions
                 .push(cx.observe(&this.channel_store, |this, _, cx| {
-                    this.update_entries(false, cx)
+                    this.update_entries(true, cx)
                 }));
             this.subscriptions
-                .push(cx.observe(&active_call, |this, _, cx| this.update_entries(false, cx)));
+                .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
             this.subscriptions.push(
-                cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(false, cx)),
+                cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(true, cx)),
             );
+            this.subscriptions.push(cx.subscribe(
+                &this.channel_store,
+                |this, _channel_store, e, cx| match e {
+                    ChannelEvent::ChannelCreated(channel_id)
+                    | ChannelEvent::ChannelRenamed(channel_id) => {
+                        if this.take_editing_state(cx) {
+                            this.update_entries(false, cx);
+                            this.selection = this.entries.iter().position(|entry| {
+                                if let ListEntry::Channel(channel) = entry {
+                                    channel.id == *channel_id
+                                } else {
+                                    false
+                                }
+                            });
+                        }
+                    }
+                },
+            ));
 
             this
         })
@@ -453,7 +493,7 @@ impl CollabPanel {
         );
     }
 
-    fn update_entries(&mut self, select_editor: bool, cx: &mut ViewContext<Self>) {
+    fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
@@ -595,7 +635,13 @@ impl CollabPanel {
                     executor.clone(),
                 ));
                 if let Some(state) = &self.channel_editing_state {
-                    if matches!(state, ChannelEditingState::Create { parent_id: None }) {
+                    if matches!(
+                        state,
+                        ChannelEditingState::Create {
+                            parent_id: None,
+                            ..
+                        }
+                    ) {
                         self.entries.push(ListEntry::ChannelEditor { depth: 0 });
                     }
                 }
@@ -603,7 +649,7 @@ impl CollabPanel {
                     let channel = &channels[mat.candidate_id];
 
                     match &self.channel_editing_state {
-                        Some(ChannelEditingState::Create { parent_id })
+                        Some(ChannelEditingState::Create { parent_id, .. })
                             if *parent_id == Some(channel.id) =>
                         {
                             self.entries.push(ListEntry::Channel(channel.clone()));
@@ -611,11 +657,11 @@ impl CollabPanel {
                                 depth: channel.depth + 1,
                             });
                         }
-                        Some(ChannelEditingState::Rename { channel_id })
+                        Some(ChannelEditingState::Rename { channel_id, .. })
                             if *channel_id == channel.id =>
                         {
                             self.entries.push(ListEntry::ChannelEditor {
-                                depth: channel.depth + 1,
+                                depth: channel.depth,
                             });
                         }
                         _ => {
@@ -775,14 +821,7 @@ impl CollabPanel {
             }
         }
 
-        if select_editor {
-            for (ix, entry) in self.entries.iter().enumerate() {
-                if matches!(*entry, ListEntry::ChannelEditor { .. }) {
-                    self.selection = Some(ix);
-                    break;
-                }
-            }
-        } else {
+        if select_same_item {
             if let Some(prev_selected_entry) = prev_selected_entry {
                 self.selection.take();
                 for (ix, entry) in self.entries.iter().enumerate() {
@@ -792,6 +831,14 @@ impl CollabPanel {
                     }
                 }
             }
+        } else {
+            self.selection = self.selection.and_then(|prev_selection| {
+                if self.entries.is_empty() {
+                    None
+                } else {
+                    Some(prev_selection.min(self.entries.len() - 1))
+                }
+            });
         }
 
         let old_scroll_top = self.list_state.logical_scroll_top();
@@ -1088,18 +1135,14 @@ impl CollabPanel {
         .into_any()
     }
 
-    fn take_editing_state(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(ChannelEditingState, String)> {
-        if let Some(state) = self.channel_editing_state.take() {
+    fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(_) = self.channel_editing_state.take() {
             self.channel_name_editor.update(cx, |editor, cx| {
-                let name = editor.text(cx);
                 editor.set_text("", cx);
-                Some((state, name))
-            })
+            });
+            true
         } else {
-            None
+            false
         }
     }
 
@@ -1367,22 +1410,43 @@ impl CollabPanel {
                     .left(),
             )
             .with_child(
-                ChildView::new(&self.channel_name_editor, cx)
+                if let Some(pending_name) = self
+                    .channel_editing_state
+                    .as_ref()
+                    .and_then(|state| state.pending_name())
+                {
+                    Label::new(
+                        pending_name.to_string(),
+                        theme.collab_panel.contact_username.text.clone(),
+                    )
                     .contained()
-                    .with_style(theme.collab_panel.channel_editor)
-                    .flex(1.0, true),
+                    .with_style(theme.collab_panel.contact_username.container)
+                    .aligned()
+                    .left()
+                    .flex(1., true)
+                    .into_any()
+                } else {
+                    ChildView::new(&self.channel_name_editor, cx)
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(theme.collab_panel.channel_editor)
+                        .flex(1.0, true)
+                        .into_any()
+                },
             )
             .align_children_center()
+            .constrained()
+            .with_height(theme.collab_panel.row_height)
             .contained()
+            .with_style(gpui::elements::ContainerStyle {
+                background_color: Some(theme.editor.background),
+                ..*theme.collab_panel.contact_row.default_style()
+            })
             .with_padding_left(
                 theme.collab_panel.contact_row.default_style().padding.left
                     + theme.collab_panel.channel_indent * depth as f32,
             )
-            .contained()
-            .with_style(gpui::elements::ContainerStyle {
-                background_color: Some(theme.editor.background),
-                ..Default::default()
-            })
             .into_any()
     }
 
@@ -1684,7 +1748,7 @@ impl CollabPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.take_editing_state(cx).is_some() {
+        if self.take_editing_state(cx) {
             cx.focus(&self.filter_editor);
         } else {
             self.filter_editor.update(cx, |editor, cx| {
@@ -1785,29 +1849,47 @@ impl CollabPanel {
         }
     }
 
-    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<'_, '_, CollabPanel>) -> bool {
-        if let Some((editing_state, channel_name)) = self.take_editing_state(cx) {
+    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<CollabPanel>) -> bool {
+        if let Some(editing_state) = &mut self.channel_editing_state {
             match editing_state {
-                ChannelEditingState::Create { parent_id } => {
-                    let request = self.channel_store.update(cx, |channel_store, _| {
-                        channel_store.create_channel(&channel_name, parent_id)
-                    });
-                    cx.foreground()
-                        .spawn(async move {
-                            request.await?;
-                            anyhow::Ok(())
-                        })
-                        .detach();
-                }
-                ChannelEditingState::Rename { channel_id } => {
+                ChannelEditingState::Create {
+                    parent_id,
+                    pending_name,
+                    ..
+                } => {
+                    if pending_name.is_some() {
+                        return false;
+                    }
+                    let channel_name = self.channel_name_editor.read(cx).text(cx);
+
+                    *pending_name = Some(channel_name.clone());
+
                     self.channel_store
                         .update(cx, |channel_store, cx| {
-                            channel_store.rename(channel_id, &channel_name, cx)
+                            channel_store.create_channel(&channel_name, *parent_id, cx)
                         })
                         .detach();
+                    cx.notify();
+                }
+                ChannelEditingState::Rename {
+                    channel_id,
+                    pending_name,
+                } => {
+                    if pending_name.is_some() {
+                        return false;
+                    }
+                    let channel_name = self.channel_name_editor.read(cx).text(cx);
+                    *pending_name = Some(channel_name.clone());
+
+                    self.channel_store
+                        .update(cx, |channel_store, cx| {
+                            channel_store.rename(*channel_id, &channel_name, cx)
+                        })
+                        .detach();
+                    cx.notify();
                 }
             }
-            self.update_entries(false, cx);
+            cx.focus_self();
             true
         } else {
             false
@@ -1844,17 +1926,30 @@ impl CollabPanel {
     }
 
     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
-        self.channel_editing_state = Some(ChannelEditingState::Create { parent_id: None });
-        self.update_entries(true, cx);
+        self.channel_editing_state = Some(ChannelEditingState::Create {
+            parent_id: None,
+            pending_name: None,
+        });
+        self.update_entries(false, cx);
+        self.select_channel_editor();
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
+    }
+
+    fn select_channel_editor(&mut self) {
+        self.selection = self.entries.iter().position(|entry| match entry {
+            ListEntry::ChannelEditor { .. } => true,
+            _ => false,
+        });
     }
 
     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
         self.channel_editing_state = Some(ChannelEditingState::Create {
             parent_id: Some(action.channel_id),
+            pending_name: None,
         });
-        self.update_entries(true, cx);
+        self.update_entries(false, cx);
+        self.select_channel_editor();
         cx.focus(self.channel_name_editor.as_any());
         cx.notify();
     }
@@ -1887,19 +1982,22 @@ impl CollabPanel {
     }
 
     fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
-        if let Some(channel) = self
-            .channel_store
-            .read(cx)
-            .channel_for_id(action.channel_id)
-        {
+        let channel_store = self.channel_store.read(cx);
+        if !channel_store.is_user_admin(action.channel_id) {
+            return;
+        }
+        if let Some(channel) = channel_store.channel_for_id(action.channel_id) {
             self.channel_editing_state = Some(ChannelEditingState::Rename {
                 channel_id: action.channel_id,
+                pending_name: None,
             });
             self.channel_name_editor.update(cx, |editor, cx| {
                 editor.set_text(channel.name.clone(), cx);
                 editor.select_all(&Default::default(), cx);
             });
-            self.update_entries(true, cx);
+            cx.focus(self.channel_name_editor.as_any());
+            self.update_entries(false, cx);
+            self.select_channel_editor();
         }
     }
 
@@ -2069,8 +2167,12 @@ impl View for CollabPanel {
         if !self.has_focus {
             self.has_focus = true;
             if !self.context_menu.is_focused(cx) {
-                if self.channel_editing_state.is_some() {
-                    cx.focus(&self.channel_name_editor);
+                if let Some(editing_state) = &self.channel_editing_state {
+                    if editing_state.pending_name().is_none() {
+                        cx.focus(&self.channel_name_editor);
+                    } else {
+                        cx.focus(&self.filter_editor);
+                    }
                 } else {
                     cx.focus(&self.filter_editor);
                 }

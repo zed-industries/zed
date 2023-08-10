@@ -131,17 +131,17 @@ message Envelope {
         RefreshInlayHints refresh_inlay_hints = 118;
 
         CreateChannel create_channel = 119;
-        CreateChannelResponse create_channel_response = 120;
+        ChannelResponse channel_response = 120;
         InviteChannelMember invite_channel_member = 121;
         RemoveChannelMember remove_channel_member = 122;
         RespondToChannelInvite respond_to_channel_invite = 123;
         UpdateChannels update_channels = 124;
-        JoinChannel join_channel = 126;
-        RemoveChannel remove_channel = 127;
-        GetChannelMembers get_channel_members = 128;
-        GetChannelMembersResponse get_channel_members_response = 129;
-        SetChannelMemberAdmin set_channel_member_admin = 130;
-        RenameChannel rename_channel = 131;
+        JoinChannel join_channel = 125;
+        RemoveChannel remove_channel = 126;
+        GetChannelMembers get_channel_members = 127;
+        GetChannelMembersResponse get_channel_members_response = 128;
+        SetChannelMemberAdmin set_channel_member_admin = 129;
+        RenameChannel rename_channel = 130;
     }
 }
 
@@ -921,8 +921,8 @@ message CreateChannel {
     optional uint64 parent_id = 2;
 }
 
-message CreateChannelResponse {
-    uint64 channel_id = 1;
+message ChannelResponse {
+    Channel channel = 1;
 }
 
 message InviteChannelMember {

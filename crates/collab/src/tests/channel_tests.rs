@@ -21,15 +21,15 @@ async fn test_core_channels(
 
     let channel_a_id = client_a
         .channel_store()
-        .update(cx_a, |channel_store, _| {
-            channel_store.create_channel("channel-a", None)
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-a", None, cx)
         })
         .await
         .unwrap();
     let channel_b_id = client_a
         .channel_store()
-        .update(cx_a, |channel_store, _| {
-            channel_store.create_channel("channel-b", Some(channel_a_id))
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-b", Some(channel_a_id), cx)
         })
         .await
         .unwrap();
@@ -150,8 +150,8 @@ async fn test_core_channels(
 
     let channel_c_id = client_a
         .channel_store()
-        .update(cx_a, |channel_store, _| {
-            channel_store.create_channel("channel-c", Some(channel_b_id))
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-c", Some(channel_b_id), cx)
         })
         .await
         .unwrap();
@@ -351,8 +351,8 @@ async fn test_joining_channel_ancestor_member(
 
     let sub_id = client_a
         .channel_store()
-        .update(cx_a, |channel_store, _| {
-            channel_store.create_channel("sub_channel", Some(parent_id))
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("sub_channel", Some(parent_id), cx)
         })
         .await
         .unwrap();

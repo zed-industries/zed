@@ -278,8 +278,8 @@ impl TestServer {
         let channel_id = admin_client
             .app_state
             .channel_store
-            .update(admin_cx, |channel_store, _| {
-                channel_store.create_channel(channel, None)
+            .update(admin_cx, |channel_store, cx| {
+                channel_store.create_channel(channel, None, cx)
             })
             .await
             .unwrap();

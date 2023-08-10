@@ -39,8 +39,13 @@ pub struct ChannelMembership {
     pub admin: bool,
 }
 
+pub enum ChannelEvent {
+    ChannelCreated(ChannelId),
+    ChannelRenamed(ChannelId),
+}
+
 impl Entity for ChannelStore {
-    type Event = ();
+    type Event = ChannelEvent;
 }
 
 pub enum ChannelMemberStatus {
@@ -127,15 +132,37 @@ impl ChannelStore {
         &self,
         name: &str,
         parent_id: Option<ChannelId>,
-    ) -> impl Future<Output = Result<ChannelId>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
         let name = name.trim_start_matches("#").to_owned();
-        async move {
-            Ok(client
+        cx.spawn(|this, mut cx| async move {
+            let channel = client
                 .request(proto::CreateChannel { name, parent_id })
                 .await?
-                .channel_id)
-        }
+                .channel
+                .ok_or_else(|| anyhow!("missing channel in response"))?;
+
+            let channel_id = channel.id;
+
+            this.update(&mut cx, |this, cx| {
+                this.update_channels(
+                    proto::UpdateChannels {
+                        channels: vec![channel],
+                        ..Default::default()
+                    },
+                    cx,
+                );
+
+                // This event is emitted because the collab panel wants to clear the pending edit state
+                // before this frame is rendered. But we can't guarantee that the collab panel's future
+                // will resolve before this flush_effects finishes. Synchronously emitting this event
+                // ensures that the collab panel will observe this creation before the frame completes
+                cx.emit(ChannelEvent::ChannelCreated(channel_id));
+            });
+
+            Ok(channel_id)
+        })
     }
 
     pub fn invite_member(
@@ -240,10 +267,27 @@ impl ChannelStore {
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let name = new_name.to_string();
-        cx.spawn(|_this, _cx| async move {
-            client
+        cx.spawn(|this, mut cx| async move {
+            let channel = client
                 .request(proto::RenameChannel { channel_id, name })
-                .await?;
+                .await?
+                .channel
+                .ok_or_else(|| anyhow!("missing channel in response"))?;
+            this.update(&mut cx, |this, cx| {
+                this.update_channels(
+                    proto::UpdateChannels {
+                        channels: vec![channel],
+                        ..Default::default()
+                    },
+                    cx,
+                );
+
+                // This event is emitted because the collab panel wants to clear the pending edit state
+                // before this frame is rendered. But we can't guarantee that the collab panel's future
+                // will resolve before this flush_effects finishes. Synchronously emitting this event
+                // ensures that the collab panel will observe this creation before the frame complete
+                cx.emit(ChannelEvent::ChannelRenamed(channel_id))
+            });
             Ok(())
         })
     }

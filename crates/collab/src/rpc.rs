@@ -2146,16 +2146,18 @@ async fn create_channel(
         .create_channel(&request.name, parent_id, &live_kit_room, session.user_id)
         .await?;
 
-    response.send(proto::CreateChannelResponse {
-        channel_id: id.to_proto(),
-    })?;
-
-    let mut update = proto::UpdateChannels::default();
-    update.channels.push(proto::Channel {
+    let channel = proto::Channel {
         id: id.to_proto(),
         name: request.name,
         parent_id: request.parent_id,
-    });
+    };
+
+    response.send(proto::ChannelResponse {
+        channel: Some(channel.clone()),
+    })?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(channel);
 
     let user_ids_to_notify = if let Some(parent_id) = parent_id {
         db.get_channel_members(parent_id).await?
@@ -2317,14 +2319,16 @@ async fn rename_channel(
         .rename_channel(channel_id, session.user_id, &request.name)
         .await?;
 
-    response.send(proto::Ack {})?;
-
-    let mut update = proto::UpdateChannels::default();
-    update.channels.push(proto::Channel {
+    let channel = proto::Channel {
         id: request.channel_id,
         name: new_name,
         parent_id: None,
-    });
+    };
+    response.send(proto::ChannelResponse {
+        channel: Some(channel.clone()),
+    })?;
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(channel);
 
     let member_ids = db.get_channel_members(channel_id).await?;
 
