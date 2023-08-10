@@ -37,7 +37,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>) {
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };

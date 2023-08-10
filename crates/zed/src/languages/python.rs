@@ -20,11 +20,11 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct PythonLspAdapter {
-    node: Arc<NodeRuntime>,
+    node: Arc<dyn NodeRuntime>,
 }
 
 impl PythonLspAdapter {
-    pub fn new(node: Arc<NodeRuntime>) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         PythonLspAdapter { node }
     }
 }
@@ -57,7 +57,7 @@ impl LspAdapter for PythonLspAdapter {
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages(&container_dir, [("pyright", version.as_str())])
+                .npm_install_packages(&container_dir, &[("pyright", version.as_str())])
                 .await?;
         }
 
@@ -72,14 +72,14 @@ impl LspAdapter for PythonLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn process_completion(&self, item: &mut lsp::CompletionItem) {
@@ -162,7 +162,7 @@ impl LspAdapter for PythonLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last_version_dir = None;
