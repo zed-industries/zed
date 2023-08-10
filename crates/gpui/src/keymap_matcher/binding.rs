@@ -88,8 +88,12 @@ impl Binding {
         action: &dyn Action,
         contexts: &[KeymapContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
-        if self.action.eq(action) && self.match_context(contexts) {
-            Some(self.keystrokes.clone())
+        if self.action.eq(action) {
+            if self.match_context(contexts) {
+                Some(self.keystrokes.clone())
+            } else {
+                None
+            }
         } else {
             None
         }

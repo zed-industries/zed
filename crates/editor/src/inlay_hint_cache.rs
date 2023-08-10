@@ -24,7 +24,7 @@ pub struct InlayHintCache {
     hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
-    enabled: bool,
+    pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
 }
 

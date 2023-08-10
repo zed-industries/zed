@@ -2,7 +2,7 @@ use editor::Editor;
 use gpui::{
     elements::{Empty, Flex, MouseEventHandler, ParentElement, Svg},
     platform::{CursorStyle, MouseButton},
-    Action, AnyElement, Element, Entity, EventContext, View, ViewContext, ViewHandle,
+    Action, AnyElement, Element, Entity, EventContext, Subscription, View, ViewContext, ViewHandle,
 };
 
 use search::{buffer_search, BufferSearchBar};
@@ -11,6 +11,7 @@ use workspace::{item::ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 pub struct QuickActionBar {
     pane: ViewHandle<Pane>,
     active_item: Option<Box<dyn ItemHandle>>,
+    _inlays_enabled_subscription: Option<Subscription>,
 }
 
 impl QuickActionBar {
@@ -18,6 +19,7 @@ impl QuickActionBar {
         Self {
             pane,
             active_item: None,
+            _inlays_enabled_subscription: None,
         }
     }
 
@@ -76,7 +78,6 @@ impl View for QuickActionBar {
                 search_bar_shown,
                 (
                     "Buffer search".to_string(),
-                    // TODO kb no keybinding is shown for search + toggle inlays does not update icon color
                     Some(Box::new(search_action.clone())),
                 ),
                 cx,
@@ -143,11 +144,25 @@ impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        _: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         match active_pane_item {
             Some(active_item) => {
                 self.active_item = Some(active_item.boxed_clone());
+                self._inlays_enabled_subscription.take();
+
+                if let Some(editor) = active_item.downcast::<Editor>() {
+                    let mut inlays_enabled = editor.read(cx).inlays_enabled();
+                    self._inlays_enabled_subscription =
+                        Some(cx.observe(&editor, move |_, editor, cx| {
+                            let new_inlays_enabled = editor.read(cx).inlays_enabled();
+                            if inlays_enabled != new_inlays_enabled {
+                                inlays_enabled = new_inlays_enabled;
+                                cx.notify();
+                            }
+                        }));
+                }
+
                 ToolbarItemLocation::PrimaryRight { flex: None }
             }
             None => {
