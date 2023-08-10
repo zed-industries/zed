@@ -367,6 +367,9 @@ impl ToolbarItemView for BufferSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
+    fn row_count(&self, _: &ViewContext<Self>) -> usize {
+        3
+    }
 }
 
 impl BufferSearchBar {
