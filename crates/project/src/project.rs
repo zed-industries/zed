@@ -37,11 +37,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
-    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, OffsetRangeExt,
-    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -57,7 +57,7 @@ use serde::Serialize;
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
-use smol::channel::Sender;
+use smol::channel::{Receiver, Sender};
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
@@ -5067,7 +5067,7 @@ impl Project {
             return Task::ready(Ok(Default::default()));
         }
         let workers = background.num_cpus().min(path_count);
-        let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
         cx.background()
             .spawn(Self::background_search(
                 cx.background().clone(),
@@ -5080,47 +5080,7 @@ impl Project {
             ))
             .detach();
 
-        let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-        let open_buffers = self
-            .opened_buffers
-            .values()
-            .filter_map(|b| b.upgrade(cx))
-            .collect::<HashSet<_>>();
-        cx.spawn(|this, cx| async move {
-            for buffer in &open_buffers {
-                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                buffers_tx.send((buffer.clone(), snapshot)).await?;
-            }
-
-            let open_buffers = Rc::new(RefCell::new(open_buffers));
-            while let Some(project_path) = matching_paths_rx.next().await {
-                if buffers_tx.is_closed() {
-                    break;
-                }
-
-                let this = this.clone();
-                let open_buffers = open_buffers.clone();
-                let buffers_tx = buffers_tx.clone();
-                cx.spawn(|mut cx| async move {
-                    if let Some(buffer) = this
-                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                        .await
-                        .log_err()
-                    {
-                        if open_buffers.borrow_mut().insert(buffer.clone()) {
-                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            buffers_tx.send((buffer, snapshot)).await?;
-                        }
-                    }
-
-                    Ok::<_, anyhow::Error>(())
-                })
-                .detach();
-            }
-
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+        let buffers_rx = self.read_open_buffers_yeet(matching_paths_rx, cx);
 
         let background = cx.background().clone();
         cx.background().spawn(async move {
@@ -5316,6 +5276,57 @@ impl Project {
             });
         }
         Task::ready(Ok(Default::default()))
+    }
+
+    fn read_open_buffers_yeet(
+        &self,
+        mut matching_paths_rx: Receiver<(WorktreeId, Arc<Path>)>,
+        cx: &mut ModelContext<Self>,
+    ) -> Receiver<(ModelHandle<Buffer>, BufferSnapshot)> {
+        let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
+        let open_buffers = self
+            .opened_buffers
+            .values()
+            .filter_map(|b| b.upgrade(cx))
+            .collect::<HashSet<_>>();
+
+        cx.spawn(|this, cx| async move {
+            for buffer in &open_buffers {
+                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                buffers_tx.send((buffer.clone(), snapshot)).await?;
+            }
+
+            let open_buffers = Rc::new(RefCell::new(open_buffers));
+            while let Some(project_path) = matching_paths_rx.next().await {
+                if buffers_tx.is_closed() {
+                    break;
+                }
+
+                let this = this.clone();
+                let open_buffers = open_buffers.clone();
+                let buffers_tx = buffers_tx.clone();
+                cx.spawn(|mut cx| async move {
+                    if let Some(buffer) = this
+                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                        .await
+                        .log_err()
+                    {
+                        if open_buffers.borrow_mut().insert(buffer.clone()) {
+                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                            buffers_tx.send((buffer, snapshot)).await?;
+                        }
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                })
+                .detach();
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+
+        buffers_rx
     }
 
     pub fn find_or_create_local_worktree(
