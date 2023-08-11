@@ -47,22 +47,30 @@ export default function search(): any {
                     background: background(theme.highest, "on"),
                     corner_radius: 2,
                     margin: { right: 2 },
-                    border: { width: 0, color: foreground(theme.highest, "variant") },
+                    border: {
+                        width: 1., color: background(theme.highest, "on")
+                    },
                     padding: {
-                        bottom: 6,
-                        left: 6,
-                        right: 6,
-                        top: 6,
+                        bottom: 4,
+                        left: 4,
+                        right: 4,
+                        top: 4,
                     },
                 },
                 state: {
                     hovered: {
                         ...text(theme.highest, "mono", "on", "hovered"),
                         background: background(theme.highest, "on", "hovered"),
+                        border: {
+                            width: 1., color: background(theme.highest, "on", "hovered")
+                        },
                     },
                     clicked: {
                         ...text(theme.highest, "mono", "on", "pressed"),
                         background: background(theme.highest, "on", "pressed"),
+                        border: {
+                            width: 1., color: background(theme.highest, "on", "pressed")
+                        },
                     },
                 },
             }),
@@ -186,8 +194,8 @@ export default function search(): any {
         mode_button: toggleable({
             base: interactive({
                 base: {
-                    ...text(theme.highest, "mono", "on"),
-                    background: background(theme.highest, "on"),
+                    ...text(theme.highest, "mono", "variant"),
+                    background: background(theme.highest, "variant"),
 
                     border: {
                         ...border(theme.highest, "on"),
@@ -205,13 +213,13 @@ export default function search(): any {
                 },
                 state: {
                     hovered: {
-                        ...text(theme.highest, "mono", "on", "hovered"),
-                        background: background(theme.highest, "on", "hovered"),
+                        ...text(theme.highest, "mono", "variant", "hovered"),
+                        background: background(theme.highest, "variant", "hovered"),
                         border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "on", "pressed"),
-                        background: background(theme.highest, "on", "pressed"),
+                        ...text(theme.highest, "mono", "variant", "pressed"),
+                        background: background(theme.highest, "variant", "pressed"),
                         border: border(theme.highest, "on", "pressed"),
                     },
                 },
@@ -219,13 +227,16 @@ export default function search(): any {
             state: {
                 active: {
                     default: {
-                        ...text(theme.highest, "mono", "accent"),
+                        ...text(theme.highest, "mono", "on"),
+                        background: background(theme.highest, "on")
                     },
                     hovered: {
-                        ...text(theme.highest, "mono", "accent", "hovered"),
+                        ...text(theme.highest, "mono", "on", "hovered"),
+                        background: background(theme.highest, "on", "hovered")
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "accent", "pressed"),
+                        ...text(theme.highest, "mono", "on", "pressed"),
+                        background: background(theme.highest, "on", "pressed")
                     },
                 },
             },

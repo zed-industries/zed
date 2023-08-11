@@ -223,6 +223,7 @@ pub(crate) fn render_option_button_icon<V: View>(
             .contained()
             .with_style(style.container)
             .constrained()
+            .with_height(22.)
     })
     .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)
