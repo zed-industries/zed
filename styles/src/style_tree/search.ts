@@ -34,7 +34,7 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 32, bottom: 32, left: 32, right: 32 },
+        padding: { top: 16, bottom: 16, left: 16, right: 16 },
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
         match_background: with_opacity(
             foreground(theme.highest, "accent"),

@@ -1693,7 +1693,7 @@ impl ToolbarItemView for ProjectSearchBar {
             .as_ref()
             .map(|search| {
                 let offset = search.read(cx).filters_enabled as usize;
-                3 + offset
+                2 + offset
             })
             .unwrap_or_else(|| 2)
     }
