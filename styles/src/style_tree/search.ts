@@ -22,7 +22,7 @@ export default function search(): any {
         padding: {
             top: 4,
             bottom: 4,
-            left: 4,
+            left: 10,
             right: 4,
         },
     }
