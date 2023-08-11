@@ -37,7 +37,12 @@ impl Lerp for Range<Hsla> {
 
 impl From<gpui::color::Color> for Rgba {
     fn from(value: gpui::color::Color) -> Self {
-        todo!()
+        Self {
+            r: value.0.r as f32 / 255.0,
+            g: value.0.g as f32 / 255.0,
+            b: value.0.b as f32 / 255.0,
+            a: value.0.a as f32 / 255.0,
+        }
     }
 }
 
@@ -196,6 +201,12 @@ impl Hsla {
 impl From<gpui::color::Color> for Hsla {
     fn from(value: gpui::color::Color) -> Self {
         Rgba::from(value).into()
+    }
+}
+
+impl Into<gpui::color::Color> for Hsla {
+    fn into(self) -> gpui::color::Color {
+        Rgba::from(self).into()
     }
 }
 

@@ -5291,6 +5291,7 @@ checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 name = "playground"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "derive_more",
  "gpui",
  "log",
@@ -5298,6 +5299,7 @@ dependencies = [
  "serde",
  "simplelog",
  "smallvec",
+ "util",
 ]
 
 [[package]]

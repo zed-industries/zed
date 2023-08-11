@@ -4,7 +4,7 @@ use derive_more::{Add, Deref, DerefMut};
 use gpui::{
     color::Color,
     elements::layout_highlighted_chunks,
-    fonts::HighlightStyle,
+    fonts::{HighlightStyle, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -20,6 +20,7 @@ use length::{Length, Rems};
 use log::warn;
 use optional_struct::*;
 use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
+use util::ResultExt;
 
 use crate::color::{Hsla, Rgba};
 
@@ -77,17 +78,26 @@ impl<V: 'static> Element<V> for Frame<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
+        let mut pushed_text_style = false;
         if self.style.text.is_some() {
             let mut style = TextStyle::from_legacy(&cx.text_style(), cx);
             self.style.text.clone().apply_to(&mut style);
-            cx.push_text_style(style.to_legacy());
+            if let Some(legacy_style) = style.to_legacy(cx).log_err() {
+                cx.push_text_style(legacy_style);
+                pushed_text_style = true;
+            }
         }
 
         let layout = if let Some(axis) = self.style.axis.to_2d() {
             self.layout_xy(axis, constraint, cx.rem_pixels(), view, cx)
         } else {
-            todo!()
+            unimplemented!()
         };
+
+        if pushed_text_style {
+            cx.pop_text_style();
+        }
+
         (layout.size.max(constraint.min), layout)
     }
 
@@ -183,7 +193,7 @@ impl<V: 'static> Element<V> for Frame<V> {
                     child_origin.set(axis, child_origin.get(axis) + child.size().get(axis));
                 }
             } else {
-                todo!();
+                unimplemented!();
             }
         }
     }
@@ -623,6 +633,8 @@ struct TextStyle {
     weight: FontWeight,
     style: FontStyle,
     color: Hsla,
+    soft_wrap: bool,
+    underline: Underline,
 }
 
 impl TextStyle {
@@ -633,10 +645,12 @@ impl TextStyle {
             weight: text_style.font_properties.weight.into(),
             style: text_style.font_properties.style.into(),
             color: text_style.color.into(),
+            soft_wrap: text_style.soft_wrap,
+            underline: text_style.underline,
         }
     }
 
-    fn to_legacy(&self, cx: &WindowContext) -> Result<gpui::fonts::TextStyle> {
+    fn to_legacy(&self, cx: &WindowContext) -> anyhow::Result<gpui::fonts::TextStyle> {
         let font_family_id = cx.font_cache().load_family(
             &[self.font_family.as_ref()],
             &gpui::fonts::Features::default(),
@@ -648,17 +662,17 @@ impl TextStyle {
         };
         let font_id = cx
             .font_cache()
-            .select_font(font_family_id, &font_properties);
+            .select_font(font_family_id, &font_properties)?;
 
         Ok(gpui::fonts::TextStyle {
             color: self.color.into(),
             font_family_name: self.font_family.clone(),
             font_family_id,
             font_id,
-            font_size: todo!(),
+            font_size: self.size.to_pixels(16.), // TODO: Get this from the context!
             font_properties,
-            underline: todo!(),
-            soft_wrap: true,
+            underline: self.underline,
+            soft_wrap: self.soft_wrap,
         })
     }
 }
@@ -666,10 +680,10 @@ impl TextStyle {
 impl OptionalTextStyle {
     pub fn is_some(&self) -> bool {
         self.size.is_some()
-            && self.font_family.is_some()
-            && self.weight.is_some()
-            && self.style.is_some()
-            && self.color.is_some()
+            || self.font_family.is_some()
+            || self.weight.is_some()
+            || self.style.is_some()
+            || self.color.is_some()
     }
 }
 
@@ -1211,6 +1225,18 @@ impl From<gpui::fonts::Style> for FontStyle {
     }
 }
 
+impl Into<gpui::fonts::Style> for FontStyle {
+    fn into(self) -> gpui::fonts::Style {
+        use gpui::fonts::Style;
+
+        match self {
+            FontStyle::Normal => Style::Normal,
+            FontStyle::Italic => Style::Italic,
+            FontStyle::Oblique => Style::Oblique,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 enum FontWeight {
     Thin,
@@ -1229,16 +1255,44 @@ impl From<gpui::fonts::Weight> for FontWeight {
     fn from(value: gpui::fonts::Weight) -> Self {
         use gpui::fonts::Weight;
 
-        match value {
-            Weight::THIN => FontWeight::Thin,
-            Weight::EXTRA_LIGHT => FontWeight::ExtraLight,
-            Weight::LIGHT => FontWeight::Light,
-            Weight::NORMAL => FontWeight::Normal,
-            Weight::MEDIUM => FontWeight::Medium,
-            Weight::SEMIBOLD => FontWeight::Semibold,
-            Weight::BOLD => FontWeight::Bold,
-            Weight::EXTRA_BOLD => FontWeight::ExtraBold,
-            Weight::BLACK => FontWeight::Black,
+        if value == Weight::THIN {
+            FontWeight::Thin
+        } else if value == Weight::EXTRA_LIGHT {
+            FontWeight::ExtraLight
+        } else if value == Weight::LIGHT {
+            FontWeight::Light
+        } else if value == Weight::NORMAL {
+            FontWeight::Normal
+        } else if value == Weight::MEDIUM {
+            FontWeight::Medium
+        } else if value == Weight::SEMIBOLD {
+            FontWeight::Semibold
+        } else if value == Weight::BOLD {
+            FontWeight::Bold
+        } else if value == Weight::EXTRA_BOLD {
+            FontWeight::ExtraBold
+        } else if value == Weight::BLACK {
+            FontWeight::Black
+        } else {
+            panic!("unknown font weight: {:?}", value);
+        }
+    }
+}
+
+impl Into<gpui::fonts::Weight> for FontWeight {
+    fn into(self) -> gpui::fonts::Weight {
+        use gpui::fonts::Weight;
+
+        match self {
+            FontWeight::Thin => Weight::THIN,
+            FontWeight::ExtraLight => Weight::EXTRA_LIGHT,
+            FontWeight::Light => Weight::LIGHT,
+            FontWeight::Normal => Weight::NORMAL,
+            FontWeight::Medium => Weight::MEDIUM,
+            FontWeight::Semibold => Weight::SEMIBOLD,
+            FontWeight::Bold => Weight::BOLD,
+            FontWeight::ExtraBold => Weight::EXTRA_BOLD,
+            FontWeight::Black => Weight::BLACK,
         }
     }
 }
@@ -1333,7 +1387,7 @@ impl<V: 'static> Element<V> for Text {
         let mut wrap_boundaries = Vec::new();
         let mut wrapper = cx.font_cache.line_wrapper(font_id, style.font_size);
         for (line, shaped_line) in self.text.split('\n').zip(&shaped_lines) {
-            if style.soft_wrap {
+            if style.soft_wrap && constraint.max.x() > 0. {
                 let boundaries = wrapper
                     .wrap_shaped_line(line, shaped_line, constraint.max.x())
                     .collect::<Vec<_>>();
@@ -1346,13 +1400,8 @@ impl<V: 'static> Element<V> for Text {
         }
 
         let line_height = cx.font_cache.line_height(style.font_size);
-        let size = vec2f(
-            max_line_width
-                .ceil()
-                .max(constraint.min.x())
-                .min(constraint.max.x()),
-            (line_height * line_count as f32).ceil(),
-        );
+        let size = vec2f(max_line_width, (line_height * line_count as f32).ceil());
+
         (
             size,
             TextLayout {
