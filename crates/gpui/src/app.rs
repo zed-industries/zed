@@ -3440,14 +3440,22 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
             .unwrap_or(Arc::new(TextStyle::default(&self.font_cache)))
     }
 
+    pub fn push_text_style<S: Into<Arc<TextStyle>>>(&mut self, style: S) {
+        self.text_style_stack.push(style.into());
+    }
+
+    pub fn pop_text_style(&mut self) {
+        self.text_style_stack.pop();
+    }
+
     pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
     where
         S: Into<Arc<TextStyle>>,
         F: FnOnce(&mut Self) -> T,
     {
-        self.text_style_stack.push(style.into());
+        self.push_text_style(style);
         let result = f(self);
-        self.text_style_stack.pop();
+        self.pop_text_style();
         result
     }
 }

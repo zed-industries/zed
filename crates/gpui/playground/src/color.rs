@@ -35,6 +35,12 @@ impl Lerp for Range<Hsla> {
     }
 }
 
+impl From<gpui::color::Color> for Rgba {
+    fn from(value: gpui::color::Color) -> Self {
+        todo!()
+    }
+}
+
 impl From<Hsla> for Rgba {
     fn from(color: Hsla) -> Self {
         let h = color.h;
@@ -88,7 +94,7 @@ impl Into<gpui::color::Color> for Rgba {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Hsla {
     pub h: f32,
     pub s: f32,
@@ -97,7 +103,12 @@ pub struct Hsla {
 }
 
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
-    Hsla { h, s, l, a }
+    Hsla {
+        h: h.clamp(0., 1.),
+        s: s.clamp(0., 1.),
+        l: l.clamp(0., 1.),
+        a: a.clamp(0., 1.),
+    }
 }
 
 impl From<Rgba> for Hsla {
@@ -179,6 +190,12 @@ impl Hsla {
         self.l -= amount;
         self.l = self.l.clamp(0.0, 1.0);
         self
+    }
+}
+
+impl From<gpui::color::Color> for Hsla {
+    fn from(value: gpui::color::Color) -> Self {
+        Rgba::from(value).into()
     }
 }
 

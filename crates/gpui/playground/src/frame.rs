@@ -1,10 +1,9 @@
 #![allow(unused_variables, dead_code)]
 
 use derive_more::{Add, Deref, DerefMut};
-use gpui::elements::layout_highlighted_chunks;
-use gpui::Entity;
 use gpui::{
     color::Color,
+    elements::layout_highlighted_chunks,
     fonts::HighlightStyle,
     geometry::{
         rect::RectF,
@@ -14,15 +13,17 @@ use gpui::{
     scene,
     serde_json::Value,
     text_layout::{Line, ShapedBoundary},
-    AnyElement, AppContext, Element, LayoutContext, PaintContext, Quad, SceneBuilder,
-    SizeConstraint, View, ViewContext,
+    AnyElement, AppContext, Element, Entity, LayoutContext, PaintContext, Quad, SceneBuilder,
+    SizeConstraint, View, ViewContext, WindowContext,
 };
 use length::{Length, Rems};
 use log::warn;
 use optional_struct::*;
 use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
 
-use crate::color::Rgba;
+use crate::color::{Hsla, Rgba};
+
+use self::length::rems;
 
 pub struct Frame<V> {
     style: FrameStyle,
@@ -76,6 +77,12 @@ impl<V: 'static> Element<V> for Frame<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
+        if self.style.text.is_some() {
+            let mut style = TextStyle::from_legacy(&cx.text_style(), cx);
+            self.style.text.clone().apply_to(&mut style);
+            cx.push_text_style(style.to_legacy());
+        }
+
         let layout = if let Some(axis) = self.style.axis.to_2d() {
             self.layout_xy(axis, constraint, cx.rem_pixels(), view, cx)
         } else {
@@ -263,6 +270,11 @@ impl<V: 'static> Frame<V> {
         self
     }
 
+    pub fn text_color(mut self, color: Hsla) -> Self {
+        self.style.text.color = Some(color);
+        self
+    }
+
     pub fn margins(mut self, margins: impl Into<Edges<Length>>) -> Self {
         self.style.margins = margins.into();
         self
@@ -327,6 +339,8 @@ impl<V: 'static> Frame<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> FrameLayout {
+        self.style.text.is_some();
+
         let cross_axis = primary_axis.rotate();
         let total_flex = self.style.flex();
         let mut layout = FrameLayout {
@@ -608,7 +622,66 @@ struct TextStyle {
     font_family: Arc<str>,
     weight: FontWeight,
     style: FontStyle,
+    color: Hsla,
 }
+
+impl TextStyle {
+    fn from_legacy(text_style: &gpui::fonts::TextStyle, _cx: &WindowContext) -> Self {
+        Self {
+            size: rems(text_style.font_size / 16.), // TODO: Get this from the context!
+            font_family: text_style.font_family_name.clone(),
+            weight: text_style.font_properties.weight.into(),
+            style: text_style.font_properties.style.into(),
+            color: text_style.color.into(),
+        }
+    }
+
+    fn to_legacy(&self, cx: &WindowContext) -> Result<gpui::fonts::TextStyle> {
+        let font_family_id = cx.font_cache().load_family(
+            &[self.font_family.as_ref()],
+            &gpui::fonts::Features::default(),
+        )?;
+        let font_properties = gpui::fonts::Properties {
+            style: self.style.into(),
+            weight: self.weight.into(),
+            stretch: Default::default(),
+        };
+        let font_id = cx
+            .font_cache()
+            .select_font(font_family_id, &font_properties);
+
+        Ok(gpui::fonts::TextStyle {
+            color: self.color.into(),
+            font_family_name: self.font_family.clone(),
+            font_family_id,
+            font_id,
+            font_size: todo!(),
+            font_properties,
+            underline: todo!(),
+            soft_wrap: true,
+        })
+    }
+}
+
+impl OptionalTextStyle {
+    pub fn is_some(&self) -> bool {
+        self.size.is_some()
+            && self.font_family.is_some()
+            && self.weight.is_some()
+            && self.style.is_some()
+            && self.color.is_some()
+    }
+}
+
+// pub color: Color,
+// pub font_family_name: Arc<str>,
+// pub font_family_id: FamilyId,
+// pub font_id: FontId,
+// pub font_size: f32,
+// #[schemars(with = "PropertiesDef")]
+// pub font_properties: Properties,
+// pub underline: Underline,
+// pub soft_wrap: bool,
 
 #[derive(Add, Default, Clone)]
 pub struct Size<T> {
@@ -1126,6 +1199,18 @@ enum FontStyle {
     Oblique,
 }
 
+impl From<gpui::fonts::Style> for FontStyle {
+    fn from(value: gpui::fonts::Style) -> Self {
+        use gpui::fonts::Style;
+
+        match value {
+            Style::Normal => FontStyle::Normal,
+            Style::Italic => FontStyle::Italic,
+            Style::Oblique => FontStyle::Oblique,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 enum FontWeight {
     Thin,
@@ -1138,6 +1223,24 @@ enum FontWeight {
     Bold,
     ExtraBold,
     Black,
+}
+
+impl From<gpui::fonts::Weight> for FontWeight {
+    fn from(value: gpui::fonts::Weight) -> Self {
+        use gpui::fonts::Weight;
+
+        match value {
+            Weight::THIN => FontWeight::Thin,
+            Weight::EXTRA_LIGHT => FontWeight::ExtraLight,
+            Weight::LIGHT => FontWeight::Light,
+            Weight::NORMAL => FontWeight::Normal,
+            Weight::MEDIUM => FontWeight::Medium,
+            Weight::SEMIBOLD => FontWeight::Semibold,
+            Weight::BOLD => FontWeight::Bold,
+            Weight::EXTRA_BOLD => FontWeight::ExtraBold,
+            Weight::BLACK => FontWeight::Black,
+        }
+    }
 }
 
 #[derive(Default)]

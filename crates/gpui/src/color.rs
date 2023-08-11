@@ -15,7 +15,7 @@ use serde_json::json;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 #[repr(transparent)]
-pub struct Color(#[schemars(with = "String")] ColorU);
+pub struct Color(#[schemars(with = "String")] pub ColorU);
 
 pub fn color(rgba: u32) -> Color {
     Color::from_u32(rgba)

@@ -8,11 +8,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-playground_ui = { path = "ui" }
-
+derive_more.workspace = true
 gpui = { path = ".." }
 log.workspace = true
+optional_struct = "0.3.1"
+serde.workspace = true
 simplelog = "0.9"
+smallvec.workspace = true
 
 [dev-dependencies]
 gpui = { path = "..", features = ["test-support"] }
