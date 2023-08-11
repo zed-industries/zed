@@ -163,7 +163,7 @@ pub(crate) fn render_search_mode_button<V: View>(
                         .contained()
                         .constrained()
                         .with_max_width(side_width)
-                        .with_height(32.),
+                        .with_height(theme.search.search_bar_row_height),
                     )
                     .with_child(label)
                     .into_any()
@@ -183,7 +183,7 @@ pub(crate) fn render_search_mode_button<V: View>(
                         .contained()
                         .constrained()
                         .with_max_width(side_width)
-                        .with_height(32.),
+                        .with_height(theme.search.search_bar_row_height),
                     )
                     .into_any()
             }

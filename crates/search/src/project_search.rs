@@ -1592,7 +1592,8 @@ impl View for ProjectSearchBar {
                                 .top()
                                 .left(),
                         )
-                        .contained()
+                        .constrained()
+                        .with_max_height(theme.search.search_bar_row_height)
                         .flex(1., true),
                 )
                 .with_child(
@@ -1609,6 +1610,7 @@ impl View for ProjectSearchBar {
                                         .constrained()
                                         .with_min_width(theme.search.editor.min_width)
                                         .with_max_width(theme.search.editor.max_width)
+                                        .with_max_height(theme.search.search_bar_row_height)
                                         .flex(1., false),
                                 )
                                 .contained()

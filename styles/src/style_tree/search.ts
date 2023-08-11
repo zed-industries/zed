@@ -272,6 +272,7 @@ export default function search(): any {
                 },
             },
         }),
+        search_bar_row_height: 32,
 
     }
 }
