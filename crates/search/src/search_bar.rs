@@ -79,6 +79,7 @@ pub(super) fn render_nav_button<V: View>(
                             .container
                             .background_color
                             .unwrap_or_else(gpui::color::Color::transparent_black),
+                        button_side_width,
                     )
                     .with_border(style.container.border.width, style.container.border.color)
                     .contained()
@@ -97,6 +98,7 @@ pub(super) fn render_nav_button<V: View>(
                             .container
                             .background_color
                             .unwrap_or_else(gpui::color::Color::transparent_black),
+                        button_side_width,
                     )
                     .with_border(style.container.border.width, style.container.border.color)
                     .contained()
@@ -155,11 +157,13 @@ pub(crate) fn render_search_mode_button<V: View>(
                                 .container
                                 .background_color
                                 .unwrap_or_else(gpui::color::Color::transparent_black),
+                            side_width,
                         )
                         .with_border(style.container.border.width, style.container.border.color)
                         .contained()
                         .constrained()
-                        .with_max_width(side_width),
+                        .with_max_width(side_width)
+                        .with_height(32.),
                     )
                     .with_child(label)
                     .into_any()
@@ -173,11 +177,13 @@ pub(crate) fn render_search_mode_button<V: View>(
                                 .container
                                 .background_color
                                 .unwrap_or_else(gpui::color::Color::transparent_black),
+                            side_width,
                         )
                         .with_border(style.container.border.width, style.container.border.color)
                         .contained()
                         .constrained()
-                        .with_max_width(side_width),
+                        .with_max_width(side_width)
+                        .with_height(32.),
                     )
                     .into_any()
             }

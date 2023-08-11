@@ -196,10 +196,10 @@ export default function search(): any {
                     },
 
                     padding: {
-                        bottom: 6,
+                        bottom: 4,
                         left: 10,
                         right: 10,
-                        top: 6,
+                        top: 5,
                     },
                     corner_radius: 6,
                 },

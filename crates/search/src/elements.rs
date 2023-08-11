@@ -7,7 +7,7 @@ use gpui::json::{self, ToJson};
 use gpui::{scene::Path, LayoutContext};
 use gpui::{Element, PaintContext, SceneBuilder, View, ViewContext};
 
-type CreatePath = fn(RectF, Color) -> Path;
+type CreatePath = fn(RectF, Color, f32) -> Path;
 type AdjustBorder = fn(RectF, f32) -> RectF;
 type BorderThickness = f32;
 
@@ -18,26 +18,43 @@ pub(crate) struct ButtonSide {
     /// the drawing bounds have to be adjusted by different factors in different dimensions.
     border_adjustment: AdjustBorder,
     border: Option<(BorderThickness, Color)>,
+    radius: f32,
 }
 
 impl ButtonSide {
-    fn new(color: Color, factory: CreatePath, border_adjustment: AdjustBorder) -> Self {
+    fn new(
+        color: Color,
+        factory: CreatePath,
+        border_adjustment: AdjustBorder,
+        radius: f32,
+    ) -> Self {
         Self {
             color,
             factory,
             border_adjustment,
             border: None,
+            radius,
         }
     }
     pub fn with_border(mut self, width: f32, color: Color) -> Self {
         self.border = Some((width, color));
         self
     }
-    pub fn left(color: Color) -> Self {
-        Self::new(color, left_button_side, left_button_border_adjust)
+    pub fn left(color: Color, corner_radius: f32) -> Self {
+        Self::new(
+            color,
+            left_button_side,
+            left_button_border_adjust,
+            corner_radius,
+        )
     }
-    pub fn right(color: Color) -> Self {
-        Self::new(color, right_button_side, right_button_border_adjust)
+    pub fn right(color: Color, corner_radius: f32) -> Self {
+        Self::new(
+            color,
+            right_button_side,
+            right_button_border_adjust,
+            corner_radius,
+        )
     }
 }
 
@@ -53,13 +70,13 @@ fn right_button_border_adjust(bounds: RectF, width: f32) -> RectF {
     origin.set_x(origin.x() - width.x());
     RectF::from_points(origin, bounds.lower_right() - width)
 }
-fn left_button_side(bounds: RectF, color: Color) -> Path {
+fn left_button_side(bounds: RectF, color: Color, radius: f32) -> Path {
     use gpui::geometry::PathBuilder;
     let mut path = PathBuilder::new();
     path.reset(bounds.lower_right());
     path.line_to(bounds.upper_right());
     let mut middle_point = bounds.origin();
-    let distance_to_line = (middle_point.y() - bounds.lower_left().y()) / 4.;
+    let distance_to_line = (middle_point.y() - bounds.lower_left().y()).min(-radius.abs());
     middle_point.set_y(middle_point.y() - distance_to_line);
     path.curve_to(middle_point, bounds.origin());
     let mut target = bounds.lower_left();
@@ -69,13 +86,13 @@ fn left_button_side(bounds: RectF, color: Color) -> Path {
     path.build(color, None)
 }
 
-fn right_button_side(bounds: RectF, color: Color) -> Path {
+fn right_button_side(bounds: RectF, color: Color, radius: f32) -> Path {
     use gpui::geometry::PathBuilder;
     let mut path = PathBuilder::new();
     path.reset(bounds.lower_left());
     path.line_to(bounds.origin());
     let mut middle_point = bounds.upper_right();
-    let distance_to_line = (middle_point.y() - bounds.lower_right().y()) / 4.;
+    let distance_to_line = (middle_point.y() - bounds.lower_right().y()).min(-radius.abs());
     middle_point.set_y(middle_point.y() - distance_to_line);
     path.curve_to(middle_point, bounds.upper_right());
     let mut target = bounds.lower_right();
@@ -110,10 +127,10 @@ impl<V: View> Element<V> for ButtonSide {
     ) -> Self::PaintState {
         let mut bounds = bounds;
         if let Some((border_width, border_color)) = self.border.as_ref() {
-            scene.push_path((self.factory)(bounds, border_color.clone()));
+            scene.push_path((self.factory)(bounds, border_color.clone(), self.radius));
             bounds = (self.border_adjustment)(bounds, *border_width);
         };
-        scene.push_path((self.factory)(bounds, self.color));
+        scene.push_path((self.factory)(bounds, self.color, self.radius));
     }
 
     fn rect_for_text_range(
