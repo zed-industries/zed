@@ -5,8 +5,6 @@ pub mod only_instance;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-mod quick_action_bar;
-
 use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
