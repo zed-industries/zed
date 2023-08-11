@@ -48,6 +48,9 @@ use workspace::{
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
 
+const GPT_3_5_TURBO_0613: &'static str = "gpt-3.5-turbo-0613";
+const GPT_4_0613: &'static str = "gpt-4-0613";
+
 actions!(
     assistant,
     [
@@ -850,7 +853,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let model = "gpt-3.5-turbo-0613";
+        let model = GPT_3_5_TURBO_0613;
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
@@ -2021,8 +2024,8 @@ impl ConversationEditor {
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             let new_model = match conversation.model.as_str() {
-                "gpt-4-0613" => "gpt-3.5-turbo-0613",
-                _ => "gpt-4-0613",
+                GPT_4_0613 => GPT_3_5_TURBO_0613,
+                _ => GPT_4_0613,
             };
             conversation.set_model(new_model.into(), cx);
         });
@@ -2046,7 +2049,13 @@ impl ConversationEditor {
 
         MouseEventHandler::<Model, _>::new(0, cx, |state, cx| {
             let style = style.model.style_for(state);
-            Label::new(self.conversation.read(cx).model.clone(), style.text.clone())
+            let model = self.conversation.read(cx).model.as_ref();
+            let model_display_name = match model {
+                GPT_3_5_TURBO_0613 => "gpt-3.5-turbo",
+                GPT_4_0613 => "gpt-4",
+                _ => panic!("Invalid model name: {}", model),
+            };
+            Label::new(model_display_name, style.text.clone())
                 .contained()
                 .with_style(style.container)
         })
