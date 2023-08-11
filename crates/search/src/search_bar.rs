@@ -139,7 +139,7 @@ pub(crate) fn render_search_mode_button<V: View>(
             .clone();
         let side_width = style.container.corner_radius;
         style.container.corner_radius = 0.;
-        if let Some(button_side) = mode.button_side() {
+        if mode.button_side().is_some() {
             style.container.border.left = mode.border_left();
             style.container.border.right = mode.border_right();
         }
