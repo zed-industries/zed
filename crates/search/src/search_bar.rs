@@ -65,6 +65,7 @@ pub(super) fn render_nav_button<V: View>(
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme.search.nav_button.style_for(state).clone();
+        let button_side_width = style.container.corner_radius;
         style.container.corner_radius = 0.;
         let label = Label::new(icon, style.label.clone())
             .contained()
@@ -82,7 +83,7 @@ pub(super) fn render_nav_button<V: View>(
                     .with_border(style.container.border.width, style.container.border.color)
                     .contained()
                     .constrained()
-                    .with_max_width(theme.search.mode_filling_width),
+                    .with_max_width(button_side_width),
                 )
                 .with_child(label)
                 .constrained()
@@ -100,7 +101,7 @@ pub(super) fn render_nav_button<V: View>(
                     .with_border(style.container.border.width, style.container.border.color)
                     .contained()
                     .constrained()
-                    .with_max_width(theme.search.mode_filling_width),
+                    .with_max_width(button_side_width),
                 )
                 .constrained()
                 .with_height(theme.workspace.toolbar.height),
@@ -134,7 +135,8 @@ pub(crate) fn render_search_mode_button<V: View>(
             .in_state(is_active)
             .style_for(state)
             .clone();
-
+        let side_width = style.container.corner_radius;
+        style.container.corner_radius = 0.;
         let label = Label::new(mode.label(), style.text.clone())
             .contained()
             .with_style(style.container);
@@ -156,7 +158,7 @@ pub(crate) fn render_search_mode_button<V: View>(
                         .with_border(style.container.border.width, style.container.border.color)
                         .contained()
                         .constrained()
-                        .with_max_width(theme.search.mode_filling_width),
+                        .with_max_width(side_width),
                     )
                     .with_child(label)
                     .into_any()
@@ -174,7 +176,7 @@ pub(crate) fn render_search_mode_button<V: View>(
                         .with_border(style.container.border.width, style.container.border.color)
                         .contained()
                         .constrained()
-                        .with_max_width(theme.search.mode_filling_width),
+                        .with_max_width(side_width),
                     )
                     .into_any()
             }

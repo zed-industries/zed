@@ -201,7 +201,7 @@ export default function search(): any {
                         right: 10,
                         top: 6,
                     },
-                    corner_radius: 2,
+                    corner_radius: 6,
                 },
                 state: {
                     hovered: {
@@ -230,12 +230,11 @@ export default function search(): any {
                 },
             },
         }),
-        mode_filling_width: 4.0,
         nav_button: interactive({
             base: {
                 text: text(theme.highest, "mono", "on"),
                 background: background(theme.highest, "on"),
-                corner_radius: 2,
+                corner_radius: 6,
                 border: {
                     ...border(theme.highest, "on"),
                     left: false,
