@@ -11,7 +11,7 @@ use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 pub struct QuickActionBar {
     buffer_search_bar: ViewHandle<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
-    _inlays_enabled_subscription: Option<Subscription>,
+    _inlay_hints_enabled_subscription: Option<Subscription>,
 }
 
 impl QuickActionBar {
@@ -19,7 +19,7 @@ impl QuickActionBar {
         Self {
             buffer_search_bar,
             active_item: None,
-            _inlays_enabled_subscription: None,
+            _inlay_hints_enabled_subscription: None,
         }
     }
 
@@ -42,17 +42,20 @@ impl View for QuickActionBar {
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
         let Some(editor) = self.active_editor() else { return Empty::new().into_any(); };
 
-        let inlays_enabled = editor.read(cx).inlays_enabled();
+        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
         let mut bar = Flex::row().with_child(render_quick_action_bar_button(
             0,
             "icons/hamburger_15.svg",
-            inlays_enabled,
-            ("Inlays".to_string(), Some(Box::new(editor::ToggleInlays))),
+            inlay_hints_enabled,
+            (
+                "Inlay hints".to_string(),
+                Some(Box::new(editor::ToggleInlayHints)),
+            ),
             cx,
             |this, cx| {
                 if let Some(editor) = this.active_editor() {
                     editor.update(cx, |editor, cx| {
-                        editor.toggle_inlays(&editor::ToggleInlays, cx);
+                        editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
                     });
                 }
             },
@@ -135,15 +138,15 @@ impl ToolbarItemView for QuickActionBar {
         match active_pane_item {
             Some(active_item) => {
                 self.active_item = Some(active_item.boxed_clone());
-                self._inlays_enabled_subscription.take();
+                self._inlay_hints_enabled_subscription.take();
 
                 if let Some(editor) = active_item.downcast::<Editor>() {
-                    let mut inlays_enabled = editor.read(cx).inlays_enabled();
-                    self._inlays_enabled_subscription =
+                    let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                    self._inlay_hints_enabled_subscription =
                         Some(cx.observe(&editor, move |_, editor, cx| {
-                            let new_inlays_enabled = editor.read(cx).inlays_enabled();
-                            if inlays_enabled != new_inlays_enabled {
-                                inlays_enabled = new_inlays_enabled;
+                            let new_inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                            if inlay_hints_enabled != new_inlay_hints_enabled {
+                                inlay_hints_enabled = new_inlay_hints_enabled;
                                 cx.notify();
                             }
                         }));

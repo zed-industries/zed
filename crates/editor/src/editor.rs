@@ -302,7 +302,7 @@ actions!(
         Hover,
         Format,
         ToggleSoftWrap,
-        ToggleInlays,
+        ToggleInlayHints,
         RevealInFinder,
         CopyPath,
         CopyRelativePath,
@@ -447,7 +447,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::toggle_soft_wrap);
-    cx.add_action(Editor::toggle_inlays);
+    cx.add_action(Editor::toggle_inlay_hints);
     cx.add_action(Editor::reveal_in_finder);
     cx.add_action(Editor::copy_path);
     cx.add_action(Editor::copy_relative_path);
@@ -1239,7 +1239,7 @@ enum GotoDefinitionKind {
 }
 
 #[derive(Debug, Clone)]
-enum InlayRefreshReason {
+enum InlayHintRefreshReason {
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
@@ -1357,8 +1357,8 @@ impl Editor {
                     }));
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
-                    if let project::Event::RefreshInlays = event {
-                        editor.refresh_inlays(InlayRefreshReason::RefreshRequested, cx);
+                    if let project::Event::RefreshInlayHints = event {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                     };
                 }));
             }
@@ -2672,24 +2672,24 @@ impl Editor {
         }
     }
 
-    pub fn toggle_inlays(&mut self, _: &ToggleInlays, cx: &mut ViewContext<Self>) {
-        self.refresh_inlays(
-            InlayRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
+    pub fn toggle_inlay_hints(&mut self, _: &ToggleInlayHints, cx: &mut ViewContext<Self>) {
+        self.refresh_inlay_hints(
+            InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
             cx,
         );
     }
 
-    pub fn inlays_enabled(&self) -> bool {
+    pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
     }
 
-    fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
+    fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
         if self.project.is_none() || self.mode != EditorMode::Full {
             return;
         }
 
         let (invalidate_cache, required_languages) = match reason {
-            InlayRefreshReason::Toggle(enabled) => {
+            InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
                 if enabled {
                     (InvalidationStrategy::RefreshRequested, None)
@@ -2706,7 +2706,7 @@ impl Editor {
                     return;
                 }
             }
-            InlayRefreshReason::SettingsChange(new_settings) => {
+            InlayHintRefreshReason::SettingsChange(new_settings) => {
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
@@ -2724,11 +2724,13 @@ impl Editor {
                     ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
                 }
             }
-            InlayRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
-            InlayRefreshReason::BufferEdited(buffer_languages) => {
+            InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+            InlayHintRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
-            InlayRefreshReason::RefreshRequested => (InvalidationStrategy::RefreshRequested, None),
+            InlayHintRefreshReason::RefreshRequested => {
+                (InvalidationStrategy::RefreshRequested, None)
+            }
         };
 
         if let Some(InlaySplice {
@@ -7728,8 +7730,8 @@ impl Editor {
                         .cloned()
                         .collect::<HashSet<_>>();
                     if !languages_affected.is_empty() {
-                        self.refresh_inlays(
-                            InlayRefreshReason::BufferEdited(languages_affected),
+                        self.refresh_inlay_hints(
+                            InlayHintRefreshReason::BufferEdited(languages_affected),
                             cx,
                         );
                     }
@@ -7767,8 +7769,8 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(true, cx);
-        self.refresh_inlays(
-            InlayRefreshReason::SettingsChange(inlay_hint_settings(
+        self.refresh_inlay_hints(
+            InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
                 &self.buffer.read(cx).snapshot(cx),
                 cx,

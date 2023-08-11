@@ -2684,7 +2684,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
     }
 
     #[gpui::test]
-    async fn test_toggle_inlays(cx: &mut gpui::TestAppContext) {
+    async fn test_toggle_inlay_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
@@ -2697,7 +2697,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
 
         editor.update(cx, |editor, cx| {
-            editor.toggle_inlays(&crate::ToggleInlays, cx)
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
         });
         cx.foreground().start_waiting();
         let lsp_request_count = Arc::new(AtomicU32::new(0));
@@ -2743,7 +2743,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         });
 
         editor.update(cx, |editor, cx| {
-            editor.toggle_inlays(&crate::ToggleInlays, cx)
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
@@ -2776,7 +2776,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         });
 
         editor.update(cx, |editor, cx| {
-            editor.toggle_inlays(&crate::ToggleInlays, cx)
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
@@ -2789,7 +2789,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         });
 
         editor.update(cx, |editor, cx| {
-            editor.toggle_inlays(&crate::ToggleInlays, cx)
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
