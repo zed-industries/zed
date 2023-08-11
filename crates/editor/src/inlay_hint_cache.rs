@@ -193,29 +193,21 @@ impl InlayHintCache {
 
         let mut invalidated_hints = Vec::new();
         if invalidate.should_invalidate() {
-            let mut changed = false;
-            self.update_tasks.retain(|task_excerpt_id, _| {
-                let retain = excerpts_to_query.contains_key(task_excerpt_id);
-                changed |= !retain;
-                retain
-            });
+            self.update_tasks
+                .retain(|task_excerpt_id, _| excerpts_to_query.contains_key(task_excerpt_id));
             self.hints.retain(|cached_excerpt, cached_hints| {
                 let retain = excerpts_to_query.contains_key(cached_excerpt);
-                changed |= !retain;
                 if !retain {
                     invalidated_hints.extend(cached_hints.read().hints.iter().map(|&(id, _)| id));
                 }
                 retain
             });
-            if changed {
-                self.version += 1;
-            }
         }
         if excerpts_to_query.is_empty() && invalidated_hints.is_empty() {
             return None;
         }
 
-        let cache_version = self.version;
+        let cache_version = self.version + 1;
         cx.spawn(|editor, mut cx| async move {
             editor
                 .update(&mut cx, |editor, cx| {
@@ -475,7 +467,7 @@ fn determine_query_range(
 
 fn new_update_task(
     query: ExcerptQuery,
-    hints_fetch_ranges: Vec<Range<language::Anchor>>,
+    hint_fetch_ranges: Vec<Range<language::Anchor>>,
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
@@ -484,7 +476,7 @@ fn new_update_task(
 ) -> Task<()> {
     cx.spawn(|editor, cx| async move {
         let task_update_results =
-            futures::future::join_all(hints_fetch_ranges.into_iter().map(|range| {
+            futures::future::join_all(hint_fetch_ranges.into_iter().map(|range| {
                 fetch_and_update_hints(
                     editor.clone(),
                     multi_buffer_snapshot.clone(),
@@ -515,7 +507,7 @@ async fn fetch_and_update_hints(
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
     mut cx: gpui::AsyncAppContext,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<()> {
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
             editor
@@ -531,8 +523,7 @@ async fn fetch_and_update_hints(
         })
         .ok()
         .flatten();
-    let mut update_happened = false;
-    let Some(inlay_hints_fetch_task) = inlay_hints_fetch_task else { return Ok(update_happened) };
+    let Some(inlay_hints_fetch_task) = inlay_hints_fetch_task else { return Ok(()) };
     let new_hints = inlay_hints_fetch_task
         .await
         .context("inlay hint fetch task")?;
@@ -555,10 +546,6 @@ async fn fetch_and_update_hints(
     editor
         .update(&mut cx, |editor, cx| {
             if let Some(new_update) = new_update {
-                update_happened = !new_update.add_to_cache.is_empty()
-                    || !new_update.remove_from_cache.is_empty()
-                    || !new_update.remove_from_visible.is_empty();
-
                 let cached_excerpt_hints = editor
                     .inlay_hint_cache
                     .hints
@@ -578,43 +565,51 @@ async fn fetch_and_update_hints(
                         cached_excerpt_hints.version = query.cache_version;
                     }
                 }
+
+                let mut cached_inlays_changed = !new_update.remove_from_cache.is_empty();
                 cached_excerpt_hints
                     .hints
                     .retain(|(hint_id, _)| !new_update.remove_from_cache.contains(hint_id));
-                cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
-                editor.inlay_hint_cache.version += 1;
-
                 let mut splice = InlaySplice {
                     to_remove: new_update.remove_from_visible,
                     to_insert: Vec::new(),
                 };
-
                 for new_hint in new_update.add_to_cache {
-                    let new_hint_position = multi_buffer_snapshot
-                        .anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                    let new_inlay_id = post_inc(&mut editor.next_inlay_id);
-                    if editor
-                        .inlay_hint_cache
-                        .allowed_hint_kinds
-                        .contains(&new_hint.kind)
-                    {
-                        splice.to_insert.push(Inlay::hint(
-                            new_inlay_id,
-                            new_hint_position,
-                            &new_hint,
-                        ));
+                    let cached_hints = &mut cached_excerpt_hints.hints;
+                    let insert_position = match cached_hints.binary_search_by(|probe| {
+                        probe.1.position.cmp(&new_hint.position, &buffer_snapshot)
+                    }) {
+                        Ok(i) => {
+                            if cached_hints[i].1.text() == new_hint.text() {
+                                None
+                            } else {
+                                Some(i)
+                            }
+                        }
+                        Err(i) => Some(i),
+                    };
+
+                    if let Some(insert_position) = insert_position {
+                        let new_inlay_id = post_inc(&mut editor.next_inlay_id);
+                        if editor
+                            .inlay_hint_cache
+                            .allowed_hint_kinds
+                            .contains(&new_hint.kind)
+                        {
+                            let new_hint_position = multi_buffer_snapshot
+                                .anchor_in_excerpt(query.excerpt_id, new_hint.position);
+                            splice.to_insert.push(Inlay::hint(
+                                new_inlay_id,
+                                new_hint_position,
+                                &new_hint,
+                            ));
+                        }
+                        cached_hints
+                            .insert(insert_position, (InlayId::Hint(new_inlay_id), new_hint));
+                        cached_inlays_changed = true;
                     }
-
-                    cached_excerpt_hints
-                        .hints
-                        .push((InlayId::Hint(new_inlay_id), new_hint));
                 }
-
-                cached_excerpt_hints
-                    .hints
-                    .sort_by(|(_, hint_a), (_, hint_b)| {
-                        hint_a.position.cmp(&hint_b.position, &buffer_snapshot)
-                    });
+                cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
                 drop(cached_excerpt_hints);
 
                 if query.invalidate.should_invalidate() {
@@ -633,6 +628,7 @@ async fn fetch_and_update_hints(
                                 .extend(excerpt_hints.hints.iter().map(|(id, _)| id));
                         }
                     }
+                    cached_inlays_changed |= !outdated_excerpt_caches.is_empty();
                     editor
                         .inlay_hint_cache
                         .hints
@@ -643,14 +639,18 @@ async fn fetch_and_update_hints(
                     to_remove,
                     to_insert,
                 } = splice;
-                if !to_remove.is_empty() || !to_insert.is_empty() {
+                let displayed_inlays_changed = !to_remove.is_empty() || !to_insert.is_empty();
+                if cached_inlays_changed || displayed_inlays_changed {
+                    editor.inlay_hint_cache.version += 1;
+                }
+                if displayed_inlays_changed {
                     editor.splice_inlay_hints(to_remove, to_insert, cx)
                 }
             }
         })
         .ok();
 
-    Ok(update_happened)
+    Ok(())
 }
 
 fn calculate_hint_updates(
@@ -2093,7 +2093,7 @@ mod tests {
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
-                // TODO kb find the range needed
+                // TODO kb find the range needed. Is it due to the hint not fitting any excerpt subranges?
                 // "main hint #4".to_string(),
                 "main hint #5".to_string(),
                 "other hint #0".to_string(),
@@ -2176,8 +2176,6 @@ mod tests {
                 "main hint(edited) #1".to_string(),
                 "main hint(edited) #2".to_string(),
                 "main hint(edited) #3".to_string(),
-                // TODO kb why?
-                "main hint(edited) #3".to_string(),
                 "main hint(edited) #4".to_string(),
                 "main hint(edited) #5".to_string(),
                 "other hint(edited) #0".to_string(),
@@ -2192,8 +2190,8 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                last_scroll_update_version + expected_layers.len() + 1,
-                "Due to every excerpt having one hint, cache should update per new excerpt received + 1 for outdated hints removal"
+                last_scroll_update_version + expected_layers.len(),
+                "Due to every excerpt having one hint, cache should update per new excerpt received"
             );
         });
     }
