@@ -137,14 +137,15 @@ pub(crate) fn render_search_mode_button<V: View>(
             .clone();
         let side_width = style.container.corner_radius;
         style.container.corner_radius = 0.;
+        if let Some(button_side) = mode.button_side() {
+            style.container.border.left = mode.border_left();
+            style.container.border.right = mode.border_right();
+        }
         let label = Label::new(mode.label(), style.text.clone())
             .contained()
             .with_style(style.container);
 
         if let Some(button_side) = mode.button_side() {
-            style.container.border.left = mode.border_left();
-            style.container.border.right = mode.border_right();
-
             if button_side == Side::Left {
                 Flex::row()
                     .align_children_center()
