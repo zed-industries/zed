@@ -72,10 +72,7 @@ impl TerminalPanel {
                         0,
                         "icons/plus_12.svg",
                         false,
-                        Some((
-                            "New Terminal".into(),
-                            Some(Box::new(workspace::NewTerminal)),
-                        )),
+                        Some(("New Terminal", Some(Box::new(workspace::NewTerminal)))),
                         cx,
                         move |_, cx| {
                             let this = this.clone();

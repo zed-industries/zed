@@ -170,7 +170,7 @@ pub trait Element<V: View>: 'static {
     fn with_tooltip<Tag: 'static>(
         self,
         id: usize,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         cx: &mut ViewContext<V>,
@@ -178,7 +178,7 @@ pub trait Element<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
+        Tooltip::new::<Tag>(id, text, action, style, self.into_any(), cx)
     }
 
     fn resizable(

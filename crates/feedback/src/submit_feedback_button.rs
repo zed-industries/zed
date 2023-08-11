@@ -80,7 +80,7 @@ impl View for SubmitFeedbackButton {
         .with_margin_left(theme.feedback.button_margin)
         .with_tooltip::<Self>(
             0,
-            "cmd-s".into(),
+            "cmd-s",
             Some(Box::new(SubmitFeedback)),
             theme.tooltip.clone(),
             cx,
