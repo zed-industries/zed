@@ -181,31 +181,42 @@ impl View for ChannelModal {
 
         Flex::column()
             .with_child(
-                Label::new(format!("#{}", channel.name), theme.header.text.clone())
+                Flex::column()
+                    .with_child(
+                        Label::new(format!("#{}", channel.name), theme.title.text.clone())
+                            .contained()
+                            .with_style(theme.title.container.clone()),
+                    )
+                    .with_child(Flex::row().with_children([
+                        render_mode_button::<InviteMembers>(
+                            Mode::InviteMembers,
+                            "Invite members",
+                            mode,
+                            theme,
+                            cx,
+                        ),
+                        render_mode_button::<ManageMembers>(
+                            Mode::ManageMembers,
+                            "Manage members",
+                            mode,
+                            theme,
+                            cx,
+                        ),
+                    ]))
+                    .expanded()
                     .contained()
-                    .with_style(theme.header.container.clone()),
+                    .with_style(theme.header),
             )
-            .with_child(Flex::row().with_children([
-                render_mode_button::<InviteMembers>(
-                    Mode::InviteMembers,
-                    "Invite members",
-                    mode,
-                    theme,
-                    cx,
-                ),
-                render_mode_button::<ManageMembers>(
-                    Mode::ManageMembers,
-                    "Manage members",
-                    mode,
-                    theme,
-                    cx,
-                ),
-            ]))
-            .with_child(ChildView::new(&self.picker, cx))
+            .with_child(
+                ChildView::new(&self.picker, cx)
+                    .contained()
+                    .with_style(theme.body),
+            )
             .constrained()
-            .with_max_height(theme.height)
+            .with_max_height(theme.max_height)
+            .with_max_width(theme.max_width)
             .contained()
-            .with_style(theme.container)
+            .with_style(theme.modal)
             .into_any()
     }
 

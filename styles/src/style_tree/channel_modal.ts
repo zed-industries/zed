@@ -24,6 +24,25 @@ export default function channel_modal(): any {
     const picker_input = input()
 
     return {
+        header: {
+            background: background(theme.middle, "accent"),
+            border: border(theme.middle, { "bottom": true, "top": false, left: false, right: false }),
+        },
+        body: {
+            background: background(theme.middle),
+        },
+        modal: {
+            background: background(theme.middle),
+            shadow: theme.modal_shadow,
+            corner_radius: 12,
+            padding: {
+                bottom: 0,
+                left: 0,
+                right: 0,
+                top: 0,
+            },
+
+        },
         // This is used for the icons that are rendered to the right of channel Members in both UIs
         member_icon: {
             background: background(theme.middle),
@@ -72,20 +91,9 @@ export default function channel_modal(): any {
                 right: 4,
             }
         },
-        container: {
-            background: background(theme.middle),
-            border: border(theme.middle),
-            shadow: theme.modal_shadow,
-            corner_radius: 12,
-            padding: {
-                bottom: 0,
-                left: 0,
-                right: 0,
-                top: 0,
-            },
-        },
-        height: 400,
-        header: {
+        max_height: 400,
+        max_width: 540,
+        title: {
             ...text(theme.middle, "sans", "on", { size: "lg" }),
             padding: {
                 left: 6,
