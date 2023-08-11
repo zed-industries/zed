@@ -96,14 +96,55 @@ impl TasksForRanges {
     ) {
         let ranges_to_query = match invalidate {
             InvalidationStrategy::None => {
-                // let mut ranges_to_query = Vec::new();
+                let mut ranges_to_query = Vec::new();
+                let mut last_cache_range_stop = None::<language::Anchor>;
+                for cached_range in self
+                    .ranges
+                    .iter()
+                    .skip_while(|cached_range| {
+                        cached_range
+                            .end
+                            .cmp(&query_range.start, buffer_snapshot)
+                            .is_lt()
+                    })
+                    .take_while(|cached_range| {
+                        cached_range
+                            .start
+                            .cmp(&query_range.end, buffer_snapshot)
+                            .is_le()
+                    })
+                {
+                    match last_cache_range_stop {
+                        Some(last_cache_range_stop) => {
+                            if last_cache_range_stop.offset.saturating_add(1)
+                                < cached_range.start.offset
+                            {
+                                ranges_to_query.push(last_cache_range_stop..cached_range.start);
+                            }
+                        }
+                        None => {
+                            if query_range
+                                .start
+                                .cmp(&cached_range.start, buffer_snapshot)
+                                .is_lt()
+                            {
+                                ranges_to_query.push(query_range.start..cached_range.start);
+                            }
+                        }
+                    }
+                    last_cache_range_stop = Some(cached_range.end);
+                }
 
-                // todo!("TODO kb also remove task ranges on invalidation");
-                // if ranges_to_query.is_empty() {
-                //     return;
-                // }
-                // ranges_to_query
-                vec![query_range]
+                match last_cache_range_stop {
+                    Some(last_cache_range_stop) => {
+                        if last_cache_range_stop.offset.saturating_add(1) < query_range.end.offset {
+                            ranges_to_query.push(last_cache_range_stop..query_range.end);
+                        }
+                    }
+                    None => ranges_to_query.push(query_range),
+                }
+
+                ranges_to_query
             }
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited => {
                 self.tasks.clear();
@@ -112,10 +153,12 @@ impl TasksForRanges {
             }
         };
 
-        self.ranges.extend(ranges_to_query.clone());
-        self.ranges
-            .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
-        self.tasks.push(spawn_task(ranges_to_query));
+        if !ranges_to_query.is_empty() {
+            self.ranges.extend(ranges_to_query.clone());
+            self.ranges
+                .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
+            self.tasks.push(spawn_task(ranges_to_query));
+        }
     }
 }
 
@@ -462,7 +505,11 @@ fn determine_query_range(
             .min(full_excerpt_range.end.offset)
             .min(buffer.len()),
     );
-    Some(start..end)
+    if start.cmp(&end, buffer).is_eq() {
+        None
+    } else {
+        Some(start..end)
+    }
 }
 
 fn new_update_task(

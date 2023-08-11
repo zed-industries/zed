@@ -333,7 +333,6 @@ impl Editor {
             cx,
         );
 
-        // TODO kb too many events + too many LSP requests even due to deduplication, why?
         self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
     }
 
