@@ -368,7 +368,7 @@ impl ToolbarItemView for BufferSearchBar {
         }
     }
     fn row_count(&self, _: &ViewContext<Self>) -> usize {
-        3
+        2
     }
 }
 
