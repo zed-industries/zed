@@ -6,18 +6,18 @@ use gpui::{
 };
 
 use search::{buffer_search, BufferSearchBar};
-use workspace::{item::ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
+use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
 pub struct QuickActionBar {
-    pane: ViewHandle<Pane>,
+    buffer_search_bar: ViewHandle<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlays_enabled_subscription: Option<Subscription>,
 }
 
 impl QuickActionBar {
-    pub fn new(pane: ViewHandle<Pane>) -> Self {
+    pub fn new(buffer_search_bar: ViewHandle<BufferSearchBar>) -> Self {
         Self {
-            pane,
+            buffer_search_bar,
             active_item: None,
             _inlays_enabled_subscription: None,
         }
@@ -59,17 +59,7 @@ impl View for QuickActionBar {
         ));
 
         if editor.read(cx).buffer().read(cx).is_singleton() {
-            let buffer_search_bar = self
-                .pane
-                .read(cx)
-                .toolbar()
-                .read(cx)
-                .item_of_type::<BufferSearchBar>();
-            let search_bar_shown = buffer_search_bar
-                .as_ref()
-                .map(|bar| !bar.read(cx).is_dismissed())
-                .unwrap_or(false);
-
+            let search_bar_shown = !self.buffer_search_bar.read(cx).is_dismissed();
             let search_action = buffer_search::Deploy { focus: true };
 
             bar = bar.with_child(render_quick_action_bar_button(
@@ -82,17 +72,13 @@ impl View for QuickActionBar {
                 ),
                 cx,
                 move |this, cx| {
-                    if search_bar_shown {
-                        if let Some(buffer_search_bar) = buffer_search_bar.as_ref() {
-                            buffer_search_bar.update(cx, |buffer_search_bar, cx| {
-                                buffer_search_bar.dismiss(&buffer_search::Dismiss, cx);
-                            });
+                    this.buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                        if search_bar_shown {
+                            buffer_search_bar.dismiss(&buffer_search::Dismiss, cx);
+                        } else {
+                            buffer_search_bar.deploy(&search_action, cx);
                         }
-                    } else {
-                        this.pane.update(cx, |pane, cx| {
-                            BufferSearchBar::deploy(pane, &search_action, cx);
-                        });
-                    }
+                    });
                 },
             ));
         }

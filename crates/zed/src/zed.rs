@@ -257,16 +257,16 @@ pub fn initialize_workspace(
             let workspace_handle = cx.handle();
             cx.subscribe(&workspace_handle, {
                 move |workspace, _, event, cx| {
-                    if let workspace::Event::PaneAdded(pane_handle) = event {
-                        pane_handle.update(cx, |pane, cx| {
+                    if let workspace::Event::PaneAdded(pane) = event {
+                        pane.update(cx, |pane, cx| {
                             pane.toolbar().update(cx, |toolbar, cx| {
                                 let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                                 toolbar.add_item(breadcrumbs, cx);
-                                let quick_action_bar =
-                                    cx.add_view(|_| QuickActionBar::new(pane_handle.clone()));
-                                toolbar.add_item(quick_action_bar, cx);
                                 let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                                toolbar.add_item(buffer_search_bar, cx);
+                                toolbar.add_item(buffer_search_bar.clone(), cx);
+                                let quick_action_bar =
+                                    cx.add_view(|_| QuickActionBar::new(buffer_search_bar));
+                                toolbar.add_item(quick_action_bar, cx);
                                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                                 toolbar.add_item(project_search_bar, cx);
                                 let submit_feedback_button =
