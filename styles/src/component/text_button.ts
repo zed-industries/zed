@@ -13,6 +13,7 @@ interface TextButtonOptions {
     | Theme["lowest"]
     | Theme["middle"]
     | Theme["highest"]
+    variant?: "default" | "ghost"
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
     text_properties?: TextProperties
@@ -23,6 +24,7 @@ type ToggleableTextButtonOptions = TextButtonOptions & {
 }
 
 export function text_button({
+    variant = "default",
     color,
     layer,
     margin,
@@ -59,7 +61,7 @@ export function text_button({
         },
         state: {
             default: {
-                background: background(layer ?? theme.lowest, color),
+                background: variant !== "ghost" ? background(layer ?? theme.lowest, color) : null,
                 color: foreground(layer ?? theme.lowest, color),
             },
             hovered: {
@@ -76,14 +78,15 @@ export function text_button({
 
 export function toggleable_text_button(
     theme: Theme,
-    { color, active_color, margin }: ToggleableTextButtonOptions
+    { variant, color, active_color, margin }: ToggleableTextButtonOptions
 ) {
     if (!color) color = "base"
 
     return toggleable({
         state: {
-            inactive: text_button({ color, margin }),
+            inactive: text_button({ variant, color, margin }),
             active: text_button({
+                variant,
                 color: active_color ? active_color : color,
                 margin,
                 layer: theme.middle,

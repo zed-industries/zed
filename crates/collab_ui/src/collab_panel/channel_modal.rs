@@ -175,19 +175,16 @@ impl View for ChannelModal {
                     this.set_mode(mode, cx);
                 }
             })
-            .with_cursor_style(if active {
-                CursorStyle::Arrow
-            } else {
-                CursorStyle::PointingHand
-            })
+            .with_cursor_style(CursorStyle::PointingHand)
             .into_any()
         }
 
         Flex::column()
-            .with_child(Label::new(
-                format!("#{}", channel.name),
-                theme.header.clone(),
-            ))
+            .with_child(
+                Label::new(format!("#{}", channel.name), theme.header.text.clone())
+                    .contained()
+                    .with_style(theme.header.container.clone()),
+            )
             .with_child(Flex::row().with_children([
                 render_mode_button::<InviteMembers>(
                     Mode::InviteMembers,

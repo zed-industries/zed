@@ -2,6 +2,8 @@ import { useTheme } from "../theme"
 import { interactive, toggleable } from "../element"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
+import { input } from "../component/input"
+import { toggleable_text_button } from "../component/text_button"
 
 export default function channel_modal(): any {
     const theme = useTheme()
@@ -19,29 +21,10 @@ export default function channel_modal(): any {
     delete picker_style.shadow
     delete picker_style.border
 
-    const picker_input = {
-        background: background(theme.middle, "on"),
-        corner_radius: 6,
-        text: text(theme.middle, "mono"),
-        placeholder_text: text(theme.middle, "mono", "on", "disabled", {
-            size: "xs",
-        }),
-        selection: theme.players[0],
-        border: border(theme.middle),
-        padding: {
-            bottom: 8,
-            left: 8,
-            right: 8,
-            top: 4,
-        },
-        margin: {
-            left: side_margin,
-            right: side_margin,
-            bottom: 8,
-        },
-    }
+    const picker_input = input()
 
     return {
+        // This is used for the icons that are rendered to the right of channel Members in both UIs
         member_icon: {
             background: background(theme.middle),
             padding: {
@@ -53,6 +36,7 @@ export default function channel_modal(): any {
             width: 5,
             color: foreground(theme.middle, "accent"),
         },
+        // This is used for the icons that are rendered to the right of channel invites in both UIs
         invitee_icon: {
             background: background(theme.middle),
             padding: {
@@ -89,54 +73,32 @@ export default function channel_modal(): any {
             }
         },
         container: {
-            background: background(theme.lowest),
-            border: border(theme.lowest),
+            background: background(theme.middle),
+            border: border(theme.middle),
             shadow: theme.modal_shadow,
             corner_radius: 12,
             padding: {
-                bottom: 4,
-                left: 20,
-                right: 20,
-                top: 20,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                top: 0,
             },
         },
         height: 400,
-        header: text(theme.middle, "sans", "on", { size: "lg" }),
-        mode_button: toggleable({
-            base: interactive({
-                base: {
-                    ...text(theme.middle, "sans", { size: "xs" }),
-                    border: border(theme.middle, "active"),
-                    corner_radius: 4,
-                    padding: {
-                        top: 3,
-                        bottom: 3,
-                        left: 7,
-                        right: 7,
-                    },
-
-                    margin: { left: 6, top: 6, bottom: 6 },
-                },
-                state: {
-                    hovered: {
-                        ...text(theme.middle, "sans", "default", { size: "xs" }),
-                        background: background(theme.middle, "hovered"),
-                        border: border(theme.middle, "active"),
-                    },
-                },
-            }),
-            state: {
-                active: {
-                    default: {
-                        color: foreground(theme.middle, "accent"),
-                    },
-                    hovered: {
-                        color: foreground(theme.middle, "accent", "hovered"),
-                    },
-                    clicked: {
-                        color: foreground(theme.middle, "accent", "pressed"),
-                    },
-                },
+        header: {
+            ...text(theme.middle, "sans", "on", { size: "lg" }),
+            padding: {
+                left: 6,
+            }
+        },
+        mode_button: toggleable_text_button(theme, {
+            variant: "ghost",
+            layer: theme.middle,
+            active_color: "accent",
+            margin: {
+                top: 8,
+                bottom: 8,
+                right: 4
             }
         }),
         picker: {
