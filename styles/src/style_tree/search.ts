@@ -77,16 +77,16 @@ export default function search(): any {
             state: {
                 active: {
                     default: {
-                        background: background(theme.highest, "accent", "hovered"),
-                        border: border(theme.highest, "on"),
+                        background: background(theme.highest, "accent"),
+                        border: border(theme.highest, "accent"),
                     },
                     hovered: {
-                        ...text(theme.highest, "mono", "accent", "hovered"),
-                        border: border(theme.highest, "on", "hovered"),
+                        background: background(theme.highest, "accent", "hovered"),
+                        border: border(theme.highest, "accent", "hovered"),
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "accent", "pressed"),
-                        border: border(theme.highest, "on", "pressed"),
+                        background: background(theme.highest, "accent", "pressed"),
+                        border: border(theme.highest, "accent", "pressed"),
                     },
                 },
             },
