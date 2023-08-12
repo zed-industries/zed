@@ -209,6 +209,7 @@ impl View for BufferSearchBar {
             render_nav_button(
                 label,
                 direction,
+                self.active_match_index.is_some(),
                 move |_, this, cx| match direction {
                     Direction::Prev => this.select_prev_match(&Default::default(), cx),
                     Direction::Next => this.select_next_match(&Default::default(), cx),

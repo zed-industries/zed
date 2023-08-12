@@ -250,36 +250,62 @@ export default function search(): any {
                 },
             },
         }),
-        nav_button: interactive({
-            base: {
-                text: text(theme.highest, "mono", "on"),
-                background: background(theme.highest, "on"),
-                corner_radius: 6,
-                border: {
-                    ...border(theme.highest, "on"),
-                    left: false,
-                    right: false,
-                },
-
-                padding: {
-                    bottom: 3,
-                    left: 10,
-                    right: 10,
-                    top: 3,
-                },
-            },
+        nav_button: toggleable({
             state: {
-                hovered: {
-                    ...text(theme.highest, "mono", "on", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                    border: border(theme.highest, "on", "hovered"),
-                },
-                clicked: {
-                    ...text(theme.highest, "mono", "on", "pressed"),
-                    background: background(theme.highest, "on", "pressed"),
-                    border: border(theme.highest, "on", "pressed"),
-                },
-            },
+                inactive: interactive({
+                    base: {
+                        background: background(theme.highest, "disabled"),
+                        text: text(theme.highest, "mono", "disabled"),
+                        corner_radius: 6,
+                        border: {
+                            ...border(theme.highest, "disabled"),
+                            left: false,
+                            right: false,
+                        },
+
+                        padding: {
+                            bottom: 3,
+                            left: 10,
+                            right: 10,
+                            top: 3,
+                        },
+                    },
+                    state: {
+                        hovered: {}
+                    }
+                }),
+                active: interactive({
+                    base: {
+                        text: text(theme.highest, "mono", "on"),
+                        background: background(theme.highest, "on"),
+                        corner_radius: 6,
+                        border: {
+                            ...border(theme.highest, "on"),
+                            left: false,
+                            right: false,
+                        },
+
+                        padding: {
+                            bottom: 3,
+                            left: 10,
+                            right: 10,
+                            top: 3,
+                        },
+                    },
+                    state: {
+                        hovered: {
+                            ...text(theme.highest, "mono", "on", "hovered"),
+                            background: background(theme.highest, "on", "hovered"),
+                            border: border(theme.highest, "on", "hovered"),
+                        },
+                        clicked: {
+                            ...text(theme.highest, "mono", "on", "pressed"),
+                            background: background(theme.highest, "on", "pressed"),
+                            border: border(theme.highest, "on", "pressed"),
+                        },
+                    },
+                })
+            }
         }),
         search_bar_row_height: 32,
 

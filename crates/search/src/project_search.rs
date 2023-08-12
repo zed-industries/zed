@@ -1552,12 +1552,14 @@ impl View for ProjectSearchBar {
                     cx,
                 )
             };
+            let is_active = search.active_match_index.is_some();
             let semantic_index = SemanticIndex::enabled(cx)
                 .then(|| search_button_for_mode(SearchMode::Semantic, cx));
             let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
                 render_nav_button(
                     label,
                     direction,
+                    is_active,
                     move |_, this, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
                             search.update(cx, |search, cx| search.select_match(direction, cx));

@@ -388,7 +388,7 @@ pub struct Search {
     pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
     pub mode_button: Toggleable<Interactive<ContainedText>>,
-    pub nav_button: Interactive<ContainedLabel>,
+    pub nav_button: Toggleable<Interactive<ContainedLabel>>,
     pub search_bar_row_height: f32,
 }
 

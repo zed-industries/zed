@@ -1,5 +1,5 @@
 use gpui::{
-    elements::{Flex, Label, MouseEventHandler, ParentElement, Svg},
+    elements::{Label, MouseEventHandler, Svg},
     platform::{CursorStyle, MouseButton},
     scene::{CornerRadii, MouseClick},
     Action, AnyElement, Element, EventContext, View, ViewContext,
@@ -42,6 +42,7 @@ pub(super) fn render_close_button<V: View>(
 pub(super) fn render_nav_button<V: View>(
     icon: &'static str,
     direction: Direction,
+    active: bool,
     on_click: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     cx: &mut ViewContext<V>,
 ) -> AnyElement<V> {
@@ -59,11 +60,20 @@ pub(super) fn render_nav_button<V: View>(
         }
     };
     let tooltip_style = theme::current(cx).tooltip.clone();
-
+    let cursor_style = if active {
+        CursorStyle::PointingHand
+    } else {
+        CursorStyle::default()
+    };
     enum NavButton {}
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
-        let style = theme.search.nav_button.style_for(state).clone();
+        let style = theme
+            .search
+            .nav_button
+            .in_state(active)
+            .style_for(state)
+            .clone();
         let mut container_style = style.container.clone();
         let label = Label::new(icon, style.label.clone()).contained();
         container_style.corner_radii = match direction {
@@ -81,7 +91,7 @@ pub(super) fn render_nav_button<V: View>(
         label.with_style(container_style)
     })
     .on_click(MouseButton::Left, on_click)
-    .with_cursor_style(CursorStyle::PointingHand)
+    .with_cursor_style(cursor_style)
     .with_tooltip::<NavButton>(
         direction as usize,
         tooltip.to_string(),
