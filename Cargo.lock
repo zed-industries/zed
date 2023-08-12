@@ -3160,6 +3160,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
+ "taffy",
  "time 0.3.24",
  "tiny-skia",
  "usvg",
@@ -3176,6 +3177,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "grid"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0634107a3a005070dd73e27e74ecb691a94e9e5ba7829f434db7fbf73a6b5c47"
+dependencies = [
+ "no-std-compat",
 ]
 
 [[package]]
@@ -4599,6 +4609,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-std-compat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
+
+[[package]]
 name = "node_runtime"
 version = "0.1.0"
 dependencies = [
@@ -5299,6 +5315,7 @@ dependencies = [
  "serde",
  "simplelog",
  "smallvec",
+ "taffy",
  "util",
 ]
 
@@ -7641,6 +7658,18 @@ dependencies = [
  "rustix 0.33.7",
  "winapi 0.3.9",
  "winx",
+]
+
+[[package]]
+name = "taffy"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3540ec65df399929a04a485feb50144475735920cc47eaf8eba09c70b1df4055"
+dependencies = [
+ "arrayvec 0.7.4",
+ "grid",
+ "num-traits",
+ "slotmap",
 ]
 
 [[package]]

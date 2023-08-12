@@ -52,6 +52,7 @@ tiny-skia = "0.5"
 usvg = { version = "0.14", features = [] }
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
+taffy = "0.3.12"
 
 [build-dependencies]
 bindgen = "0.65.1"

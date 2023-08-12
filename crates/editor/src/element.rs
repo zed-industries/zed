@@ -585,7 +585,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
 
@@ -740,7 +740,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let style = &self.style;
         let local_replica_id = editor.replica_id(cx);
@@ -1317,7 +1317,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_left = scroll_position.x() * layout.position_map.em_width;

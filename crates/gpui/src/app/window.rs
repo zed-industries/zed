@@ -33,12 +33,14 @@ use std::{
     mem,
     ops::{Deref, DerefMut, Range, Sub},
 };
+use taffy::Taffy;
 use util::ResultExt;
 use uuid::Uuid;
 
 use super::{Reference, ViewMetadata};
 
 pub struct Window {
+    layout_engine: Taffy,
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
     pub(crate) parents: HashMap<usize, usize>,
@@ -73,6 +75,7 @@ impl Window {
         let titlebar_height = platform_window.titlebar_height();
         let appearance = platform_window.appearance();
         let mut window = Self {
+            layout_engine: Taffy::new(),
             root_view: None,
             focused_view_id: None,
             parents: Default::default(),
@@ -205,6 +208,10 @@ impl<'a> WindowContext<'a> {
             window_handle: handle,
             removed: false,
         }
+    }
+
+    pub fn layout_engine(&mut self) -> &mut Taffy {
+        &mut self.window.layout_engine
     }
 
     pub fn remove_window(&mut self) {

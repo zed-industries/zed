@@ -215,7 +215,7 @@ trait AnyElementState<V> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     );
 
     fn rect_for_text_range(
@@ -288,7 +288,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         *self = match mem::take(self) {
             ElementState::PostLayout {
@@ -464,7 +464,7 @@ impl<V> AnyElement<V> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         self.state.paint(scene, origin, visible_bounds, view, cx);
     }
@@ -637,7 +637,9 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .ok_or_else(|| anyhow!("paint called on a root element for a dropped view"))?;
 
         view.update(cx, |view, cx| {
-            self.element.paint(scene, origin, visible_bounds, view, cx);
+            let mut cx = PaintContext::new(cx);
+            self.element
+                .paint(scene, origin, visible_bounds, view, &mut cx);
             Ok(())
         })
     }

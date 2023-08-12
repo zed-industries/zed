@@ -16,6 +16,7 @@ optional_struct = "0.3.1"
 serde.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
+taffy = "0.3.12"
 util = { path = "../../util" }
 
 [dev-dependencies]
