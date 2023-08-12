@@ -12,6 +12,7 @@ use crate::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
@@ -52,9 +53,9 @@ pub struct KeystrokeStyle {
 }
 
 impl<V: View> Tooltip<V> {
-    pub fn new<Tag: 'static, T: View>(
+    pub fn new<Tag: 'static>(
         id: usize,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         child: AnyElement<V>,
@@ -66,6 +67,8 @@ impl<V: View> Tooltip<V> {
 
         let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
+        let text = text.into();
+
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
                 focused_view_id,
@@ -127,7 +130,7 @@ impl<V: View> Tooltip<V> {
 
     pub fn render_tooltip(
         focused_view_id: Option<usize>,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,

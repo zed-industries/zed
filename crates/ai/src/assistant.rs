@@ -362,7 +362,7 @@ impl AssistantPanel {
                 this.set_active_editor_index(this.prev_active_editor_index, cx);
             }
         })
-        .with_tooltip::<History>(1, "History".into(), None, tooltip_style, cx)
+        .with_tooltip::<History>(1, "History", None, tooltip_style, cx)
     }
 
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement<Self>> {
@@ -394,7 +394,7 @@ impl AssistantPanel {
         })
         .with_tooltip::<Split>(
             1,
-            "Split Message".into(),
+            "Split Message",
             Some(Box::new(Split)),
             tooltip_style,
             cx,
@@ -416,13 +416,7 @@ impl AssistantPanel {
                 active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
             }
         })
-        .with_tooltip::<Assist>(
-            1,
-            "Assist".into(),
-            Some(Box::new(Assist)),
-            tooltip_style,
-            cx,
-        )
+        .with_tooltip::<Assist>(1, "Assist", Some(Box::new(Assist)), tooltip_style, cx)
     }
 
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
@@ -446,7 +440,7 @@ impl AssistantPanel {
         })
         .with_tooltip::<QuoteSelection>(
             1,
-            "Quote Selection".into(),
+            "Quote Selection",
             Some(Box::new(QuoteSelection)),
             tooltip_style,
             cx,
@@ -468,7 +462,7 @@ impl AssistantPanel {
         })
         .with_tooltip::<NewConversation>(
             1,
-            "New Conversation".into(),
+            "New Conversation",
             Some(Box::new(NewConversation)),
             tooltip_style,
             cx,
@@ -498,11 +492,7 @@ impl AssistantPanel {
         })
         .with_tooltip::<ToggleZoom>(
             0,
-            if self.zoomed {
-                "Zoom Out".into()
-            } else {
-                "Zoom In".into()
-            },
+            if self.zoomed { "Zoom Out" } else { "Zoom In" },
             Some(Box::new(ToggleZoom)),
             tooltip_style,
             cx,

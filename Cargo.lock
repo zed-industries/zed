@@ -3172,6 +3172,7 @@ dependencies = [
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -9860,7 +9861,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.99.0"
+version = "0.100.0"
 dependencies = [
  "activity_indicator",
  "ai",

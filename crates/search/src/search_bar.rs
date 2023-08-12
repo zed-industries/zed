@@ -65,8 +65,8 @@ pub(super) fn render_nav_button<V: View>(
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme.search.nav_button.style_for(state).clone();
-        let button_side_width = style.container.corner_radius;
-        style.container.corner_radius = 0.;
+        let button_side_width = style.container.corner_radii.top_left;
+        style.container.corner_radii = (0.).into();
         let label = Label::new(icon, style.label.clone())
             .contained()
             .with_style(style.container.clone());
@@ -137,8 +137,8 @@ pub(crate) fn render_search_mode_button<V: View>(
             .in_state(is_active)
             .style_for(state)
             .clone();
-        let side_width = style.container.corner_radius;
-        style.container.corner_radius = 0.;
+        let side_width = style.container.corner_radii.top_left;
+        style.container.corner_radii = (0.).into();
         if mode.button_side().is_some() {
             style.container.border.left = mode.border_left();
             style.container.border.right = mode.border_right();

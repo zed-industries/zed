@@ -654,6 +654,10 @@ fn load_embedded_fonts(app: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     smol::block_on(app.background().scoped(|scope| {
         for font_path in &font_paths {
+            if !font_path.ends_with(".ttf") {
+                continue;
+            }
+
             scope.spawn(async {
                 let font_path = &*font_path;
                 let font_bytes = Assets.load(font_path).unwrap().to_vec();

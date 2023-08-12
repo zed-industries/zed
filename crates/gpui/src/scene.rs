@@ -3,8 +3,10 @@ mod mouse_region;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;
+use derive_more::Mul;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_derive::Serialize;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
 
@@ -65,13 +67,73 @@ pub struct Quad {
     pub bounds: RectF,
     pub background: Option<Color>,
     pub border: Border,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
+}
+
+#[derive(Default, Debug, Mul, Clone, Copy, Serialize, JsonSchema)]
+pub struct CornerRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+impl<'de> Deserialize<'de> for CornerRadii {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        pub struct CornerRadiiHelper {
+            pub top_left: Option<f32>,
+            pub top_right: Option<f32>,
+            pub bottom_right: Option<f32>,
+            pub bottom_left: Option<f32>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RadiusOrRadii {
+            Radius(f32),
+            Radii(CornerRadiiHelper),
+        }
+
+        let json = RadiusOrRadii::deserialize(deserializer)?;
+
+        let result = match json {
+            RadiusOrRadii::Radius(radius) => CornerRadii::from(radius),
+            RadiusOrRadii::Radii(CornerRadiiHelper {
+                top_left,
+                top_right,
+                bottom_right,
+                bottom_left,
+            }) => CornerRadii {
+                top_left: top_left.unwrap_or(0.0),
+                top_right: top_right.unwrap_or(0.0),
+                bottom_right: bottom_right.unwrap_or(0.0),
+                bottom_left: bottom_left.unwrap_or(0.0),
+            },
+        };
+
+        Ok(result)
+    }
+}
+
+impl From<f32> for CornerRadii {
+    fn from(radius: f32) -> Self {
+        Self {
+            top_left: radius,
+            top_right: radius,
+            bottom_right: radius,
+            bottom_left: radius,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Shadow {
     pub bounds: RectF,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
     pub sigma: f32,
     pub color: Color,
 }
@@ -177,7 +239,7 @@ pub struct PathVertex {
 pub struct Image {
     pub bounds: RectF,
     pub border: Border,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
     pub grayscale: bool,
     pub data: Arc<ImageData>,
 }

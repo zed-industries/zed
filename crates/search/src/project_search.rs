@@ -1438,7 +1438,7 @@ impl View for ProjectSearchBar {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_tooltip::<Self>(
                     0,
-                    "Toggle filters".into(),
+                    "Toggle filters",
                     Some(Box::new(ToggleFilters)),
                     tooltip_style,
                     cx,
