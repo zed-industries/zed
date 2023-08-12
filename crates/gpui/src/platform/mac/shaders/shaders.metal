@@ -273,10 +273,10 @@ vertex QuadFragmentInput image_vertex(
         image.border_bottom,
         image.border_left,
         coloru_to_colorf(image.border_color),
-        image.corner_radius,
-        image.corner_radius,
-        image.corner_radius,
-        image.corner_radius,
+        image.corner_radius_top_left,
+        image.corner_radius_top_right,
+        image.corner_radius_bottom_right,
+        image.corner_radius_bottom_left,
         image.grayscale,
     };
 }

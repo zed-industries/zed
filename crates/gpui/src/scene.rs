@@ -3,6 +3,7 @@ mod mouse_region;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;
+use derive_more::Mul;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -68,7 +69,7 @@ pub struct Quad {
     pub corner_radii: CornerRadii,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Mul, Clone, Copy)]
 pub struct CornerRadii {
     pub top_left: f32,
     pub top_right: f32,
@@ -196,7 +197,7 @@ pub struct PathVertex {
 pub struct Image {
     pub bounds: RectF,
     pub border: Border,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
     pub grayscale: bool,
     pub data: Arc<ImageData>,
 }

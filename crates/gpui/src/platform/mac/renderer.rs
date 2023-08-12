@@ -741,7 +741,7 @@ impl Renderer {
         for image in images {
             let origin = image.bounds.origin() * scale_factor;
             let target_size = image.bounds.size() * scale_factor;
-            let corner_radius = image.corner_radius * scale_factor;
+            let corner_radii = image.corner_radii * scale_factor;
             let border_width = image.border.width * scale_factor;
             let (alloc_id, atlas_bounds) = self.image_cache.render(&image.data);
             images_by_atlas
@@ -757,7 +757,10 @@ impl Renderer {
                     border_bottom: border_width * (image.border.bottom as usize as f32),
                     border_left: border_width * (image.border.left as usize as f32),
                     border_color: image.border.color.to_uchar4(),
-                    corner_radius,
+                    corner_radius_top_left: corner_radii.top_left,
+                    corner_radius_top_right: corner_radii.top_right,
+                    corner_radius_bottom_right: corner_radii.bottom_right,
+                    corner_radius_bottom_left: corner_radii.bottom_left,
                     grayscale: image.grayscale as u8,
                 });
         }
@@ -780,7 +783,10 @@ impl Renderer {
                         border_bottom: 0.,
                         border_left: 0.,
                         border_color: Default::default(),
-                        corner_radius: 0.,
+                        corner_radius_top_left: 0.,
+                        corner_radius_top_right: 0.,
+                        corner_radius_bottom_right: 0.,
+                        corner_radius_bottom_left: 0.,
                         grayscale: false as u8,
                     });
             } else {

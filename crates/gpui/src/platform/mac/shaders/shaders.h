@@ -92,7 +92,10 @@ typedef struct {
   float border_bottom;
   float border_left;
   vector_uchar4 border_color;
-  float corner_radius;
+  float corner_radius_top_left;
+  float corner_radius_top_right;
+  float corner_radius_bottom_right;
+  float corner_radius_bottom_left;
   uint8_t grayscale;
 } GPUIImage;
 
