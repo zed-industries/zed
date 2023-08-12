@@ -63,7 +63,7 @@ pub(super) fn render_nav_button<V: View>(
     enum NavButton {}
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
-        let mut style = theme.search.nav_button.style_for(state).clone();
+        let style = theme.search.nav_button.style_for(state).clone();
         let mut container_style = style.container.clone();
         let label = Label::new(icon, style.label.clone()).contained();
         match direction {
