@@ -10,16 +10,16 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene,
     serde_json::Value,
     text_layout::{Line, ShapedBoundary},
-    AnyElement, AppContext, Element, Entity, LayoutContext, PaintContext, Quad, SceneBuilder,
+    AnyElement, AppContext, Element, Entity, LayoutContext, PaintContext, SceneBuilder,
     SizeConstraint, View, ViewContext, WindowContext,
 };
 use length::{Length, Rems};
 use log::warn;
 use optional_struct::*;
 use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
+use taffy::prelude::Style as TaffyStyle;
 use util::ResultExt;
 
 use crate::color::{Hsla, Rgba};
@@ -38,23 +38,11 @@ pub fn column<V>() -> Frame<V> {
 }
 
 pub fn row<V>() -> Frame<V> {
-    Frame {
-        style: FrameStyle {
-            axis: Axis3d::X,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    todo!()
 }
 
 pub fn stack<V>() -> Frame<V> {
-    Frame {
-        style: FrameStyle {
-            axis: Axis3d::Z,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    todo!()
 }
 
 impl<V> Default for Frame<V> {
@@ -88,17 +76,7 @@ impl<V: 'static> Element<V> for Frame<V> {
             }
         }
 
-        let layout = if let Some(axis) = self.style.axis.to_2d() {
-            self.layout_xy(axis, constraint, cx.rem_pixels(), view, cx)
-        } else {
-            unimplemented!()
-        };
-
-        if pushed_text_style {
-            cx.pop_text_style();
-        }
-
-        (layout.size.max(constraint.min), layout)
+        (todo!(), todo!())
     }
 
     fn paint(
@@ -114,27 +92,15 @@ impl<V: 'static> Element<V> for Frame<V> {
             before_paint(bounds, layout, cx);
         }
 
-        let bounds_center = bounds.size() / 2.;
-        let bounds_target = bounds_center + (bounds_center * self.style.align.0);
-        let layout_center = layout.size / 2.;
-        let layout_target = layout_center + layout_center * self.style.align.0;
-        let delta = bounds_target - layout_target;
-
-        let aligned_bounds = RectF::new(bounds.origin() + delta, layout.size);
-        let margined_bounds = RectF::from_points(
-            aligned_bounds.origin() + vec2f(layout.margins.left, layout.margins.top),
-            aligned_bounds.lower_right() - vec2f(layout.margins.right, layout.margins.bottom),
-        );
-
-        // Paint drop shadow
-        for shadow in &self.style.shadows {
-            scene.push_shadow(scene::Shadow {
-                bounds: margined_bounds + shadow.offset,
-                corner_radius: self.style.corner_radius,
-                sigma: shadow.blur,
-                color: shadow.color,
-            });
-        }
+        // // Paint drop shadow
+        // for shadow in &self.style.shadows {
+        //     scene.push_shadow(scene::Shadow {
+        //         bounds: margined_bounds + shadow.offset,
+        //         corner_radius: self.style.corner_radius,
+        //         sigma: shadow.blur,
+        //         color: shadow.color,
+        //     });
+        // }
 
         // // Paint cursor style
         // if let Some(hit_bounds) = content_bounds.intersection(visible_bounds) {
@@ -146,56 +112,56 @@ impl<V: 'static> Element<V> for Frame<V> {
         //     }
         // }
 
-        // Render the background and/or the border.
-        let Fill::Color(fill_color) = self.style.fill;
-        let is_fill_visible = fill_color.a > 0.;
-        if is_fill_visible || self.style.borders.is_visible() {
-            scene.push_quad(Quad {
-                bounds: margined_bounds,
-                background: is_fill_visible.then_some(fill_color.into()),
-                border: scene::Border {
-                    width: self.style.borders.width,
-                    color: self.style.borders.color,
-                    overlay: false,
-                    top: self.style.borders.top,
-                    right: self.style.borders.right,
-                    bottom: self.style.borders.bottom,
-                    left: self.style.borders.left,
-                },
-                corner_radius: self.style.corner_radius,
-            });
-        }
+        // // Render the background and/or the border.
+        // let Fill::Color(fill_color) = self.style.fill;
+        // let is_fill_visible = fill_color.a > 0.;
+        // if is_fill_visible || self.style.borders.is_visible() {
+        //     scene.push_quad(Quad {
+        //         bounds: margined_bounds,
+        //         background: is_fill_visible.then_some(fill_color.into()),
+        //         border: scene::Border {
+        //             width: self.style.borders.width,
+        //             color: self.style.borders.color,
+        //             overlay: false,
+        //             top: self.style.borders.top,
+        //             right: self.style.borders.right,
+        //             bottom: self.style.borders.bottom,
+        //             left: self.style.borders.left,
+        //         },
+        //         corner_radius: self.style.corner_radius,
+        //     });
+        // }
 
-        if !self.children.is_empty() {
-            // Account for padding first.
-            let borders = &self.style.borders;
-            let padded_bounds = RectF::from_points(
-                margined_bounds.origin()
-                    + vec2f(
-                        borders.left_width() + layout.padding.left,
-                        borders.top_width() + layout.padding.top,
-                    ),
-                margined_bounds.lower_right()
-                    - vec2f(
-                        layout.padding.right + borders.right_width(),
-                        layout.padding.bottom + borders.bottom_width(),
-                    ),
-            );
+        // if !self.children.is_empty() {
+        //     // Account for padding first.
+        //     let borders = &self.style.borders;
+        //     let padded_bounds = RectF::from_points(
+        //         margined_bounds.origin()
+        //             + vec2f(
+        //                 borders.left_width() + layout.padding.left,
+        //                 borders.top_width() + layout.padding.top,
+        //             ),
+        //         margined_bounds.lower_right()
+        //             - vec2f(
+        //                 layout.padding.right + borders.right_width(),
+        //                 layout.padding.bottom + borders.bottom_width(),
+        //             ),
+        //     );
 
-            if let Some(axis) = self.style.axis.to_2d() {
-                // let parent_size = padded_bounds.size();
-                let mut child_origin = padded_bounds.origin();
+        //     if let Some(axis) = self.style.axis.to_2d() {
+        //         // let parent_size = padded_bounds.size();
+        //         let mut child_origin = padded_bounds.origin();
 
-                for child in &mut self.children {
-                    child.paint(scene, child_origin, visible_bounds, view, cx);
+        //         for child in &mut self.children {
+        //             child.paint(scene, child_origin, visible_bounds, view, cx);
 
-                    // Advance along the primary axis by the size of this child
-                    child_origin.set(axis, child_origin.get(axis) + child.size().get(axis));
-                }
-            } else {
-                unimplemented!();
-            }
-        }
+        //             // Advance along the primary axis by the size of this child
+        //             child_origin.set(axis, child_origin.get(axis) + child.size().get(axis));
+        //         }
+        //     } else {
+        //         unimplemented!();
+        //     }
+        // }
     }
 
     fn rect_for_text_range(
@@ -255,21 +221,6 @@ impl<V: 'static> Frame<V> {
         self
     }
 
-    pub fn size(self, size: impl Into<Size<Length>>) -> Self {
-        let size = size.into();
-        self.width(size.width).height(size.height)
-    }
-
-    pub fn width(mut self, width: impl Into<Length>) -> Self {
-        self.style.size.width = width.into();
-        self
-    }
-
-    pub fn height(mut self, height: impl Into<Length>) -> Self {
-        self.style.size.height = height.into();
-        self
-    }
-
     pub fn fill(mut self, fill: impl Into<Fill>) -> Self {
         self.style.fill = fill.into();
         self
@@ -283,261 +234,6 @@ impl<V: 'static> Frame<V> {
     pub fn text_color(mut self, color: Hsla) -> Self {
         self.style.text.color = Some(color);
         self
-    }
-
-    pub fn margins(mut self, margins: impl Into<Edges<Length>>) -> Self {
-        self.style.margins = margins.into();
-        self
-    }
-
-    pub fn margin_x(mut self, margin: impl Into<Length>) -> Self {
-        self.style.margins.set_x(margin.into());
-        self
-    }
-
-    pub fn margin_y(mut self, margin: impl Into<Length>) -> Self {
-        self.style.margins.set_y(margin.into());
-        self
-    }
-
-    pub fn margin_top(mut self, top: Length) -> Self {
-        self.style.margins.top = top;
-        self
-    }
-
-    pub fn margin_bottom(mut self, bottom: Length) -> Self {
-        self.style.margins.bottom = bottom;
-        self
-    }
-
-    pub fn margin_left(mut self, left: impl Into<Length>) -> Self {
-        self.style.margins.left = left.into();
-        self
-    }
-
-    pub fn margin_right(mut self, right: impl Into<Length>) -> Self {
-        self.style.margins.right = right.into();
-        self
-    }
-
-    pub fn align(mut self, alignment: f32) -> Self {
-        let cross_axis = self
-            .style
-            .axis
-            .to_2d()
-            .map(Axis2d::rotate)
-            .unwrap_or(Axis2d::Y);
-        self.style.align.set(cross_axis, alignment);
-        self
-    }
-
-    pub fn justify(mut self, alignment: f32) -> Self {
-        let axis = self.style.axis.to_2d().unwrap_or(Axis2d::X);
-        self.style.align.set(axis, alignment);
-        self
-    }
-
-    fn id_string(&self) -> String {
-        self.id.as_deref().unwrap_or("<anonymous>").to_string()
-    }
-
-    fn layout_xy(
-        &mut self,
-        primary_axis: Axis2d,
-        constraint: SizeConstraint,
-        rem_pixels: f32,
-        view: &mut V,
-        cx: &mut LayoutContext<V>,
-    ) -> FrameLayout {
-        self.style.text.is_some();
-
-        let cross_axis = primary_axis.rotate();
-        let total_flex = self.style.flex();
-        let mut layout = FrameLayout {
-            size: Default::default(),
-            padding: self.style.padding.fixed_pixels(rem_pixels),
-            margins: self.style.margins.fixed_pixels(rem_pixels),
-            borders: self.style.borders.edges(),
-        };
-        let fixed_padding_size = layout.padding.size();
-        let fixed_margin_size = layout.margins.size();
-        let borders_size = layout.borders.size();
-        let fixed_constraint = constraint - fixed_margin_size - borders_size - fixed_padding_size;
-
-        // Determine the child constraints in each dimension based on the styled size
-        let mut child_constraint = SizeConstraint::default();
-        for axis in [Axis2d::X, Axis2d::Y] {
-            let length = self.style.size.get(axis);
-            let content_length = match length {
-                Length::Hug => {
-                    // Tell the children not to expand
-                    0.
-                }
-                Length::Fixed(fixed_length) => {
-                    // Tell the children to expand up to the fixed length minus the padding.
-                    fixed_length.to_pixels(rem_pixels) - fixed_padding_size.get(axis)
-                }
-                Length::Auto { .. } => {
-                    // Tell the children to expand to fill their share of the flex space in this node.
-                    length.flex_pixels(
-                        rem_pixels,
-                        &mut total_flex.get(axis),
-                        &mut fixed_constraint.max.get(axis),
-                    )
-                }
-            };
-            child_constraint.max.set(axis, content_length);
-            if axis == cross_axis {
-                child_constraint.min.set(axis, content_length);
-            }
-        }
-
-        // Lay out inflexible children. Total up flex of flexible children for
-        // use in a second pass.
-        let mut remaining_length = child_constraint.max.get(primary_axis);
-        let mut remaining_flex = 0.;
-        let mut total_length = 0.;
-        let mut cross_axis_max: f32 = 0.;
-
-        for child in &mut self.children {
-            if let Some(child_flex) = child
-                .metadata::<FrameStyle>()
-                .map(|style| style.flex().get(primary_axis))
-            {
-                if child_flex > 0. {
-                    remaining_flex += child_flex;
-                    continue;
-                }
-            }
-
-            let child_size = child.layout(child_constraint, view, cx);
-            let child_length = child_size.get(primary_axis);
-            remaining_length -= child_length;
-            total_length += child_length;
-            cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
-        }
-
-        // Distribute the remaining length among the flexible children.
-        for child in &mut self.children {
-            if let Some(child_flex) = child
-                .metadata::<FrameStyle>()
-                .map(|style| style.flex().get(primary_axis))
-            {
-                if child_flex > 0. {
-                    let max_child_length = (child_flex / remaining_flex) * remaining_length;
-                    child_constraint.max.set(primary_axis, max_child_length);
-
-                    let child_size = child.layout(child_constraint, view, cx);
-                    let child_length = child_size.get(primary_axis);
-                    total_length += child_length;
-                    remaining_length -= child_length;
-                    remaining_flex -= child_flex;
-                    cross_axis_max = cross_axis_max.max(child_size.get(cross_axis));
-                }
-            }
-        }
-
-        let content_size = match primary_axis {
-            Axis2d::X => vec2f(total_length, cross_axis_max),
-            Axis2d::Y => vec2f(cross_axis_max, total_length),
-        };
-
-        // Distribute remaining space to flexible padding and margins.
-        for axis in [Axis2d::X, Axis2d::Y] {
-            let length = self.style.size.get(axis);
-            match length {
-                Length::Hug => {
-                    let mut remaining_flex = total_flex.get(axis);
-                    let mut remaining_length =
-                        fixed_constraint.min.get(axis) - content_size.get(axis);
-
-                    layout.padding.compute_flex_edges(
-                        &self.style.padding,
-                        axis,
-                        &mut remaining_flex,
-                        &mut remaining_length,
-                        rem_pixels,
-                    );
-                    layout.margins.compute_flex_edges(
-                        &self.style.margins,
-                        axis,
-                        &mut remaining_flex,
-                        &mut remaining_length,
-                        rem_pixels,
-                    );
-                    layout.size.set(
-                        axis,
-                        content_size.get(axis)
-                            + layout.padding.size().get(axis)
-                            + layout.borders.size().get(axis)
-                            + layout.margins.size().get(axis),
-                    );
-                }
-                Length::Fixed(fixed_length) => {
-                    let fixed_length = fixed_length.to_pixels(rem_pixels);
-
-                    // With a fixed length, we can only distribute the space in the fixed-length container
-                    // not consumed by the content.
-                    let mut padding_flex = self.style.padding.flex().get(axis);
-                    let mut max_padding_length = (fixed_length - content_size.get(axis)).max(0.);
-                    layout.padding.compute_flex_edges(
-                        &self.style.padding,
-                        axis,
-                        &mut padding_flex,
-                        &mut max_padding_length,
-                        rem_pixels,
-                    );
-
-                    // Similarly, distribute the available space for margins so we preserve the fixed length
-                    // of the container.
-                    let mut margin_flex = self.style.margins.flex().get(axis);
-                    let mut max_margin_length = constraint.max.get(axis) - fixed_length;
-                    layout.margins.compute_flex_edges(
-                        &self.style.margins,
-                        axis,
-                        &mut margin_flex,
-                        &mut max_margin_length,
-                        rem_pixels,
-                    );
-
-                    layout
-                        .size
-                        .set(axis, fixed_length + layout.margins.size().get(axis))
-                }
-                Length::Auto { .. } => {
-                    let mut remaining_flex = total_flex.get(axis);
-                    let mut remaining_length = fixed_constraint.max.get(axis);
-                    let flex_length =
-                        length.flex_pixels(rem_pixels, &mut remaining_flex, &mut remaining_length);
-
-                    layout.padding.compute_flex_edges(
-                        &self.style.padding,
-                        axis,
-                        &mut remaining_flex,
-                        &mut remaining_length,
-                        rem_pixels,
-                    );
-
-                    layout.margins.compute_flex_edges(
-                        &self.style.margins,
-                        axis,
-                        &mut remaining_flex,
-                        &mut remaining_length,
-                        rem_pixels,
-                    );
-
-                    layout.size.set(
-                        axis,
-                        flex_length
-                            + layout.padding.size().get(axis)
-                            + layout.borders.size().get(axis)
-                            + layout.margins.size().get(axis),
-                    )
-                }
-            }
-        }
-
-        layout
     }
 
     fn before_paint<H>(mut self, handler: H) -> Self
@@ -601,29 +297,13 @@ struct Interactive<Style> {
 
 #[derive(Clone, Default)]
 pub struct FrameStyle {
-    axis: Axis3d,
-    wrap: bool,
-    align: Alignment,
-    overflow_x: Overflow,
-    overflow_y: Overflow,
-    gap_x: Gap,
-    gap_y: Gap,
-
-    size: Size<Length>,
-    margins: Edges<Length>,
-    padding: Edges<Length>,
     text: OptionalTextStyle,
     opacity: f32,
     fill: Fill,
     borders: Borders,
     corner_radius: f32,
     shadows: Vec<Shadow>,
-}
-
-impl FrameStyle {
-    fn flex(&self) -> Vector2F {
-        self.size.flex() + self.padding.flex() + self.margins.flex()
-    }
+    layout: TaffyStyle,
 }
 
 #[optional_struct]
@@ -1682,36 +1362,36 @@ mod tests {
 
     #[gpui::test]
     fn test_frame_layout(cx: &mut TestAppContext) {
-        cx.add_window(|_| {
-            view(|_| {
-                let theme = rose_pine::dawn();
-                column()
-                    .width(auto())
-                    .height(auto())
-                    .justify(1.)
-                    .child(
-                        row()
-                            .width(auto())
-                            .height(rems(10.))
-                            .justify(1.)
-                            .child(
-                                row()
-                                    .width(rems(10.))
-                                    .height(auto())
-                                    .fill(theme.surface(1.)),
-                            )
-                            .before_paint(|bounds, layout, cx| {
-                                assert_eq!(bounds.origin(), vec2f(0., 0.));
-                                assert_eq!(layout.size.x(), cx.window_size().x());
-                                assert_eq!(layout.size.y(), rems(10.).to_pixels(cx.rem_pixels()));
-                            }),
-                    )
-                    .child(row())
-                    .before_paint(|bounds, layout, cx| {
-                        assert_eq!(layout.size, cx.window_size());
-                    })
-            })
-        })
-        .remove(cx);
+        // cx.add_window(|_| {
+        // view(|_| {
+        //     let theme = rose_pine::dawn();
+        //     column()
+        //         .width(auto())
+        //         .height(auto())
+        //         .justify(1.)
+        //         .child(
+        //             row()
+        //                 .width(auto())
+        //                 .height(rems(10.))
+        //                 .justify(1.)
+        //                 .child(
+        //                     row()
+        //                         .width(rems(10.))
+        //                         .height(auto())
+        //                         .fill(theme.surface(1.)),
+        //                 )
+        //                 .before_paint(|bounds, layout, cx| {
+        //                     assert_eq!(bounds.origin(), vec2f(0., 0.));
+        //                     assert_eq!(layout.size.x(), cx.window_size().x());
+        //                     assert_eq!(layout.size.y(), rems(10.).to_pixels(cx.rem_pixels()));
+        //                 }),
+        //         )
+        //         .child(row())
+        //         .before_paint(|bounds, layout, cx| {
+        //             assert_eq!(layout.size, cx.window_size());
+        //         })
+        // })
+        // })
+        // .remove(cx);
     }
 }
