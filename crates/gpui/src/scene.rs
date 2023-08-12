@@ -6,6 +6,7 @@ use collections::HashSet;
 use derive_more::Mul;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_derive::Serialize;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
 
@@ -69,7 +70,7 @@ pub struct Quad {
     pub corner_radii: CornerRadii,
 }
 
-#[derive(Default, Debug, Mul, Clone, Copy)]
+#[derive(Default, Debug, Mul, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 pub struct CornerRadii {
     pub top_left: f32,
     pub top_right: f32,
@@ -91,7 +92,7 @@ impl From<f32> for CornerRadii {
 #[derive(Debug)]
 pub struct Shadow {
     pub bounds: RectF,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
     pub sigma: f32,
     pub color: Color,
 }

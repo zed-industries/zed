@@ -34,7 +34,10 @@ typedef enum {
 typedef struct {
   vector_float2 origin;
   vector_float2 size;
-  float corner_radius;
+  float corner_radius_top_left;
+  float corner_radius_top_right;
+  float corner_radius_bottom_right;
+  float corner_radius_bottom_left;
   float sigma;
   vector_uchar4 color;
 } GPUIShadow;

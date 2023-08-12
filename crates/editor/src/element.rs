@@ -1129,7 +1129,7 @@ impl EditorElement {
                         bounds,
                         background: Some(color),
                         border,
-                        corner_radii: style.thumb.corner_radius.into(),
+                        corner_radii: style.thumb.corner_radii.into(),
                     })
                 };
                 let background_ranges = editor
@@ -1189,7 +1189,7 @@ impl EditorElement {
                         bounds,
                         background: Some(color),
                         border,
-                        corner_radii: style.thumb.corner_radius.into(),
+                        corner_radii: style.thumb.corner_radii.into(),
                     })
                 }
             }
@@ -1198,7 +1198,7 @@ impl EditorElement {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
                 background: style.thumb.background_color,
-                corner_radii: style.thumb.corner_radius.into(),
+                corner_radii: style.thumb.corner_radii.into(),
             });
         }
 

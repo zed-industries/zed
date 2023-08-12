@@ -509,10 +509,14 @@ impl Renderer {
         };
         for (ix, shadow) in shadows.iter().enumerate() {
             let shape_bounds = shadow.bounds * scale_factor;
+            let corner_radii = shadow.corner_radii * scale_factor;
             let shader_shadow = shaders::GPUIShadow {
                 origin: shape_bounds.origin().to_float2(),
                 size: shape_bounds.size().to_float2(),
-                corner_radius: shadow.corner_radius * scale_factor,
+                corner_radius_top_left: corner_radii.top_left,
+                corner_radius_top_right: corner_radii.top_right,
+                corner_radius_bottom_right: corner_radii.bottom_right,
+                corner_radius_bottom_left: corner_radii.bottom_left,
                 sigma: shadow.sigma,
                 color: shadow.color.to_uchar4(),
             };

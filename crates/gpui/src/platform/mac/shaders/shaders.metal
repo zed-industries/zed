@@ -146,7 +146,10 @@ struct ShadowFragmentInput {
     float4 position [[position]];
     vector_float2 origin;
     vector_float2 size;
-    float corner_radius;
+    float corner_radius_top_left;
+    float corner_radius_top_right;
+    float corner_radius_bottom_right;
+    float corner_radius_bottom_left;
     float sigma;
     vector_uchar4 color;
 };
@@ -169,7 +172,10 @@ vertex ShadowFragmentInput shadow_vertex(
         device_position,
         shadow.origin,
         shadow.size,
-        shadow.corner_radius,
+        shadow.corner_radius_top_left,
+        shadow.corner_radius_top_right,
+        shadow.corner_radius_bottom_right,
+        shadow.corner_radius_bottom_left,
         shadow.sigma,
         shadow.color,
     };
@@ -179,10 +185,24 @@ fragment float4 shadow_fragment(
     ShadowFragmentInput input [[stage_in]]
 ) {
     float sigma = input.sigma;
-    float corner_radius = input.corner_radius;
     float2 half_size = input.size / 2.;
     float2 center = input.origin + half_size;
     float2 point = input.position.xy - center;
+    float2 center_to_point = input.position.xy - center;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_left;
+        } else {
+            corner_radius = input.corner_radius_bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_right;
+        } else {
+            corner_radius = input.corner_radius_bottom_right;
+        }
+    }
 
     // The signal is only non-zero in a limited range, so don't waste samples
     float low = point.y - half_size.y;

@@ -9,7 +9,7 @@ use crate::{
     },
     json::ToJson,
     platform::CursorStyle,
-    scene::{self, Border, CursorRegion, Quad},
+    scene::{self, Border, CornerRadii, CursorRegion, Quad},
     AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
     ViewContext,
 };
@@ -30,7 +30,7 @@ pub struct ContainerStyle {
     #[serde(default)]
     pub border: Border,
     #[serde(default)]
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
     #[serde(default)]
     pub shadow: Option<Shadow>,
     #[serde(default)]
@@ -133,7 +133,10 @@ impl<V: View> Container<V> {
     }
 
     pub fn with_corner_radius(mut self, radius: f32) -> Self {
-        self.style.corner_radius = radius;
+        self.style.corner_radii.top_left = radius;
+        self.style.corner_radii.top_right = radius;
+        self.style.corner_radii.bottom_right = radius;
+        self.style.corner_radii.bottom_left = radius;
         self
     }
 
@@ -225,7 +228,7 @@ impl<V: View> Element<V> for Container<V> {
         if let Some(shadow) = self.style.shadow.as_ref() {
             scene.push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
-                corner_radius: self.style.corner_radius,
+                corner_radii: self.style.corner_radii,
                 sigma: shadow.blur,
                 color: shadow.color,
             });
@@ -248,7 +251,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: Default::default(),
-                corner_radii: self.style.corner_radius.into(),
+                corner_radii: self.style.corner_radii.into(),
             });
 
             self.child
@@ -259,7 +262,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.overlay_color,
                 border: self.style.border,
-                corner_radii: self.style.corner_radius.into(),
+                corner_radii: self.style.corner_radii.into(),
             });
             scene.pop_layer();
         } else {
@@ -267,7 +270,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: self.style.border,
-                corner_radii: self.style.corner_radius.into(),
+                corner_radii: self.style.corner_radii.into(),
             });
 
             let child_origin = child_origin
@@ -284,7 +287,7 @@ impl<V: View> Element<V> for Container<V> {
                     bounds: quad_bounds,
                     background: self.style.overlay_color,
                     border: Default::default(),
-                    corner_radii: self.style.corner_radius.into(),
+                    corner_radii: self.style.corner_radii.into(),
                 });
                 scene.pop_layer();
             }
@@ -328,7 +331,7 @@ impl ToJson for ContainerStyle {
             "padding": self.padding.to_json(),
             "background_color": self.background_color.to_json(),
             "border": self.border.to_json(),
-            "corner_radius": self.corner_radius,
+            "corner_radius": self.corner_radii,
             "shadow": self.shadow.to_json(),
         })
     }
