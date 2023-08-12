@@ -201,6 +201,10 @@ pub trait Element<V: View>: 'static {
     }
 }
 
+pub trait RenderElement {
+    fn render<V: View>(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+}
+
 trait AnyElementState<V: View> {
     fn layout(
         &mut self,
