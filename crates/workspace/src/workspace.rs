@@ -3614,7 +3614,7 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                                 bounds,
                                 background: Some(code_span_background_color),
                                 border: Default::default(),
-                                corner_radius: 2.0,
+                                corner_radii: (2.0).into(),
                             })
                         })
                         .into_any()

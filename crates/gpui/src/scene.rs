@@ -65,7 +65,26 @@ pub struct Quad {
     pub bounds: RectF,
     pub background: Option<Color>,
     pub border: Border,
-    pub corner_radius: f32,
+    pub corner_radii: CornerRadii,
+}
+
+#[derive(Default, Debug)]
+pub struct CornerRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+impl From<f32> for CornerRadii {
+    fn from(radius: f32) -> Self {
+        Self {
+            top_left: radius,
+            top_right: radius,
+            bottom_right: radius,
+            bottom_left: radius,
+        }
+    }
 }
 
 #[derive(Debug)]

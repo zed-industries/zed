@@ -586,7 +586,10 @@ impl Renderer {
                 border_bottom: border_width * (quad.border.bottom as usize as f32),
                 border_left: border_width * (quad.border.left as usize as f32),
                 border_color: quad.border.color.to_uchar4(),
-                corner_radius: quad.corner_radius * scale_factor,
+                corner_radius_top_left: quad.corner_radii.top_left * scale_factor,
+                corner_radius_top_right: quad.corner_radii.top_right * scale_factor,
+                corner_radius_bottom_right: quad.corner_radii.bottom_right * scale_factor,
+                corner_radius_bottom_left: quad.corner_radii.bottom_left * scale_factor,
             };
             unsafe {
                 *(buffer_contents.add(ix)) = shader_quad;

@@ -248,7 +248,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: Default::default(),
-                corner_radius: self.style.corner_radius,
+                corner_radii: self.style.corner_radius.into(),
             });
 
             self.child
@@ -259,7 +259,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.overlay_color,
                 border: self.style.border,
-                corner_radius: self.style.corner_radius,
+                corner_radii: self.style.corner_radius.into(),
             });
             scene.pop_layer();
         } else {
@@ -267,7 +267,7 @@ impl<V: View> Element<V> for Container<V> {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: self.style.border,
-                corner_radius: self.style.corner_radius,
+                corner_radii: self.style.corner_radius.into(),
             });
 
             let child_origin = child_origin
@@ -284,7 +284,7 @@ impl<V: View> Element<V> for Container<V> {
                     bounds: quad_bounds,
                     background: self.style.overlay_color,
                     border: Default::default(),
-                    corner_radius: 0.,
+                    corner_radii: self.style.corner_radius.into(),
                 });
                 scene.pop_layer();
             }

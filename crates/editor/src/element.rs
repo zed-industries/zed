@@ -488,13 +488,13 @@ impl EditorElement {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         });
         scene.push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         });
 
         if let EditorMode::Full = layout.mode {
@@ -522,7 +522,7 @@ impl EditorElement {
                         bounds: RectF::new(origin, size),
                         background: Some(self.style.active_line_background),
                         border: Border::default(),
-                        corner_radius: 0.,
+                        corner_radii: Default::default(),
                     });
                 }
             }
@@ -542,7 +542,7 @@ impl EditorElement {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
                     border: Border::default(),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
             }
 
@@ -572,7 +572,7 @@ impl EditorElement {
                     ),
                     background: Some(color),
                     border: Border::new(0., Color::transparent_black()),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
             }
         }
@@ -673,7 +673,7 @@ impl EditorElement {
                         bounds: highlight_bounds,
                         background: Some(diff_style.modified),
                         border: Border::new(0., Color::transparent_black()),
-                        corner_radius: 1. * line_height,
+                        corner_radii: (1. * line_height).into(),
                     });
 
                     continue;
@@ -706,7 +706,7 @@ impl EditorElement {
                         bounds: highlight_bounds,
                         background: Some(diff_style.deleted),
                         border: Border::new(0., Color::transparent_black()),
-                        corner_radius: 1. * line_height,
+                        corner_radii: (1. * line_height).into(),
                     });
 
                     continue;
@@ -728,7 +728,7 @@ impl EditorElement {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: diff_style.corner_radius * line_height,
+                corner_radii: (diff_style.corner_radius * line_height).into(),
             });
         }
     }
@@ -1129,7 +1129,7 @@ impl EditorElement {
                         bounds,
                         background: Some(color),
                         border,
-                        corner_radius: style.thumb.corner_radius,
+                        corner_radii: style.thumb.corner_radius.into(),
                     })
                 };
                 let background_ranges = editor
@@ -1189,7 +1189,7 @@ impl EditorElement {
                         bounds,
                         background: Some(color),
                         border,
-                        corner_radius: style.thumb.corner_radius,
+                        corner_radii: style.thumb.corner_radius.into(),
                     })
                 }
             }
@@ -1198,7 +1198,7 @@ impl EditorElement {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
                 background: style.thumb.background_color,
-                corner_radius: style.thumb.corner_radius,
+                corner_radii: style.thumb.corner_radius.into(),
             });
         }
 
@@ -2725,14 +2725,14 @@ impl Cursor {
                 bounds,
                 background: None,
                 border: Border::all(1., self.color),
-                corner_radius: 0.,
+                corner_radii: Default::default(),
             });
         } else {
             scene.push_quad(Quad {
                 bounds,
                 background: Some(self.color),
                 border: Default::default(),
-                corner_radius: 0.,
+                corner_radii: Default::default(),
             });
         }
 

@@ -61,7 +61,7 @@ where
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
                                 border: Default::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                         });
                     }

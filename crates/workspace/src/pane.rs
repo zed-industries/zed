@@ -1397,7 +1397,7 @@ impl Pane {
                         bounds: square,
                         background: Some(color),
                         border: Default::default(),
-                        corner_radius: diameter / 2.,
+                        corner_radii: (diameter / 2.).into(),
                     });
                 }
             })

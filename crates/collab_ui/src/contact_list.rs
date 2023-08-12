@@ -837,7 +837,7 @@ impl ContactList {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                             scene.push_quad(gpui::Quad {
                                 bounds: RectF::from_points(
@@ -846,7 +846,7 @@ impl ContactList {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                         }))
                         .constrained()
@@ -934,7 +934,7 @@ impl ContactList {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: Default::default(),
                                 });
                                 scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
@@ -943,7 +943,7 @@ impl ContactList {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: Default::default(),
                                 });
                             }))
                             .constrained()
