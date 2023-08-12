@@ -70,12 +70,53 @@ pub struct Quad {
     pub corner_radii: CornerRadii,
 }
 
-#[derive(Default, Debug, Mul, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[derive(Default, Debug, Mul, Clone, Copy, Serialize, JsonSchema)]
 pub struct CornerRadii {
     pub top_left: f32,
     pub top_right: f32,
     pub bottom_right: f32,
     pub bottom_left: f32,
+}
+
+impl<'de> Deserialize<'de> for CornerRadii {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        pub struct CornerRadiiHelper {
+            pub top_left: f32,
+            pub top_right: f32,
+            pub bottom_right: f32,
+            pub bottom_left: f32,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RadiusOrRadii {
+            Radius(f32),
+            Radii(CornerRadiiHelper),
+        }
+
+        let json = RadiusOrRadii::deserialize(deserializer)?;
+
+        let result = match json {
+            RadiusOrRadii::Radius(radius) => CornerRadii::from(radius),
+            RadiusOrRadii::Radii(CornerRadiiHelper {
+                top_left,
+                top_right,
+                bottom_right,
+                bottom_left,
+            }) => CornerRadii {
+                top_left,
+                top_right,
+                bottom_right,
+                bottom_left,
+            },
+        };
+
+        Ok(result)
+    }
 }
 
 impl From<f32> for CornerRadii {

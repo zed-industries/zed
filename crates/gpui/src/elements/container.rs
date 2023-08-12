@@ -30,6 +30,7 @@ pub struct ContainerStyle {
     #[serde(default)]
     pub border: Border,
     #[serde(default)]
+    #[serde(alias = "corner_radius")]
     pub corner_radii: CornerRadii,
     #[serde(default)]
     pub shadow: Option<Shadow>,
