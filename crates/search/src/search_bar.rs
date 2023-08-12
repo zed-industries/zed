@@ -1,13 +1,12 @@
 use gpui::{
     elements::{Flex, Label, MouseEventHandler, ParentElement, Svg},
     platform::{CursorStyle, MouseButton},
-    scene::MouseClick,
+    scene::{CornerRadii, MouseClick},
     Action, AnyElement, Element, EventContext, View, ViewContext,
 };
 use workspace::searchable::Direction;
 
 use crate::{
-    elements::ButtonSide,
     mode::{SearchMode, Side},
     SearchOptions, SelectNextMatch, SelectPrevMatch,
 };
@@ -65,48 +64,31 @@ pub(super) fn render_nav_button<V: View>(
     MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme.search.nav_button.style_for(state).clone();
-        let button_side_width = style.container.corner_radii.top_left;
-        style.container.corner_radii = (0.).into();
-        let label = Label::new(icon, style.label.clone())
-            .contained()
-            .with_style(style.container.clone());
+        let mut container_style = style.container.clone();
+        let label = Label::new(icon, style.label.clone()).contained();
         match direction {
-            Direction::Prev => Flex::row()
-                .with_child(
-                    ButtonSide::left(
-                        style
-                            .clone()
-                            .container
-                            .background_color
-                            .unwrap_or_else(gpui::color::Color::transparent_black),
-                        button_side_width,
-                    )
-                    .with_border(style.container.border.width, style.container.border.color)
-                    .contained()
+            Direction::Prev => {
+                container_style.corner_radii = CornerRadii {
+                    bottom_right: 0.,
+                    top_right: 0.,
+                    ..container_style.corner_radii
+                };
+                Flex::row()
+                    .with_child(label.with_style(container_style))
                     .constrained()
-                    .with_max_width(button_side_width),
-                )
-                .with_child(label)
-                .constrained()
-                .with_height(theme.workspace.toolbar.height),
-            Direction::Next => Flex::row()
-                .with_child(label)
-                .with_child(
-                    ButtonSide::right(
-                        style
-                            .clone()
-                            .container
-                            .background_color
-                            .unwrap_or_else(gpui::color::Color::transparent_black),
-                        button_side_width,
-                    )
-                    .with_border(style.container.border.width, style.container.border.color)
-                    .contained()
+                //.with_height(theme.workspace.toolbar.height)
+            }
+            Direction::Next => {
+                container_style.corner_radii = CornerRadii {
+                    bottom_left: 0.,
+                    top_left: 0.,
+                    ..container_style.corner_radii
+                };
+                Flex::row()
+                    .with_child(label.with_style(container_style))
                     .constrained()
-                    .with_max_width(button_side_width),
-                )
-                .constrained()
-                .with_height(theme.workspace.toolbar.height),
+                //   .with_height(theme.workspace.toolbar.height)
+            }
         }
     })
     .on_click(MouseButton::Left, on_click)
@@ -137,58 +119,37 @@ pub(crate) fn render_search_mode_button<V: View>(
             .in_state(is_active)
             .style_for(state)
             .clone();
-        let side_width = style.container.corner_radii.top_left;
-        style.container.corner_radii = (0.).into();
         if mode.button_side().is_some() {
             style.container.border.left = mode.border_left();
             style.container.border.right = mode.border_right();
         }
-        let label = Label::new(mode.label(), style.text.clone())
-            .contained()
-            .with_style(style.container);
-
+        let label = Label::new(mode.label(), style.text.clone()).contained();
+        let mut container_style = style.container.clone();
         if let Some(button_side) = mode.button_side() {
             if button_side == Side::Left {
+                container_style.corner_radii = CornerRadii {
+                    bottom_right: 0.,
+                    top_right: 0.,
+                    ..container_style.corner_radii
+                };
                 Flex::row()
                     .align_children_center()
-                    .with_child(
-                        ButtonSide::left(
-                            style
-                                .container
-                                .background_color
-                                .unwrap_or_else(gpui::color::Color::transparent_black),
-                            side_width,
-                        )
-                        .with_border(style.container.border.width, style.container.border.color)
-                        .contained()
-                        .constrained()
-                        .with_max_width(side_width)
-                        .with_height(theme.search.search_bar_row_height),
-                    )
-                    .with_child(label)
+                    .with_child(label.with_style(container_style))
                     .into_any()
             } else {
+                container_style.corner_radii = CornerRadii {
+                    bottom_left: 0.,
+                    top_left: 0.,
+                    ..container_style.corner_radii
+                };
                 Flex::row()
                     .align_children_center()
-                    .with_child(label)
-                    .with_child(
-                        ButtonSide::right(
-                            style
-                                .container
-                                .background_color
-                                .unwrap_or_else(gpui::color::Color::transparent_black),
-                            side_width,
-                        )
-                        .with_border(style.container.border.width, style.container.border.color)
-                        .contained()
-                        .constrained()
-                        .with_max_width(side_width)
-                        .with_height(theme.search.search_bar_row_height),
-                    )
+                    .with_child(label.with_style(container_style))
                     .into_any()
             }
         } else {
-            label.into_any()
+            container_style.corner_radii = CornerRadii::default();
+            label.with_style(container_style).into_any()
         }
     })
     .on_click(MouseButton::Left, on_click)

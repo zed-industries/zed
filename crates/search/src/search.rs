@@ -6,7 +6,6 @@ use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 
 pub mod buffer_search;
-mod elements;
 mod history;
 mod mode;
 pub mod project_search;

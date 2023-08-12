@@ -245,7 +245,7 @@ export default function search(): any {
             base: {
                 text: text(theme.highest, "mono", "on"),
                 background: background(theme.highest, "on"),
-                corner_radius: 6,
+                corner_radius: { top_left: 6, top_right: 6, bottom_right: 6, bottom_left: 6 },
                 border: {
                     ...border(theme.highest, "on"),
                     left: false,

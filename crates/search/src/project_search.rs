@@ -1593,7 +1593,7 @@ impl View for ProjectSearchBar {
                                 .left(),
                         )
                         .constrained()
-                        .with_max_height(theme.search.search_bar_row_height)
+                        .with_height(theme.search.search_bar_row_height)
                         .flex(1., true),
                 )
                 .with_child(
@@ -1642,7 +1642,7 @@ impl View for ProjectSearchBar {
                                     None,
                                 ))
                                 .constrained()
-                                .with_height(theme.workspace.toolbar.height)
+                                .with_height(theme.search.search_bar_row_height)
                                 .contained()
                                 .aligned()
                                 .right()
