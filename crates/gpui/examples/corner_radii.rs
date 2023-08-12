@@ -1,4 +1,7 @@
-use gpui::{color::Color, geometry::rect::RectF, AnyElement, App, Element, Entity, Quad, View};
+use gpui::{
+    color::Color, geometry::rect::RectF, scene::Shadow, AnyElement, App, Element, Entity, Quad,
+    View,
+};
 use log::LevelFilter;
 use pathfinder_geometry::vector::vec2f;
 use simplelog::SimpleLogger;
@@ -8,29 +11,29 @@ fn main() {
 
     App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(Default::default(), |_| QuadView);
+        cx.add_window(Default::default(), |_| CornersView);
     });
 }
 
-struct QuadView;
+struct CornersView;
 
-impl Entity for QuadView {
+impl Entity for CornersView {
     type Event = ();
 }
 
-impl View for QuadView {
+impl View for CornersView {
     fn ui_name() -> &'static str {
-        "QuadView"
+        "CornersView"
     }
 
-    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> AnyElement<QuadView> {
-        QuadElement.into_any()
+    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> AnyElement<CornersView> {
+        CornersElement.into_any()
     }
 }
 
-struct QuadElement;
+struct CornersElement;
 
-impl<V: View> gpui::Element<V> for QuadElement {
+impl<V: View> gpui::Element<V> for CornersElement {
     type LayoutState = ();
 
     type PaintState = ();
@@ -47,12 +50,20 @@ impl<V: View> gpui::Element<V> for QuadElement {
     fn paint(
         &mut self,
         scene: &mut gpui::SceneBuilder,
-        _: pathfinder_geometry::rect::RectF,
+        bounds: pathfinder_geometry::rect::RectF,
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
         _: &mut gpui::PaintContext<V>,
     ) -> Self::PaintState {
+        scene.push_quad(Quad {
+            bounds,
+            background: Some(Color::white()),
+            ..Default::default()
+        });
+
+        scene.push_layer(None);
+
         scene.push_quad(Quad {
             bounds: RectF::new(vec2f(100., 100.), vec2f(100., 100.)),
             background: Some(Color::red()),
@@ -92,6 +103,30 @@ impl<V: View> gpui::Element<V> for QuadElement {
                 ..Default::default()
             },
         });
+
+        scene.push_shadow(Shadow {
+            bounds: RectF::new(vec2f(400., 100.), vec2f(100., 100.)),
+            corner_radii: gpui::scene::CornerRadii {
+                bottom_right: 20.,
+                ..Default::default()
+            },
+            sigma: 20.0,
+            color: Color::black(),
+        });
+
+        scene.push_layer(None);
+        scene.push_quad(Quad {
+            bounds: RectF::new(vec2f(400., 100.), vec2f(100., 100.)),
+            background: Some(Color::red()),
+            border: Default::default(),
+            corner_radii: gpui::scene::CornerRadii {
+                bottom_right: 20.,
+                ..Default::default()
+            },
+        });
+
+        scene.pop_layer();
+        scene.pop_layer();
     }
 
     fn rect_for_text_range(
