@@ -18,8 +18,8 @@ use gpui::{
 use length::{Length, Rems};
 use log::warn;
 use optional_struct::*;
+use smallvec::SmallVec;
 use std::{any::Any, borrow::Cow, f32, ops::Range, sync::Arc};
-use taffy::prelude::Style as TaffyStyle;
 use util::ResultExt;
 
 use crate::color::{Hsla, Rgba};
@@ -28,6 +28,7 @@ use self::length::rems;
 
 pub struct Frame<V> {
     style: FrameStyle,
+    metadata: FrameMetadata,
     children: Vec<AnyElement<V>>,
     id: Option<Cow<'static, str>>,
     before_paint: Option<Box<dyn FnMut(RectF, &mut FrameLayout, &mut PaintContext<V>)>>,
@@ -49,6 +50,7 @@ impl<V> Default for Frame<V> {
     fn default() -> Self {
         Self {
             style: Default::default(),
+            metadata: Default::default(),
             children: Default::default(),
             id: None,
             before_paint: None,
@@ -74,6 +76,25 @@ impl<V: 'static> Element<V> for Frame<V> {
                 cx.push_text_style(legacy_style);
                 pushed_text_style = true;
             }
+        }
+
+        let mut child_node_ids = SmallVec::<[_; 2]>::new();
+        for child in &mut self.children {
+            child.layout(constraint, view, cx);
+            child_node_ids.extend(
+                child
+                    .metadata::<FrameMetadata>()
+                    .and_then(|meta| meta.layout_node_id),
+            );
+        }
+
+        self.metadata.layout_node_id = cx
+            .layout_engine()
+            .new_with_children(self.style.layout.clone(), child_node_ids.as_slice())
+            .log_err();
+
+        if pushed_text_style {
+            cx.pop_text_style();
         }
 
         (todo!(), todo!())
@@ -196,7 +217,7 @@ impl<V: 'static> Element<V> for Frame<V> {
     }
 
     fn metadata(&self) -> Option<&dyn Any> {
-        Some(&self.style)
+        Some(&self.metadata)
     }
 }
 
@@ -295,6 +316,11 @@ struct Interactive<Style> {
     disabled: Style,
 }
 
+#[derive(Default)]
+pub struct FrameMetadata {
+    layout_node_id: Option<taffy::tree::NodeId>,
+}
+
 #[derive(Clone, Default)]
 pub struct FrameStyle {
     text: OptionalTextStyle,
@@ -303,7 +329,7 @@ pub struct FrameStyle {
     borders: Borders,
     corner_radius: f32,
     shadows: Vec<Shadow>,
-    layout: TaffyStyle,
+    layout: taffy::style::Style,
 }
 
 #[optional_struct]
@@ -1306,28 +1332,6 @@ impl Vector2FExt for Vector2F {
     fn increment_y(&mut self, delta: f32) -> f32 {
         self.set_y(self.y() + delta);
         self.y()
-    }
-}
-
-trait ElementExt<V: 'static> {
-    fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>
-    where
-        Self: Element<V> + Sized,
-    {
-        column().child(self).margin_left(margin_left)
-    }
-}
-
-impl<V, E> ElementExt<V> for E
-where
-    V: 'static,
-    E: Element<V>,
-{
-    fn margin_left(self, margin_left: impl Into<Length>) -> Frame<V>
-    where
-        Self: Sized,
-    {
-        column().child(self).margin_left(margin_left)
     }
 }
 

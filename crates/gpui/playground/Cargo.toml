@@ -16,7 +16,7 @@ optional_struct = "0.3.1"
 serde.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
-taffy = "0.3.12"
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "dab541d6104d58e2e10ce90c4a1dad0b703160cd" }
 util = { path = "../../util" }
 
 [dev-dependencies]

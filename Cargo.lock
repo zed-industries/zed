@@ -3181,12 +3181,9 @@ dependencies = [
 
 [[package]]
 name = "grid"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0634107a3a005070dd73e27e74ecb691a94e9e5ba7829f434db7fbf73a6b5c47"
-dependencies = [
- "no-std-compat",
-]
+checksum = "eec1c01eb1de97451ee0d60de7d81cf1e72aabefb021616027f3d1c3ec1c723c"
 
 [[package]]
 name = "h2"
@@ -4607,12 +4604,6 @@ dependencies = [
  "libc",
  "static_assertions",
 ]
-
-[[package]]
-name = "no-std-compat"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
 
 [[package]]
 name = "node_runtime"
@@ -7662,9 +7653,8 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3540ec65df399929a04a485feb50144475735920cc47eaf8eba09c70b1df4055"
+version = "0.3.11"
+source = "git+https://github.com/DioxusLabs/taffy?rev=dab541d6104d58e2e10ce90c4a1dad0b703160cd#dab541d6104d58e2e10ce90c4a1dad0b703160cd"
 dependencies = [
  "arrayvec 0.7.4",
  "grid",
