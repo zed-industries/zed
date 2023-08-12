@@ -43,7 +43,10 @@ struct QuadFragmentInput {
     float border_bottom;
     float border_left;
     float4 border_color;
-    float corner_radius;
+    float corner_radius_top_left;
+    float corner_radius_top_right;
+    float corner_radius_bottom_right;
+    float corner_radius_bottom_left;
     uchar grayscale; // only used in image shader
 };
 
@@ -51,12 +54,27 @@ float4 quad_sdf(QuadFragmentInput input) {
     float2 half_size = input.size / 2.;
     float2 center = input.origin + half_size;
     float2 center_to_point = input.position.xy - center;
-    float2 rounded_edge_to_point = abs(center_to_point) - half_size + input.corner_radius;
-    float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - input.corner_radius;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_left;
+        } else {
+            corner_radius = input.corner_radius_bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_right;
+        } else {
+            corner_radius = input.corner_radius_bottom_right;
+        }
+    }
+
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
+    float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - corner_radius;
 
     float vertical_border = center_to_point.x <= 0. ? input.border_left : input.border_right;
     float horizontal_border = center_to_point.y <= 0. ? input.border_top : input.border_bottom;
-    float2 inset_size = half_size - input.corner_radius - float2(vertical_border, horizontal_border);
+    float2 inset_size = half_size - corner_radius - float2(vertical_border, horizontal_border);
     float2 point_to_inset_corner = abs(center_to_point) - inset_size;
     float border_width;
     if (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) {
@@ -110,7 +128,10 @@ vertex QuadFragmentInput quad_vertex(
         quad.border_bottom,
         quad.border_left,
         coloru_to_colorf(quad.border_color),
-        quad.corner_radius,
+        quad.corner_radius_top_left,
+        quad.corner_radius_top_right,
+        quad.corner_radius_bottom_right,
+        quad.corner_radius_bottom_left,
         0,
     };
 }
@@ -125,7 +146,10 @@ struct ShadowFragmentInput {
     float4 position [[position]];
     vector_float2 origin;
     vector_float2 size;
-    float corner_radius;
+    float corner_radius_top_left;
+    float corner_radius_top_right;
+    float corner_radius_bottom_right;
+    float corner_radius_bottom_left;
     float sigma;
     vector_uchar4 color;
 };
@@ -148,7 +172,10 @@ vertex ShadowFragmentInput shadow_vertex(
         device_position,
         shadow.origin,
         shadow.size,
-        shadow.corner_radius,
+        shadow.corner_radius_top_left,
+        shadow.corner_radius_top_right,
+        shadow.corner_radius_bottom_right,
+        shadow.corner_radius_bottom_left,
         shadow.sigma,
         shadow.color,
     };
@@ -158,10 +185,24 @@ fragment float4 shadow_fragment(
     ShadowFragmentInput input [[stage_in]]
 ) {
     float sigma = input.sigma;
-    float corner_radius = input.corner_radius;
     float2 half_size = input.size / 2.;
     float2 center = input.origin + half_size;
     float2 point = input.position.xy - center;
+    float2 center_to_point = input.position.xy - center;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_left;
+        } else {
+            corner_radius = input.corner_radius_bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = input.corner_radius_top_right;
+        } else {
+            corner_radius = input.corner_radius_bottom_right;
+        }
+    }
 
     // The signal is only non-zero in a limited range, so don't waste samples
     float low = point.y - half_size.y;
@@ -252,7 +293,10 @@ vertex QuadFragmentInput image_vertex(
         image.border_bottom,
         image.border_left,
         coloru_to_colorf(image.border_color),
-        image.corner_radius,
+        image.corner_radius_top_left,
+        image.corner_radius_top_right,
+        image.corner_radius_bottom_right,
+        image.corner_radius_bottom_left,
         image.grayscale,
     };
 }
@@ -266,7 +310,7 @@ fragment float4 image_fragment(
     if (input.grayscale) {
         float grayscale =
             0.2126 * input.background_color.r +
-            0.7152 * input.background_color.g + 
+            0.7152 * input.background_color.g +
             0.0722 * input.background_color.b;
         input.background_color = float4(grayscale, grayscale, grayscale, input.background_color.a);
     }
