@@ -85,10 +85,10 @@ impl<'de> Deserialize<'de> for CornerRadii {
     {
         #[derive(Deserialize)]
         pub struct CornerRadiiHelper {
-            pub top_left: f32,
-            pub top_right: f32,
-            pub bottom_right: f32,
-            pub bottom_left: f32,
+            pub top_left: Option<f32>,
+            pub top_right: Option<f32>,
+            pub bottom_right: Option<f32>,
+            pub bottom_left: Option<f32>,
         }
 
         #[derive(Deserialize)]
@@ -108,10 +108,10 @@ impl<'de> Deserialize<'de> for CornerRadii {
                 bottom_right,
                 bottom_left,
             }) => CornerRadii {
-                top_left,
-                top_right,
-                bottom_right,
-                bottom_left,
+                top_left: top_left.unwrap_or(0.0),
+                top_right: top_right.unwrap_or(0.0),
+                bottom_right: bottom_right.unwrap_or(0.0),
+                bottom_left: bottom_left.unwrap_or(0.0),
             },
         };
 
