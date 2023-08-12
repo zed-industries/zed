@@ -599,7 +599,7 @@ impl InfoPopover {
                                         bounds,
                                         background: Some(code_span_background_color),
                                         border: Default::default(),
-                                        corner_radius: 2.0,
+                                        corner_radii: (2.0).into(),
                                     });
                                 }
                             },

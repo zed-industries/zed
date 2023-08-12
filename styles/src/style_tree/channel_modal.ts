@@ -27,9 +27,17 @@ export default function channel_modal(): any {
         header: {
             background: background(theme.middle, "accent"),
             border: border(theme.middle, { "bottom": true, "top": false, left: false, right: false }),
+            corner_radii: {
+                top_right: 12,
+                top_left: 12,
+            }
         },
         body: {
             background: background(theme.middle),
+            corner_radii: {
+                bottom_right: 12,
+                bottom_left: 12,
+            }
         },
         modal: {
             background: background(theme.middle),

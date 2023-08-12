@@ -988,7 +988,7 @@ impl CollabPanel {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: (0.).into(),
                             });
                             scene.push_quad(gpui::Quad {
                                 bounds: RectF::from_points(
@@ -997,7 +997,7 @@ impl CollabPanel {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: (0.).into(),
                             });
                         }))
                         .constrained()
@@ -1085,7 +1085,7 @@ impl CollabPanel {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: (0.).into(),
                                 });
                                 scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
@@ -1094,7 +1094,7 @@ impl CollabPanel {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: (0.).into(),
                                 });
                             }))
                             .constrained()
@@ -1188,7 +1188,7 @@ impl CollabPanel {
                 })
                 .with_tooltip::<AddContact>(
                     0,
-                    "Leave call".into(),
+                    "Leave call",
                     None,
                     tooltip_style.clone(),
                     cx,
@@ -1210,7 +1210,7 @@ impl CollabPanel {
                 })
                 .with_tooltip::<LeaveCallContactList>(
                     0,
-                    "Search for new contact".into(),
+                    "Search for new contact",
                     None,
                     tooltip_style.clone(),
                     cx,
@@ -1230,7 +1230,7 @@ impl CollabPanel {
                 .on_click(MouseButton::Left, |_, this, cx| this.new_root_channel(cx))
                 .with_tooltip::<AddChannel>(
                     0,
-                    "Add or join a channel".into(),
+                    "Add or join a channel",
                     None,
                     tooltip_style.clone(),
                     cx,

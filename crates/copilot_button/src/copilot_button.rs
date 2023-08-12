@@ -140,7 +140,7 @@ impl View for CopilotButton {
                 })
                 .with_tooltip::<Self>(
                     0,
-                    "GitHub Copilot".into(),
+                    "GitHub Copilot",
                     None,
                     theme.tooltip.clone(),
                     cx,

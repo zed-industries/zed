@@ -174,7 +174,7 @@ pub trait Element<V: View>: 'static {
     fn with_tooltip<Tag: 'static>(
         self,
         id: usize,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         cx: &mut ViewContext<V>,
@@ -182,7 +182,7 @@ pub trait Element<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
+        Tooltip::new::<Tag>(id, text, action, style, self.into_any(), cx)
     }
 
     fn resizable(
@@ -203,6 +203,10 @@ pub trait Element<V: View>: 'static {
     {
         MouseEventHandler::for_child(self.into_any(), region_id)
     }
+}
+
+pub trait RenderElement {
+    fn render<V: View>(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 }
 
 trait AnyElementState<V: View> {
