@@ -28,10 +28,10 @@ pub(super) fn render_close_button<V: View>(
             .constrained()
             .with_width(style.icon_width)
             .aligned()
-            .constrained()
-            .with_width(style.button_width)
             .contained()
             .with_style(style.container)
+            .constrained()
+            .with_height(theme.search_bar_row_height)
     })
     .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)
@@ -66,30 +66,19 @@ pub(super) fn render_nav_button<V: View>(
         let style = theme.search.nav_button.style_for(state).clone();
         let mut container_style = style.container.clone();
         let label = Label::new(icon, style.label.clone()).contained();
-        match direction {
-            Direction::Prev => {
-                container_style.corner_radii = CornerRadii {
-                    bottom_right: 0.,
-                    top_right: 0.,
-                    ..container_style.corner_radii
-                };
-                Flex::row()
-                    .with_child(label.with_style(container_style))
-                    .constrained()
-                //.with_height(theme.workspace.toolbar.height)
-            }
-            Direction::Next => {
-                container_style.corner_radii = CornerRadii {
-                    bottom_left: 0.,
-                    top_left: 0.,
-                    ..container_style.corner_radii
-                };
-                Flex::row()
-                    .with_child(label.with_style(container_style))
-                    .constrained()
-                //   .with_height(theme.workspace.toolbar.height)
-            }
-        }
+        container_style.corner_radii = match direction {
+            Direction::Prev => CornerRadii {
+                bottom_right: 0.,
+                top_right: 0.,
+                ..container_style.corner_radii
+            },
+            Direction::Next => CornerRadii {
+                bottom_left: 0.,
+                top_left: 0.,
+                ..container_style.corner_radii
+            },
+        };
+        label.with_style(container_style)
     })
     .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)
@@ -132,24 +121,18 @@ pub(crate) fn render_search_mode_button<V: View>(
                     top_right: 0.,
                     ..container_style.corner_radii
                 };
-                Flex::row()
-                    .align_children_center()
-                    .with_child(label.with_style(container_style))
-                    .into_any()
+                label.with_style(container_style)
             } else {
                 container_style.corner_radii = CornerRadii {
                     bottom_left: 0.,
                     top_left: 0.,
                     ..container_style.corner_radii
                 };
-                Flex::row()
-                    .align_children_center()
-                    .with_child(label.with_style(container_style))
-                    .into_any()
+                label.with_style(container_style)
             }
         } else {
             container_style.corner_radii = CornerRadii::default();
-            label.with_style(container_style).into_any()
+            label.with_style(container_style)
         }
     })
     .on_click(MouseButton::Left, on_click)

@@ -161,19 +161,28 @@ export default function search(): any {
         dismiss_button: interactive({
             base: {
                 color: foreground(theme.highest, "variant"),
-                icon_width: 12,
-                button_width: 14,
+                icon_width: 14,
+                button_width: 32,
+                corner_radius: 6,
                 padding: {
-                    left: 10,
-                    right: 10,
+                    top: 8,
+                    bottom: 8,
+                    left: 8,
+                    right: 8,
                 },
+
+                background: background(theme.highest, "variant"),
+
+                border: border(theme.highest, "on"),
             },
             state: {
                 hovered: {
                     color: foreground(theme.highest, "hovered"),
+                    background: background(theme.highest, "variant", "hovered")
                 },
                 clicked: {
                     color: foreground(theme.highest, "pressed"),
+                    background: background(theme.highest, "variant", "pressed")
                 },
             },
         }),
@@ -245,7 +254,7 @@ export default function search(): any {
             base: {
                 text: text(theme.highest, "mono", "on"),
                 background: background(theme.highest, "on"),
-                corner_radius: { top_left: 6, top_right: 6, bottom_right: 6, bottom_left: 6 },
+                corner_radius: 6,
                 border: {
                     ...border(theme.highest, "on"),
                     left: false,
@@ -253,10 +262,10 @@ export default function search(): any {
                 },
 
                 padding: {
-                    bottom: 6,
-                    left: 6,
-                    right: 6,
-                    top: 6,
+                    bottom: 3,
+                    left: 10,
+                    right: 10,
+                    top: 3,
                 },
             },
             state: {

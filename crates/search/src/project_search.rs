@@ -1590,10 +1590,10 @@ impl View for ProjectSearchBar {
                                 .with_children(matches)
                                 .aligned()
                                 .top()
-                                .left(),
+                                .left()
+                                .constrained()
+                                .with_height(theme.search.search_bar_row_height),
                         )
-                        .constrained()
-                        .with_height(theme.search.search_bar_row_height)
                         .flex(1., true),
                 )
                 .with_child(
@@ -1627,23 +1627,36 @@ impl View for ProjectSearchBar {
                         .with_child(
                             Flex::row()
                                 .align_children_center()
-                                .with_child(search_button_for_mode(SearchMode::Text, cx))
-                                .with_children(semantic_index)
-                                .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                                .with_child(super::search_bar::render_close_button(
-                                    "Dismiss Project Search",
-                                    &theme.search,
-                                    cx,
-                                    |_, this, cx| {
-                                        if let Some(search) = this.active_project_search.as_mut() {
-                                            search.update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
-                                        }
-                                    },
-                                    None,
-                                ))
+                                .with_child(
+                                    Flex::row()
+                                        .with_child(search_button_for_mode(SearchMode::Text, cx))
+                                        .with_children(semantic_index)
+                                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                                        .aligned()
+                                        .left()
+                                        .contained()
+                                        .with_margin_right(3.),
+                                )
+                                .with_child(
+                                    super::search_bar::render_close_button(
+                                        "Dismiss Project Search",
+                                        &theme.search,
+                                        cx,
+                                        |_, this, cx| {
+                                            if let Some(search) =
+                                                this.active_project_search.as_mut()
+                                            {
+                                                search
+                                                    .update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
+                                            }
+                                        },
+                                        None,
+                                    )
+                                    .aligned()
+                                    .right(),
+                                )
                                 .constrained()
                                 .with_height(theme.search.search_bar_row_height)
-                                .contained()
                                 .aligned()
                                 .right()
                                 .top()
