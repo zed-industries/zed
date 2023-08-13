@@ -1,0 +1,14 @@
+[package]
+name = "playground_macros"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/playground_macros.rs"
+proc-macro = true
+
+[dependencies]
+syn = "1.0.72"
+quote = "1.0.9"
+proc-macro2 = "1.0.66"
+once_cell = "1.18.0"
