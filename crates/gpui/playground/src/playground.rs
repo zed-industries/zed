@@ -1,9 +1,6 @@
 #![allow(dead_code, unused_variables)]
 
-use gpui::{
-    platform::{TitlebarOptions, WindowOptions},
-    AnyElement, Element,
-};
+use gpui::{elements::Empty, Element};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -12,24 +9,21 @@ fn main() {
 
     gpui::App::new(()).unwrap().run(|cx| {
         cx.platform().activate(true);
-        cx.add_window(
-            WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |_| view(|_| Playground::new()),
-        );
+        // cx.add_window(
+        //     WindowOptions {
+        //         titlebar: Some(TitlebarOptions {
+        //             appears_transparent: true,
+        //             ..Default::default()
+        //         }),
+        //         ..Default::default()
+        //     },
+        //     |_| view(|_| Playground::new()),
+        // );
     });
 }
 
-use frame::{length::auto, *};
-use gpui::{LayoutContext, ViewContext};
-use std::{borrow::Cow, cell::RefCell, marker::PhantomData, rc::Rc};
-use themes::{rose_pine, ThemeColors};
-use tokens::{margin::m4, text::lg};
+use std::marker::PhantomData;
+use themes::ThemeColors;
 
 mod color;
 mod frame;
@@ -45,19 +39,21 @@ impl<V> Playground<V> {
     }
 
     pub fn render(&mut self, _: &mut V, _: &mut gpui::ViewContext<V>) -> impl Element<V> {
-        workspace(&rose_pine::dawn())
+        Empty::new()
+        // workspace(&rose_pine::dawn())
     }
 }
 
-fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-    column()
-    // .size(auto())
-    // .fill(theme.base(0.5))
-    // .text_color(theme.text(0.5))
-    // .child(title_bar(theme))
-    // .child(stage(theme))
-    // .child(status_bar(theme))
-}
+// fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
+//     todo!()
+//     // column()
+//     // .size(auto())
+//     // .fill(theme.base(0.5))
+//     // .text_color(theme.text(0.5))
+//     // .child(title_bar(theme))
+//     // .child(stage(theme))
+//     // .child(status_bar(theme))
+// }
 
 // fn title_bar<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
 //     row()

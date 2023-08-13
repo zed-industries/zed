@@ -5303,11 +5303,22 @@ dependencies = [
  "gpui",
  "log",
  "optional_struct",
+ "playground_macros",
  "serde",
  "simplelog",
  "smallvec",
  "taffy",
  "util",
+]
+
+[[package]]
+name = "playground_macros"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

@@ -99,7 +99,7 @@ impl Into<gpui::color::Color> for Rgba {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq)]
 pub struct Hsla {
     pub h: f32,
     pub s: f32,
