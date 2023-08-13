@@ -20,7 +20,7 @@ pub fn tailwind_lengths(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let function_name = format_ident!("{}_{}", function_signature.ident, length);
         output_functions.extend(quote! {
             pub fn #function_name(mut self) -> Self {
-                let #argument_name = #value;
+                let #argument_name = #value.into();
                 #function_body
             }
         });
@@ -66,7 +66,6 @@ fn fixed_lengths() -> Vec<(&'static str, TokenStream2)> {
         ("72", quote! { Length::Rems(18.) }),
         ("80", quote! { Length::Rems(20.) }),
         ("96", quote! { Length::Rems(24.) }),
-        ("auto", quote! { Length::Auto }),
         ("half", quote! { Length::Percent(50.) }),
         ("1_3rd", quote! { Length::Percent(33.333333) }),
         ("2_3rd", quote! { Length::Percent(66.666667) }),

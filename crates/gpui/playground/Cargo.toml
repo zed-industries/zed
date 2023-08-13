@@ -17,7 +17,7 @@ playground_macros = { path = "../playground_macros" }
 serde.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "dab541d6104d58e2e10ce90c4a1dad0b703160cd" }
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "dab541d6104d58e2e10ce90c4a1dad0b703160cd", features = ["flexbox"] }
 util = { path = "../../util" }
 
 [dev-dependencies]
