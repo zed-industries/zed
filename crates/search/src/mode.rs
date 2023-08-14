@@ -51,15 +51,16 @@ impl SearchMode {
 
     pub(crate) fn border_right(&self) -> bool {
         match self {
-            SearchMode::Text => false,
-            _ => true,
+            SearchMode::Regex => true,
+            SearchMode::Text => true,
+            SearchMode::Semantic => true,
         }
     }
 
     pub(crate) fn border_left(&self) -> bool {
         match self {
-            SearchMode::Regex => false,
-            _ => true,
+            SearchMode::Text => true,
+            _ => false,
         }
     }
 

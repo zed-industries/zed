@@ -125,10 +125,9 @@ pub(crate) fn render_search_mode_button<V: View>(
             .in_state(is_active)
             .style_for(state)
             .clone();
-        if mode.button_side().is_some() {
-            style.container.border.left = mode.border_left();
-            style.container.border.right = mode.border_right();
-        }
+        style.container.border.left = mode.border_left();
+        style.container.border.right = mode.border_right();
+
         let label = Label::new(mode.label(), style.text.clone()).contained();
         let mut container_style = style.container.clone();
         if let Some(button_side) = mode.button_side() {
