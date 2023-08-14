@@ -1461,6 +1461,7 @@ impl ToJson for SizeConstraint {
     }
 }
 
+#[derive(Clone)]
 pub struct ChildView {
     view_id: usize,
     view_name: &'static str,

@@ -10,14 +10,14 @@ pub use taffy::tree::NodeId;
 
 #[derive(Deref, DerefMut)]
 pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
-    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, Adapter<V>>,
+    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
 }
 
 #[derive(Deref, DerefMut)]
 pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
-    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, Adapter<V>>,
+    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
     pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
@@ -35,6 +35,14 @@ pub trait Element<V: 'static>: 'static + Clone {
             element: Box::new(self) as Box<dyn ElementObject<V>>,
             layout_node_id: None,
         }
+    }
+
+    fn adapt(self) -> Adapter<V>
+    where
+        Self: Sized,
+        Self: Element<V>,
+    {
+        Adapter(self.into_any())
     }
 
     // Display ////////////////////
@@ -200,14 +208,15 @@ pub trait Element<V: 'static>: 'static + Clone {
 }
 
 pub trait ElementObject<V> {
-    fn clone_object(&self) -> Box<dyn ElementObject<V>>;
+    fn style_mut(&mut self) -> &mut Style;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
     fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
+    fn clone_object(&self) -> Box<dyn ElementObject<V>>;
 }
 
 impl<V: 'static, E: Element<V>> ElementObject<V> for E {
-    fn clone_object(&self) -> Box<dyn ElementObject<V>> {
-        Box::new(Clone::clone(self))
+    fn style_mut(&mut self) -> &mut Style {
+        self.style_mut()
     }
 
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
@@ -216,6 +225,10 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
 
     fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         self.paint(layout, view, cx)
+    }
+
+    fn clone_object(&self) -> Box<dyn ElementObject<V>> {
+        Box::new(Clone::clone(self))
     }
 }
 
@@ -248,5 +261,19 @@ impl<V> Clone for AnyElement<V> {
             element: self.element.clone_object(),
             layout_node_id: self.layout_node_id,
         }
+    }
+}
+
+impl<V: 'static> Element<V> for AnyElement<V> {
+    fn style_mut(&mut self) -> &mut Style {
+        self.element.style_mut()
+    }
+
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
+        self.layout(view, cx)
+    }
+
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+        self.paint(view, cx)
     }
 }

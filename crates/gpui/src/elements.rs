@@ -33,8 +33,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
-    WeakViewHandle, WindowContext,
+    json, Action, Entity, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    ViewContext, WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -563,6 +563,12 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         self
     }
 }
+
+impl Entity for AnyElement<()> {
+    type Event = ();
+}
+
+// impl View for AnyElement<()> {}
 
 pub struct RootElement<V> {
     element: AnyElement<V>,
