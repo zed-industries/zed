@@ -26,6 +26,7 @@ use std::marker::PhantomData;
 use themes::ThemeColors;
 
 mod color;
+mod element;
 mod frame;
 mod style;
 mod themes;

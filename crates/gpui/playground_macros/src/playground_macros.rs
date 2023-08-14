@@ -6,8 +6,11 @@ use syn::{parse_macro_input, FnArg, ItemFn, PatType};
 #[proc_macro_attribute]
 pub fn tailwind_lengths(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_function = parse_macro_input!(item as ItemFn);
+
+    let visibility = &input_function.vis;
     let function_signature = input_function.sig.clone();
     let function_body = input_function.block;
+    let where_clause = &function_signature.generics.where_clause;
 
     let argument_name = match function_signature.inputs.iter().nth(1) {
         Some(FnArg::Typed(PatType { pat, .. })) => pat,
@@ -19,7 +22,7 @@ pub fn tailwind_lengths(_attr: TokenStream, item: TokenStream) -> TokenStream {
     for (length, value) in fixed_lengths() {
         let function_name = format_ident!("{}_{}", function_signature.ident, length);
         output_functions.extend(quote! {
-            pub fn #function_name(mut self) -> Self {
+            #visibility fn #function_name(mut self) -> Self #where_clause {
                 let #argument_name = #value.into();
                 #function_body
             }

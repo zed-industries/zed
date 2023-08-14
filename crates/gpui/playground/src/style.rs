@@ -1,5 +1,5 @@
-use playground_macros::tailwind_lengths;
-use taffy::style::{
+use crate::color::Hsla;
+pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
@@ -62,6 +62,9 @@ pub struct Style {
     pub flex_grow: f32,
     /// The relative rate at which this item shrinks when it is contracting to fit into space, 1.0 is the default value, and this value must be positive.
     pub flex_shrink: f32,
+
+    /// The fill color of this element
+    pub fill: Fill,
 }
 
 impl Style {
@@ -93,117 +96,44 @@ impl Style {
         flex_grow: 0.0,
         flex_shrink: 1.0,
         flex_basis: LengthOrAuto::Auto,
+        fill: Fill::Color(Hsla {
+            h: 0.,
+            s: 0.,
+            l: 0.,
+            a: 0.,
+        }),
     };
 
     pub fn new() -> Self {
         Self::DEFAULT.clone()
     }
 
-    // Display ////////////////////
-
-    fn block(mut self) -> Self {
-        self.display = Display::Block;
-        self
-    }
-
-    fn flex(mut self) -> Self {
-        self.display = Display::Flex;
-        self
-    }
-
-    fn grid(mut self) -> Self {
-        self.display = Display::Grid;
-        self
-    }
-
-    // Overflow ///////////////////
-
-    pub fn overflow_visible(mut self) -> Self {
-        self.overflow.x = Overflow::Visible;
-        self.overflow.y = Overflow::Visible;
-        self
-    }
-
-    pub fn overflow_hidden(mut self) -> Self {
-        self.overflow.x = Overflow::Hidden;
-        self.overflow.y = Overflow::Hidden;
-        self
-    }
-
-    pub fn overflow_scroll(mut self) -> Self {
-        self.overflow.x = Overflow::Scroll;
-        self.overflow.y = Overflow::Scroll;
-        self
-    }
-
-    pub fn overflow_x_visible(mut self) -> Self {
-        self.overflow.x = Overflow::Visible;
-        self
-    }
-
-    pub fn overflow_x_hidden(mut self) -> Self {
-        self.overflow.x = Overflow::Hidden;
-        self
-    }
-
-    pub fn overflow_x_scroll(mut self) -> Self {
-        self.overflow.x = Overflow::Scroll;
-        self
-    }
-
-    pub fn overflow_y_visible(mut self) -> Self {
-        self.overflow.y = Overflow::Visible;
-        self
-    }
-
-    pub fn overflow_y_hidden(mut self) -> Self {
-        self.overflow.y = Overflow::Hidden;
-        self
-    }
-
-    pub fn overflow_y_scroll(mut self) -> Self {
-        self.overflow.y = Overflow::Scroll;
-        self
-    }
-
-    // Position ///////////////////
-
-    pub fn relative(mut self) -> Self {
-        self.position = Position::Relative;
-        self
-    }
-
-    pub fn absolute(mut self) -> Self {
-        self.position = Position::Absolute;
-
-        self
-    }
-
-    #[tailwind_lengths]
-    pub fn inset(mut self, length: Length) -> Self {
-        self.inset.top = length;
-        self.inset.right = length;
-        self.inset.bottom = length;
-        self.inset.left = length;
-        self
-    }
-
-    #[tailwind_lengths]
-    pub fn w(mut self, length: Length) -> Self {
-        self.size.width = length;
-        self
-    }
-
-    #[tailwind_lengths]
-    pub fn min_w(mut self, length: Length) -> Self {
-        self.size.width = length;
-        self
-    }
-
-    #[tailwind_lengths]
-    pub fn h(mut self, length: Length) -> Self {
-        self.size.height = length;
-        self
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::style::Style {
+        taffy::style::Style {
+            display: self.display,
+            overflow: self.overflow.clone().into(),
+            scrollbar_width: self.scrollbar_width,
+            position: self.position,
+            inset: self.inset.to_taffy(rem_size),
+            size: self.size.to_taffy(rem_size),
+            min_size: self.min_size.to_taffy(rem_size),
+            max_size: self.max_size.to_taffy(rem_size),
+            aspect_ratio: self.aspect_ratio,
+            margin: self.margin.to_taffy(rem_size),
+            padding: self.padding.to_taffy(rem_size),
+            border: self.border.to_taffy(rem_size),
+            align_items: self.align_items,
+            align_self: self.align_self,
+            align_content: self.align_content,
+            justify_content: self.justify_content,
+            gap: self.gap.to_taffy(rem_size),
+            flex_direction: self.flex_direction,
+            flex_wrap: self.flex_wrap,
+            flex_basis: self.flex_basis.to_taffy(rem_size).into(),
+            flex_grow: self.flex_grow,
+            flex_shrink: self.flex_shrink,
+            ..Default::default() // Ignore grid properties for now
+        }
     }
 }
 
@@ -211,6 +141,15 @@ impl Style {
 pub struct Point<T> {
     pub x: T,
     pub y: T,
+}
+
+impl<T> Into<taffy::geometry::Point<T>> for Point<T> {
+    fn into(self) -> taffy::geometry::Point<T> {
+        taffy::geometry::Point {
+            x: self.x,
+            y: self.y,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -226,6 +165,13 @@ impl Size<Length> {
             height: Length::Pixels(0.),
         }
     }
+
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::geometry::Size<taffy::style::LengthPercentage> {
+        taffy::geometry::Size {
+            width: self.width.to_taffy(rem_size),
+            height: self.height.to_taffy(rem_size),
+        }
+    }
 }
 
 impl Size<LengthOrAuto> {
@@ -233,6 +179,16 @@ impl Size<LengthOrAuto> {
         Self {
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
+        }
+    }
+
+    pub fn to_taffy<T: From<taffy::prelude::LengthPercentageAuto>>(
+        &self,
+        rem_size: f32,
+    ) -> taffy::geometry::Size<T> {
+        taffy::geometry::Size {
+            width: self.width.to_taffy(rem_size).into(),
+            height: self.height.to_taffy(rem_size).into(),
         }
     }
 }
@@ -252,6 +208,15 @@ impl Edges<Length> {
             right: Length::Pixels(0.0),
             bottom: Length::Pixels(0.0),
             left: Length::Pixels(0.0),
+        }
+    }
+
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::geometry::Rect<taffy::style::LengthPercentage> {
+        taffy::geometry::Rect {
+            top: self.top.to_taffy(rem_size),
+            right: self.right.to_taffy(rem_size),
+            bottom: self.bottom.to_taffy(rem_size),
+            left: self.left.to_taffy(rem_size),
         }
     }
 }
@@ -274,6 +239,18 @@ impl Edges<LengthOrAuto> {
             left: LengthOrAuto::Length(Length::Pixels(0.0)),
         }
     }
+
+    pub fn to_taffy(
+        &self,
+        rem_size: f32,
+    ) -> taffy::geometry::Rect<taffy::style::LengthPercentageAuto> {
+        taffy::geometry::Rect {
+            top: self.top.to_taffy(rem_size),
+            right: self.right.to_taffy(rem_size),
+            bottom: self.bottom.to_taffy(rem_size),
+            left: self.left.to_taffy(rem_size),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -283,14 +260,44 @@ pub enum Length {
     Percent(f32), // 0. - 100.
 }
 
+impl Length {
+    fn to_taffy(&self, rem_size: f32) -> taffy::style::LengthPercentage {
+        match self {
+            Length::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
+            Length::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
+            Length::Percent(percent) => taffy::style::LengthPercentage::Percent(*percent),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum LengthOrAuto {
     Length(Length),
     Auto,
 }
 
+impl LengthOrAuto {
+    fn to_taffy(&self, rem_size: f32) -> taffy::prelude::LengthPercentageAuto {
+        match self {
+            LengthOrAuto::Length(length) => length.to_taffy(rem_size).into(),
+            LengthOrAuto::Auto => taffy::prelude::LengthPercentageAuto::Auto,
+        }
+    }
+}
+
 impl From<Length> for LengthOrAuto {
     fn from(value: Length) -> Self {
         LengthOrAuto::Length(value)
+    }
+}
+
+#[derive(Clone)]
+pub enum Fill {
+    Color(Hsla),
+}
+
+impl Default for Fill {
+    fn default() -> Self {
+        Self::Color(Hsla::default())
     }
 }
