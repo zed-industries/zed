@@ -10,6 +10,7 @@ import { useTheme } from "../theme"
 import collab_modals from "./collab_modals"
 import { text_button } from "../component/text_button"
 import { toggleable_icon_button } from "../component/icon_button"
+import { indicator } from "../component/indicator"
 
 export default function contacts_panel(): any {
     const theme = useTheme()
@@ -24,7 +25,7 @@ export default function contacts_panel(): any {
     const contact_button = {
         background: background(layer, "on"),
         color: foreground(layer, "on"),
-        icon_width: 8,
+        icon_width: 14,
         button_width: 16,
         corner_radius: 8,
     }
@@ -199,19 +200,23 @@ export default function contacts_panel(): any {
         }),
         list_empty_label_container: {
             margin: {
-                left: 5,
+                left: NAME_MARGIN,
             }
         },
         list_empty_icon: {
-            color: foreground(layer, "on"),
-            width: 16,
+            color: foreground(layer, "variant"),
+            width: 14,
         },
         list_empty_state: toggleable({
             base: interactive({
                 base: {
                     ...text(layer, "ui_sans", "variant", { size: "sm" }),
-                    padding: SPACING
-
+                    padding: {
+                        top: SPACING / 2,
+                        bottom: SPACING / 2,
+                        left: SPACING,
+                        right: SPACING
+                    },
                 },
                 state: {
                     clicked: {
@@ -238,20 +243,10 @@ export default function contacts_panel(): any {
         }),
         contact_avatar: {
             corner_radius: 10,
-            width: 18,
+            width: 20,
         },
-        contact_status_free: {
-            corner_radius: 4,
-            padding: 4,
-            margin: { top: 12, left: 12 },
-            background: foreground(layer, "positive"),
-        },
-        contact_status_busy: {
-            corner_radius: 4,
-            padding: 4,
-            margin: { top: 12, left: 12 },
-            background: foreground(layer, "negative"),
-        },
+        contact_status_free: indicator({ layer, color: "positive" }),
+        contact_status_busy: indicator({ layer, color: "negative" }),
         contact_username: {
             ...text(layer, "ui_sans", { size: "sm" }),
             margin: {
@@ -302,7 +297,7 @@ export default function contacts_panel(): any {
                     icon: {
                         margin: { left: NAME_MARGIN },
                         color: foreground(layer, "variant"),
-                        width: 12,
+                        width: 14,
                     },
                     name: {
                         ...project_row.name,
