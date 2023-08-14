@@ -659,19 +659,6 @@ fn calculate_hint_updates(
             visible_hints
                 .iter()
                 .filter(|hint| hint.position.excerpt_id == query.excerpt_id)
-                .filter(|hint| {
-                    contains_position(&fetch_range, hint.position.text_anchor, buffer_snapshot)
-                })
-                .filter(|hint| {
-                    fetch_range
-                        .start
-                        .cmp(&hint.position.text_anchor, buffer_snapshot)
-                        .is_le()
-                        && fetch_range
-                            .end
-                            .cmp(&hint.position.text_anchor, buffer_snapshot)
-                            .is_ge()
-                })
                 .map(|inlay_hint| inlay_hint.id)
                 .filter(|hint_id| !excerpt_hints_to_persist.contains_key(hint_id)),
         );
@@ -684,16 +671,6 @@ fn calculate_hint_updates(
                     .iter()
                     .filter(|(cached_inlay_id, _)| {
                         !excerpt_hints_to_persist.contains_key(cached_inlay_id)
-                    })
-                    .filter(|(_, cached_hint)| {
-                        fetch_range
-                            .start
-                            .cmp(&cached_hint.position, buffer_snapshot)
-                            .is_le()
-                            && fetch_range
-                                .end
-                                .cmp(&cached_hint.position, buffer_snapshot)
-                                .is_ge()
                     })
                     .map(|(cached_inlay_id, _)| *cached_inlay_id),
             );
@@ -2009,12 +1986,12 @@ mod tests {
             assert_eq!(query_range.start, lsp::Position::new(selection_in_cached_range.row - expected_increment, 0));
             assert_eq!(query_range.end, lsp::Position::new(selection_in_cached_range.row + expected_increment, 0));
 
-            assert_eq!(lsp_request_count.load(Ordering::Acquire), 3, "Should query for hints after the scroll and again after the edit");
-            let expected_layers = vec!["1".to_string(), "2".to_string(), "3".to_string()];
+            assert_eq!(lsp_request_count.load(Ordering::Acquire), 4, "Should query for hints once after the edit");
+            let expected_layers = vec!["4".to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit");
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, 3, "Should update the cache for every LSP response with hints added");
+            assert_eq!(editor.inlay_hint_cache().version, 4, "Should update the cache for every LSP response with hints added");
         });
     }
 
