@@ -43,7 +43,7 @@ export default function search(): any {
         option_button: toggleable({
             base: interactive({
                 base: {
-                    ...text(theme.highest, "mono", "on"),
+                    ...text(theme.highest, "mono", "variant"),
                     background: background(theme.highest, "on"),
                     corner_radius: 2,
                     margin: { right: 2 },
@@ -59,14 +59,14 @@ export default function search(): any {
                 },
                 state: {
                     hovered: {
-                        ...text(theme.highest, "mono", "on", "hovered"),
+                        ...text(theme.highest, "mono", "variant", "hovered"),
                         background: background(theme.highest, "on", "hovered"),
                         border: {
                             width: 1., color: background(theme.highest, "on", "hovered")
                         },
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "on", "pressed"),
+                        ...text(theme.highest, "mono", "variant", "pressed"),
                         background: background(theme.highest, "on", "pressed"),
                         border: {
                             width: 1., color: background(theme.highest, "on", "pressed")
