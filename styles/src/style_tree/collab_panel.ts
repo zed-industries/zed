@@ -267,6 +267,15 @@ export default function contacts_panel(): any {
                 },
             },
         }),
+        list_empty_label_container: {
+            margin: {
+                left: 5,
+            }
+        },
+        list_empty_icon: {
+            color: foreground(layer, "on"),
+            width: 16,
+        },
         list_empty_state: toggleable({
             base: interactive({
                 base: {

@@ -220,6 +220,8 @@ pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub list_empty_state: Toggleable<Interactive<ContainedText>>,
+    pub list_empty_icon: Icon,
+    pub list_empty_label_container: ContainerStyle,
     pub log_in_button: Interactive<ContainedText>,
     pub channel_editor: ContainerStyle,
     pub channel_hash: Icon,

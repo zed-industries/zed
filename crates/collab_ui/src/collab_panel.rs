@@ -1413,7 +1413,21 @@ impl CollabPanel {
         enum AddContacts {}
         MouseEventHandler::<AddContacts, Self>::new(0, cx, |state, _| {
             let style = theme.list_empty_state.style_for(is_selected, state);
-            Label::new("Add contacts to begin collaborating", style.text.clone())
+            Flex::row()
+                .with_child(
+                    Svg::new("icons/plus_16.svg")
+                        .with_color(theme.list_empty_icon.color)
+                        .constrained()
+                        .with_width(theme.list_empty_icon.width)
+                        .aligned()
+                        .left(),
+                )
+                .with_child(
+                    Label::new("Add a contact", style.text.clone())
+                        .contained()
+                        .with_style(theme.list_empty_label_container),
+                )
+                .align_children_center()
                 .contained()
                 .with_style(style.container)
                 .into_any()
