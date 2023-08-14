@@ -5113,7 +5113,13 @@ impl Project {
                                         Vec::new()
                                     };
                                     if !buffer_matches.is_empty() {
-                                        result_tx.send((buffer.clone(), buffer_matches)).await;
+                                        if result_tx
+                                            .send((buffer.clone(), buffer_matches))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
                                         // worker_matched_buffers.insert(buffer.clone(), buffer_matches);
                                     }
                                 }
