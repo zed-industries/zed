@@ -103,7 +103,7 @@ impl View for BufferSearchBar {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx).clone();
-        let editor_container = if self.query_contains_error {
+        let query_container_style = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
             theme.search.editor.input.container
@@ -241,47 +241,50 @@ impl View for BufferSearchBar {
             )
             .contained();
 
+        let query = Flex::row()
+            .with_child(
+                Svg::for_style(icon_style.icon)
+                    .contained()
+                    .with_style(icon_style.container)
+                    .constrained(),
+            )
+            .with_child(
+                ChildView::new(&self.query_editor, cx)
+                    .constrained()
+                    .flex(1., true),
+            )
+            .with_child(
+                Flex::row()
+                    .with_children(render_search_option(
+                        supported_options.case,
+                        "icons/case_insensitive_12.svg",
+                        SearchOptions::CASE_SENSITIVE,
+                        cx,
+                    ))
+                    .with_children(render_search_option(
+                        supported_options.word,
+                        "icons/word_search_12.svg",
+                        SearchOptions::WHOLE_WORD,
+                        cx,
+                    ))
+                    .flex(1., true)
+                    .contained(),
+            )
+            .align_children_center()
+            .aligned()
+            .left()
+            .flex(1., true);
+        let row_spacing = theme.workspace.toolbar.container.padding.bottom;
         let editor_column = Flex::column()
             .align_children_center()
             .with_child(
                 Flex::row()
-                    .align_children_center()
                     .with_child(
                         Flex::row()
-                            .align_children_center()
-                            .with_child(
-                                Svg::for_style(icon_style.icon)
-                                    .contained()
-                                    .with_style(icon_style.container)
-                                    .constrained(),
-                            )
-                            .with_child(
-                                ChildView::new(&self.query_editor, cx)
-                                    .aligned()
-                                    .left()
-                                    .flex(1., true),
-                            )
-                            .with_child(
-                                Flex::row()
-                                    .with_children(render_search_option(
-                                        supported_options.case,
-                                        "icons/case_insensitive_12.svg",
-                                        SearchOptions::CASE_SENSITIVE,
-                                        cx,
-                                    ))
-                                    .with_children(render_search_option(
-                                        supported_options.word,
-                                        "icons/word_search_12.svg",
-                                        SearchOptions::WHOLE_WORD,
-                                        cx,
-                                    ))
-                                    .flex(1., true)
-                                    .contained(),
-                            )
+                            .with_child(query)
                             .contained()
-                            .with_style(editor_container)
+                            .with_style(query_container_style)
                             .aligned()
-                            .top()
                             .constrained()
                             .with_min_width(theme.search.editor.min_width)
                             .with_max_width(theme.search.editor.max_width)
@@ -293,6 +296,8 @@ impl View for BufferSearchBar {
                             .with_child(self.render_action_button("Select All", cx))
                             .aligned(),
                     )
+                    .contained()
+                    .with_margin_bottom(row_spacing)
                     .flex(1., false),
             )
             .contained()
