@@ -66,7 +66,7 @@ impl ChannelModal {
                 },
                 cx,
             )
-            .with_theme(|theme| theme.collab_panel.channel_modal.picker.clone())
+            .with_theme(|theme| theme.collab_panel.tabbed_modal.picker.clone())
         });
 
         cx.subscribe(&picker, |_, _, e, cx| cx.emit(*e)).detach();
@@ -143,7 +143,7 @@ impl View for ChannelModal {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).collab_panel.channel_modal;
+        let theme = &theme::current(cx).collab_panel.tabbed_modal;
 
         let mode = self.picker.read(cx).delegate().mode;
         let Some(channel) = self
@@ -160,12 +160,12 @@ impl View for ChannelModal {
             mode: Mode,
             text: &'static str,
             current_mode: Mode,
-            theme: &theme::ChannelModal,
+            theme: &theme::TabbedModal,
             cx: &mut ViewContext<ChannelModal>,
         ) -> AnyElement<ChannelModal> {
             let active = mode == current_mode;
             MouseEventHandler::<T, _>::new(0, cx, move |state, _| {
-                let contained_text = theme.mode_button.style_for(active, state);
+                let contained_text = theme.tab_button.style_for(active, state);
                 Label::new(text, contained_text.text.clone())
                     .contained()
                     .with_style(contained_text.container.clone())
@@ -367,11 +367,17 @@ impl PickerDelegate for ChannelModalDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let theme = &theme::current(cx).collab_panel.channel_modal;
+        let full_theme = &theme::current(cx);
+        let theme = &full_theme.collab_panel.channel_modal;
+        let tabbed_modal = &full_theme.collab_panel.tabbed_modal;
         let (user, admin) = self.user_at_index(ix).unwrap();
         let request_status = self.member_status(user.id, cx);
 
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
+        let style = tabbed_modal
+            .picker
+            .item
+            .in_state(selected)
+            .style_for(mouse_state);
 
         let in_manage = matches!(self.mode, Mode::ManageMembers);
 
@@ -448,7 +454,7 @@ impl PickerDelegate for ChannelModalDelegate {
             .contained()
             .with_style(style.container)
             .constrained()
-            .with_height(theme.row_height)
+            .with_height(tabbed_modal.row_height)
             .into_any();
 
         if selected {

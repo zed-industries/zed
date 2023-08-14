@@ -7,9 +7,7 @@ import {
 } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
-import channel_modal from "./channel_modal"
-import { icon_button, toggleable_icon_button } from "../component/icon_button"
-
+import collab_modals from "./collab_modals"
 
 export default function contacts_panel(): any {
     const theme = useTheme()
@@ -109,7 +107,7 @@ export default function contacts_panel(): any {
 
 
     return {
-        channel_modal: channel_modal(),
+        ...collab_modals(),
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),

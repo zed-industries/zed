@@ -48,7 +48,6 @@ pub struct Theme {
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
-    pub contact_finder: ContactFinder,
     pub picker: Picker,
     pub editor: Editor,
     pub search: Search,
@@ -224,6 +223,8 @@ pub struct CollabPanel {
     pub log_in_button: Interactive<ContainedText>,
     pub channel_editor: ContainerStyle,
     pub channel_hash: Icon,
+    pub tabbed_modal: TabbedModal,
+    pub contact_finder: ContactFinder,
     pub channel_modal: ChannelModal,
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
@@ -251,13 +252,20 @@ pub struct CollabPanel {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ChannelModal {
+pub struct TabbedModal {
+    pub tab_button: Toggleable<Interactive<ContainedText>>,
+    pub modal: ContainerStyle,
+    pub header: ContainerStyle,
+    pub body: ContainerStyle,
+    pub title: ContainedText,
+    pub picker: Picker,
     pub max_height: f32,
     pub max_width: f32,
-    pub title: ContainedText,
-    pub mode_button: Toggleable<Interactive<ContainedText>>,
-    pub picker: Picker,
     pub row_height: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ChannelModal {
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainerStyle,
     pub remove_member_button: ContainedText,
@@ -265,9 +273,6 @@ pub struct ChannelModal {
     pub member_icon: Icon,
     pub invitee_icon: Icon,
     pub member_tag: ContainedText,
-    pub modal: ContainerStyle,
-    pub header: ContainerStyle,
-    pub body: ContainerStyle,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -286,8 +291,6 @@ pub struct TreeBranch {
 
 #[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactFinder {
-    pub picker: Picker,
-    pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainerStyle,
     pub contact_button: IconButton,

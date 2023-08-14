@@ -46,7 +46,6 @@ export default function app(): any {
         project_diagnostics: project_diagnostics(),
         project_panel: project_panel(),
         collab_panel: collab_panel(),
-        contact_finder: contact_finder(),
         toolbar_dropdown_menu: toolbar_dropdown_menu(),
         search: search(),
         shared_screen: shared_screen(),

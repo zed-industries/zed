@@ -7,7 +7,7 @@ use call::ActiveCall;
 use client::{
     proto::PeerId, Channel, ChannelEvent, ChannelId, ChannelStore, Client, Contact, User, UserStore,
 };
-use contact_finder::build_contact_finder;
+
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
@@ -45,6 +45,8 @@ use workspace::{
 
 use crate::face_pile::FacePile;
 use channel_modal::ChannelModal;
+
+use self::contact_finder::ContactFinder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
@@ -1945,7 +1947,7 @@ impl CollabPanel {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.add_view(|cx| {
-                        let finder = build_contact_finder(self.user_store.clone(), cx);
+                        let mut finder = ContactFinder::new(self.user_store.clone(), cx);
                         finder.set_query(self.filter_editor.read(cx).text(cx), cx);
                         finder
                     })

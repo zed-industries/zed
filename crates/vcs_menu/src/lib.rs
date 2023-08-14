@@ -256,7 +256,7 @@ impl PickerDelegate for BranchListDelegate {
             .contained()
             .with_style(style.container)
             .constrained()
-            .with_height(theme.contact_finder.row_height)
+            .with_height(theme.collab_panel.tabbed_modal.row_height)
             .into_any()
     }
     fn render_header(
