@@ -97,7 +97,7 @@ impl TasksForRanges {
         let ranges_to_query = match invalidate {
             InvalidationStrategy::None => {
                 let mut ranges_to_query = Vec::new();
-                let mut last_cache_range_stop = None::<language::Anchor>;
+                let mut latest_cached_range = None::<&mut Range<language::Anchor>>;
                 for cached_range in self
                     .sorted_ranges
                     .iter_mut()
@@ -114,12 +114,13 @@ impl TasksForRanges {
                             .is_le()
                     })
                 {
-                    match last_cache_range_stop {
-                        Some(last_cache_range_stop) => {
-                            if last_cache_range_stop.offset.saturating_add(1)
+                    match latest_cached_range {
+                        Some(latest_cached_range) => {
+                            if latest_cached_range.end.offset.saturating_add(1)
                                 < cached_range.start.offset
                             {
-                                ranges_to_query.push(last_cache_range_stop..cached_range.start);
+                                ranges_to_query.push(latest_cached_range.end..cached_range.start);
+                                cached_range.start = latest_cached_range.end;
                             }
                         }
                         None => {
@@ -129,19 +130,28 @@ impl TasksForRanges {
                                 .is_lt()
                             {
                                 ranges_to_query.push(query_range.start..cached_range.start);
+                                cached_range.start = query_range.start;
                             }
                         }
                     }
-                    last_cache_range_stop = Some(cached_range.end);
+                    latest_cached_range = Some(cached_range);
                 }
 
-                match last_cache_range_stop {
-                    Some(last_cache_range_stop) => {
-                        if last_cache_range_stop.offset.saturating_add(1) < query_range.end.offset {
-                            ranges_to_query.push(last_cache_range_stop..query_range.end);
+                match latest_cached_range {
+                    Some(latest_cached_range) => {
+                        if latest_cached_range.end.offset.saturating_add(1) < query_range.end.offset
+                        {
+                            ranges_to_query.push(latest_cached_range.end..query_range.end);
+                            latest_cached_range.end = query_range.end;
                         }
                     }
-                    None => ranges_to_query.push(query_range),
+                    None => {
+                        ranges_to_query.push(query_range.clone());
+                        self.sorted_ranges.push(query_range);
+                        self.sorted_ranges.sort_by(|range_a, range_b| {
+                            range_a.start.cmp(&range_b.start, buffer_snapshot)
+                        });
+                    }
                 }
 
                 ranges_to_query
@@ -154,9 +164,6 @@ impl TasksForRanges {
         };
 
         if !ranges_to_query.is_empty() {
-            self.sorted_ranges.extend(ranges_to_query.clone());
-            self.sorted_ranges
-                .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
             self.tasks.push(spawn_task(ranges_to_query));
         }
     }
