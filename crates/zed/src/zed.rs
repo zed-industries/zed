@@ -433,10 +433,10 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Some(close) = window.update_root(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(false, cx)
+            if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
             }) {
-                if close.await? {
+                if !should_close.await? {
                     return Ok(());
                 }
             }
@@ -2324,6 +2324,11 @@ mod tests {
                     .into(),
                 Assets
                     .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .to_vec()
                     .into(),

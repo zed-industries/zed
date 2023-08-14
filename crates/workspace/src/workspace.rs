@@ -3614,7 +3614,7 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                                 bounds,
                                 background: Some(code_span_background_color),
                                 border: Default::default(),
-                                corner_radius: 2.0,
+                                corner_radii: (2.0).into(),
                             })
                         })
                         .into_any()
@@ -4067,10 +4067,10 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Some(close) = window.update_root(&mut cx, |workspace, cx| {
+            if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
                 workspace.prepare_to_close(true, cx)
             }) {
-                if !close.await? {
+                if !should_close.await? {
                     return Ok(());
                 }
             }

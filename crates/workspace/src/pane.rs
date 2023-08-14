@@ -303,10 +303,10 @@ impl Pane {
                         let tooltip_label;
                         if pane.is_zoomed() {
                             icon_path = "icons/minimize_8.svg";
-                            tooltip_label = "Zoom In".into();
+                            tooltip_label = "Zoom In";
                         } else {
                             icon_path = "icons/maximize_8.svg";
-                            tooltip_label = "Zoom In".into();
+                            tooltip_label = "Zoom In";
                         }
 
                         Pane::render_tab_bar_button(
@@ -1397,7 +1397,7 @@ impl Pane {
                         bounds: square,
                         background: Some(color),
                         border: Default::default(),
-                        corner_radius: diameter / 2.,
+                        corner_radii: (diameter / 2.).into(),
                     });
                 }
             })
@@ -1477,7 +1477,7 @@ impl Pane {
         index: usize,
         icon: &'static str,
         is_active: bool,
-        tooltip: Option<(String, Option<Box<dyn Action>>)>,
+        tooltip: Option<(&'static str, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F1,
         on_down: F2,

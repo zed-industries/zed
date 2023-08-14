@@ -177,7 +177,7 @@ impl MouseRegion {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
 pub struct MouseRegionId {
     view_id: usize,
     tag: TypeId,

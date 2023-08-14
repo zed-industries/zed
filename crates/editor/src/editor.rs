@@ -8686,7 +8686,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         // We really need to rethink this ID system...
         .with_tooltip::<BlockContextToolip>(
             cx.block_id,
-            "Copy diagnostic message".to_string(),
+            "Copy diagnostic message",
             None,
             tooltip_style,
             cx,

@@ -173,7 +173,7 @@ impl View for DiagnosticIndicator {
             })
             .with_tooltip::<Summary>(
                 0,
-                "Project Diagnostics".to_string(),
+                "Project Diagnostics",
                 Some(Box::new(crate::Deploy)),
                 tooltip_style,
                 cx,

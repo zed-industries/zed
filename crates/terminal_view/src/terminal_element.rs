@@ -153,7 +153,7 @@ impl LayoutRect {
             bounds: RectF::new(position, size),
             background: Some(self.color),
             border: Default::default(),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         })
     }
 }
@@ -764,7 +764,7 @@ impl Element<TerminalView> for TerminalElement {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
                     background: Some(layout.background_color),
                     border: Default::default(),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
 
                 for rect in &layout.rects {

@@ -238,7 +238,7 @@ impl CollabTitlebarItem {
                             .left()
                             .with_tooltip::<RecentProjectsTooltip>(
                                 0,
-                                "Recent projects".into(),
+                                "Recent projects",
                                 Some(Box::new(recent_projects::OpenRecent)),
                                 theme.tooltip.clone(),
                                 cx,
@@ -282,7 +282,7 @@ impl CollabTitlebarItem {
                                             .left()
                                             .with_tooltip::<BranchPopoverTooltip>(
                                                 0,
-                                                "Recent branches".into(),
+                                                "Recent branches",
                                                 Some(Box::new(ToggleVcsMenu)),
                                                 theme.tooltip.clone(),
                                                 cx,
@@ -582,7 +582,7 @@ impl CollabTitlebarItem {
                 })
                 .with_tooltip::<ToggleContactsMenu>(
                     0,
-                    "Show contacts menu".into(),
+                    "Show contacts menu",
                     Some(Box::new(ToggleContactsMenu)),
                     theme.tooltip.clone(),
                     cx,
@@ -633,7 +633,7 @@ impl CollabTitlebarItem {
         })
         .with_tooltip::<ToggleScreenSharing>(
             0,
-            tooltip.into(),
+            tooltip,
             Some(Box::new(ToggleScreenSharing)),
             theme.tooltip.clone(),
             cx,
@@ -686,7 +686,7 @@ impl CollabTitlebarItem {
         })
         .with_tooltip::<ToggleMute>(
             0,
-            tooltip.into(),
+            tooltip,
             Some(Box::new(ToggleMute)),
             theme.tooltip.clone(),
             cx,
@@ -734,7 +734,7 @@ impl CollabTitlebarItem {
         })
         .with_tooltip::<ToggleDeafen>(
             0,
-            tooltip.into(),
+            tooltip,
             Some(Box::new(ToggleDeafen)),
             theme.tooltip.clone(),
             cx,
@@ -768,7 +768,7 @@ impl CollabTitlebarItem {
         })
         .with_tooltip::<LeaveCall>(
             0,
-            tooltip.into(),
+            tooltip,
             Some(Box::new(LeaveCall)),
             theme.tooltip.clone(),
             cx,

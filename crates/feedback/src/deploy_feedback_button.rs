@@ -66,7 +66,7 @@ impl View for DeployFeedbackButton {
                 })
                 .with_tooltip::<Self>(
                     0,
-                    "Send Feedback".into(),
+                    "Send Feedback",
                     Some(Box::new(GiveFeedback)),
                     theme.tooltip.clone(),
                     cx,

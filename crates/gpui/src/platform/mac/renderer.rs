@@ -509,10 +509,14 @@ impl Renderer {
         };
         for (ix, shadow) in shadows.iter().enumerate() {
             let shape_bounds = shadow.bounds * scale_factor;
+            let corner_radii = shadow.corner_radii * scale_factor;
             let shader_shadow = shaders::GPUIShadow {
                 origin: shape_bounds.origin().to_float2(),
                 size: shape_bounds.size().to_float2(),
-                corner_radius: shadow.corner_radius * scale_factor,
+                corner_radius_top_left: corner_radii.top_left,
+                corner_radius_top_right: corner_radii.top_right,
+                corner_radius_bottom_right: corner_radii.bottom_right,
+                corner_radius_bottom_left: corner_radii.bottom_left,
                 sigma: shadow.sigma,
                 color: shadow.color.to_uchar4(),
             };
@@ -586,7 +590,10 @@ impl Renderer {
                 border_bottom: border_width * (quad.border.bottom as usize as f32),
                 border_left: border_width * (quad.border.left as usize as f32),
                 border_color: quad.border.color.to_uchar4(),
-                corner_radius: quad.corner_radius * scale_factor,
+                corner_radius_top_left: quad.corner_radii.top_left * scale_factor,
+                corner_radius_top_right: quad.corner_radii.top_right * scale_factor,
+                corner_radius_bottom_right: quad.corner_radii.bottom_right * scale_factor,
+                corner_radius_bottom_left: quad.corner_radii.bottom_left * scale_factor,
             };
             unsafe {
                 *(buffer_contents.add(ix)) = shader_quad;
@@ -738,7 +745,7 @@ impl Renderer {
         for image in images {
             let origin = image.bounds.origin() * scale_factor;
             let target_size = image.bounds.size() * scale_factor;
-            let corner_radius = image.corner_radius * scale_factor;
+            let corner_radii = image.corner_radii * scale_factor;
             let border_width = image.border.width * scale_factor;
             let (alloc_id, atlas_bounds) = self.image_cache.render(&image.data);
             images_by_atlas
@@ -754,7 +761,10 @@ impl Renderer {
                     border_bottom: border_width * (image.border.bottom as usize as f32),
                     border_left: border_width * (image.border.left as usize as f32),
                     border_color: image.border.color.to_uchar4(),
-                    corner_radius,
+                    corner_radius_top_left: corner_radii.top_left,
+                    corner_radius_top_right: corner_radii.top_right,
+                    corner_radius_bottom_right: corner_radii.bottom_right,
+                    corner_radius_bottom_left: corner_radii.bottom_left,
                     grayscale: image.grayscale as u8,
                 });
         }
@@ -777,7 +787,10 @@ impl Renderer {
                         border_bottom: 0.,
                         border_left: 0.,
                         border_color: Default::default(),
-                        corner_radius: 0.,
+                        corner_radius_top_left: 0.,
+                        corner_radius_top_right: 0.,
+                        corner_radius_bottom_right: 0.,
+                        corner_radius_bottom_left: 0.,
                         grayscale: false as u8,
                     });
             } else {

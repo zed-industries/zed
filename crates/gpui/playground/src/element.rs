@@ -1,6 +1,6 @@
 use crate::{
     adapter::Adapter,
-    style::{DefinedLength, Display, Overflow, Position, Style},
+    style::{DefinedLength, Display, Fill, Overflow, Position, Style},
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -193,7 +193,7 @@ pub trait Element<V: 'static>: 'static + Clone {
     where
         Self: Sized,
     {
-        self.style_mut().size.width = length;
+        self.style_mut().min_size.width = length;
         self
     }
 
@@ -203,6 +203,23 @@ pub trait Element<V: 'static>: 'static + Clone {
         Self: Sized,
     {
         self.style_mut().size.height = length;
+        self
+    }
+
+    #[tailwind_lengths]
+    fn min_h(mut self, length: DefinedLength) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().min_size.height = length;
+        self
+    }
+
+    fn fill(mut self, fill: impl Into<Fill>) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().fill = fill.into();
         self
     }
 }

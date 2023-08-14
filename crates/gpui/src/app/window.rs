@@ -54,8 +54,8 @@ pub struct Window {
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
     last_mouse_moved_event: Option<Event>,
-    pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_region_ids: HashSet<MouseRegionId>,
+    pub(crate) hovered_region_ids: Vec<MouseRegionId>,
+    pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
     mouse_position: Vector2F,
     text_layout_cache: TextLayoutCache,
@@ -690,6 +690,7 @@ impl<'a> WindowContext<'a> {
                     let mut highest_z_index = None;
                     let mouse_position = self.window.mouse_position.clone();
                     let window = &mut *self.window;
+                    let prev_hovered_regions = mem::take(&mut window.hovered_region_ids);
                     for (region, z_index) in window.mouse_regions.iter().rev() {
                         // Allow mouse regions to appear transparent to hovers
                         if !region.hoverable {
@@ -708,7 +709,11 @@ impl<'a> WindowContext<'a> {
                         // highest_z_index is set.
                         if contains_mouse && z_index == highest_z_index.unwrap() {
                             //Ensure that hover entrance events aren't sent twice
-                            if window.hovered_region_ids.insert(region.id()) {
+                            if let Err(ix) = window.hovered_region_ids.binary_search(&region.id()) {
+                                window.hovered_region_ids.insert(ix, region.id());
+                            }
+                            // window.hovered_region_ids.insert(region.id());
+                            if !prev_hovered_regions.contains(&region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
@@ -716,7 +721,7 @@ impl<'a> WindowContext<'a> {
                             }
                         } else {
                             // Ensure that hover exit events aren't sent twice
-                            if window.hovered_region_ids.remove(&region.id()) {
+                            if prev_hovered_regions.contains(&region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
