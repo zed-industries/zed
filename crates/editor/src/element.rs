@@ -81,11 +81,13 @@ impl SelectionLayout {
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
 
+        // vim visual line mode
         if line_mode {
             let point_range = map.expand_to_line(point_selection.range());
             range = point_range.start.to_display_point(map)..point_range.end.to_display_point(map);
         }
 
+        // any vim visual mode (including line mode)
         if cursor_shape == CursorShape::Block && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left)
@@ -94,8 +96,8 @@ impl SelectionLayout {
                     DisplayPoint::new(head.row() - 1, map.line_len(head.row() - 1)),
                     Bias::Left,
                 );
-
-                // updating range.end is a no-op unless you're on a multi-buffer divider
+                // updating range.end is a no-op unless you're cursor is
+                // on the newline containing a multi-buffer divider
                 // in which case the clip_point may have moved the head up
                 // an additional row.
                 range.end = DisplayPoint::new(head.row() + 1, 0);
@@ -2996,7 +2998,7 @@ mod tests {
     use language::language_settings;
     use log::info;
     use std::{num::NonZeroU32, sync::Arc};
-    use util::test::sample_text;
+    use util::test::{generate_marked_text, sample_text};
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut TestAppContext) {
@@ -3018,7 +3020,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_vim_visual_selections(cx: &mut TestAppContext) {
+    async fn test_vim_visual_selections(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
         let (_, editor) = cx.add_window(|cx| {
@@ -3053,26 +3055,112 @@ mod tests {
         let local_selections = &state.selections[0].1;
         assert_eq!(local_selections.len(), 3);
         // moves cursor back one line
+        assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
         assert_eq!(
             local_selections[0].range,
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 6)
+            DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
         );
+
         // moves cursor back one column
         assert_eq!(
             local_selections[1].range,
-            DisplayPoint::new(3, 2)..DisplayPoint::new(3, 2)
+            DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
         );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
+
         // leaves cursor on the max point
         assert_eq!(
             local_selections[2].range,
             DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
         );
+        assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
 
-        // active lines does not include 1
+        // active lines does not include 1 (even though the range of the selection does)
         assert_eq!(
             state.active_rows.keys().cloned().collect::<Vec<u32>>(),
             vec![0, 3, 5, 6]
         );
+
+        // multi-buffer support
+        // in DisplayPoint co-ordinates, this is what we're dealing with:
+        //  0: [[file
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: ...
+        //  7: ffffff
+        //  8: gggggg
+        //  9: hhhhhh
+        // 10:
+        // 11: [[file
+        // 12:   header]]
+        // 13: bbbbbb
+        // 14: cccccc
+        // 15: dddddd
+        let (_, editor) = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![
+                            Point::new(0, 0)..Point::new(3, 0),
+                            Point::new(4, 0)..Point::new(7, 0),
+                        ],
+                    ),
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![Point::new(1, 0)..Point::new(3, 0)],
+                    ),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::Full, buffer, None, None, cx)
+        });
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+        let (_, state) = editor.update(cx, |editor, cx| {
+            editor.cursor_shape = CursorShape::Block;
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
+                    DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
+                ]);
+            });
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            element.layout(
+                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                editor,
+                &mut layout_cx,
+            )
+        });
+
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 2);
+
+        // moves cursor on excerpt boundary back a line
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+
+        // moves cursor on buffer boundary back two lines
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
     }
 
     #[gpui::test]
