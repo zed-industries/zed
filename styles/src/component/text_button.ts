@@ -30,7 +30,7 @@ export function text_button({
     layer,
     margin,
     text_properties,
-}: TextButtonOptions) {
+}: TextButtonOptions = {}) {
     const theme = useTheme()
     if (!color) color = "base"
 
@@ -81,7 +81,7 @@ export function text_button({
 
 export function toggleable_text_button(
     theme: Theme,
-    { variant, color, active_color, margin }: ToggleableTextButtonOptions
+    { variant, color, active_color, margin }: ToggleableTextButtonOptions = {}
 ) {
     if (!color) color = "base"
 

@@ -8,12 +8,16 @@ import {
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
 import collab_modals from "./collab_modals"
+import { text_button } from "../component/text_button"
+import { toggleable_icon_button } from "../component/icon_button"
 
 export default function contacts_panel(): any {
     const theme = useTheme()
 
-    const name_margin = 8
-    const side_padding = 12
+    const NAME_MARGIN = 6 as const
+    const SPACING = 12 as const
+    const INDENT_SIZE = 8 as const
+    const ITEM_HEIGHT = 28 as const
 
     const layer = theme.middle
 
@@ -24,6 +28,7 @@ export default function contacts_panel(): any {
         button_width: 16,
         corner_radius: 8,
     }
+
     const project_row = {
         guest_avatar_spacing: 4,
         height: 24,
@@ -32,186 +37,111 @@ export default function contacts_panel(): any {
             width: 14,
         },
         name: {
-            ...text(layer, "mono", { size: "sm" }),
+            ...text(layer, "ui_sans", { size: "sm" }),
             margin: {
-                left: name_margin,
-                right: 6,
+                left: NAME_MARGIN,
+                right: 4,
             },
         },
         guests: {
             margin: {
-                left: name_margin,
-                right: name_margin,
+                left: NAME_MARGIN,
+                right: NAME_MARGIN,
             },
         },
         padding: {
-            left: side_padding,
-            right: side_padding,
+            left: SPACING,
+            right: SPACING,
         },
     }
 
-    const headerButton = toggleable({
-        state: {
-            inactive: interactive({
-                base: {
-                    corner_radius: 6,
-                    padding: {
-                        top: 2,
-                        bottom: 2,
-                        left: 4,
-                        right: 4,
-                    },
-                    icon_width: 14,
-                    icon_height: 14,
-                    button_width: 20,
-                    button_height: 16,
-                    color: foreground(layer, "on"),
-                },
-                state: {
-                    default: {
-                    },
-                    hovered: {
-                        background: background(layer, "base", "hovered"),
-                    },
-                    clicked: {
-                        background: background(layer, "base", "pressed"),
-                    },
-                },
-            }),
-            active: interactive({
-                base: {
-                    corner_radius: 6,
-                    padding: {
-                        top: 2,
-                        bottom: 2,
-                        left: 4,
-                        right: 4,
-                    },
-                    icon_width: 14,
-                    icon_height: 14,
-                    button_width: 20,
-                    button_height: 16,
-                    color: foreground(layer, "on"),
-                },
-                state: {
-                    default: {
-                        background: background(layer, "base", "active"),
-                    },
-                    clicked: {
-                        background: background(layer, "base", "active"),
-                    },
-                },
-            }),
-        },
+    const icon_style = {
+        color: foreground(layer, "variant"),
+        width: 14,
+    }
+
+    const header_icon_button = toggleable_icon_button(theme, {
+        layer: theme.middle,
+        variant: "ghost",
     })
 
-
-    return {
-        ...collab_modals(),
-        log_in_button: interactive({
+    const subheader_row = toggleable({
+        base: interactive({
             base: {
-                background: background(theme.middle),
-                border: border(theme.middle, "active"),
-                corner_radius: 4,
-                margin: {
-                    top: 16,
-                    left: 16,
-                    right: 16,
-                },
+                ...text(layer, "ui_sans", { size: "sm" }),
                 padding: {
-                    top: 3,
-                    bottom: 3,
-                    left: 7,
-                    right: 7,
+                    left: SPACING,
+                    right: SPACING,
                 },
-                ...text(theme.middle, "sans", "default", { size: "sm" }),
             },
             state: {
                 hovered: {
-                    ...text(theme.middle, "sans", "default", { size: "sm" }),
-                    background: background(theme.middle, "hovered"),
-                    border: border(theme.middle, "active"),
+                    background: background(layer, "hovered"),
                 },
                 clicked: {
-                    ...text(theme.middle, "sans", "default", { size: "sm" }),
-                    background: background(theme.middle, "pressed"),
-                    border: border(theme.middle, "active"),
+                    background: background(layer, "pressed"),
                 },
             },
         }),
+        state: {
+            active: {
+                default: {
+                    ...text(layer, "ui_sans", "active", { size: "sm" }),
+                    background: background(layer, "active"),
+                },
+                clicked: {
+                    background: background(layer, "pressed"),
+                },
+            },
+        },
+    })
+
+    const filter_input = {
+        background: background(layer, "on"),
+        corner_radius: 6,
+        text: text(layer, "ui_sans", "base"),
+        placeholder_text: text(layer, "ui_sans", "base", "disabled", {
+            size: "xs",
+        }),
+        selection: theme.players[0],
+        border: border(layer, "on"),
+        padding: {
+            bottom: 4,
+            left: 8,
+            right: 8,
+            top: 4,
+        },
+        margin: {
+            left: SPACING,
+            right: SPACING,
+        },
+    }
+
+    return {
+        ...collab_modals(),
+        log_in_button: text_button(),
         background: background(layer),
         padding: {
-            top: 12,
+            top: SPACING,
         },
-        user_query_editor: {
-            background: background(layer, "on"),
-            corner_radius: 6,
-            text: text(layer, "mono", "on"),
-            placeholder_text: text(layer, "mono", "on", "disabled", {
-                size: "xs",
-            }),
-            selection: theme.players[0],
-            border: border(layer, "on"),
-            padding: {
-                bottom: 4,
-                left: 8,
-                right: 8,
-                top: 4,
-            },
-            margin: {
-                left: side_padding,
-                right: side_padding,
-            },
-        },
-        channel_hash: {
-            color: foreground(layer, "on"),
-            width: 14,
-        },
+        user_query_editor: filter_input,
+        channel_hash: icon_style,
         user_query_editor_height: 33,
-        add_contact_button: headerButton,
-        add_channel_button: headerButton,
-        leave_call_button: headerButton,
-        row_height: 28,
-        channel_indent: 10,
+        add_contact_button: header_icon_button,
+        add_channel_button: header_icon_button,
+        leave_call_button: header_icon_button,
+        row_height: ITEM_HEIGHT,
+        channel_indent: INDENT_SIZE,
         section_icon_size: 8,
         header_row: {
-            ...text(layer, "mono", { size: "sm", weight: "bold" }),
-            margin: { top: 14 },
+            ...text(layer, "ui_sans", { size: "sm", weight: "bold" }),
+            margin: { top: SPACING },
             padding: {
-                left: side_padding,
-                right: side_padding,
+                left: SPACING,
+                right: SPACING,
             },
         },
-        subheader_row: toggleable({
-            base: interactive({
-                base: {
-                    ...text(layer, "mono", { size: "sm" }),
-                    padding: {
-                        left: side_padding,
-                        right: side_padding,
-                    },
-                },
-                state: {
-                    hovered: {
-                        background: background(layer, "hovered"),
-                    },
-                    clicked: {
-                        background: background(layer, "pressed"),
-                    },
-                },
-            }),
-            state: {
-                active: {
-                    default: {
-                        ...text(layer, "mono", "active", { size: "sm" }),
-                        background: background(layer, "active"),
-                    },
-                    clicked: {
-                        background: background(layer, "pressed"),
-                    },
-                },
-            },
-        }),
+        subheader_row,
         leave_call: interactive({
             base: {
                 background: background(layer),
@@ -240,8 +170,8 @@ export default function contacts_panel(): any {
             base: interactive({
                 base: {
                     padding: {
-                        left: side_padding,
-                        right: side_padding,
+                        left: SPACING,
+                        right: SPACING,
                     },
                 },
                 state: {
@@ -258,7 +188,7 @@ export default function contacts_panel(): any {
                 },
                 active: {
                     default: {
-                        ...text(layer, "mono", "active", { size: "sm" }),
+                        ...text(layer, "ui_sans", "active", { size: "sm" }),
                         background: background(layer, "active"),
                     },
                     clicked: {
@@ -280,7 +210,7 @@ export default function contacts_panel(): any {
             base: interactive({
                 base: {
                     ...text(layer, "ui_sans", "variant", { size: "sm" }),
-                    padding: side_padding
+                    padding: SPACING
 
                 },
                 state: {
@@ -323,12 +253,12 @@ export default function contacts_panel(): any {
             background: foreground(layer, "negative"),
         },
         contact_username: {
-            ...text(layer, "mono", { size: "sm" }),
+            ...text(layer, "ui_sans", { size: "sm" }),
             margin: {
-                left: name_margin,
+                left: NAME_MARGIN,
             },
         },
-        contact_button_spacing: name_margin,
+        contact_button_spacing: NAME_MARGIN,
         contact_button: interactive({
             base: { ...contact_button },
             state: {
@@ -369,9 +299,8 @@ export default function contacts_panel(): any {
             base: interactive({
                 base: {
                     ...project_row,
-                    // background: background(layer),
                     icon: {
-                        margin: { left: name_margin },
+                        margin: { left: NAME_MARGIN },
                         color: foreground(layer, "variant"),
                         width: 12,
                     },
@@ -395,7 +324,7 @@ export default function contacts_panel(): any {
         face_overlap: 8,
         channel_editor: {
             padding: {
-                left: name_margin,
+                left: NAME_MARGIN,
             }
         }
     }
