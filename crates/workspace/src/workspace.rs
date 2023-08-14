@@ -3760,20 +3760,19 @@ impl View for Workspace {
                                         )
                                     }))
                                     .with_children(self.modal.as_ref().map(|modal| {
+                                        // Prevent clicks within the modal from falling
+                                        // through to the rest of the workspace.
                                         enum ModalBackground {}
                                         MouseEventHandler::<ModalBackground, _>::new(
                                             0,
                                             cx,
-                                            |_, cx| {
-                                                ChildView::new(modal.view.as_any(), cx)
-                                                    .contained()
-                                                    .with_style(theme.workspace.modal)
-                                                    .aligned()
-                                                    .top()
-                                            },
+                                            |_, cx| ChildView::new(modal.view.as_any(), cx),
                                         )
                                         .on_click(MouseButton::Left, |_, _, _| {})
-                                        // Consume click events to stop focus dropping through
+                                        .contained()
+                                        .with_style(theme.workspace.modal)
+                                        .aligned()
+                                        .top()
                                     }))
                                     .with_children(self.render_notifications(&theme.workspace, cx)),
                             ))
