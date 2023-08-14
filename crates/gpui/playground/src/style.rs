@@ -19,25 +19,25 @@ pub struct Style {
     /// What should the `position` value of this struct use as a base offset?
     pub position: Position,
     /// How should the position of this element be tweaked relative to the layout defined?
-    pub inset: Edges<LengthOrAuto>,
+    pub inset: Edges<Length>,
 
     // Size properies
     /// Sets the initial size of the item
-    pub size: Size<LengthOrAuto>,
+    pub size: Size<Length>,
     /// Controls the minimum size of the item
-    pub min_size: Size<LengthOrAuto>,
+    pub min_size: Size<Length>,
     /// Controls the maximum size of the item
-    pub max_size: Size<LengthOrAuto>,
+    pub max_size: Size<Length>,
     /// Sets the preferred aspect ratio for the item. The ratio is calculated as width divided by height.
     pub aspect_ratio: Option<f32>,
 
     // Spacing Properties
     /// How large should the margin be on each side?
-    pub margin: Edges<LengthOrAuto>,
+    pub margin: Edges<Length>,
     /// How large should the padding be on each side?
-    pub padding: Edges<Length>,
+    pub padding: Edges<DefinedLength>,
     /// How large should the border be on each side?
-    pub border: Edges<Length>,
+    pub border: Edges<DefinedLength>,
 
     // Alignment properties
     /// How this node's children aligned in the cross/block axis?
@@ -49,7 +49,7 @@ pub struct Style {
     /// How should contained within this item be aligned in the main/inline axis
     pub justify_content: Option<JustifyContent>,
     /// How large should the gaps between items in a flex container be?
-    pub gap: Size<Length>,
+    pub gap: Size<DefinedLength>,
 
     // Flexbox properies
     /// Which direction does the main axis flow in?
@@ -57,7 +57,7 @@ pub struct Style {
     /// Should elements wrap, or stay in a single line?
     pub flex_wrap: FlexWrap,
     /// Sets the initial main axis size of the item
-    pub flex_basis: LengthOrAuto,
+    pub flex_basis: Length,
     /// The relative rate at which this item grows when it is expanding to fill space, 0.0 is the default value, and this value must be positive.
     pub flex_grow: f32,
     /// The relative rate at which this item shrinks when it is contracting to fit into space, 1.0 is the default value, and this value must be positive.
@@ -77,9 +77,9 @@ impl Style {
         scrollbar_width: 0.0,
         position: Position::Relative,
         inset: Edges::auto(),
-        margin: Edges::<LengthOrAuto>::zero(),
-        padding: Edges::<Length>::zero(),
-        border: Edges::<Length>::zero(),
+        margin: Edges::<Length>::zero(),
+        padding: Edges::<DefinedLength>::zero(),
+        border: Edges::<DefinedLength>::zero(),
         size: Size::auto(),
         min_size: Size::auto(),
         max_size: Size::auto(),
@@ -95,7 +95,7 @@ impl Style {
         flex_wrap: FlexWrap::NoWrap,
         flex_grow: 0.0,
         flex_shrink: 1.0,
-        flex_basis: LengthOrAuto::Auto,
+        flex_basis: Length::Auto,
         fill: Fill::Color(Hsla {
             h: 0.,
             s: 0.,
@@ -137,6 +137,12 @@ impl Style {
     }
 }
 
+impl Default for Style {
+    fn default() -> Self {
+        Self::DEFAULT.clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct Point<T> {
     pub x: T,
@@ -158,11 +164,11 @@ pub struct Size<T> {
     pub height: T,
 }
 
-impl Size<Length> {
+impl Size<DefinedLength> {
     pub const fn zero() -> Self {
         Self {
-            width: Length::Pixels(0.),
-            height: Length::Pixels(0.),
+            width: DefinedLength::Pixels(0.),
+            height: DefinedLength::Pixels(0.),
         }
     }
 
@@ -174,11 +180,11 @@ impl Size<Length> {
     }
 }
 
-impl Size<LengthOrAuto> {
+impl Size<Length> {
     pub const fn auto() -> Self {
         Self {
-            width: LengthOrAuto::Auto,
-            height: LengthOrAuto::Auto,
+            width: Length::Auto,
+            height: Length::Auto,
         }
     }
 
@@ -201,13 +207,13 @@ pub struct Edges<T> {
     pub left: T,
 }
 
-impl Edges<Length> {
+impl Edges<DefinedLength> {
     pub const fn zero() -> Self {
         Self {
-            top: Length::Pixels(0.0),
-            right: Length::Pixels(0.0),
-            bottom: Length::Pixels(0.0),
-            left: Length::Pixels(0.0),
+            top: DefinedLength::Pixels(0.0),
+            right: DefinedLength::Pixels(0.0),
+            bottom: DefinedLength::Pixels(0.0),
+            left: DefinedLength::Pixels(0.0),
         }
     }
 
@@ -221,22 +227,22 @@ impl Edges<Length> {
     }
 }
 
-impl Edges<LengthOrAuto> {
+impl Edges<Length> {
     pub const fn auto() -> Self {
         Self {
-            top: LengthOrAuto::Auto,
-            right: LengthOrAuto::Auto,
-            bottom: LengthOrAuto::Auto,
-            left: LengthOrAuto::Auto,
+            top: Length::Auto,
+            right: Length::Auto,
+            bottom: Length::Auto,
+            left: Length::Auto,
         }
     }
 
     pub const fn zero() -> Self {
         Self {
-            top: LengthOrAuto::Length(Length::Pixels(0.0)),
-            right: LengthOrAuto::Length(Length::Pixels(0.0)),
-            bottom: LengthOrAuto::Length(Length::Pixels(0.0)),
-            left: LengthOrAuto::Length(Length::Pixels(0.0)),
+            top: Length::Length(DefinedLength::Pixels(0.0)),
+            right: Length::Length(DefinedLength::Pixels(0.0)),
+            bottom: Length::Length(DefinedLength::Pixels(0.0)),
+            left: Length::Length(DefinedLength::Pixels(0.0)),
         }
     }
 
@@ -253,41 +259,43 @@ impl Edges<LengthOrAuto> {
     }
 }
 
+/// A non-auto length that can be defined in pixels, rems, or percent of parent.
 #[derive(Clone, Copy)]
-pub enum Length {
+pub enum DefinedLength {
     Pixels(f32),
     Rems(f32),
     Percent(f32), // 0. - 100.
 }
 
-impl Length {
+impl DefinedLength {
     fn to_taffy(&self, rem_size: f32) -> taffy::style::LengthPercentage {
         match self {
-            Length::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
-            Length::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
-            Length::Percent(percent) => taffy::style::LengthPercentage::Percent(*percent),
+            DefinedLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
+            DefinedLength::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
+            DefinedLength::Percent(percent) => taffy::style::LengthPercentage::Percent(*percent),
         }
     }
 }
 
+/// A length that can be defined in pixels, rems, percent of parent, or auto.
 #[derive(Clone, Copy)]
-pub enum LengthOrAuto {
-    Length(Length),
+pub enum Length {
+    Length(DefinedLength),
     Auto,
 }
 
-impl LengthOrAuto {
+impl Length {
     fn to_taffy(&self, rem_size: f32) -> taffy::prelude::LengthPercentageAuto {
         match self {
-            LengthOrAuto::Length(length) => length.to_taffy(rem_size).into(),
-            LengthOrAuto::Auto => taffy::prelude::LengthPercentageAuto::Auto,
+            Length::Length(length) => length.to_taffy(rem_size).into(),
+            Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
         }
     }
 }
 
-impl From<Length> for LengthOrAuto {
-    fn from(value: Length) -> Self {
-        LengthOrAuto::Length(value)
+impl From<DefinedLength> for Length {
+    fn from(value: DefinedLength) -> Self {
+        Length::Length(value)
     }
 }
 

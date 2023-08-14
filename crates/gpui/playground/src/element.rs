@@ -1,12 +1,25 @@
-use crate::style::{Display, Length, Overflow, Position, Style};
-use gpui::{LayoutContext, PaintContext};
+use crate::style::{DefinedLength, Display, Overflow, Position, Style};
+use anyhow::Result;
+use gpui::{Layout, LayoutContext, PaintContext};
 use playground_macros::tailwind_lengths;
-pub use taffy::tree::{Layout, NodeId};
+pub use taffy::tree::NodeId;
 
 pub trait Element<V> {
     fn style_mut(&mut self) -> &mut Style;
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> NodeId;
-    fn paint(&mut self, layout: &Layout, view: &mut V, cx: &mut gpui::PaintContext<V>);
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut gpui::PaintContext<V>)
+        -> Result<()>;
+
+    /// Convert to a dynamically-typed element suitable for layout and paint.
+    fn into_any(self) -> AnyElement<V>
+    where
+        Self: 'static + Sized,
+    {
+        AnyElement {
+            element: Box::new(self) as Box<dyn Element<V>>,
+            layout_node_id: None,
+        }
+    }
 
     // Display ////////////////////
 
@@ -131,7 +144,7 @@ pub trait Element<V> {
     }
 
     #[tailwind_lengths]
-    fn inset(mut self, length: Length) -> Self
+    fn inset(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -143,7 +156,7 @@ pub trait Element<V> {
     }
 
     #[tailwind_lengths]
-    fn w(mut self, length: Length) -> Self
+    fn w(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -152,7 +165,7 @@ pub trait Element<V> {
     }
 
     #[tailwind_lengths]
-    fn min_w(mut self, length: Length) -> Self
+    fn min_w(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -161,7 +174,7 @@ pub trait Element<V> {
     }
 
     #[tailwind_lengths]
-    fn h(mut self, length: Length) -> Self
+    fn h(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -176,15 +189,19 @@ pub struct AnyElement<V> {
 }
 
 impl<V> AnyElement<V> {
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> NodeId {
-        let layout_node_id = self.element.layout(view, cx);
+    pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
+        let layout_node_id = self.element.layout(view, cx)?;
         self.layout_node_id = Some(layout_node_id);
-        layout_node_id
+        Ok(layout_node_id)
     }
 
-    fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
+    pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         let layout_node_id = self.layout_node_id.expect("paint called before layout");
-        let layout = cx.layout_engine().layout(layout_node_id).unwrap().clone();
-        self.element.paint(&layout, view, cx);
+        let layout = cx
+            .layout_engine()
+            .unwrap()
+            .computed_layout(layout_node_id)
+            .expect("you can currently only use playground elements within an adapter");
+        self.element.paint(layout, view, cx)
     }
 }

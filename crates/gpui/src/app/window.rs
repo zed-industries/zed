@@ -40,7 +40,7 @@ use uuid::Uuid;
 use super::{Reference, ViewMetadata};
 
 pub struct Window {
-    layout_engine: Taffy,
+    layout_engines: Vec<LayoutEngine>,
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
     pub(crate) parents: HashMap<usize, usize>,
@@ -75,7 +75,7 @@ impl Window {
         let titlebar_height = platform_window.titlebar_height();
         let appearance = platform_window.appearance();
         let mut window = Self {
-            layout_engine: Taffy::new(),
+            layout_engines: Vec::new(),
             root_view: None,
             focused_view_id: None,
             parents: Default::default(),
@@ -210,8 +210,16 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn layout_engine(&mut self) -> &mut Taffy {
-        &mut self.window.layout_engine
+    pub fn layout_engine(&mut self) -> Option<&mut LayoutEngine> {
+        self.window.layout_engines.last_mut()
+    }
+
+    pub fn push_layout_engine(&mut self) {
+        self.window.layout_engines.push(LayoutEngine::new());
+    }
+
+    pub fn pop_layout_engine(&mut self) {
+        self.window.layout_engines.pop();
     }
 
     pub fn remove_window(&mut self) {
@@ -1221,6 +1229,58 @@ impl<'a> WindowContext<'a> {
         handle
     }
 }
+
+pub struct LayoutEngine(Taffy);
+pub use taffy::style::Style as LayoutStyle;
+
+impl LayoutEngine {
+    fn new() -> Self {
+        Self(Taffy::new())
+    }
+
+    pub fn add_node<C>(&mut self, style: LayoutStyle, children: C) -> Result<LayoutNodeId>
+    where
+        C: IntoIterator<Item = LayoutNodeId>,
+    {
+        Ok(self
+            .0
+            .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
+    }
+
+    pub fn compute_layout(&mut self, root: LayoutNodeId, available_space: Vector2F) -> Result<()> {
+        self.0.compute_layout(
+            root,
+            taffy::geometry::Size {
+                width: available_space.x().into(),
+                height: available_space.y().into(),
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn computed_layout(&mut self, node: LayoutNodeId) -> Result<Layout> {
+        Ok(self.0.layout(node)?.into())
+    }
+}
+
+pub struct Layout {
+    pub bounds: RectF,
+    pub order: u32,
+}
+
+impl From<&taffy::tree::Layout> for Layout {
+    fn from(value: &taffy::tree::Layout) -> Self {
+        Self {
+            bounds: RectF::new(
+                vec2f(value.location.x, value.location.y),
+                vec2f(value.size.width, value.size.height),
+            ),
+            order: value.order,
+        }
+    }
+}
+
+pub type LayoutNodeId = taffy::prelude::NodeId;
 
 pub struct RenderParams {
     pub view_id: usize,

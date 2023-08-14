@@ -1,6 +1,5 @@
 use crate::color::{Hsla, Lerp};
-use serde::{Deserialize, Serialize};
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 pub mod rose_pine;
 
@@ -82,25 +81,4 @@ impl ThemeColors {
     pub fn modified(&self, level: f32) -> Hsla {
         self.modified.lerp(level)
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct Entity {
-    class: String,
-    #[serde(rename = "type")]
-    kind: String,
-    id: Arc<str>,
-    name: String,
-    value: String,
-    description: String,
-    category_id: String,
-    last_updated_by: String,
-    last_updated: String,
-    tags: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Category {
-    id: String,
-    label: String,
 }
