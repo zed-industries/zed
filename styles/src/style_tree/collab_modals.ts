@@ -2,13 +2,16 @@ import { useTheme } from "../theme"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
 import { input } from "../component/input"
-import { toggleable_text_button } from "../component/text_button"
 import contact_finder from "./contact_finder"
+import { tab } from "../component/tab"
 
 export default function channel_modal(): any {
     const theme = useTheme()
 
-    const side_margin = 6
+    const SPACING = 12 as const
+    const BUTTON_OFFSET = 6 as const
+    const ITEM_HEIGHT = 36 as const
+
     const contact_button = {
         background: background(theme.middle, "variant"),
         color: foreground(theme.middle, "variant"),
@@ -26,20 +29,16 @@ export default function channel_modal(): any {
     return {
         contact_finder: contact_finder(),
         tabbed_modal: {
-            tab_button: toggleable_text_button(theme, {
-                variant: "ghost",
-                layer: theme.middle,
-                active_color: "accent",
-                margin: {
-                    top: 8,
-                    bottom: 8,
-                    right: 4
-                }
-            }),
-            row_height: 28,
+            tab_button: tab({ layer: theme.middle }),
+            row_height: ITEM_HEIGHT,
             header: {
-                background: background(theme.middle, "accent"),
+                background: background(theme.lowest),
                 border: border(theme.middle, { "bottom": true, "top": false, left: false, right: false }),
+                padding: {
+                    top: SPACING,
+                    left: SPACING - BUTTON_OFFSET,
+                    right: SPACING - BUTTON_OFFSET,
+                },
                 corner_radii: {
                     top_right: 12,
                     top_left: 12,
@@ -47,6 +46,13 @@ export default function channel_modal(): any {
             },
             body: {
                 background: background(theme.middle),
+                padding: {
+                    top: SPACING - 4,
+                    left: SPACING,
+                    right: SPACING,
+                    bottom: SPACING,
+
+                },
                 corner_radii: {
                     bottom_right: 12,
                     bottom_left: 12,
@@ -69,14 +75,14 @@ export default function channel_modal(): any {
             title: {
                 ...text(theme.middle, "sans", "on", { size: "lg" }),
                 padding: {
-                    left: 6,
+                    left: BUTTON_OFFSET,
                 }
             },
             picker: {
                 empty_container: {},
                 item: {
                     ...picker_style.item,
-                    margin: { left: side_margin, right: side_margin },
+                    margin: { left: SPACING, right: SPACING },
                 },
                 no_matches: picker_style.no_matches,
                 input_editor: picker_input,

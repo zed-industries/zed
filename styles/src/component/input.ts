@@ -13,9 +13,6 @@ export const input = () => {
         selection: theme.players[0],
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
-        margin: {
-            right: 12,
-        },
         padding: {
             top: 3,
             bottom: 3,
