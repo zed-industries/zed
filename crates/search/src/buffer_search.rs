@@ -250,6 +250,7 @@ impl View for BufferSearchBar {
                             .align_children_center()
                             .with_child(
                                 Flex::row()
+                                    .align_children_center()
                                     .with_child(
                                         Svg::for_style(icon_style.icon)
                                             .contained()
