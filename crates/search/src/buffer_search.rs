@@ -219,29 +219,30 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
-        let icon_style = theme.search.editor_icon.clone();
-        Flex::row()
+
+        let nav_column = Flex::column()
             .with_child(
-                Flex::column()
+                Flex::row()
+                    .align_children_center()
                     .with_child(
                         Flex::row()
-                            .align_children_center()
-                            .with_child(
-                                Flex::row()
-                                    .with_child(nav_button_for_direction("<", Direction::Prev, cx))
-                                    .with_child(nav_button_for_direction(">", Direction::Next, cx))
-                                    .aligned(),
-                            )
-                            .with_children(match_count)
-                            .aligned()
-                            .left()
-                            .top()
-                            .flex(1., true)
-                            .constrained()
-                            .with_max_height(theme.search.search_bar_row_height),
+                            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+                            .with_child(nav_button_for_direction(">", Direction::Next, cx))
+                            .aligned(),
                     )
-                    .contained(),
+                    .with_children(match_count)
+                    .aligned()
+                    .left()
+                    .top()
+                    .flex(1., true)
+                    .constrained()
+                    .with_max_height(theme.search.search_bar_row_height),
             )
+            .contained();
+
+        let icon_style = theme.search.editor_icon.clone();
+        Flex::row()
+            .with_child(nav_column)
             .with_child(
                 Flex::column()
                     .align_children_center()
@@ -263,18 +264,23 @@ impl View for BufferSearchBar {
                                             .left()
                                             .flex(1., true),
                                     )
-                                    .with_children(render_search_option(
-                                        supported_options.case,
-                                        "icons/case_insensitive_12.svg",
-                                        SearchOptions::CASE_SENSITIVE,
-                                        cx,
-                                    ))
-                                    .with_children(render_search_option(
-                                        supported_options.word,
-                                        "icons/word_search_12.svg",
-                                        SearchOptions::WHOLE_WORD,
-                                        cx,
-                                    ))
+                                    .with_child(
+                                        Flex::row()
+                                            .with_children(render_search_option(
+                                                supported_options.case,
+                                                "icons/case_insensitive_12.svg",
+                                                SearchOptions::CASE_SENSITIVE,
+                                                cx,
+                                            ))
+                                            .with_children(render_search_option(
+                                                supported_options.word,
+                                                "icons/word_search_12.svg",
+                                                SearchOptions::WHOLE_WORD,
+                                                cx,
+                                            ))
+                                            .flex(1., true)
+                                            .contained(),
+                                    )
                                     .contained()
                                     .with_style(editor_container)
                                     .aligned()

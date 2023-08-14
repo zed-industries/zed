@@ -1551,113 +1551,96 @@ impl View for ProjectSearchBar {
                     cx,
                 )
             };
-
-            Flex::row()
+            let nav_column = Flex::column()
                 .with_child(
-                    Flex::column()
-                        .with_child(
-                            Flex::row()
-                                .align_children_center()
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(nav_button_for_direction(
-                                            "<",
-                                            Direction::Prev,
-                                            cx,
-                                        ))
-                                        .with_child(nav_button_for_direction(
-                                            ">",
-                                            Direction::Next,
-                                            cx,
-                                        ))
-                                        .aligned(),
-                                )
-                                .with_children(matches)
-                                .aligned()
-                                .top()
-                                .left()
-                                .constrained()
-                                .with_height(theme.search.search_bar_row_height),
-                        )
-                        .flex(1., true),
-                )
-                .with_child(
-                    Flex::column()
+                    Flex::row()
                         .align_children_center()
                         .with_child(
                             Flex::row()
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(query)
-                                        .contained()
-                                        .with_style(query_container_style)
-                                        .aligned()
-                                        .constrained()
-                                        .with_min_width(theme.search.editor.min_width)
-                                        .with_max_width(theme.search.editor.max_width)
-                                        .with_max_height(theme.search.search_bar_row_height)
-                                        .flex(1., false),
-                                )
-                                .contained()
-                                .with_margin_bottom(row_spacing),
+                                .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+                                .with_child(nav_button_for_direction(">", Direction::Next, cx))
+                                .aligned(),
                         )
-                        .with_children(filters)
-                        .contained()
+                        .with_children(matches)
                         .aligned()
                         .top()
-                        .flex(1., false),
+                        .left()
+                        .constrained()
+                        .with_height(theme.search.search_bar_row_height),
                 )
+                .flex(1., true);
+            let editor_column = Flex::column()
+                .align_children_center()
                 .with_child(
-                    Flex::column()
+                    Flex::row()
                         .with_child(
                             Flex::row()
-                                .align_children_center()
-                                .with_child(
-                                    Flex::row()
-                                        .with_child(search_button_for_mode(SearchMode::Text, cx))
-                                        .with_children(semantic_index)
-                                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                                        .constrained()
-                                        .with_height(theme.search.search_bar_row_height)
-                                        .aligned()
-                                        .left()
-                                        .contained()
-                                        .with_style(theme.search.modes_container),
-                                )
-                                .with_child(
-                                    super::search_bar::render_close_button(
-                                        "Dismiss Project Search",
-                                        &theme.search,
-                                        cx,
-                                        |_, this, cx| {
-                                            if let Some(search) =
-                                                this.active_project_search.as_mut()
-                                            {
-                                                search
-                                                    .update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
-                                            }
-                                        },
-                                        None,
-                                    )
-                                    .aligned()
-                                    .right(),
-                                )
-                                .constrained()
-                                .with_height(theme.search.search_bar_row_height)
+                                .with_child(query)
+                                .contained()
+                                .with_style(query_container_style)
                                 .aligned()
-                                .right()
-                                .top()
-                                .flex(1., true),
-                        )
-                        .with_children(
-                            _search
-                                .read(cx)
-                                .filters_enabled
-                                .then(|| Flex::row().flex(1., true)),
+                                .constrained()
+                                .with_min_width(theme.search.editor.min_width)
+                                .with_max_width(theme.search.editor.max_width)
+                                .with_max_height(theme.search.search_bar_row_height)
+                                .flex(1., false),
                         )
                         .contained()
+                        .with_margin_bottom(row_spacing),
+                )
+                .with_children(filters)
+                .contained()
+                .aligned()
+                .top()
+                .flex(1., false);
+            let mode_column = Flex::column()
+                .with_child(
+                    Flex::row()
+                        .align_children_center()
+                        .with_child(
+                            Flex::row()
+                                .with_child(search_button_for_mode(SearchMode::Text, cx))
+                                .with_children(semantic_index)
+                                .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                                .aligned()
+                                .left()
+                                .contained()
+                                .with_style(theme.search.modes_container),
+                        )
+                        .with_child(
+                            super::search_bar::render_close_button(
+                                "Dismiss Project Search",
+                                &theme.search,
+                                cx,
+                                |_, this, cx| {
+                                    if let Some(search) = this.active_project_search.as_mut() {
+                                        search.update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
+                                    }
+                                },
+                                None,
+                            )
+                            .aligned()
+                            .right(),
+                        )
+                        .constrained()
+                        .with_height(theme.search.search_bar_row_height)
+                        .aligned()
+                        .right()
+                        .top()
                         .flex(1., true),
                 )
+                .with_children(
+                    _search
+                        .read(cx)
+                        .filters_enabled
+                        .then(|| Flex::row().flex(1., true)),
+                )
+                .contained()
+                .flex(1., true);
+            Flex::row()
+                .with_child(nav_column)
+                .with_child(editor_column)
+                .with_child(mode_column)
                 .contained()
                 .with_style(theme.search.container)
                 .flex_float()
