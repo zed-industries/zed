@@ -9,7 +9,7 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 
 #[cfg(any(test, feature = "test-support"))]
 use crate::util::post_inc;
-use crate::ElementStateId;
+use crate::{AnyWindowHandle, ElementStateId};
 
 lazy_static! {
     static ref LEAK_BACKTRACE: bool =
@@ -26,7 +26,7 @@ pub struct RefCounts {
     entity_counts: HashMap<usize, usize>,
     element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
     dropped_models: HashSet<usize>,
-    dropped_views: HashSet<(usize, usize)>,
+    dropped_views: HashSet<(AnyWindowHandle, usize)>,
     dropped_element_states: HashSet<ElementStateId>,
 
     #[cfg(any(test, feature = "test-support"))]
@@ -55,12 +55,12 @@ impl RefCounts {
         }
     }
 
-    pub fn inc_view(&mut self, window_id: usize, view_id: usize) {
+    pub fn inc_view(&mut self, window: AnyWindowHandle, view_id: usize) {
         match self.entity_counts.entry(view_id) {
             Entry::Occupied(mut entry) => *entry.get_mut() += 1,
             Entry::Vacant(entry) => {
                 entry.insert(1);
-                self.dropped_views.remove(&(window_id, view_id));
+                self.dropped_views.remove(&(window, view_id));
             }
         }
     }
@@ -94,12 +94,12 @@ impl RefCounts {
         }
     }
 
-    pub fn dec_view(&mut self, window_id: usize, view_id: usize) {
+    pub fn dec_view(&mut self, window: AnyWindowHandle, view_id: usize) {
         let count = self.entity_counts.get_mut(&view_id).unwrap();
         *count -= 1;
         if *count == 0 {
             self.entity_counts.remove(&view_id);
-            self.dropped_views.insert((window_id, view_id));
+            self.dropped_views.insert((window, view_id));
         }
     }
 
@@ -120,7 +120,7 @@ impl RefCounts {
         &mut self,
     ) -> (
         HashSet<usize>,
-        HashSet<(usize, usize)>,
+        HashSet<(AnyWindowHandle, usize)>,
         HashSet<ElementStateId>,
     ) {
         (

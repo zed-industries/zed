@@ -305,18 +305,18 @@ impl ContactList {
             github_login
         );
         let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
-        let window_id = cx.window_id();
+        let window = cx.window();
         cx.spawn(|_, mut cx| async move {
             if answer.next().await == Some(0) {
                 if let Err(e) = user_store
                     .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                 {
-                    cx.prompt(
-                        window_id,
+                    window.prompt(
                         PromptLevel::Info,
                         &format!("Failed to remove contact: {}", e),
                         &["Ok"],
+                        &mut cx,
                     );
                 }
             }
@@ -837,7 +837,7 @@ impl ContactList {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                             scene.push_quad(gpui::Quad {
                                 bounds: RectF::from_points(
@@ -846,7 +846,7 @@ impl ContactList {
                                 ),
                                 background: Some(tree_branch.color),
                                 border: gpui::Border::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                         }))
                         .constrained()
@@ -934,7 +934,7 @@ impl ContactList {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: Default::default(),
                                 });
                                 scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
@@ -943,7 +943,7 @@ impl ContactList {
                                     ),
                                     background: Some(tree_branch.color),
                                     border: gpui::Border::default(),
-                                    corner_radius: 0.,
+                                    corner_radii: Default::default(),
                                 });
                             }))
                             .constrained()
@@ -1345,7 +1345,7 @@ impl View for ContactList {
                         })
                         .with_tooltip::<AddContact>(
                             0,
-                            "Search for new contact".into(),
+                            "Search for new contact",
                             None,
                             theme.tooltip.clone(),
                             cx,

@@ -83,6 +83,8 @@ function write_tokens(themes: Theme[], tokens_directory: string) {
     console.log(`- ${METADATA_FILE} created`)
 }
 
-const all_themes: Theme[] = themes.map((theme) => create_theme(theme))
+const all_themes: Theme[] = themes.map((theme) =>
+    create_theme(theme)
+)
 
 write_tokens(all_themes, TOKENS_DIRECTORY)

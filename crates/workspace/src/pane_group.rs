@@ -595,7 +595,7 @@ mod element {
         platform::{CursorStyle, MouseButton},
         scene::MouseDrag,
         AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
-        RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
+        PaintContext, RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
     };
 
     use crate::{
@@ -856,7 +856,7 @@ mod element {
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
             view: &mut Workspace,
-            cx: &mut ViewContext<Workspace>,
+            cx: &mut PaintContext<Workspace>,
         ) -> Self::PaintState {
             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();

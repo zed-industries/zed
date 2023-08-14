@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use super::Element;
 use crate::{
     json::{self, json},
-    SceneBuilder, View, ViewContext,
+    PaintContext, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use pathfinder_geometry::{
@@ -56,7 +56,7 @@ where
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         self.0(scene, bounds, visible_bounds, view, cx)
     }

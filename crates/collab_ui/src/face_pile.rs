@@ -7,7 +7,7 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, LayoutContext, SceneBuilder, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, PaintContext, SceneBuilder, ViewContext,
 };
 
 use crate::CollabTitlebarItem;
@@ -54,7 +54,7 @@ impl Element<CollabTitlebarItem> for FacePile {
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
         view: &mut CollabTitlebarItem,
-        cx: &mut ViewContext<CollabTitlebarItem>,
+        cx: &mut PaintContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 

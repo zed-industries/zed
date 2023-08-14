@@ -1,2 +1,2 @@
 ((glsl_content) @content
-    (.set! "language" "glsl"))
+ (#set! "language" "glsl"))

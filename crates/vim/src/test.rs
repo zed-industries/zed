@@ -99,7 +99,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     });
 
     search_bar.read_with(cx.cx, |bar, cx| {
-        assert_eq!(bar.query_editor.read(cx).text(cx), "");
+        assert_eq!(bar.query(cx), "");
     })
 }
 
@@ -175,7 +175,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     });
 
     search_bar.read_with(cx.cx, |bar, cx| {
-        assert_eq!(bar.query_editor.read(cx).text(cx), "cc");
+        assert_eq!(bar.query(cx), "cc");
     });
 
     // wait for the query editor change event to fire.

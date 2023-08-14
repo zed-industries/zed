@@ -1,5 +1,5 @@
 import { Scale, Color } from "chroma-js"
-import { SyntaxHighlightStyle, SyntaxProperty } from "../types/syntax"
+import { Syntax } from "./syntax"
 
 interface ThemeMeta {
     /** The name of the theme */
@@ -55,9 +55,7 @@ export type ThemeConfigInputColorsKeys = keyof ThemeConfigInputColors
  * }
  * ```
  */
-export type ThemeConfigInputSyntax = Partial<
-    Record<SyntaxProperty, Partial<SyntaxHighlightStyle>>
->
+export type ThemeConfigInputSyntax = Partial<Syntax>
 
 interface ThemeConfigOverrides {
     syntax: ThemeConfigInputSyntax

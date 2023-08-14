@@ -22,6 +22,7 @@ sqlez = { path = "../sqlez" }
 async-task = "4.0.3"
 backtrace = { version = "0.3", optional = true }
 ctor.workspace = true
+derive_more.workspace = true
 dhat = { version = "0.3", optional = true }
 env_logger = { version = "0.9", optional = true }
 etagere = "0.2"

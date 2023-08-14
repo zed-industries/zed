@@ -32,7 +32,7 @@ use gpui::{
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AnyElement, Axis, Border, CursorRegion, Element, EventContext, FontCache, LayoutContext,
-    MouseRegion, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
+    MouseRegion, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -508,13 +508,13 @@ impl EditorElement {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         });
         scene.push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         });
 
         if let EditorMode::Full = layout.mode {
@@ -542,7 +542,7 @@ impl EditorElement {
                         bounds: RectF::new(origin, size),
                         background: Some(self.style.active_line_background),
                         border: Border::default(),
-                        corner_radius: 0.,
+                        corner_radii: Default::default(),
                     });
                 }
             }
@@ -562,12 +562,24 @@ impl EditorElement {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
                     border: Border::default(),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
             }
 
+            let scroll_left =
+                layout.position_map.snapshot.scroll_position().x() * layout.position_map.em_width;
+
             for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x = text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.;
+                let x =
+                    (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
+                        - scroll_left;
+
+                if x < text_bounds.origin_x()
+                    || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
+                {
+                    continue;
+                }
+
                 let color = if *active {
                     self.style.active_wrap_guide
                 } else {
@@ -580,7 +592,7 @@ impl EditorElement {
                     ),
                     background: Some(color),
                     border: Border::new(0., Color::transparent_black()),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
             }
         }
@@ -681,7 +693,7 @@ impl EditorElement {
                         bounds: highlight_bounds,
                         background: Some(diff_style.modified),
                         border: Border::new(0., Color::transparent_black()),
-                        corner_radius: 1. * line_height,
+                        corner_radii: (1. * line_height).into(),
                     });
 
                     continue;
@@ -714,7 +726,7 @@ impl EditorElement {
                         bounds: highlight_bounds,
                         background: Some(diff_style.deleted),
                         border: Border::new(0., Color::transparent_black()),
-                        corner_radius: 1. * line_height,
+                        corner_radii: (1. * line_height).into(),
                     });
 
                     continue;
@@ -736,7 +748,7 @@ impl EditorElement {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: diff_style.corner_radius * line_height,
+                corner_radii: (diff_style.corner_radius * line_height).into(),
             });
         }
     }
@@ -1056,6 +1068,10 @@ impl EditorElement {
         scene.pop_layer();
     }
 
+    fn scrollbar_left(&self, bounds: &RectF) -> f32 {
+        bounds.max_x() - self.style.theme.scrollbar.width
+    }
+
     fn paint_scrollbar(
         &mut self,
         scene: &mut SceneBuilder,
@@ -1074,7 +1090,7 @@ impl EditorElement {
         let top = bounds.min_y();
         let bottom = bounds.max_y();
         let right = bounds.max_x();
-        let left = right - style.width;
+        let left = self.scrollbar_left(&bounds);
         let row_range = &layout.scrollbar_row_range;
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
@@ -1111,8 +1127,6 @@ impl EditorElement {
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
                 let end_anchor = Anchor::max();
-                let mut start_row = None;
-                let mut end_row = None;
                 let color = scrollbar_theme.selections;
                 let border = Border {
                     width: 1.,
@@ -1123,54 +1137,32 @@ impl EditorElement {
                     bottom: false,
                     left: true,
                 };
-                let mut push_region = |start, end| {
-                    if let (Some(start_display), Some(end_display)) = (start, end) {
-                        let start_y = y_for_row(start_display as f32);
-                        let mut end_y = y_for_row(end_display as f32);
-                        if end_y - start_y < 1. {
-                            end_y = start_y + 1.;
-                        }
-                        let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
-
-                        scene.push_quad(Quad {
-                            bounds,
-                            background: Some(color),
-                            border,
-                            corner_radius: style.thumb.corner_radius,
-                        })
+                let mut push_region = |start: DisplayPoint, end: DisplayPoint| {
+                    let start_y = y_for_row(start.row() as f32);
+                    let mut end_y = y_for_row(end.row() as f32);
+                    if end_y - start_y < 1. {
+                        end_y = start_y + 1.;
                     }
+                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+
+                    scene.push_quad(Quad {
+                        bounds,
+                        background: Some(color),
+                        border,
+                        corner_radii: style.thumb.corner_radii.into(),
+                    })
                 };
-                for (row, _) in &editor
-                    .background_highlights_in_range_for::<crate::items::BufferSearchHighlights>(
+                let background_ranges = editor
+                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
-                        &theme,
-                    )
-                {
-                    let start_display = row.start;
-                    let end_display = row.end;
-
-                    if start_row.is_none() {
-                        assert_eq!(end_row, None);
-                        start_row = Some(start_display.row());
-                        end_row = Some(end_display.row());
-                        continue;
-                    }
-                    if let Some(current_end) = end_row.as_mut() {
-                        if start_display.row() > *current_end + 1 {
-                            push_region(start_row, end_row);
-                            start_row = Some(start_display.row());
-                            end_row = Some(end_display.row());
-                        } else {
-                            // Merge two hunks.
-                            *current_end = end_display.row();
-                        }
-                    } else {
-                        unreachable!();
-                    }
+                        50000,
+                    );
+                for row in background_ranges {
+                    let start = row.start();
+                    let end = row.end();
+                    push_region(*start, *end);
                 }
-                // We might still have a hunk that was not rendered (if there was a search hit on the last line)
-                push_region(start_row, end_row);
             }
 
             if layout.is_singleton && scrollbar_settings.git_diff {
@@ -1217,7 +1209,7 @@ impl EditorElement {
                         bounds,
                         background: Some(color),
                         border,
-                        corner_radius: style.thumb.corner_radius,
+                        corner_radii: style.thumb.corner_radii.into(),
                     })
                 }
             }
@@ -1226,7 +1218,7 @@ impl EditorElement {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
                 background: style.thumb.background_color,
-                corner_radius: style.thumb.corner_radius,
+                corner_radii: style.thumb.corner_radii.into(),
             });
         }
 
@@ -2481,7 +2473,7 @@ impl Element<Editor> for EditorElement {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         scene.push_layer(Some(visible_bounds));
@@ -2751,14 +2743,14 @@ impl Cursor {
                 bounds,
                 background: None,
                 border: Border::all(1., self.color),
-                corner_radius: 0.,
+                corner_radii: Default::default(),
             });
         } else {
             scene.push_quad(Quad {
                 bounds,
                 background: Some(self.color),
                 border: Default::default(),
-                corner_radius: 0.,
+                corner_radii: Default::default(),
             });
         }
 
@@ -2998,16 +2990,18 @@ mod tests {
     use language::language_settings;
     use log::info;
     use std::{num::NonZeroU32, sync::Arc};
-    use util::test::{generate_marked_text, sample_text};
+    use util::test::sample_text;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
-        });
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
         let element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
 
         let layouts = editor.update(cx, |editor, cx| {
@@ -3023,10 +3017,12 @@ mod tests {
     async fn test_vim_visual_selections(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
-        });
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (_, state) = editor.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
@@ -3099,25 +3095,27 @@ mod tests {
         // 13: bbbbbb
         // 14: cccccc
         // 15: dddddd
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_multi(
-                [
-                    (
-                        &(sample_text(8, 6, 'a') + "\n"),
-                        vec![
-                            Point::new(0, 0)..Point::new(3, 0),
-                            Point::new(4, 0)..Point::new(7, 0),
-                        ],
-                    ),
-                    (
-                        &(sample_text(8, 6, 'a') + "\n"),
-                        vec![Point::new(1, 0)..Point::new(3, 0)],
-                    ),
-                ],
-                cx,
-            );
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
-        });
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_multi(
+                    [
+                        (
+                            &(sample_text(8, 6, 'a') + "\n"),
+                            vec![
+                                Point::new(0, 0)..Point::new(3, 0),
+                                Point::new(4, 0)..Point::new(7, 0),
+                            ],
+                        ),
+                        (
+                            &(sample_text(8, 6, 'a') + "\n"),
+                            vec![Point::new(1, 0)..Point::new(3, 0)],
+                        ),
+                    ],
+                    cx,
+                );
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (_, state) = editor.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
@@ -3167,10 +3165,12 @@ mod tests {
     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
-        });
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("", cx);
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
 
         editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("hello", cx);
@@ -3221,7 +3221,14 @@ mod tests {
         let mut scene = SceneBuilder::new(1.0);
         let bounds = RectF::new(Default::default(), size);
         editor.update(cx, |editor, cx| {
-            element.paint(&mut scene, bounds, bounds, &mut state, editor, cx);
+            element.paint(
+                &mut scene,
+                bounds,
+                bounds,
+                &mut state,
+                editor,
+                &mut PaintContext::new(cx),
+            );
         });
     }
 
@@ -3377,10 +3384,12 @@ mod tests {
         info!(
             "Creating editor with mode {editor_mode:?}, width {editor_width} and text '{input_text}'"
         );
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&input_text, cx);
-            Editor::new(editor_mode, buffer, None, None, cx)
-        });
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(&input_text, cx);
+                Editor::new(editor_mode, buffer, None, None, cx)
+            })
+            .root(cx);
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (_, layout_state) = editor.update(cx, |editor, cx| {

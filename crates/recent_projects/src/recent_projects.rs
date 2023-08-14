@@ -11,6 +11,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::sync::Arc;
+use util::paths::PathExt;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, Workspace, WorkspaceLocation,
     WORKSPACE_DB,
@@ -134,7 +135,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let combined_string = location
                     .paths()
                     .iter()
-                    .map(|path| util::paths::compact(&path).to_string_lossy().into_owned())
+                    .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
                 StringMatchCandidate::new(id, combined_string)

@@ -1,28 +1,28 @@
-import { Scale, Color } from "chroma-js"
+import chroma, { Scale, Color } from "chroma-js"
+import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
+export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 import {
     ThemeConfig,
     ThemeAppearance,
     ThemeConfigInputColors,
 } from "./theme_config"
 import { get_ramps } from "./ramps"
-import { syntaxStyle } from "./syntax"
-import { Syntax } from "../types/syntax"
 
 export interface Theme {
     name: string
     is_light: boolean
 
     /**
-     * App background, other elements that should sit directly on top of the background.
-     */
+    * App background, other elements that should sit directly on top of the background.
+    */
     lowest: Layer
     /**
-     * Panels, tabs, other UI surfaces that sit on top of the background.
-     */
+    * Panels, tabs, other UI surfaces that sit on top of the background.
+    */
     middle: Layer
     /**
-     * Editors like code buffers, conversation editors, etc.
-     */
+    * Editors like code buffers, conversation editors, etc.
+    */
     highest: Layer
 
     ramps: RampSet
@@ -31,7 +31,8 @@ export interface Theme {
     modal_shadow: Shadow
 
     players: Players
-    syntax: Syntax
+    syntax?: Partial<ThemeSyntax>
+    color_family: ColorFamily
 }
 
 export interface Meta {
@@ -67,6 +68,15 @@ export interface Players {
     "5": Player
     "6": Player
     "7": Player
+}
+
+export type ColorFamily = Partial<{ [K in keyof RampSet]: ColorFamilyRange }>
+
+export interface ColorFamilyRange {
+    low: number
+    high: number
+    range: number
+    scaling_value: number
 }
 
 export interface Shadow {
@@ -115,7 +125,12 @@ export interface Style {
 }
 
 export function create_theme(theme: ThemeConfig): Theme {
-    const { name, appearance, input_color } = theme
+    const {
+        name,
+        appearance,
+        input_color,
+        override: { syntax },
+    } = theme
 
     const is_light = appearance === ThemeAppearance.Light
     const color_ramps: ThemeConfigInputColors = input_color
@@ -157,10 +172,7 @@ export function create_theme(theme: ThemeConfig): Theme {
         "7": player(ramps.yellow),
     }
 
-    const syntax = syntaxStyle(
-        ramps,
-        theme.override.syntax ? theme.override.syntax : {}
-    )
+    const color_family = build_color_family(ramps)
 
     return {
         name,
@@ -177,6 +189,7 @@ export function create_theme(theme: ThemeConfig): Theme {
 
         players,
         syntax,
+        color_family,
     }
 }
 
@@ -185,6 +198,28 @@ function player(ramp: Scale): Player {
         selection: ramp(0.5).alpha(0.24).hex(),
         cursor: ramp(0.5).hex(),
     }
+}
+
+function build_color_family(ramps: RampSet): ColorFamily {
+    const color_family: ColorFamily = {}
+
+    for (const ramp in ramps) {
+        const ramp_value = ramps[ramp as keyof RampSet]
+
+        const lightnessValues = [ramp_value(0).get('hsl.l') * 100, ramp_value(1).get('hsl.l') * 100]
+        const low = Math.min(...lightnessValues)
+        const high = Math.max(...lightnessValues)
+        const range = high - low
+
+        color_family[ramp as keyof RampSet] = {
+            low,
+            high,
+            range,
+            scaling_value: 100 / range,
+        }
+    }
+
+    return color_family
 }
 
 function lowest_layer(ramps: RampSet): Layer {

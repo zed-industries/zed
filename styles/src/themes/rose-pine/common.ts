@@ -1,4 +1,4 @@
-import { ThemeConfigInputSyntax } from "../../common"
+import { ThemeSyntax } from "../../common"
 
 export const color = {
     default: {
@@ -54,7 +54,7 @@ export const color = {
     },
 }
 
-export const syntax = (c: typeof color.default): ThemeConfigInputSyntax => {
+export const syntax = (c: typeof color.default): Partial<ThemeSyntax> => {
     return {
         comment: { color: c.muted },
         operator: { color: c.pine },

@@ -34,14 +34,10 @@ export default function status_bar(): any {
             ...text(layer, "mono", "variant", { size: "xs" }),
         },
         active_language: text_button({
-            color: "variant",
+            color: "variant"
         }),
-        auto_update_progress_message: text(layer, "sans", "variant", {
-            size: "xs",
-        }),
-        auto_update_done_message: text(layer, "sans", "variant", {
-            size: "xs",
-        }),
+        auto_update_progress_message: text(layer, "sans", "variant", { size: "xs" }),
+        auto_update_done_message: text(layer, "sans", "variant", { size: "xs" }),
         lsp_status: interactive({
             base: {
                 ...diagnostic_status_container,
@@ -53,7 +49,7 @@ export default function status_bar(): any {
             },
             state: {
                 hovered: {
-                    message: text(layer, "sans"),
+                    message: text(layer, "sans", { size: "xs" }),
                     icon_color: foreground(layer),
                     background: background(layer, "hovered"),
                 },

@@ -74,7 +74,7 @@
 (sized_type_specifier) @type
 
 ((identifier) @constant
-    (.match? @constant "^[A-Z][A-Z\\d_]*$"))
+ (#match? @constant "^[A-Z][A-Z\\d_]*$"))
 
 (identifier) @variable
 
@@ -114,5 +114,5 @@
 
 (
   (identifier) @variable.builtin
-  (.match? @variable.builtin "^gl_")
+  (#match? @variable.builtin "^gl_")
 )

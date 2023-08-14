@@ -179,13 +179,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
             let app_state = workspace.app_state().clone();
             let markdown = app_state.languages.language_for_name("JSON");
-            let window_id = cx.window_id();
+            let window = cx.window();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
-                let content = to_string_pretty(
-                    &cx.debug_elements(window_id)
-                        .ok_or_else(|| anyhow!("could not debug elements for {window_id}"))?,
-                )
+                let content = to_string_pretty(&window.debug_elements(&cx).ok_or_else(|| {
+                    anyhow!("could not debug elements for window {}", window.id())
+                })?)
                 .unwrap();
                 workspace
                     .update(&mut cx, |workspace, cx| {
@@ -406,29 +405,22 @@ pub fn build_window_options(
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
-        let mut workspaces = cx
-            .window_ids()
+        let mut workspace_windows = cx
+            .windows()
             .into_iter()
-            .filter_map(|window_id| {
-                Some(
-                    cx.root_view(window_id)?
-                        .clone()
-                        .downcast::<Workspace>()?
-                        .downgrade(),
-                )
-            })
+            .filter_map(|window| window.downcast::<Workspace>())
             .collect::<Vec<_>>();
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+        workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx.prompt(
-                workspace.window_id(),
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
+            let answer = window.prompt(
                 PromptLevel::Info,
                 "Are you sure you want to quit?",
                 &["Quit", "Cancel"],
+                &mut cx,
             );
 
             if let Some(mut answer) = answer {
@@ -440,14 +432,13 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for workspace in workspaces {
-            if !workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
-                })?
-                .await?
-            {
-                return Ok(());
+        for window in workspace_windows {
+            if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
+            }) {
+                if !should_close.await? {
+                    return Ok(());
+                }
             }
         }
         cx.platform().quit();
@@ -545,7 +536,6 @@ pub fn handle_keymap_file_changes(
                             reload_keymaps(cx, &keymap_content);
                         }
                     })
-                    .detach();
                 }));
             }
         }
@@ -725,8 +715,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
-        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AnyWindowHandle,
+        AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;
@@ -783,17 +773,13 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
-        let workspace_1 = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
             assert!(workspace.left_dock().read(cx).is_open());
@@ -810,27 +796,22 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 2);
+        assert_eq!(cx.windows().len(), 2);
 
         // Replace existing windows
-        let window_id = cx.window_ids()[0];
+        let window = cx.windows()[0].downcast::<Workspace>().unwrap();
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 &app_state,
-                Some(window_id),
+                Some(window),
                 cx,
             )
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 2);
-        let workspace_1 = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .clone()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 2);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(
                 workspace
@@ -856,14 +837,11 @@ mod tests {
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let workspace = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        let window = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let workspace = window.root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
@@ -872,19 +850,19 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Editing a buffer marks the window as edited.
         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Undoing the edit restores the window's edited state.
         editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Redoing the edit marks the window as edited again.
         editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Closing the item restores the window's edited state.
         let close = pane.update(cx, |pane, cx| {
@@ -892,9 +870,10 @@ mod tests {
             pane.close_active_item(&Default::default(), cx).unwrap()
         });
         executor.run_until_parked();
-        cx.simulate_prompt_answer(workspace.window_id(), 1);
+
+        window.simulate_prompt_answer(1, cx);
         close.await.unwrap();
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
@@ -907,22 +886,22 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
-        assert!(!cx.is_window_edited(workspace.window_id()));
+        assert!(!window.is_edited(cx));
 
         // Editing the buffer marks the window as edited.
         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-        assert!(cx.is_window_edited(workspace.window_id()));
+        assert!(window.is_edited(cx));
 
         // Ensure closing the window via the mouse gets preempted due to the
         // buffer having unsaved changes.
-        assert!(!cx.simulate_window_close(workspace.window_id()));
+        assert!(!window.simulate_close(cx));
         executor.run_until_parked();
-        assert_eq!(cx.window_ids().len(), 1);
+        assert_eq!(cx.windows().len(), 1);
 
         // The window is successfully closed after the user dismisses the prompt.
-        cx.simulate_prompt_answer(workspace.window_id(), 1);
+        window.simulate_prompt_answer(1, cx);
         executor.run_until_parked();
-        assert_eq!(cx.window_ids().len(), 0);
+        assert_eq!(cx.windows().len(), 0);
     }
 
     #[gpui::test]
@@ -935,12 +914,13 @@ mod tests {
         })
         .await;
 
-        let window_id = *cx.window_ids().first().unwrap();
-        let workspace = cx
-            .read_window(window_id, |cx| cx.root_view().clone())
+        let window = cx
+            .windows()
+            .first()
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
+        let workspace = window.root(cx);
 
         let editor = workspace.update(cx, |workspace, cx| {
             workspace
@@ -983,7 +963,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1104,12 +1085,8 @@ mod tests {
         cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
             .await
             .unwrap();
-        assert_eq!(cx.window_ids().len(), 1);
-        let workspace = cx
-            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
 
         #[track_caller]
         fn assert_project_panel_selection(
@@ -1295,7 +1272,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         // Open a file within an existing worktree.
         workspace
@@ -1321,7 +1299,7 @@ mod tests {
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
-        cx.simulate_prompt_answer(window_id, 0);
+        window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
@@ -1336,11 +1314,12 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1395,7 +1374,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_and_clone(
@@ -1429,10 +1408,11 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, NewFile);
+        cx.dispatch_action(window.into(), NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1480,7 +1460,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1502,7 +1483,7 @@ mod tests {
             (editor.downgrade(), buffer)
         });
 
-        cx.dispatch_action(window_id, pane::SplitRight);
+        cx.dispatch_action(window.into(), pane::SplitRight);
         let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
@@ -1512,7 +1493,7 @@ mod tests {
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
@@ -1520,9 +1501,9 @@ mod tests {
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 1);
+        window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
 
         workspace.read_with(cx, |workspace, cx| {
@@ -1554,7 +1535,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -1831,7 +1814,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project, cx))
+            .root(cx);
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2073,11 +2058,11 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2104,7 +2089,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &B), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2127,7 +2112,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &B), ("[", &ActivatePrevItem)],
             line!(),
@@ -2135,7 +2120,7 @@ mod tests {
 
         #[track_caller]
         fn assert_key_bindings_for<'a>(
-            window_id: usize,
+            window: AnyWindowHandle,
             cx: &TestAppContext,
             actions: Vec<(&'static str, &'a dyn Action)>,
             line: u32,
@@ -2143,7 +2128,7 @@ mod tests {
             for (key, action) in actions {
                 // assert that...
                 assert!(
-                    cx.available_actions(window_id, 0)
+                    cx.available_actions(window, 0)
                         .into_iter()
                         .any(|(_, bound_action, b)| {
                             // action names match...
@@ -2243,11 +2228,11 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        let (window_id, _view) = cx.add_window(|_| TestView);
+        let window = cx.add_window(|_| TestView);
 
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window_id,
+            window.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
@@ -2273,7 +2258,12 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        assert_key_bindings_for(window_id, cx, vec![("k", &ActivatePreviousPane)], line!());
+        assert_key_bindings_for(
+            window.into(),
+            cx,
+            vec![("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
         // Test modifying the base, while retaining the users keymap
         fs.save(
@@ -2291,11 +2281,11 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        assert_key_bindings_for(window_id, cx, vec![("[", &ActivatePrevItem)], line!());
+        assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
 
         #[track_caller]
         fn assert_key_bindings_for<'a>(
-            window_id: usize,
+            window: AnyWindowHandle,
             cx: &TestAppContext,
             actions: Vec<(&'static str, &'a dyn Action)>,
             line: u32,
@@ -2303,7 +2293,7 @@ mod tests {
             for (key, action) in actions {
                 // assert that...
                 assert!(
-                    cx.available_actions(window_id, 0)
+                    cx.available_actions(window, 0)
                         .into_iter()
                         .any(|(_, bound_action, b)| {
                             // action names match...
@@ -2334,6 +2324,11 @@ mod tests {
                     .into(),
                 Assets
                     .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .to_vec()
                     .into(),

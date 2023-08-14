@@ -45,7 +45,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::http::HttpClient;
+use util::{http::HttpClient, paths::PathExt};
 use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -182,8 +182,8 @@ impl CachedLspAdapter {
         self.adapter.workspace_configuration(cx)
     }
 
-    pub async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params).await
+    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+        self.adapter.process_diagnostics(params)
     }
 
     pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
@@ -262,7 +262,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
-    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
@@ -777,7 +777,7 @@ impl LanguageRegistry {
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
-        let extension = path.extension().and_then(|name| name.to_str());
+        let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
         self.get_or_load_language(|config| {
             let path_matches = config
@@ -1487,12 +1487,6 @@ impl Language {
         None
     }
 
-    pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        for adapter in &self.adapters {
-            adapter.process_diagnostics(diagnostics).await;
-        }
-    }
-
     pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
         for adapter in &self.adapters {
             adapter.process_completion(completion).await;
@@ -1756,7 +1750,7 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         unreachable!();
     }
 
-    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
