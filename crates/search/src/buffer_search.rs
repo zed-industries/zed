@@ -237,7 +237,8 @@ impl View for BufferSearchBar {
                             .left()
                             .top()
                             .flex(1., true)
-                            .constrained(),
+                            .constrained()
+                            .with_max_height(theme.search.search_bar_row_height),
                     )
                     .contained(),
             )
@@ -280,6 +281,7 @@ impl View for BufferSearchBar {
                                     .constrained()
                                     .with_min_width(theme.search.editor.min_width)
                                     .with_max_width(theme.search.editor.max_width)
+                                    .with_max_height(theme.search.search_bar_row_height)
                                     .flex(1., false),
                             )
                             .with_child(
@@ -307,6 +309,8 @@ impl View for BufferSearchBar {
                             |_, this, cx| this.dismiss(&Default::default(), cx),
                             Some(Box::new(Dismiss)),
                         ))
+                        .constrained()
+                        .with_height(theme.search.search_bar_row_height)
                         .contained()
                         .aligned()
                         .right()
