@@ -1189,7 +1189,7 @@ impl CollabPanel {
                             .collab_panel
                             .leave_call_button
                             .style_for(is_selected, state),
-                        "icons/radix/exit.svg",
+                        "icons/exit.svg",
                     )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -1233,7 +1233,7 @@ impl CollabPanel {
                             .collab_panel
                             .add_contact_button
                             .style_for(is_selected, state),
-                        "icons/plus_16.svg",
+                        "icons/plus.svg",
                     )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -1266,9 +1266,9 @@ impl CollabPanel {
                 .with_children(if can_collapse {
                     Some(
                         Svg::new(if is_collapsed {
-                            "icons/chevron_right_8.svg"
+                            "icons/chevron_right.svg"
                         } else {
-                            "icons/chevron_down_8.svg"
+                            "icons/chevron_down.svg"
                         })
                         .with_color(header_style.text.color)
                         .constrained()
@@ -1364,7 +1364,7 @@ impl CollabPanel {
                             cx,
                             |mouse_state, _| {
                                 let button_style = theme.contact_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x_mark_8.svg")
+                                render_icon_button(button_style, "icons/x.svg")
                                     .aligned()
                                     .flex_float()
                             },
@@ -1415,7 +1415,7 @@ impl CollabPanel {
             let style = theme.list_empty_state.style_for(is_selected, state);
             Flex::row()
                 .with_child(
-                    Svg::new("icons/plus_16.svg")
+                    Svg::new("icons/plus.svg")
                         .with_color(theme.list_empty_icon.color)
                         .constrained()
                         .with_width(theme.list_empty_icon.width)
@@ -1446,7 +1446,7 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         Flex::row()
             .with_child(
-                Svg::new("icons/channel_hash.svg")
+                Svg::new("icons/hash.svg")
                     .with_color(theme.collab_panel.channel_hash.color)
                     .constrained()
                     .with_width(theme.collab_panel.channel_hash.width)
@@ -1506,7 +1506,7 @@ impl CollabPanel {
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
                 .with_child(
-                    Svg::new("icons/channel_hash.svg")
+                    Svg::new("icons/hash.svg")
                         .with_color(theme.channel_hash.color)
                         .constrained()
                         .with_width(theme.channel_hash.width)
@@ -1572,7 +1572,7 @@ impl CollabPanel {
 
         Flex::row()
             .with_child(
-                Svg::new("icons/channel_hash.svg")
+                Svg::new("icons/hash.svg")
                     .with_color(theme.channel_hash.color)
                     .constrained()
                     .with_width(theme.channel_hash.width)
@@ -1597,7 +1597,7 @@ impl CollabPanel {
                         } else {
                             theme.contact_button.style_for(mouse_state)
                         };
-                        render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
+                        render_icon_button(button_style, "icons/x.svg").aligned()
                     },
                 )
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -1686,7 +1686,7 @@ impl CollabPanel {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
+                    render_icon_button(button_style, "icons/x.svg").aligned()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1720,7 +1720,7 @@ impl CollabPanel {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/x_mark_8.svg")
+                    render_icon_button(button_style, "icons/x.svg")
                         .aligned()
                         .flex_float()
                 })
@@ -2340,7 +2340,7 @@ impl Panel for CollabPanel {
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
         settings::get::<CollaborationPanelSettings>(cx)
             .button
-            .then(|| "icons/speech_bubble_12.svg")
+            .then(|| "icons/conversations.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {

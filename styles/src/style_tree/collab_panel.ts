@@ -132,7 +132,7 @@ export default function contacts_panel(): any {
         leave_call_button: header_icon_button,
         row_height: ITEM_HEIGHT,
         channel_indent: INDENT_SIZE,
-        section_icon_size: 8,
+        section_icon_size: 14,
         header_row: {
             ...text(layer, "ui_sans", { size: "sm", weight: "bold" }),
             margin: { top: SPACING },
