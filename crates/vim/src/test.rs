@@ -158,6 +158,16 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("aˇbˇc", Mode::Normal);
+    cx.simulate_keystrokes(["escape"]);
+
+    cx.assert_state("aˇbc", Mode::Normal);
+}
+
+#[gpui::test]
 async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
