@@ -370,7 +370,7 @@ impl CollabPanel {
                             this.render_channel_editor(&theme, *depth, cx)
                         }
                         ListEntry::ContactPlaceholder => {
-                            this.render_contact_placeholder(&theme.collab_panel)
+                            this.render_contact_placeholder(&theme.collab_panel, is_selected, cx)
                         }
                     }
                 });
@@ -1402,13 +1402,23 @@ impl CollabPanel {
         event_handler.into_any()
     }
 
-    fn render_contact_placeholder(&self, theme: &theme::CollabPanel) -> AnyElement<Self> {
-        Label::new(
-            "Add contacts to begin collaborating",
-            theme.placeholder.text.clone(),
-        )
-        .contained()
-        .with_style(theme.placeholder.container)
+    fn render_contact_placeholder(
+        &self,
+        theme: &theme::CollabPanel,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        enum AddContacts {}
+        MouseEventHandler::<AddContacts, Self>::new(0, cx, |state, _| {
+            let style = theme.list_empty_state.style_for(is_selected, state);
+            Label::new("Add contacts to begin collaborating", style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .into_any()
+        })
+        .on_click(MouseButton::Left, |_, this, cx| {
+            this.toggle_contact_finder(cx);
+        })
         .into_any()
     }
 
@@ -1861,6 +1871,7 @@ impl CollabPanel {
                     ListEntry::Channel(channel) => {
                         self.join_channel(channel.id, cx);
                     }
+                    ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
                     _ => {}
                 }
             }

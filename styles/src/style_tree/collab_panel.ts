@@ -110,10 +110,6 @@ export default function contacts_panel(): any {
 
     return {
         channel_modal: channel_modal(),
-        placeholder: {
-            ...text(theme.middle, "sans", "default", { size: "sm" }),
-            padding: 5,
-        },
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),
@@ -273,10 +269,36 @@ export default function contacts_panel(): any {
                 },
             },
         }),
-        list_empty_state: {
-            ...text(layer, "ui_sans", "variant", { size: "sm" }),
-            padding: side_padding
-        },
+        list_empty_state: toggleable({
+            base: interactive({
+                base: {
+                    ...text(layer, "ui_sans", "variant", { size: "sm" }),
+                    padding: side_padding
+
+                },
+                state: {
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            }),
+            state: {
+                inactive: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+                active: {
+                    default: {
+                        ...text(layer, "ui_sans", "active", { size: "sm" }),
+                        background: background(layer, "active"),
+                    },
+                    clicked: {
+                        background: background(layer, "pressed"),
+                    },
+                },
+            },
+        }),
         contact_avatar: {
             corner_radius: 10,
             width: 18,
