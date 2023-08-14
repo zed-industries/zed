@@ -36,8 +36,8 @@ fn test_update_channels(cx: &mut AppContext) {
         &channel_store,
         &[
             //
-            (0, "a", false),
-            (0, "b", true),
+            (0, "a".to_string(), false),
+            (0, "b".to_string(), true),
         ],
         cx,
     );
@@ -64,13 +64,74 @@ fn test_update_channels(cx: &mut AppContext) {
     assert_channels(
         &channel_store,
         &[
-            (0, "a", false),
-            (1, "y", false),
-            (0, "b", true),
-            (1, "x", true),
+            (0, "a".to_string(), false),
+            (1, "y".to_string(), false),
+            (0, "b".to_string(), true),
+            (1, "x".to_string(), true),
         ],
         cx,
     );
+}
+
+#[gpui::test]
+fn test_dangling_channel_paths(cx: &mut AppContext) {
+    let http = FakeHttpClient::with_404_response();
+    let client = Client::new(http.clone(), cx);
+    let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+
+    let channel_store = cx.add_model(|cx| ChannelStore::new(client, user_store, cx));
+
+    update_channels(
+        &channel_store,
+        proto::UpdateChannels {
+            channels: vec![
+                proto::Channel {
+                    id: 0,
+                    name: "a".to_string(),
+                    parent_id: None,
+                },
+                proto::Channel {
+                    id: 1,
+                    name: "b".to_string(),
+                    parent_id: Some(0),
+                },
+                proto::Channel {
+                    id: 2,
+                    name: "c".to_string(),
+                    parent_id: Some(1),
+                },
+            ],
+            channel_permissions: vec![proto::ChannelPermission {
+                channel_id: 0,
+                is_admin: true,
+            }],
+            ..Default::default()
+        },
+        cx,
+    );
+    // Sanity check
+    assert_channels(
+        &channel_store,
+        &[
+            //
+            (0, "a".to_string(), true),
+            (1, "b".to_string(), true),
+            (2, "c".to_string(), true),
+        ],
+        cx,
+    );
+
+    update_channels(
+        &channel_store,
+        proto::UpdateChannels {
+            remove_channels: vec![1, 2],
+            ..Default::default()
+        },
+        cx,
+    );
+
+    // Make sure that the 1/2/3 path is gone
+    assert_channels(&channel_store, &[(0, "a".to_string(), true)], cx);
 }
 
 fn update_channels(
@@ -84,15 +145,20 @@ fn update_channels(
 #[track_caller]
 fn assert_channels(
     channel_store: &ModelHandle<ChannelStore>,
-    expected_channels: &[(usize, &str, bool)],
+    expected_channels: &[(usize, String, bool)],
     cx: &AppContext,
 ) {
-    channel_store.read_with(cx, |store, _| {
-        let actual = store
+    let actual = channel_store.read_with(cx, |store, _| {
+        store
             .channels()
-            .iter()
-            .map(|c| (c.depth, c.name.as_str(), store.is_user_admin(c.id)))
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected_channels);
+            .map(|(depth, channel)| {
+                (
+                    depth,
+                    channel.name.to_string(),
+                    store.is_user_admin(channel.id),
+                )
+            })
+            .collect::<Vec<_>>()
     });
+    assert_eq!(actual, expected_channels);
 }

@@ -194,7 +194,10 @@ enum ListEntry {
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     ChannelInvite(Arc<Channel>),
-    Channel(Arc<Channel>),
+    Channel {
+        channel: Arc<Channel>,
+        depth: usize,
+    },
     ChannelEditor {
         depth: usize,
     },
@@ -315,9 +318,10 @@ impl CollabPanel {
                                 cx,
                             )
                         }
-                        ListEntry::Channel(channel) => {
+                        ListEntry::Channel { channel, depth } => {
                             let channel_row = this.render_channel(
                                 &*channel,
+                                *depth,
                                 &theme.collab_panel,
                                 is_selected,
                                 cx,
@@ -438,7 +442,7 @@ impl CollabPanel {
                         if this.take_editing_state(cx) {
                             this.update_entries(false, cx);
                             this.selection = this.entries.iter().position(|entry| {
-                                if let ListEntry::Channel(channel) = entry {
+                                if let ListEntry::Channel { channel, .. } = entry {
                                     channel.id == *channel_id
                                 } else {
                                     false
@@ -621,17 +625,19 @@ impl CollabPanel {
         if self.include_channels_section(cx) {
             self.entries.push(ListEntry::Header(Section::Channels, 0));
 
-            let channels = channel_store.channels();
-            if !(channels.is_empty() && self.channel_editing_state.is_none()) {
+            if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(channels.iter().enumerate().map(|(ix, channel)| {
-                        StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone(),
-                            char_bag: channel.name.chars().collect(),
-                        }
-                    }));
+                    .extend(
+                        channel_store
+                            .channels()
+                            .enumerate()
+                            .map(|(ix, (_, channel))| StringMatchCandidate {
+                                id: ix,
+                                string: channel.name.clone(),
+                                char_bag: channel.name.chars().collect(),
+                            }),
+                    );
                 let matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -652,26 +658,30 @@ impl CollabPanel {
                     }
                 }
                 for mat in matches {
-                    let channel = &channels[mat.candidate_id];
+                    let (depth, channel) =
+                        channel_store.channel_at_index(mat.candidate_id).unwrap();
 
                     match &self.channel_editing_state {
                         Some(ChannelEditingState::Create { parent_id, .. })
                             if *parent_id == Some(channel.id) =>
                         {
-                            self.entries.push(ListEntry::Channel(channel.clone()));
-                            self.entries.push(ListEntry::ChannelEditor {
-                                depth: channel.depth + 1,
+                            self.entries.push(ListEntry::Channel {
+                                channel: channel.clone(),
+                                depth,
                             });
+                            self.entries
+                                .push(ListEntry::ChannelEditor { depth: depth + 1 });
                         }
                         Some(ChannelEditingState::Rename { channel_id, .. })
                             if *channel_id == channel.id =>
                         {
-                            self.entries.push(ListEntry::ChannelEditor {
-                                depth: channel.depth,
-                            });
+                            self.entries.push(ListEntry::ChannelEditor { depth });
                         }
                         _ => {
-                            self.entries.push(ListEntry::Channel(channel.clone()));
+                            self.entries.push(ListEntry::Channel {
+                                channel: channel.clone(),
+                                depth,
+                            });
                         }
                     }
                 }
@@ -1497,6 +1507,7 @@ impl CollabPanel {
     fn render_channel(
         &self,
         channel: &Channel,
+        depth: usize,
         theme: &theme::CollabPanel,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
@@ -1542,7 +1553,7 @@ impl CollabPanel {
                 .with_style(*theme.contact_row.style_for(is_selected, state))
                 .with_padding_left(
                     theme.contact_row.default_style().padding.left
-                        + theme.channel_indent * channel.depth as f32,
+                        + theme.channel_indent * depth as f32,
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
@@ -1884,7 +1895,7 @@ impl CollabPanel {
                             });
                         }
                     }
-                    ListEntry::Channel(channel) => {
+                    ListEntry::Channel { channel, .. } => {
                         self.join_channel(channel.id, cx);
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
@@ -2031,7 +2042,7 @@ impl CollabPanel {
         if !channel_store.is_user_admin(action.channel_id) {
             return;
         }
-        if let Some(channel) = channel_store.channel_for_id(action.channel_id) {
+        if let Some(channel) = channel_store.channel_for_id(action.channel_id).cloned() {
             self.channel_editing_state = Some(ChannelEditingState::Rename {
                 channel_id: action.channel_id,
                 pending_name: None,
@@ -2058,7 +2069,7 @@ impl CollabPanel {
         self.selection
             .and_then(|ix| self.entries.get(ix))
             .and_then(|entry| match entry {
-                ListEntry::Channel(channel) => Some(channel),
+                ListEntry::Channel { channel, .. } => Some(channel),
                 _ => None,
             })
     }
@@ -2395,9 +2406,16 @@ impl PartialEq for ListEntry {
                     return peer_id_1 == peer_id_2;
                 }
             }
-            ListEntry::Channel(channel_1) => {
-                if let ListEntry::Channel(channel_2) = other {
-                    return channel_1.id == channel_2.id;
+            ListEntry::Channel {
+                channel: channel_1,
+                depth: depth_1,
+            } => {
+                if let ListEntry::Channel {
+                    channel: channel_2,
+                    depth: depth_2,
+                } = other
+                {
+                    return channel_1.id == channel_2.id && depth_1 == depth_2;
                 }
             }
             ListEntry::ChannelInvite(channel_1) => {

@@ -3,8 +3,8 @@ use crate::{
     tests::{room_participants, RoomParticipants, TestServer},
 };
 use call::ActiveCall;
-use client::{Channel, ChannelMembership, User};
-use gpui::{executor::Deterministic, TestAppContext};
+use client::{ChannelId, ChannelMembership, ChannelStore, User};
+use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
 use std::sync::Arc;
 
@@ -35,31 +35,28 @@ async fn test_core_channels(
         .unwrap();
 
     deterministic.run_until_parked();
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[
-                Arc::new(Channel {
-                    id: channel_a_id,
-                    name: "channel-a".to_string(),
-                    parent_id: None,
-                    depth: 0,
-                }),
-                Arc::new(Channel {
-                    id: channel_b_id,
-                    name: "channel-b".to_string(),
-                    parent_id: Some(channel_a_id),
-                    depth: 1,
-                })
-            ]
-        );
-        assert!(channels.is_user_admin(channel_a_id));
-        assert!(channels.is_user_admin(channel_b_id));
-    });
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                depth: 0,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+        ],
+    );
 
-    client_b
-        .channel_store()
-        .read_with(cx_b, |channels, _| assert_eq!(channels.channels(), &[]));
+    client_b.channel_store().read_with(cx_b, |channels, _| {
+        assert!(channels.channels().collect::<Vec<_>>().is_empty())
+    });
 
     // Invite client B to channel A as client A.
     client_a
@@ -78,17 +75,16 @@ async fn test_core_channels(
 
     // Client A sees that B has been invited.
     deterministic.run_until_parked();
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channel_invitations(),
-            &[Arc::new(Channel {
-                id: channel_a_id,
-                name: "channel-a".to_string(),
-                parent_id: None,
-                depth: 0,
-            })]
-        )
-    });
+    assert_channel_invitations(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            id: channel_a_id,
+            name: "channel-a".to_string(),
+            depth: 0,
+            user_is_admin: false,
+        }],
+    );
 
     let members = client_a
         .channel_store()
@@ -125,28 +121,25 @@ async fn test_core_channels(
     deterministic.run_until_parked();
 
     // Client B now sees that they are a member of channel A and its existing subchannels.
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(channels.channel_invitations(), &[]);
-        assert_eq!(
-            channels.channels(),
-            &[
-                Arc::new(Channel {
-                    id: channel_a_id,
-                    name: "channel-a".to_string(),
-                    parent_id: None,
-                    depth: 0,
-                }),
-                Arc::new(Channel {
-                    id: channel_b_id,
-                    name: "channel-b".to_string(),
-                    parent_id: Some(channel_a_id),
-                    depth: 1,
-                })
-            ]
-        );
-        assert!(!channels.is_user_admin(channel_a_id));
-        assert!(!channels.is_user_admin(channel_b_id));
-    });
+    assert_channel_invitations(client_b.channel_store(), cx_b, &[]);
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                user_is_admin: false,
+                depth: 0,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                user_is_admin: false,
+                depth: 1,
+            },
+        ],
+    );
 
     let channel_c_id = client_a
         .channel_store()
@@ -157,31 +150,30 @@ async fn test_core_channels(
         .unwrap();
 
     deterministic.run_until_parked();
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[
-                Arc::new(Channel {
-                    id: channel_a_id,
-                    name: "channel-a".to_string(),
-                    parent_id: None,
-                    depth: 0,
-                }),
-                Arc::new(Channel {
-                    id: channel_b_id,
-                    name: "channel-b".to_string(),
-                    parent_id: Some(channel_a_id),
-                    depth: 1,
-                }),
-                Arc::new(Channel {
-                    id: channel_c_id,
-                    name: "channel-c".to_string(),
-                    parent_id: Some(channel_b_id),
-                    depth: 2,
-                }),
-            ]
-        )
-    });
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                user_is_admin: false,
+                depth: 0,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                user_is_admin: false,
+                depth: 1,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                user_is_admin: false,
+                depth: 2,
+            },
+        ],
+    );
 
     // Update client B's membership to channel A to be an admin.
     client_a
@@ -195,34 +187,31 @@ async fn test_core_channels(
 
     // Observe that client B is now an admin of channel A, and that
     // their admin priveleges extend to subchannels of channel A.
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(channels.channel_invitations(), &[]);
-        assert_eq!(
-            channels.channels(),
-            &[
-                Arc::new(Channel {
-                    id: channel_a_id,
-                    name: "channel-a".to_string(),
-                    parent_id: None,
-                    depth: 0,
-                }),
-                Arc::new(Channel {
-                    id: channel_b_id,
-                    name: "channel-b".to_string(),
-                    parent_id: Some(channel_a_id),
-                    depth: 1,
-                }),
-                Arc::new(Channel {
-                    id: channel_c_id,
-                    name: "channel-c".to_string(),
-                    parent_id: Some(channel_b_id),
-                    depth: 2,
-                }),
-            ]
-        );
-
-        assert!(channels.is_user_admin(channel_c_id))
-    });
+    assert_channel_invitations(client_b.channel_store(), cx_b, &[]);
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                depth: 0,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                depth: 2,
+                user_is_admin: true,
+            },
+        ],
+    );
 
     // Client A deletes the channel, deletion also deletes subchannels.
     client_a
@@ -234,30 +223,26 @@ async fn test_core_channels(
         .unwrap();
 
     deterministic.run_until_parked();
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: channel_a_id,
-                name: "channel-a".to_string(),
-                parent_id: None,
-
-                depth: 0,
-            })]
-        )
-    });
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: channel_a_id,
-                name: "channel-a".to_string(),
-                parent_id: None,
-
-                depth: 0,
-            })]
-        )
-    });
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[ExpectedChannel {
+            id: channel_a_id,
+            name: "channel-a".to_string(),
+            depth: 0,
+            user_is_admin: true,
+        }],
+    );
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            id: channel_a_id,
+            name: "channel-a".to_string(),
+            depth: 0,
+            user_is_admin: true,
+        }],
+    );
 
     // Remove client B
     client_a
@@ -271,46 +256,38 @@ async fn test_core_channels(
     deterministic.run_until_parked();
 
     // Client A still has their channel
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: channel_a_id,
-                name: "channel-a".to_string(),
-                parent_id: None,
-                depth: 0,
-            })]
-        )
-    });
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[ExpectedChannel {
+            id: channel_a_id,
+            name: "channel-a".to_string(),
+            depth: 0,
+            user_is_admin: true,
+        }],
+    );
 
-    // Client B is gone
-    client_b
-        .channel_store()
-        .read_with(cx_b, |channels, _| assert_eq!(channels.channels(), &[]));
+    // Client B no longer has access to the channel
+    assert_channels(client_b.channel_store(), cx_b, &[]);
 
     // When disconnected, client A sees no channels.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(channels.channels(), &[]);
-        assert!(!channels.is_user_admin(channel_a_id));
-    });
+    assert_channels(client_a.channel_store(), cx_a, &[]);
 
     server.allow_connections();
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: channel_a_id,
-                name: "channel-a".to_string(),
-                parent_id: None,
-                depth: 0,
-            })]
-        );
-        assert!(channels.is_user_admin(channel_a_id));
-    });
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[ExpectedChannel {
+            id: channel_a_id,
+            name: "channel-a".to_string(),
+            depth: 0,
+            user_is_admin: true,
+        }],
+    );
 }
 
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
@@ -404,20 +381,21 @@ async fn test_channel_room(
         );
     });
 
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            id: zed_id,
+            name: "zed".to_string(),
+            depth: 0,
+            user_is_admin: false,
+        }],
+    );
     client_b.channel_store().read_with(cx_b, |channels, _| {
         assert_participants_eq(
             channels.channel_participants(zed_id),
             &[client_a.user_id().unwrap()],
         );
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: zed_id,
-                name: "zed".to_string(),
-                parent_id: None,
-                depth: 0,
-            })]
-        )
     });
 
     client_c.channel_store().read_with(cx_c, |channels, _| {
@@ -629,20 +607,17 @@ async fn test_permissions_update_while_invited(
 
     deterministic.run_until_parked();
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channel_invitations(),
-            &[Arc::new(Channel {
-                id: rust_id,
-                name: "rust".to_string(),
-                parent_id: None,
-
-                depth: 0,
-            })],
-        );
-
-        assert_eq!(channels.channels(), &[],);
-    });
+    assert_channel_invitations(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            depth: 0,
+            id: rust_id,
+            name: "rust".to_string(),
+            user_is_admin: false,
+        }],
+    );
+    assert_channels(client_b.channel_store(), cx_b, &[]);
 
     // Update B's invite before they've accepted it
     client_a
@@ -655,20 +630,17 @@ async fn test_permissions_update_while_invited(
 
     deterministic.run_until_parked();
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channel_invitations(),
-            &[Arc::new(Channel {
-                id: rust_id,
-                name: "rust".to_string(),
-                parent_id: None,
-
-                depth: 0,
-            })],
-        );
-
-        assert_eq!(channels.channels(), &[],);
-    });
+    assert_channel_invitations(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            depth: 0,
+            id: rust_id,
+            name: "rust".to_string(),
+            user_is_admin: false,
+        }],
+    );
+    assert_channels(client_b.channel_store(), cx_b, &[]);
 }
 
 #[gpui::test]
@@ -695,34 +667,78 @@ async fn test_channel_rename(
         .await
         .unwrap();
 
-    let rust_archive_id = rust_id;
     deterministic.run_until_parked();
 
     // Client A sees the channel with its new name.
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: rust_archive_id,
-                name: "rust-archive".to_string(),
-                parent_id: None,
-
-                depth: 0,
-            })],
-        );
-    });
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[ExpectedChannel {
+            depth: 0,
+            id: rust_id,
+            name: "rust-archive".to_string(),
+            user_is_admin: true,
+        }],
+    );
 
     // Client B sees the channel with its new name.
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.channels(),
-            &[Arc::new(Channel {
-                id: rust_archive_id,
-                name: "rust-archive".to_string(),
-                parent_id: None,
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            depth: 0,
+            id: rust_id,
+            name: "rust-archive".to_string(),
+            user_is_admin: false,
+        }],
+    );
+}
 
+#[derive(Debug, PartialEq)]
+struct ExpectedChannel {
+    depth: usize,
+    id: ChannelId,
+    name: String,
+    user_is_admin: bool,
+}
+
+#[track_caller]
+fn assert_channel_invitations(
+    channel_store: &ModelHandle<ChannelStore>,
+    cx: &TestAppContext,
+    expected_channels: &[ExpectedChannel],
+) {
+    let actual = channel_store.read_with(cx, |store, _| {
+        store
+            .channel_invitations()
+            .iter()
+            .map(|channel| ExpectedChannel {
                 depth: 0,
-            })],
-        );
+                name: channel.name.clone(),
+                id: channel.id,
+                user_is_admin: store.is_user_admin(channel.id),
+            })
+            .collect::<Vec<_>>()
     });
+    assert_eq!(actual, expected_channels);
+}
+
+#[track_caller]
+fn assert_channels(
+    channel_store: &ModelHandle<ChannelStore>,
+    cx: &TestAppContext,
+    expected_channels: &[ExpectedChannel],
+) {
+    let actual = channel_store.read_with(cx, |store, _| {
+        store
+            .channels()
+            .map(|(depth, channel)| ExpectedChannel {
+                depth,
+                name: channel.name.clone(),
+                id: channel.id,
+                user_is_admin: store.is_user_admin(channel.id),
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(actual, expected_channels);
 }

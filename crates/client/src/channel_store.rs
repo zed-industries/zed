@@ -14,7 +14,8 @@ pub type ChannelId = u64;
 pub type UserId = u64;
 
 pub struct ChannelStore {
-    channels: Vec<Arc<Channel>>,
+    channels_by_id: HashMap<ChannelId, Arc<Channel>>,
+    channel_paths: Vec<Vec<ChannelId>>,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channels_with_admin_privileges: HashSet<ChannelId>,
@@ -29,8 +30,6 @@ pub struct ChannelStore {
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
-    pub parent_id: Option<ChannelId>,
-    pub depth: usize,
 }
 
 pub struct ChannelMembership {
@@ -69,10 +68,11 @@ impl ChannelStore {
                 if matches!(status, Status::ConnectionLost | Status::SignedOut) {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
-                            this.channels.clear();
+                            this.channels_by_id.clear();
                             this.channel_invitations.clear();
                             this.channel_participants.clear();
                             this.channels_with_admin_privileges.clear();
+                            this.channel_paths.clear();
                             this.outgoing_invites.clear();
                             cx.notify();
                         });
@@ -83,8 +83,9 @@ impl ChannelStore {
             }
         });
         Self {
-            channels: vec![],
-            channel_invitations: vec![],
+            channels_by_id: HashMap::default(),
+            channel_invitations: Vec::default(),
+            channel_paths: Vec::default(),
             channel_participants: Default::default(),
             channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
@@ -95,31 +96,43 @@ impl ChannelStore {
         }
     }
 
-    pub fn channels(&self) -> &[Arc<Channel>] {
-        &self.channels
+    pub fn channel_count(&self) -> usize {
+        self.channel_paths.len()
+    }
+
+    pub fn channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
+        self.channel_paths.iter().map(move |path| {
+            let id = path.last().unwrap();
+            let channel = self.channel_for_id(*id).unwrap();
+            (path.len() - 1, channel)
+        })
+    }
+
+    pub fn channel_at_index(&self, ix: usize) -> Option<(usize, &Arc<Channel>)> {
+        let path = self.channel_paths.get(ix)?;
+        let id = path.last().unwrap();
+        let channel = self.channel_for_id(*id).unwrap();
+        Some((path.len() - 1, channel))
     }
 
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {
         &self.channel_invitations
     }
 
-    pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<Arc<Channel>> {
-        self.channels.iter().find(|c| c.id == channel_id).cloned()
+    pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<&Arc<Channel>> {
+        self.channels_by_id.get(&channel_id)
     }
 
-    pub fn is_user_admin(&self, mut channel_id: ChannelId) -> bool {
-        loop {
-            if self.channels_with_admin_privileges.contains(&channel_id) {
-                return true;
+    pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {
+        self.channel_paths.iter().any(|path| {
+            if let Some(ix) = path.iter().position(|id| *id == channel_id) {
+                path[..=ix]
+                    .iter()
+                    .any(|id| self.channels_with_admin_privileges.contains(id))
+            } else {
+                false
             }
-            if let Some(channel) = self.channel_for_id(channel_id) {
-                if let Some(parent_id) = channel.parent_id {
-                    channel_id = parent_id;
-                    continue;
-                }
-            }
-            return false;
-        }
+        })
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -373,69 +386,78 @@ impl ChannelStore {
         payload: proto::UpdateChannels,
         cx: &mut ModelContext<ChannelStore>,
     ) {
-        self.channels
-            .retain(|channel| !payload.remove_channels.contains(&channel.id));
-        self.channel_invitations
-            .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
-        self.channel_participants
-            .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
-        self.channels_with_admin_privileges
-            .retain(|channel_id| !payload.remove_channels.contains(channel_id));
-
-        for channel in payload.channel_invitations {
-            if let Some(existing_channel) = self
-                .channel_invitations
-                .iter_mut()
-                .find(|c| c.id == channel.id)
-            {
-                let existing_channel = Arc::make_mut(existing_channel);
-                existing_channel.name = channel.name;
-                continue;
-            }
-
-            self.channel_invitations.insert(
-                0,
-                Arc::new(Channel {
-                    id: channel.id,
-                    name: channel.name,
-                    parent_id: None,
-                    depth: 0,
-                }),
-            );
+        if !payload.remove_channel_invitations.is_empty() {
+            self.channel_invitations
+                .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
         }
-
-        for channel in payload.channels {
-            if let Some(existing_channel) = self.channels.iter_mut().find(|c| c.id == channel.id) {
-                let existing_channel = Arc::make_mut(existing_channel);
-                existing_channel.name = channel.name;
-                continue;
-            }
-
-            if let Some(parent_id) = channel.parent_id {
-                if let Some(ix) = self.channels.iter().position(|c| c.id == parent_id) {
-                    let parent_channel = &self.channels[ix];
-                    let depth = parent_channel.depth + 1;
-                    self.channels.insert(
-                        ix + 1,
-                        Arc::new(Channel {
-                            id: channel.id,
-                            name: channel.name,
-                            parent_id: Some(parent_id),
-                            depth,
-                        }),
-                    );
-                }
-            } else {
-                self.channels.insert(
-                    0,
+        for channel in payload.channel_invitations {
+            match self
+                .channel_invitations
+                .binary_search_by_key(&channel.id, |c| c.id)
+            {
+                Ok(ix) => Arc::make_mut(&mut self.channel_invitations[ix]).name = channel.name,
+                Err(ix) => self.channel_invitations.insert(
+                    ix,
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
-                        parent_id: None,
-                        depth: 0,
+                    }),
+                ),
+            }
+        }
+
+        let channels_changed = !payload.channels.is_empty() || !payload.remove_channels.is_empty();
+        if channels_changed {
+            if !payload.remove_channels.is_empty() {
+                self.channels_by_id
+                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
+                self.channel_participants
+                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
+                self.channels_with_admin_privileges
+                    .retain(|channel_id| !payload.remove_channels.contains(channel_id));
+            }
+
+            for channel in payload.channels {
+                if let Some(existing_channel) = self.channels_by_id.get_mut(&channel.id) {
+                    let existing_channel = Arc::make_mut(existing_channel);
+                    existing_channel.name = channel.name;
+                    continue;
+                }
+                self.channels_by_id.insert(
+                    channel.id,
+                    Arc::new(Channel {
+                        id: channel.id,
+                        name: channel.name,
                     }),
                 );
+
+                if let Some(parent_id) = channel.parent_id {
+                    let mut ix = 0;
+                    while ix < self.channel_paths.len() {
+                        let path = &self.channel_paths[ix];
+                        if path.ends_with(&[parent_id]) {
+                            let mut new_path = path.clone();
+                            new_path.push(channel.id);
+                            self.channel_paths.insert(ix + 1, new_path);
+                            ix += 1;
+                        }
+                        ix += 1;
+                    }
+                } else {
+                    self.channel_paths.push(vec![channel.id]);
+                }
             }
+
+            self.channel_paths.sort_by(|a, b| {
+                let a = Self::channel_path_sorting_key(a, &self.channels_by_id);
+                let b = Self::channel_path_sorting_key(b, &self.channels_by_id);
+                a.cmp(b)
+            });
+            self.channel_paths.dedup();
+            self.channel_paths.retain(|path| {
+                path.iter()
+                    .all(|channel_id| self.channels_by_id.contains_key(channel_id))
+            });
         }
 
         for permission in payload.channel_permissions {
@@ -491,5 +513,13 @@ impl ChannelStore {
         .detach();
 
         cx.notify();
+    }
+
+    fn channel_path_sorting_key<'a>(
+        path: &'a [ChannelId],
+        channels_by_id: &'a HashMap<ChannelId, Arc<Channel>>,
+    ) -> impl 'a + Iterator<Item = Option<&'a str>> {
+        path.iter()
+            .map(|id| Some(channels_by_id.get(id)?.name.as_str()))
     }
 }
