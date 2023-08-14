@@ -2723,7 +2723,7 @@ impl Editor {
             .collect()
     }
 
-    fn excerpt_visible_offsets(
+    pub fn excerpt_visible_offsets(
         &self,
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut ViewContext<'_, '_, Editor>,
