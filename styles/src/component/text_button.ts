@@ -6,6 +6,7 @@ import {
     text,
 } from "../style_tree/components"
 import { useTheme, Theme } from "../theme"
+import { ButtonVariant, Variant } from "./button"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
@@ -13,7 +14,7 @@ interface TextButtonOptions {
     | Theme["lowest"]
     | Theme["middle"]
     | Theme["highest"]
-    variant?: "default" | "ghost"
+    variant?: Variant
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
     text_properties?: TextProperties
@@ -24,7 +25,7 @@ type ToggleableTextButtonOptions = TextButtonOptions & {
 }
 
 export function text_button({
-    variant = "default",
+    variant = ButtonVariant.Default,
     color,
     layer,
     margin,
@@ -32,6 +33,8 @@ export function text_button({
 }: TextButtonOptions) {
     const theme = useTheme()
     if (!color) color = "base"
+
+    const background_color = variant === ButtonVariant.Ghost ? null : background(layer ?? theme.lowest, color)
 
     const text_options: TextProperties = {
         size: "xs",
@@ -61,7 +64,7 @@ export function text_button({
         },
         state: {
             default: {
-                background: variant !== "ghost" ? background(layer ?? theme.lowest, color) : null,
+                background: background_color,
                 color: foreground(layer ?? theme.lowest, color),
             },
             hovered: {
