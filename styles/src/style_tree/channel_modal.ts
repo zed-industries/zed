@@ -1,5 +1,4 @@
 import { useTheme } from "../theme"
-import { interactive, toggleable } from "../element"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
 import { input } from "../component/input"

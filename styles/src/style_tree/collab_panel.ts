@@ -269,6 +269,10 @@ export default function contacts_panel(): any {
                 },
             },
         }),
+        list_empty_state: {
+            ...text(layer, "ui_sans", "variant", { size: "sm" }),
+            padding: side_padding
+        },
         contact_avatar: {
             corner_radius: 10,
             width: 18,
