@@ -43,3 +43,12 @@ impl<V: 'static> Element<V> for Frame<V> {
         Ok(())
     }
 }
+
+impl<V> Clone for Frame<V> {
+    fn clone(&self) -> Self {
+        Self {
+            style: self.style.clone(),
+            children: self.children.clone(),
+        }
+    }
+}

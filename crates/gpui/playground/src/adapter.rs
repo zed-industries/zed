@@ -4,22 +4,26 @@ use util::ResultExt;
 
 use crate::element::AnyElement;
 
-struct Adapter<V>(AnyElement<V>);
+#[derive(Clone)]
+pub struct Adapter<V> {
+    view: V,
+    element: AnyElement<V>,
+}
 
-impl<V: 'static> gpui::Element<V> for Adapter<V> {
+impl<V: 'static> gpui::Element<Adapter<V>> for Adapter<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        view: &mut V,
-        legacy_cx: &mut gpui::LayoutContext<V>,
+        view: &mut Self,
+        legacy_cx: &mut gpui::LayoutContext<Self>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         legacy_cx.push_layout_engine();
         let node = self
-            .0
-            .layout(view, &mut LayoutContext { legacy_cx })
+            .element
+            .layout(&mut self.view, &mut LayoutContext { legacy_cx })
             .log_err();
 
         if let Some(node) = node {
@@ -37,11 +41,11 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut (),
-        view: &mut V,
-        legacy_cx: &mut gpui::PaintContext<V>,
+        adapter: &mut Self,
+        legacy_cx: &mut gpui::PaintContext<Self>,
     ) -> Self::PaintState {
         let mut cx = PaintContext { legacy_cx, scene };
-        self.0.paint(view, &mut cx).log_err();
+        self.element.paint(&mut adapter.view, &mut cx).log_err();
     }
 
     fn rect_for_text_range(
@@ -51,8 +55,8 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         visible_bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        view: &Adapter<V>,
+        cx: &gpui::ViewContext<Adapter<V>>,
     ) -> Option<RectF> {
         todo!()
     }
@@ -62,9 +66,22 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        view: &Adapter<V>,
+        cx: &gpui::ViewContext<Adapter<V>>,
     ) -> gpui::serde_json::Value {
         todo!()
+    }
+}
+
+impl<V: 'static> gpui::Entity for Adapter<V> {
+    type Event = ();
+}
+
+impl<V: 'static> gpui::View for Adapter<V>
+where
+    V: Clone,
+{
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
+        gpui::Element::into_any(self.clone())
     }
 }

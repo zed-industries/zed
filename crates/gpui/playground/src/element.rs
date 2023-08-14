@@ -1,4 +1,7 @@
-use crate::style::{DefinedLength, Display, Overflow, Position, Style};
+use crate::{
+    adapter::Adapter,
+    style::{DefinedLength, Display, Overflow, Position, Style},
+};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{Layout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext};
@@ -7,18 +10,18 @@ pub use taffy::tree::NodeId;
 
 #[derive(Deref, DerefMut)]
 pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
-    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
+    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, Adapter<V>>,
 }
 
 #[derive(Deref, DerefMut)]
 pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
-    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
+    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, Adapter<V>>,
     pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
-pub trait Element<V> {
+pub trait Element<V: 'static>: 'static + Clone {
     fn style_mut(&mut self) -> &mut Style;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
     fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
@@ -29,7 +32,7 @@ pub trait Element<V> {
         Self: 'static + Sized,
     {
         AnyElement {
-            element: Box::new(self) as Box<dyn Element<V>>,
+            element: Box::new(self) as Box<dyn ElementObject<V>>,
             layout_node_id: None,
         }
     }
@@ -196,8 +199,28 @@ pub trait Element<V> {
     }
 }
 
+pub trait ElementObject<V> {
+    fn clone_object(&self) -> Box<dyn ElementObject<V>>;
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
+}
+
+impl<V: 'static, E: Element<V>> ElementObject<V> for E {
+    fn clone_object(&self) -> Box<dyn ElementObject<V>> {
+        Box::new(Clone::clone(self))
+    }
+
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
+        self.layout(view, cx)
+    }
+
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+        self.paint(layout, view, cx)
+    }
+}
+
 pub struct AnyElement<V> {
-    element: Box<dyn Element<V>>,
+    element: Box<dyn ElementObject<V>>,
     layout_node_id: Option<NodeId>,
 }
 
@@ -216,5 +239,14 @@ impl<V> AnyElement<V> {
             .computed_layout(layout_node_id)
             .expect("you can currently only use playground elements within an adapter");
         self.element.paint(layout, view, cx)
+    }
+}
+
+impl<V> Clone for AnyElement<V> {
+    fn clone(&self) -> Self {
+        Self {
+            element: self.element.clone_object(),
+            layout_node_id: self.layout_node_id,
+        }
     }
 }
