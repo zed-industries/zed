@@ -1901,6 +1901,8 @@ mod tests {
         });
 
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
+        let visible_line_count =
+            editor.update(cx, |editor, _| editor.visible_line_count().unwrap());
         cx.foreground().run_until_parked();
         let selection_in_cached_range = editor.update(cx, |editor, cx| {
             let ranges = lsp_request_ranges
@@ -1923,12 +1925,11 @@ mod tests {
                 first_scroll.start, expected_initial_query_range_end,
                 "First scroll should start the query right after the end of the original scroll",
             );
-            let expected_increment = editor.visible_line_count().unwrap().ceil() as u32;
             assert_eq!(
                 second_scroll.end,
                 lsp::Position::new(
                     visible_range_after_scrolls.end.row
-                        + expected_increment,
+                        + visible_line_count.ceil() as u32,
                     0
                 ),
                 "Second scroll should query one more screen down after the end of the visible range"
@@ -1953,12 +1954,12 @@ mod tests {
             );
 
             let mut selection_in_cached_range = visible_range_after_scrolls.end;
-            selection_in_cached_range.row -= expected_increment;
+            selection_in_cached_range.row -= visible_line_count.ceil() as u32;
             selection_in_cached_range
         });
 
         editor.update(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                 s.select_ranges([selection_in_cached_range..selection_in_cached_range])
             });
         });
@@ -1979,12 +1980,17 @@ mod tests {
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
             let ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
-            let expected_increment = editor.visible_line_count().unwrap().ceil() as u32;
             assert_eq!(ranges.len(), 1,
                 "On edit, should scroll to selection and query a range around it. Instead, got query ranges {ranges:?}");
             let query_range = &ranges[0];
-            assert_eq!(query_range.start, lsp::Position::new(selection_in_cached_range.row - expected_increment, 0));
-            assert_eq!(query_range.end, lsp::Position::new(selection_in_cached_range.row + expected_increment, 0));
+            assert!(query_range.start.line < selection_in_cached_range.row,
+                "Hints should be queried with the selected range after the query range start");
+            assert!(query_range.end.line > selection_in_cached_range.row,
+                "Hints should be queried with the selected range before the query range end");
+            assert!(query_range.start.line <= selection_in_cached_range.row - (visible_line_count * 3.0 / 2.0) as u32,
+                "Hints query range should contain one more screen before");
+            assert!(query_range.end.line >= selection_in_cached_range.row + (visible_line_count * 3.0 / 2.0) as u32,
+                "Hints query range should contain one more screen after");
 
             assert_eq!(lsp_request_count.load(Ordering::Acquire), 4, "Should query for hints once after the edit");
             let expected_layers = vec!["4".to_string()];
