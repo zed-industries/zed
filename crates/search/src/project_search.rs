@@ -1617,10 +1617,12 @@ impl View for ProjectSearchBar {
                                         .with_child(search_button_for_mode(SearchMode::Text, cx))
                                         .with_children(semantic_index)
                                         .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                                        .constrained()
+                                        .with_height(theme.search.search_bar_row_height)
                                         .aligned()
                                         .left()
                                         .contained()
-                                        .with_margin_right(3.),
+                                        .with_style(theme.search.modes_container),
                                 )
                                 .with_child(
                                     super::search_bar::render_close_button(

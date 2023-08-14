@@ -391,6 +391,7 @@ pub struct Search {
     pub nav_button: Toggleable<Interactive<ContainedLabel>>,
     pub search_bar_row_height: f32,
     pub option_button_height: f32,
+    pub modes_container: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

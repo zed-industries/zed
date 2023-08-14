@@ -308,7 +308,7 @@ impl View for BufferSearchBar {
                                 .aligned()
                                 .left()
                                 .contained()
-                                .with_margin_right(3.),
+                                .with_style(theme.search.modes_container),
                         )
                         .with_child(
                             super::search_bar::render_close_button(

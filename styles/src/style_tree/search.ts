@@ -165,10 +165,10 @@ export default function search(): any {
                 button_width: 32,
                 corner_radius: 6,
                 padding: {
-                    top: 8,
-                    bottom: 8,
-                    left: 8,
-                    right: 8,
+                    top: 10,
+                    bottom: 10,
+                    left: 10,
+                    right: 10,
                 },
 
                 background: background(theme.highest, "variant"),
@@ -309,6 +309,11 @@ export default function search(): any {
         }),
         search_bar_row_height: 32,
         option_button_height: 22,
+        modes_container: {
+            margin: {
+                right: 9
+            }
+        }
 
     }
 }
