@@ -174,7 +174,9 @@ impl View for BufferSearchBar {
                     crate::search_bar::render_option_button_icon::<Self>(
                         is_active,
                         icon,
-                        option,
+                        option.bits as usize,
+                        format!("Toggle {}", option.label()),
+                        option.to_toggle_action(),
                         move |_, this, cx| {
                             this.toggle_search_option(option, cx);
                         },

@@ -1,7 +1,7 @@
 use crate::{
     history::SearchHistory,
     mode::SearchMode,
-    search_bar::{render_nav_button, render_search_mode_button},
+    search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
     ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
@@ -16,11 +16,9 @@ use futures::StreamExt;
 use gpui::platform::PromptLevel;
 
 use gpui::{
-    actions,
-    elements::*,
-    platform::{CursorStyle, MouseButton},
-    Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::MouseButton, Action, AnyElement, AnyViewHandle, AppContext,
+    Entity, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 
 use menu::Confirm;
@@ -1417,41 +1415,26 @@ impl View for ProjectSearchBar {
                 .flex(1.0, true);
             let row_spacing = theme.workspace.toolbar.container.padding.bottom;
             let search = _search.read(cx);
-            let filter_button = {
-                let tooltip_style = theme::current(cx).tooltip.clone();
-                let is_active = search.filters_enabled;
-                MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
-                    let theme = theme::current(cx);
-                    let style = theme
-                        .search
-                        .option_button
-                        .in_state(is_active)
-                        .style_for(state);
-                    Svg::new("icons/filter_12.svg")
-                        .with_color(style.text.color.clone())
-                        .contained()
-                        .with_style(style.container)
-                })
-                .on_click(MouseButton::Left, move |_, this, cx| {
+            let filter_button = render_option_button_icon(
+                search.filters_enabled,
+                "icons/filter_12.svg",
+                0,
+                "Toggle filters",
+                Box::new(ToggleFilters),
+                move |_, this, cx| {
                     this.toggle_filters(cx);
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .with_tooltip::<Self>(
-                    0,
-                    "Toggle filters",
-                    Some(Box::new(ToggleFilters)),
-                    tooltip_style,
-                    cx,
-                )
-                .into_any()
-            };
+                },
+                cx,
+            );
             let search = _search.read(cx);
             let is_semantic_disabled = search.semantic_state.is_none();
             let render_option_button_icon = |path, option, cx: &mut ViewContext<Self>| {
                 crate::search_bar::render_option_button_icon(
                     self.is_option_enabled(option, cx),
                     path,
-                    option,
+                    option.bits as usize,
+                    format!("Toggle {}", option.label()),
+                    option.to_toggle_action(),
                     move |_, this, cx| {
                         this.toggle_search_option(option, cx);
                     },
