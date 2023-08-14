@@ -90,6 +90,11 @@ pub(super) fn render_nav_button<V: View>(
                 ..container_style.corner_radii
             },
         };
+        if direction == Direction::Prev {
+            // Remove right border so that when both Next and Prev buttons are
+            // next to one another, there's no double border between them.
+            container_style.border.right = false;
+        }
         label.with_style(container_style)
     })
     .on_click(MouseButton::Left, on_click)
