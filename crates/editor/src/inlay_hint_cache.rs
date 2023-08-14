@@ -17,6 +17,7 @@ use project::InlayHint;
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
+use sum_tree::Bias;
 use util::post_inc;
 
 pub struct InlayHintCache {
@@ -500,19 +501,17 @@ fn determine_query_range(
 
     let buffer = excerpt_buffer.read(cx);
     let excerpt_visible_len = excerpt_visible_range.end - excerpt_visible_range.start;
-    let start = buffer.anchor_before(
-        excerpt_visible_range
-            .start
-            .saturating_sub(excerpt_visible_len)
-            .max(full_excerpt_range.start.offset),
-    );
-    let end = buffer.anchor_after(
-        excerpt_visible_range
-            .end
-            .saturating_add(excerpt_visible_len)
-            .min(full_excerpt_range.end.offset)
-            .min(buffer.len()),
-    );
+    let start_offset = excerpt_visible_range
+        .start
+        .saturating_sub(excerpt_visible_len)
+        .max(full_excerpt_range.start.offset);
+    let start = buffer.anchor_before(buffer.clip_offset(start_offset, Bias::Left));
+    let end_offset = excerpt_visible_range
+        .end
+        .saturating_add(excerpt_visible_len)
+        .min(full_excerpt_range.end.offset)
+        .min(buffer.len());
+    let end = buffer.anchor_after(buffer.clip_offset(end_offset, Bias::Right));
     if start.cmp(&end, buffer).is_eq() {
         None
     } else {
