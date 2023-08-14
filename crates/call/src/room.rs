@@ -1116,11 +1116,11 @@ impl Room {
         })
     }
 
-    pub fn is_muted(&self) -> bool {
+    pub fn is_muted(&self, cx: &AppContext) -> bool {
         self.live_kit
             .as_ref()
             .and_then(|live_kit| match &live_kit.microphone_track {
-                LocalTrack::None => Some(true),
+                LocalTrack::None => Some(settings::get::<CallSettings>(cx).mute_on_join),
                 LocalTrack::Pending { muted, .. } => Some(*muted),
                 LocalTrack::Published { muted, .. } => Some(*muted),
             })
@@ -1310,7 +1310,7 @@ impl Room {
     }
 
     pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
-        let should_mute = !self.is_muted();
+        let should_mute = !self.is_muted(cx);
         if let Some(live_kit) = self.live_kit.as_mut() {
             if matches!(live_kit.microphone_track, LocalTrack::None) {
                 return Ok(self.share_microphone(cx));

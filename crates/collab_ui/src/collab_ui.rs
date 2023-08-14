@@ -64,7 +64,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = call.room().cloned() {
         let client = call.client();
         room.update(cx, |room, cx| {
-            if room.is_muted() {
+            if room.is_muted(cx) {
                 ActiveCall::report_call_event_for_room("enable microphone", room.id(), &client, cx);
             } else {
                 ActiveCall::report_call_event_for_room(

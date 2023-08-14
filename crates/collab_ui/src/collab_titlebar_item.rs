@@ -90,7 +90,7 @@ impl View for CollabTitlebarItem {
             right_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
             right_container.add_child(self.render_leave_call(&theme, cx));
-            let muted = room.read(cx).is_muted();
+            let muted = room.read(cx).is_muted(cx);
             let speaking = room.read(cx).is_speaking();
             left_container.add_child(
                 self.render_current_user(&workspace, &theme, &user, peer_id, muted, speaking, cx),
@@ -544,7 +544,7 @@ impl CollabTitlebarItem {
     ) -> AnyElement<Self> {
         let icon;
         let tooltip;
-        let is_muted = room.read(cx).is_muted();
+        let is_muted = room.read(cx).is_muted(cx);
         if is_muted {
             icon = "icons/radix/mic-mute.svg";
             tooltip = "Unmute microphone";
