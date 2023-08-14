@@ -110,6 +110,10 @@ export default function contacts_panel(): any {
 
     return {
         channel_modal: channel_modal(),
+        placeholder: {
+            ...text(theme.middle, "sans", "default", { size: "sm" }),
+            padding: 5,
+        },
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),

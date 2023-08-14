@@ -200,6 +200,7 @@ enum ListEntry {
         contact: Arc<Contact>,
         calling: bool,
     },
+    ContactPlaceholder,
 }
 
 impl Entity for CollabPanel {
@@ -367,6 +368,9 @@ impl CollabPanel {
                         ),
                         ListEntry::ChannelEditor { depth } => {
                             this.render_channel_editor(&theme, *depth, cx)
+                        }
+                        ListEntry::ContactPlaceholder => {
+                            this.render_contact_placeholder(&theme.collab_panel)
                         }
                     }
                 });
@@ -819,6 +823,10 @@ impl CollabPanel {
                     }
                 }
             }
+        }
+
+        if incoming.is_empty() && outgoing.is_empty() && contacts.is_empty() {
+            self.entries.push(ListEntry::ContactPlaceholder);
         }
 
         if select_same_item {
@@ -1392,6 +1400,16 @@ impl CollabPanel {
         }
 
         event_handler.into_any()
+    }
+
+    fn render_contact_placeholder(&self, theme: &theme::CollabPanel) -> AnyElement<Self> {
+        Label::new(
+            "Add contacts to begin collaborating",
+            theme.placeholder.text.clone(),
+        )
+        .contained()
+        .with_style(theme.placeholder.container)
+        .into_any()
     }
 
     fn render_channel_editor(
@@ -2383,6 +2401,11 @@ impl PartialEq for ListEntry {
             ListEntry::ChannelEditor { depth } => {
                 if let ListEntry::ChannelEditor { depth: other_depth } = other {
                     return depth == other_depth;
+                }
+            }
+            ListEntry::ContactPlaceholder => {
+                if let ListEntry::ContactPlaceholder = other {
+                    return true;
                 }
             }
         }
