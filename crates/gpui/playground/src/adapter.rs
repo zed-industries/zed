@@ -1,4 +1,5 @@
-use crate::element::LayoutContext;
+use crate::element::{LayoutContext, PaintContext};
+use gpui::geometry::rect::RectF;
 use util::ResultExt;
 
 use crate::element::AnyElement;
@@ -22,11 +23,8 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
             .log_err();
 
         if let Some(node) = node {
-            legacy_cx
-                .layout_engine()
-                .unwrap()
-                .compute_layout(node, constraint.max)
-                .log_err();
+            let layout_engine = legacy_cx.layout_engine().unwrap();
+            layout_engine.compute_layout(node, constraint.max).log_err();
         }
         legacy_cx.pop_layout_engine();
 
@@ -36,31 +34,32 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
     fn paint(
         &mut self,
         scene: &mut gpui::SceneBuilder,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
-        layout: &mut Self::LayoutState,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &mut (),
         view: &mut V,
-        cx: &mut gpui::PaintContext<V>,
+        legacy_cx: &mut gpui::PaintContext<V>,
     ) -> Self::PaintState {
-        todo!()
+        let mut cx = PaintContext { legacy_cx, scene };
+        self.0.paint(view, &mut cx).log_err();
     }
 
     fn rect_for_text_range(
         &self,
         range_utf16: std::ops::Range<usize>,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
+        bounds: RectF,
+        visible_bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
         view: &V,
         cx: &gpui::ViewContext<V>,
-    ) -> Option<gpui::geometry::rect::RectF> {
+    ) -> Option<RectF> {
         todo!()
     }
 
     fn debug(
         &self,
-        bounds: gpui::geometry::rect::RectF,
+        bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
         view: &V,

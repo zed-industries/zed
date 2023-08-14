@@ -15,7 +15,7 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
-    scene: &'d mut gpui::SceneBuilder,
+    pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
 pub trait Element<V> {
