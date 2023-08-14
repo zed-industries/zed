@@ -394,7 +394,7 @@ impl Panel for TerminalPanel {
     }
 
     fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-        Some("icons/terminal_12.svg")
+        Some("icons/terminal.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
