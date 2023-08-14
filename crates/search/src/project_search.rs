@@ -1488,8 +1488,8 @@ impl View for ProjectSearchBar {
                 .with_child(
                     Flex::row()
                         .with_child(filter_button)
-                        .with_children(whole_word)
                         .with_children(case_sensitive)
+                        .with_children(whole_word)
                         .flex(1., true)
                         .contained(),
                 )
