@@ -300,18 +300,28 @@ impl View for BufferSearchBar {
                 Flex::column().with_child(
                     Flex::row()
                         .align_children_center()
-                        .with_child(search_button_for_mode(SearchMode::Text, cx))
-                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                        .with_child(super::search_bar::render_close_button(
-                            "Dismiss Buffer Search",
-                            &theme.search,
-                            cx,
-                            |_, this, cx| this.dismiss(&Default::default(), cx),
-                            Some(Box::new(Dismiss)),
-                        ))
+                        .with_child(
+                            Flex::row()
+                                .with_child(search_button_for_mode(SearchMode::Text, cx))
+                                .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                                .aligned()
+                                .left()
+                                .contained()
+                                .with_margin_right(3.),
+                        )
+                        .with_child(
+                            super::search_bar::render_close_button(
+                                "Dismiss Buffer Search",
+                                &theme.search,
+                                cx,
+                                |_, this, cx| this.dismiss(&Default::default(), cx),
+                                Some(Box::new(Dismiss)),
+                            )
+                            .aligned()
+                            .right(),
+                        )
                         .constrained()
                         .with_height(theme.search.search_bar_row_height)
-                        .contained()
                         .aligned()
                         .right()
                         .top()
