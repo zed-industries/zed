@@ -1,3 +1,4 @@
+use crate::element::LayoutContext;
 use util::ResultExt;
 
 use crate::element::AnyElement;
@@ -12,16 +13,22 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut V,
-        cx: &mut gpui::LayoutContext<V>,
+        legacy_cx: &mut gpui::LayoutContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        cx.push_layout_engine();
-        if let Some(node) = self.0.layout(view, cx).log_err() {
-            cx.layout_engine()
+        legacy_cx.push_layout_engine();
+        let node = self
+            .0
+            .layout(view, &mut LayoutContext { legacy_cx })
+            .log_err();
+
+        if let Some(node) = node {
+            legacy_cx
+                .layout_engine()
                 .unwrap()
                 .compute_layout(node, constraint.max)
                 .log_err();
         }
-        cx.pop_layout_engine();
+        legacy_cx.pop_layout_engine();
 
         (constraint.max, ())
     }

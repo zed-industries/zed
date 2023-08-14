@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use gpui::{Layout, LayoutNodeId};
 
 use crate::{
-    element::{AnyElement, Element},
+    element::{AnyElement, Element, LayoutContext, PaintContext},
     style::Style,
 };
 
@@ -23,11 +23,7 @@ impl<V: 'static> Element<V> for Frame<V> {
         &mut self.style
     }
 
-    fn layout(
-        &mut self,
-        view: &mut V,
-        cx: &mut gpui::LayoutContext<V>,
-    ) -> Result<taffy::tree::NodeId> {
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<taffy::tree::NodeId> {
         let child_layout_node_ids = self
             .children
             .iter_mut()
@@ -40,12 +36,7 @@ impl<V: 'static> Element<V> for Frame<V> {
             .add_node(self.style.to_taffy(rem_size), child_layout_node_ids)
     }
 
-    fn paint(
-        &mut self,
-        layout: Layout,
-        view: &mut V,
-        cx: &mut gpui::PaintContext<V>,
-    ) -> Result<()> {
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         for child in &mut self.children {
             child.paint(view, cx)?;
         }

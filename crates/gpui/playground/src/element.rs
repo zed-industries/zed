@@ -1,14 +1,27 @@
 use crate::style::{DefinedLength, Display, Overflow, Position, Style};
 use anyhow::Result;
-use gpui::{Layout, LayoutContext, PaintContext};
+use derive_more::{Deref, DerefMut};
+use gpui::{Layout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext};
 use playground_macros::tailwind_lengths;
 pub use taffy::tree::NodeId;
+
+#[derive(Deref, DerefMut)]
+pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
+    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
+}
+
+#[derive(Deref, DerefMut)]
+pub struct PaintContext<'a, 'b, 'c, 'd, V> {
+    #[deref]
+    #[deref_mut]
+    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
+    scene: &'d mut gpui::SceneBuilder,
+}
 
 pub trait Element<V> {
     fn style_mut(&mut self) -> &mut Style;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut gpui::PaintContext<V>)
-        -> Result<()>;
+    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
 
     /// Convert to a dynamically-typed element suitable for layout and paint.
     fn into_any(self) -> AnyElement<V>
