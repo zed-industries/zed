@@ -214,12 +214,12 @@ impl<'a> WindowContext<'a> {
         self.window.layout_engines.last_mut()
     }
 
-    pub fn push_layout_engine(&mut self) {
-        self.window.layout_engines.push(LayoutEngine::new());
+    pub fn push_layout_engine(&mut self, engine: LayoutEngine) {
+        self.window.layout_engines.push(engine);
     }
 
-    pub fn pop_layout_engine(&mut self) {
-        self.window.layout_engines.pop();
+    pub fn pop_layout_engine(&mut self) -> Option<LayoutEngine> {
+        self.window.layout_engines.pop()
     }
 
     pub fn remove_window(&mut self) {
@@ -1235,12 +1235,13 @@ impl<'a> WindowContext<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct LayoutEngine(Taffy);
 pub use taffy::style::Style as LayoutStyle;
 
 impl LayoutEngine {
-    fn new() -> Self {
-        Self(Taffy::new())
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub fn add_node<C>(&mut self, style: LayoutStyle, children: C) -> Result<LayoutNodeId>

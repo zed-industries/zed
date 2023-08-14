@@ -20,7 +20,7 @@ pub fn tailwind_lengths(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut output_functions = TokenStream2::new();
 
     for (length, value) in fixed_lengths() {
-        let function_name = format_ident!("{}_{}", function_signature.ident, length);
+        let function_name = format_ident!("{}{}", function_signature.ident, length);
         output_functions.extend(quote! {
             #visibility fn #function_name(mut self) -> Self #where_clause {
                 let #argument_name = #value.into();

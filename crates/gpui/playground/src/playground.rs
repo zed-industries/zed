@@ -1,20 +1,14 @@
 #![allow(dead_code, unused_variables)]
-use element::{AnyElement, Element};
+use element::Element;
 use frame::frame;
+use gpui::{
+    geometry::{rect::RectF, vector::vec2f},
+    platform::WindowOptions,
+};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
-fn main() {
-    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
-
-    gpui::App::new(()).unwrap().run(|cx| {
-        cx.add_window(Default::default(), |_| {
-            view(|_| workspace(&rose_pine::moon()))
-        });
-        cx.platform().activate(true);
-    });
-}
-
+use style::percent;
 use themes::{rose_pine, ThemeColors};
 use view::view;
 
@@ -26,16 +20,28 @@ mod style;
 mod themes;
 mod view;
 
-pub struct Playground<V: 'static>(AnyElement<V>);
+fn main() {
+    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-impl<V> Playground<V> {
-    pub fn new() -> Self {
-        Self(workspace(&rose_pine::moon()).into_any())
-    }
+    gpui::App::new(()).unwrap().run(|cx| {
+        cx.add_window(
+            WindowOptions {
+                bounds: gpui::platform::WindowBounds::Fixed(RectF::new(
+                    vec2f(0., 0.),
+                    vec2f(400., 300.),
+                )),
+                center: true,
+                ..Default::default()
+            },
+            |_| view(|_| workspace(&rose_pine::moon())),
+        );
+        cx.platform().activate(true);
+    });
 }
 
 fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-    frame()
+    // frame().w_full().h_half().fill(theme.success(0.5))
+    frame().h_full().w(percent(50.)).fill(theme.success(0.5))
 }
 //     todo!()
 //     // column()

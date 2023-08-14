@@ -37,6 +37,13 @@ impl<V: 'static> Element<V> for Frame<V> {
     }
 
     fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+        cx.scene.push_quad(gpui::scene::Quad {
+            bounds: layout.bounds,
+            background: self.style.fill.color().map(Into::into),
+            border: Default::default(),
+            corner_radii: Default::default(),
+        });
+
         for child in &mut self.children {
             child.paint(view, cx)?;
         }

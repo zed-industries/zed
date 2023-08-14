@@ -1,6 +1,6 @@
 use crate::{
     adapter::Adapter,
-    style::{DefinedLength, Display, Fill, Overflow, Position, Style},
+    style::{DefinedLength, Display, Fill, Length, Overflow, Position, Style},
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -168,7 +168,7 @@ pub trait Element<V: 'static>: 'static + Clone {
     }
 
     #[tailwind_lengths]
-    fn inset(mut self, length: DefinedLength) -> Self
+    fn inset_(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -179,8 +179,24 @@ pub trait Element<V: 'static>: 'static + Clone {
         self
     }
 
+    fn w(mut self, width: impl Into<Length>) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().size.width = width.into();
+        self
+    }
+
+    fn w_auto(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().size.width = Length::Auto;
+        self
+    }
+
     #[tailwind_lengths]
-    fn w(mut self, length: DefinedLength) -> Self
+    fn w_(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -189,7 +205,7 @@ pub trait Element<V: 'static>: 'static + Clone {
     }
 
     #[tailwind_lengths]
-    fn min_w(mut self, length: DefinedLength) -> Self
+    fn min_w_(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {
@@ -197,17 +213,33 @@ pub trait Element<V: 'static>: 'static + Clone {
         self
     }
 
-    #[tailwind_lengths]
-    fn h(mut self, length: DefinedLength) -> Self
+    fn h(mut self, height: impl Into<Length>) -> Self
     where
         Self: Sized,
     {
-        self.style_mut().size.height = length;
+        self.style_mut().size.height = height.into();
+        self
+    }
+
+    fn h_auto(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().size.height = Length::Auto;
         self
     }
 
     #[tailwind_lengths]
-    fn min_h(mut self, length: DefinedLength) -> Self
+    fn h_(mut self, height: DefinedLength) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().size.height = height;
+        self
+    }
+
+    #[tailwind_lengths]
+    fn min_h_(mut self, length: DefinedLength) -> Self
     where
         Self: Sized,
     {

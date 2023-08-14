@@ -1,5 +1,5 @@
 use crate::element::{LayoutContext, PaintContext};
-use gpui::geometry::rect::RectF;
+use gpui::{geometry::rect::RectF, LayoutEngine};
 use util::ResultExt;
 
 use crate::element::AnyElement;
@@ -8,7 +8,7 @@ use crate::element::AnyElement;
 pub struct Adapter<V>(pub(crate) AnyElement<V>);
 
 impl<V: 'static> gpui::Element<V> for Adapter<V> {
-    type LayoutState = ();
+    type LayoutState = Option<LayoutEngine>;
     type PaintState = ();
 
     fn layout(
@@ -17,7 +17,7 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         view: &mut V,
         legacy_cx: &mut gpui::LayoutContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        legacy_cx.push_layout_engine();
+        legacy_cx.push_layout_engine(LayoutEngine::new());
         let node = self
             .0
             .layout(view, &mut LayoutContext { legacy_cx })
@@ -27,9 +27,9 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
             let layout_engine = legacy_cx.layout_engine().unwrap();
             layout_engine.compute_layout(node, constraint.max).log_err();
         }
-        legacy_cx.pop_layout_engine();
-
-        (constraint.max, ())
+        let layout_engine = legacy_cx.pop_layout_engine();
+        debug_assert!(layout_engine.is_some());
+        (constraint.max, layout_engine)
     }
 
     fn paint(
@@ -37,12 +37,15 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         scene: &mut gpui::SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut (),
+        layout_engine: &mut Option<LayoutEngine>,
         view: &mut V,
         legacy_cx: &mut gpui::PaintContext<V>,
     ) -> Self::PaintState {
+        legacy_cx.push_layout_engine(layout_engine.take().unwrap());
         let mut cx = PaintContext { legacy_cx, scene };
         self.0.paint(view, &mut cx).log_err();
+        *layout_engine = legacy_cx.pop_layout_engine();
+        debug_assert!(layout_engine.is_some());
     }
 
     fn rect_for_text_range(

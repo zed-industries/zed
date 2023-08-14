@@ -239,10 +239,10 @@ impl Edges<Length> {
 
     pub const fn zero() -> Self {
         Self {
-            top: Length::Length(DefinedLength::Pixels(0.0)),
-            right: Length::Length(DefinedLength::Pixels(0.0)),
-            bottom: Length::Length(DefinedLength::Pixels(0.0)),
-            left: Length::Length(DefinedLength::Pixels(0.0)),
+            top: Length::Defined(DefinedLength::Pixels(0.0)),
+            right: Length::Defined(DefinedLength::Pixels(0.0)),
+            bottom: Length::Defined(DefinedLength::Pixels(0.0)),
+            left: Length::Defined(DefinedLength::Pixels(0.0)),
         }
     }
 
@@ -272,7 +272,9 @@ impl DefinedLength {
         match self {
             DefinedLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
             DefinedLength::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
-            DefinedLength::Percent(percent) => taffy::style::LengthPercentage::Percent(*percent),
+            DefinedLength::Percent(percent) => {
+                taffy::style::LengthPercentage::Percent(*percent / 100.)
+            }
         }
     }
 }
@@ -280,14 +282,30 @@ impl DefinedLength {
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
 #[derive(Clone, Copy)]
 pub enum Length {
-    Length(DefinedLength),
+    Defined(DefinedLength),
     Auto,
+}
+
+pub fn auto() -> Length {
+    Length::Auto
+}
+
+pub fn percent(percent: f32) -> DefinedLength {
+    DefinedLength::Percent(percent)
+}
+
+pub fn rems(rems: f32) -> DefinedLength {
+    DefinedLength::Rems(rems)
+}
+
+pub fn pixels(pixels: f32) -> DefinedLength {
+    DefinedLength::Pixels(pixels)
 }
 
 impl Length {
     fn to_taffy(&self, rem_size: f32) -> taffy::prelude::LengthPercentageAuto {
         match self {
-            Length::Length(length) => length.to_taffy(rem_size).into(),
+            Length::Defined(length) => length.to_taffy(rem_size).into(),
             Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
         }
     }
@@ -295,7 +313,7 @@ impl Length {
 
 impl From<DefinedLength> for Length {
     fn from(value: DefinedLength) -> Self {
-        Length::Length(value)
+        Length::Defined(value)
     }
 }
 
@@ -304,8 +322,22 @@ pub enum Fill {
     Color(Hsla),
 }
 
+impl Fill {
+    pub fn color(&self) -> Option<Hsla> {
+        match self {
+            Fill::Color(color) => Some(*color),
+        }
+    }
+}
+
 impl Default for Fill {
     fn default() -> Self {
         Self::Color(Hsla::default())
+    }
+}
+
+impl From<Hsla> for Fill {
+    fn from(color: Hsla) -> Self {
+        Self::Color(color)
     }
 }
