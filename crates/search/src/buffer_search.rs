@@ -220,6 +220,7 @@ impl View for BufferSearchBar {
             )
         };
 
+        let icon_style = theme.search.editor_icon.clone();
         let nav_column = Flex::column()
             .with_child(
                 Flex::row()
@@ -240,101 +241,98 @@ impl View for BufferSearchBar {
             )
             .contained();
 
-        let icon_style = theme.search.editor_icon.clone();
-        Flex::row()
-            .with_child(nav_column)
+        let editor_column = Flex::column()
+            .align_children_center()
             .with_child(
-                Flex::column()
+                Flex::row()
                     .align_children_center()
                     .with_child(
                         Flex::row()
                             .align_children_center()
                             .with_child(
-                                Flex::row()
-                                    .align_children_center()
-                                    .with_child(
-                                        Svg::for_style(icon_style.icon)
-                                            .contained()
-                                            .with_style(icon_style.container)
-                                            .constrained(),
-                                    )
-                                    .with_child(
-                                        ChildView::new(&self.query_editor, cx)
-                                            .aligned()
-                                            .left()
-                                            .flex(1., true),
-                                    )
-                                    .with_child(
-                                        Flex::row()
-                                            .with_children(render_search_option(
-                                                supported_options.case,
-                                                "icons/case_insensitive_12.svg",
-                                                SearchOptions::CASE_SENSITIVE,
-                                                cx,
-                                            ))
-                                            .with_children(render_search_option(
-                                                supported_options.word,
-                                                "icons/word_search_12.svg",
-                                                SearchOptions::WHOLE_WORD,
-                                                cx,
-                                            ))
-                                            .flex(1., true)
-                                            .contained(),
-                                    )
+                                Svg::for_style(icon_style.icon)
                                     .contained()
-                                    .with_style(editor_container)
+                                    .with_style(icon_style.container)
+                                    .constrained(),
+                            )
+                            .with_child(
+                                ChildView::new(&self.query_editor, cx)
                                     .aligned()
-                                    .top()
-                                    .constrained()
-                                    .with_min_width(theme.search.editor.min_width)
-                                    .with_max_width(theme.search.editor.max_width)
-                                    .with_max_height(theme.search.search_bar_row_height)
-                                    .flex(1., false),
+                                    .left()
+                                    .flex(1., true),
                             )
                             .with_child(
                                 Flex::row()
-                                    .with_child(self.render_action_button("Select All", cx))
-                                    .aligned(),
+                                    .with_children(render_search_option(
+                                        supported_options.case,
+                                        "icons/case_insensitive_12.svg",
+                                        SearchOptions::CASE_SENSITIVE,
+                                        cx,
+                                    ))
+                                    .with_children(render_search_option(
+                                        supported_options.word,
+                                        "icons/word_search_12.svg",
+                                        SearchOptions::WHOLE_WORD,
+                                        cx,
+                                    ))
+                                    .flex(1., true)
+                                    .contained(),
                             )
+                            .contained()
+                            .with_style(editor_container)
+                            .aligned()
+                            .top()
+                            .constrained()
+                            .with_min_width(theme.search.editor.min_width)
+                            .with_max_width(theme.search.editor.max_width)
+                            .with_max_height(theme.search.search_bar_row_height)
                             .flex(1., false),
                     )
-                    .contained()
-                    .aligned()
-                    .top()
+                    .with_child(
+                        Flex::row()
+                            .with_child(self.render_action_button("Select All", cx))
+                            .aligned(),
+                    )
                     .flex(1., false),
             )
-            .with_child(
-                Flex::column().with_child(
+            .contained()
+            .aligned()
+            .top()
+            .flex(1., false);
+        let mode_column = Flex::column().with_child(
+            Flex::row()
+                .align_children_center()
+                .with_child(
                     Flex::row()
-                        .align_children_center()
-                        .with_child(
-                            Flex::row()
-                                .with_child(search_button_for_mode(SearchMode::Text, cx))
-                                .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                                .aligned()
-                                .left()
-                                .contained()
-                                .with_style(theme.search.modes_container),
-                        )
-                        .with_child(
-                            super::search_bar::render_close_button(
-                                "Dismiss Buffer Search",
-                                &theme.search,
-                                cx,
-                                |_, this, cx| this.dismiss(&Default::default(), cx),
-                                Some(Box::new(Dismiss)),
-                            )
-                            .aligned()
-                            .right(),
-                        )
-                        .constrained()
-                        .with_height(theme.search.search_bar_row_height)
+                        .with_child(search_button_for_mode(SearchMode::Text, cx))
+                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
                         .aligned()
-                        .right()
-                        .top()
-                        .flex(1., true),
-                ),
-            )
+                        .left()
+                        .contained()
+                        .with_style(theme.search.modes_container),
+                )
+                .with_child(
+                    super::search_bar::render_close_button(
+                        "Dismiss Buffer Search",
+                        &theme.search,
+                        cx,
+                        |_, this, cx| this.dismiss(&Default::default(), cx),
+                        Some(Box::new(Dismiss)),
+                    )
+                    .aligned()
+                    .right(),
+                )
+                .constrained()
+                .with_height(theme.search.search_bar_row_height)
+                .aligned()
+                .right()
+                .top()
+                .flex(1., true),
+        );
+        Flex::row()
+            .with_child(nav_column)
+            .with_child(editor_column)
+            .with_child(mode_column)
             .contained()
             .with_style(theme.search.container)
             .flex_float()
