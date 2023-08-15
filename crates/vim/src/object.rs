@@ -64,7 +64,7 @@ pub fn init(cx: &mut AppContext) {
 fn object(object: Object, cx: &mut WindowContext) {
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_object(object, cx),
-        Mode::Visual { .. } => visual_object(object, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_object(object, cx),
         Mode::Insert => {
             // Shouldn't execute a text object in insert mode. Ignoring
         }

@@ -138,10 +138,10 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
 
 pub fn toggle_visual(_: &mut Workspace, _: &ToggleVisual, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| match vim.state.mode {
-        Mode::Normal | Mode::Insert | Mode::Visual { line: true } => {
-            vim.switch_mode(Mode::Visual { line: false }, false, cx);
+        Mode::Normal | Mode::Insert | Mode::VisualLine | Mode::VisualBlock => {
+            vim.switch_mode(Mode::Visual, false, cx);
         }
-        Mode::Visual { line: false } => {
+        Mode::Visual => {
             vim.switch_mode(Mode::Normal, false, cx);
         }
     })
@@ -153,10 +153,10 @@ pub fn toggle_visual_line(
     cx: &mut ViewContext<Workspace>,
 ) {
     Vim::update(cx, |vim, cx| match vim.state.mode {
-        Mode::Normal | Mode::Insert | Mode::Visual { line: false } => {
-            vim.switch_mode(Mode::Visual { line: true }, false, cx);
+        Mode::Normal | Mode::Insert | Mode::Visual | Mode::VisualBlock => {
+            vim.switch_mode(Mode::VisualLine, false, cx);
         }
-        Mode::Visual { line: true } => {
+        Mode::VisualLine => {
             vim.switch_mode(Mode::Normal, false, cx);
         }
     })
@@ -701,7 +701,7 @@ mod test {
                 The quick brown
                 fox «jumpsˇ» over
                 the lazy dog"},
-            Mode::Visual { line: false },
+            Mode::Visual,
         );
         cx.simulate_keystroke("y");
         cx.set_state(
@@ -725,7 +725,7 @@ mod test {
                 The quick brown
                 fox ju«mˇ»ps over
                 the lazy dog"},
-            Mode::Visual { line: true },
+            Mode::VisualLine,
         );
         cx.simulate_keystroke("d");
         cx.assert_state(
@@ -738,7 +738,7 @@ mod test {
             indoc! {"
                 The quick brown
                 the «lazyˇ» dog"},
-            Mode::Visual { line: false },
+            Mode::Visual,
         );
         cx.simulate_keystroke("p");
         cx.assert_state(

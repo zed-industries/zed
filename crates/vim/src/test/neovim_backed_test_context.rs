@@ -116,7 +116,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
         let mode = if marked_text.contains("»") {
-            Mode::Visual { line: false }
+            Mode::Visual
         } else {
             Mode::Normal
         };

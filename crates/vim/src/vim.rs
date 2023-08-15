@@ -164,7 +164,7 @@ impl Vim {
             let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
             if editor_mode == EditorMode::Full && !newest_selection_empty {
-                self.switch_mode(Mode::Visual { line: false }, true, cx);
+                self.switch_mode(Mode::Visual, true, cx);
             }
         }
 
@@ -270,7 +270,7 @@ impl Vim {
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
                 Mode::Normal => normal_replace(text, cx),
-                Mode::Visual { .. } => visual_replace(text, cx),
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
             _ => {}
@@ -317,7 +317,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
                 editor.set_collapse_matches(true);
                 editor.set_input_enabled(!state.vim_controlled());
-                editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
+                editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
                 let context_layer = state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(context_layer, cx);
             } else {
@@ -368,7 +368,7 @@ impl Setting for VimModeSetting {
 fn local_selections_changed(newest_empty: bool, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
-            vim.switch_mode(Mode::Visual { line: false }, false, cx)
+            vim.switch_mode(Mode::Visual, false, cx)
         }
     })
 }

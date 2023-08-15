@@ -9,14 +9,16 @@ use crate::motion::Motion;
 pub enum Mode {
     Normal,
     Insert,
-    Visual { line: bool },
+    Visual,
+    VisualLine,
+    VisualBlock,
 }
 
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
             Mode::Normal | Mode::Insert => false,
-            Mode::Visual { .. } => true,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
         }
     }
 }
@@ -74,7 +76,7 @@ impl VimState {
                     CursorShape::Underscore
                 }
             }
-            Mode::Visual { .. } => CursorShape::Block,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -89,7 +91,7 @@ impl VimState {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual { .. } => false,
+            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => false,
             Mode::Normal => true,
         }
     }
@@ -101,7 +103,7 @@ impl VimState {
             "vim_mode",
             match self.mode {
                 Mode::Normal => "normal",
-                Mode::Visual { .. } => "visual",
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
                 Mode::Insert => "insert",
             },
         );

@@ -4,7 +4,7 @@ use language::Point;
 use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
-    let line_mode = vim.state.mode == Mode::Visual { line: true };
+    let line_mode = vim.state.mode == Mode::VisualLine;
     vim.switch_mode(Mode::Insert, true, cx);
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
@@ -52,7 +52,7 @@ mod test {
         cx.assert_editor_state("xˇbc\n");
 
         // supports a selection
-        cx.set_state(indoc! {"a«bcˇ»\n"}, Mode::Visual { line: false });
+        cx.set_state(indoc! {"a«bcˇ»\n"}, Mode::Visual);
         cx.assert_editor_state("a«bcˇ»\n");
         cx.simulate_keystrokes(["s", "x"]);
         cx.assert_editor_state("axˇ\n");

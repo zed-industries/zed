@@ -261,8 +261,9 @@ impl NeovimConnection {
         let mode = match nvim_mode_text.as_ref() {
             "i" => Some(Mode::Insert),
             "n" => Some(Mode::Normal),
-            "v" => Some(Mode::Visual { line: false }),
-            "V" => Some(Mode::Visual { line: true }),
+            "v" => Some(Mode::Visual),
+            "V" => Some(Mode::VisualLine),
+            "CTRL-V" => Some(Mode::VisualBlock),
             _ => None,
         };
 
@@ -270,7 +271,7 @@ impl NeovimConnection {
         // Zed uses the index of the positions between the characters, so we need
         // to add one to the end in visual mode.
         match mode {
-            Some(Mode::Visual { .. }) => {
+            Some(Mode::Visual) | Some(Mode::VisualLine) | Some(Mode::VisualBlock) => {
                 if selection_col > cursor_col {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
