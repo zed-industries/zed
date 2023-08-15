@@ -26,7 +26,7 @@ use serde::Deserialize;
 use settings::{Setting, SettingsStore};
 use state::{Mode, Operator, VimState};
 use std::sync::Arc;
-use visual::visual_replace;
+use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
 struct VimModeSetting(bool);
@@ -182,6 +182,8 @@ impl Vim {
 
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
         let last_mode = self.state.mode;
+        let prior_mode = self.state.last_mode;
+        self.state.last_mode = last_mode;
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
@@ -196,7 +198,27 @@ impl Vim {
 
         // Adjust selections
         self.update_active_editor(cx, |editor, cx| {
+            if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
+            {
+                visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
+            }
+
             editor.change_selections(None, cx, |s| {
+                // we cheat with visual block mode and use multiple cursors.
+                // the cost of this cheat is we need to convert back to a single
+                // cursor whenever vim would.
+                if last_mode == Mode::VisualBlock && mode != Mode::VisualBlock {
+                    let tail = s.oldest_anchor().tail();
+                    let head = s.newest_anchor().head();
+                    s.select_anchor_ranges(vec![tail..head]);
+                } else if last_mode == Mode::Insert
+                    && prior_mode == Mode::VisualBlock
+                    && mode != Mode::VisualBlock
+                {
+                    let pos = s.first_anchor().head();
+                    s.select_anchor_ranges(vec![pos..pos])
+                }
+
                 s.move_with(|map, selection| {
                     if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();

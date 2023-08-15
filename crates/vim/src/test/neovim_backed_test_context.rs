@@ -160,7 +160,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub async fn neovim_state(&mut self) -> String {
         generate_marked_text(
             self.neovim.text().await.as_str(),
-            &vec![self.neovim_selection().await],
+            &self.neovim_selections().await[..],
             true,
         )
     }
@@ -169,9 +169,12 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.neovim.mode().await.unwrap()
     }
 
-    async fn neovim_selection(&mut self) -> Range<usize> {
-        let neovim_selection = self.neovim.selection().await;
-        neovim_selection.to_offset(&self.buffer_snapshot())
+    async fn neovim_selections(&mut self) -> Vec<Range<usize>> {
+        let neovim_selections = self.neovim.selections().await;
+        neovim_selections
+            .into_iter()
+            .map(|selection| selection.to_offset(&self.buffer_snapshot()))
+            .collect()
     }
 
     pub async fn assert_state_matches(&mut self) {

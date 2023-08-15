@@ -2,10 +2,13 @@ use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use editor::{
-    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement,
+    scroll::autoscroll::Autoscroll,
+    Bias, ClipboardSelection, DisplayPoint, Editor,
 };
 use gpui::{actions, AppContext, ViewContext, WindowContext};
-use language::{AutoindentMode, SelectionGoal};
+use language::{AutoindentMode, Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
@@ -21,6 +24,7 @@ actions!(
     [
         ToggleVisual,
         ToggleVisualLine,
+        ToggleVisualBlock,
         VisualDelete,
         VisualYank,
         VisualPaste,
@@ -29,8 +33,17 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(toggle_visual);
-    cx.add_action(toggle_visual_line);
+    cx.add_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
+        toggle_mode(Mode::Visual, cx)
+    });
+    cx.add_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
+        toggle_mode(Mode::VisualLine, cx)
+    });
+    cx.add_action(
+        |_, _: &ToggleVisualBlock, cx: &mut ViewContext<Workspace>| {
+            toggle_mode(Mode::VisualBlock, cx)
+        },
+    );
     cx.add_action(other_end);
     cx.add_action(delete);
     cx.add_action(yank);
@@ -40,53 +53,167 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    let was_reversed = selection.reversed;
+            if vim.state.mode == Mode::VisualBlock && !matches!(motion, Motion::EndOfLine) {
+                let is_up_or_down = matches!(motion, Motion::Up | Motion::Down);
+                visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
+                    motion.move_point(map, point, goal, times)
+                })
+            } else {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let was_reversed = selection.reversed;
+                        let mut current_head = selection.head();
 
-                    let mut current_head = selection.head();
+                        // our motions assume the current character is after the cursor,
+                        // but in (forward) visual mode the current character is just
+                        // before the end of the selection.
 
-                    // our motions assume the current character is after the cursor,
-                    // but in (forward) visual mode the current character is just
-                    // before the end of the selection.
+                        // If the file ends with a newline (which is common) we don't do this.
+                        // so that if you go to the end of such a file you can use "up" to go
+                        // to the previous line and have it work somewhat as expected.
+                        if !selection.reversed
+                            && !selection.is_empty()
+                            && !(selection.end.column() == 0 && selection.end == map.max_point())
+                        {
+                            current_head = movement::left(map, selection.end)
+                        }
 
-                    // If the file ends with a newline (which is common) we don't do this.
-                    // so that if you go to the end of such a file you can use "up" to go
-                    // to the previous line and have it work somewhat as expected.
-                    if !selection.reversed
-                        && !selection.is_empty()
-                        && !(selection.end.column() == 0 && selection.end == map.max_point())
-                    {
-                        current_head = movement::left(map, selection.end)
-                    }
-
-                    let Some((new_head, goal)) =
+                        let Some((new_head, goal)) =
                         motion.move_point(map, current_head, selection.goal, times) else { return };
 
-                    selection.set_head(new_head, goal);
+                        selection.set_head(new_head, goal);
 
-                    // ensure the current character is included in the selection.
-                    if !selection.reversed {
-                        // TODO: maybe try clipping left for multi-buffers
-                        let next_point = movement::right(map, selection.end);
+                        // ensure the current character is included in the selection.
+                        if !selection.reversed {
+                            let next_point = if vim.state.mode == Mode::VisualBlock {
+                                movement::saturating_right(map, selection.end)
+                            } else {
+                                movement::right(map, selection.end)
+                            };
 
-                        if !(next_point.column() == 0 && next_point == map.max_point()) {
-                            selection.end = movement::right(map, selection.end)
+                            if !(next_point.column() == 0 && next_point == map.max_point()) {
+                                selection.end = next_point;
+                            }
                         }
-                    }
 
-                    // vim always ensures the anchor character stays selected.
-                    // if our selection has reversed, we need to move the opposite end
-                    // to ensure the anchor is still selected.
-                    if was_reversed && !selection.reversed {
-                        selection.start = movement::left(map, selection.start);
-                    } else if !was_reversed && selection.reversed {
-                        selection.end = movement::right(map, selection.end);
-                    }
+                        // vim always ensures the anchor character stays selected.
+                        // if our selection has reversed, we need to move the opposite end
+                        // to ensure the anchor is still selected.
+                        if was_reversed && !selection.reversed {
+                            selection.start = movement::left(map, selection.start);
+                        } else if !was_reversed && selection.reversed {
+                            selection.end = movement::right(map, selection.end);
+                        }
+                    })
                 });
-            });
+            }
         });
     });
+}
+
+pub fn visual_block_motion(
+    preserve_goal: bool,
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+    mut move_selection: impl FnMut(
+        &DisplaySnapshot,
+        DisplayPoint,
+        SelectionGoal,
+    ) -> Option<(DisplayPoint, SelectionGoal)>,
+) {
+    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        let map = &s.display_map();
+        let mut head = s.newest_anchor().head().to_display_point(map);
+        let mut tail = s.oldest_anchor().tail().to_display_point(map);
+        let mut goal = s.newest_anchor().goal;
+
+        let was_reversed = tail.column() > head.column();
+
+        if !was_reversed && !(head.column() == 0 && head == map.max_point()) {
+            head = movement::saturating_left(map, head);
+        }
+
+        let Some((new_head, new_goal)) = move_selection(&map, head, goal) else {
+            return
+        };
+        head = new_head;
+        if goal == SelectionGoal::None {
+            goal = new_goal;
+        }
+
+        let mut is_reversed = tail.column() > head.column();
+        if was_reversed && !is_reversed {
+            tail = movement::left(map, tail)
+        } else if !was_reversed && is_reversed {
+            tail = movement::right(map, tail)
+        }
+        if !is_reversed {
+            head = movement::saturating_right(map, head)
+        }
+
+        if !preserve_goal
+            || !matches!(
+                goal,
+                SelectionGoal::ColumnRange { .. } | SelectionGoal::Column(_)
+            )
+        {
+            goal = SelectionGoal::ColumnRange {
+                start: tail.column(),
+                end: head.column(),
+            }
+        }
+
+        let mut columns = if let SelectionGoal::ColumnRange { start, end } = goal {
+            if start > end {
+                is_reversed = true;
+                end..start
+            } else {
+                is_reversed = false;
+                start..end
+            }
+        } else if let SelectionGoal::Column(column) = goal {
+            is_reversed = false;
+            column..(column + 1)
+        } else {
+            unreachable!()
+        };
+
+        if columns.start >= map.line_len(head.row()) {
+            columns.start = map.line_len(head.row()).saturating_sub(1);
+        }
+        if columns.start >= map.line_len(tail.row()) {
+            columns.start = map.line_len(tail.row()).saturating_sub(1);
+        }
+
+        let mut selections = Vec::new();
+        let mut row = tail.row();
+
+        loop {
+            let start = map.clip_point(DisplayPoint::new(row, columns.start), Bias::Left);
+            let end = map.clip_point(DisplayPoint::new(row, columns.end), Bias::Left);
+            if columns.start <= map.line_len(row) {
+                let mut selection = Selection {
+                    id: s.new_selection_id(),
+                    start: start.to_point(map),
+                    end: end.to_point(map),
+                    reversed: is_reversed,
+                    goal: goal.clone(),
+                };
+
+                selections.push(selection);
+            }
+            if row == head.row() {
+                break;
+            }
+            if tail.row() > head.row() {
+                row -= 1
+            } else {
+                row += 1
+            }
+        }
+
+        s.select(selections);
+    })
 }
 
 pub fn visual_object(object: Object, cx: &mut WindowContext) {
@@ -136,28 +263,12 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
     });
 }
 
-pub fn toggle_visual(_: &mut Workspace, _: &ToggleVisual, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| match vim.state.mode {
-        Mode::Normal | Mode::Insert | Mode::VisualLine | Mode::VisualBlock => {
-            vim.switch_mode(Mode::Visual, false, cx);
-        }
-        Mode::Visual => {
+fn toggle_mode(mode: Mode, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        if vim.state.mode == mode {
             vim.switch_mode(Mode::Normal, false, cx);
-        }
-    })
-}
-
-pub fn toggle_visual_line(
-    _: &mut Workspace,
-    _: &ToggleVisualLine,
-    cx: &mut ViewContext<Workspace>,
-) {
-    Vim::update(cx, |vim, cx| match vim.state.mode {
-        Mode::Normal | Mode::Insert | Mode::Visual | Mode::VisualBlock => {
-            vim.switch_mode(Mode::VisualLine, false, cx);
-        }
-        Mode::VisualLine => {
-            vim.switch_mode(Mode::Normal, false, cx);
+        } else {
+            vim.switch_mode(mode, false, cx);
         }
     })
 }
@@ -207,6 +318,9 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
                     selection.collapse_to(cursor, selection.goal)
                 });
+                if vim.state.mode == Mode::VisualBlock {
+                    s.select_anchors(vec![s.first_anchor()])
+                }
             });
         });
         vim.switch_mode(Mode::Normal, true, cx);
@@ -222,6 +336,9 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                 s.move_with(|_, selection| {
                     selection.collapse_to(selection.start, SelectionGoal::None)
                 });
+                if vim.state.mode == Mode::VisualBlock {
+                    s.select_anchors(vec![s.first_anchor()])
+                }
             });
         });
         vim.switch_mode(Mode::Normal, true, cx);
@@ -275,7 +392,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                                     linewise = all_selections_were_entire_line;
                                 }
 
-                                let mut selection = selection.clone();
+                                let selection = selection.clone();
                                 if !selection.reversed {
                                     let adjusted = selection.end;
                                     // If the selection is empty, move both the start and end forward one
@@ -750,5 +867,120 @@ mod test {
             .replace("_", " "), // Hack for trailing whitespace
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+             fox jumps over
+             the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «qˇ»uick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["2", "down"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «qˇ»uick brown
+            fox «jˇ»umps over
+            the «lˇ»azy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["e"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «quicˇ»k brown
+            fox «jumpˇ»s over
+            the «lazyˇ» dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["^"]).await;
+        cx.assert_shared_state(indoc! {
+            "«ˇThe q»uick brown
+            «ˇfox j»umps over
+            «ˇthe l»azy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["$"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «quick brownˇ»
+            fox «jumps overˇ»
+            the «lazy dogˇ»"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["shift-f", " "]).await;
+        cx.assert_shared_state(indoc! {
+            "The «quickˇ» brown
+            fox «jumpsˇ» over
+            the «lazy ˇ»dog"
+        })
+        .await;
+
+        // toggling through visual mode works as expected
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «quick brown
+            fox jumps over
+            the lazy ˇ»dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v"]).await;
+        cx.assert_shared_state(indoc! {
+            "The «quickˇ» brown
+            fox «jumpsˇ» over
+            the «lazy ˇ»dog"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick
+             brown
+             fox
+             jumps over the
+
+             lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "down", "down", "down"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "The «qˇ»uick
+            brow«nˇ»
+            fox
+            jump«sˇ» over the
+
+            lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystroke("left").await;
+        cx.assert_shared_state(indoc! {
+            "The«ˇ q»uick
+            bro«ˇwn»
+            foxˇ
+            jum«ˇps» over the
+
+            lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["s", "o", "escape"]).await;
+        cx.assert_shared_state(indoc! {
+            "Theˇouick
+            broo
+            foxo
+            jumo over the
+
+            lazy dog
+            "
+        })
+        .await;
     }
 }

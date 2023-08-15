@@ -44,6 +44,7 @@ pub enum Operator {
 #[derive(Default)]
 pub struct VimState {
     pub mode: Mode,
+    pub last_mode: Mode,
     pub operator_stack: Vec<Operator>,
     pub search: SearchState,
 

@@ -72,6 +72,18 @@ fn object(object: Object, cx: &mut WindowContext) {
 }
 
 impl Object {
+    pub fn is_multiline(self) -> bool {
+        match self {
+            Object::Word { .. } | Object::Quotes | Object::BackQuotes | Object::DoubleQuotes => {
+                false
+            }
+            Object::Sentence
+            | Object::Parentheses
+            | Object::AngleBrackets
+            | Object::CurlyBrackets
+            | Object::SquareBrackets => true,
+        }
+    }
     pub fn range(
         self,
         map: &DisplaySnapshot,
@@ -87,13 +99,27 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            Object::Quotes => surrounding_markers(map, relative_to, around, false, '\'', '\''),
-            Object::BackQuotes => surrounding_markers(map, relative_to, around, false, '`', '`'),
-            Object::DoubleQuotes => surrounding_markers(map, relative_to, around, false, '"', '"'),
-            Object::Parentheses => surrounding_markers(map, relative_to, around, true, '(', ')'),
-            Object::SquareBrackets => surrounding_markers(map, relative_to, around, true, '[', ']'),
-            Object::CurlyBrackets => surrounding_markers(map, relative_to, around, true, '{', '}'),
-            Object::AngleBrackets => surrounding_markers(map, relative_to, around, true, '<', '>'),
+            Object::Quotes => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
+            }
+            Object::BackQuotes => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
+            }
+            Object::DoubleQuotes => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
+            }
+            Object::Parentheses => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
+            }
+            Object::SquareBrackets => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
+            }
+            Object::CurlyBrackets => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '{', '}')
+            }
+            Object::AngleBrackets => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
+            }
         }
     }
 

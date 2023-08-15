@@ -1,7 +1,7 @@
 use std::{
     cell::Ref,
     cmp, iter, mem,
-    ops::{Deref, Range, Sub},
+    ops::{Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 
@@ -53,7 +53,7 @@ impl SelectionsCollection {
         }
     }
 
-    fn display_map(&self, cx: &mut AppContext) -> DisplaySnapshot {
+    pub fn display_map(&self, cx: &mut AppContext) -> DisplaySnapshot {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
@@ -250,6 +250,10 @@ impl SelectionsCollection {
         resolve(self.oldest_anchor(), &self.buffer(cx))
     }
 
+    pub fn first_anchor(&self) -> Selection<Anchor> {
+        self.disjoint[0].clone()
+    }
+
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &AppContext,
@@ -352,7 +356,7 @@ pub struct MutableSelectionsCollection<'a> {
 }
 
 impl<'a> MutableSelectionsCollection<'a> {
-    fn display_map(&mut self) -> DisplaySnapshot {
+    pub fn display_map(&mut self) -> DisplaySnapshot {
         self.collection.display_map(self.cx)
     }
 
@@ -607,6 +611,10 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select_anchors(selections)
     }
 
+    pub fn new_selection_id(&mut self) -> usize {
+        post_inc(&mut self.next_selection_id)
+    }
+
     pub fn select_display_ranges<T>(&mut self, ranges: T)
     where
         T: IntoIterator<Item = Range<DisplayPoint>>,
@@ -827,6 +835,12 @@ impl<'a> MutableSelectionsCollection<'a> {
 impl<'a> Deref for MutableSelectionsCollection<'a> {
     type Target = SelectionsCollection;
     fn deref(&self) -> &Self::Target {
+        self.collection
+    }
+}
+
+impl<'a> DerefMut for MutableSelectionsCollection<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
     }
 }
