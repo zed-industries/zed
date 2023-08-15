@@ -5,12 +5,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Setting;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAIModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
     GptThreeFiveTurbo0613,
     #[serde(rename = "gpt-4-0613")]
-    #[default]
     GptFour0613,
 }
 
