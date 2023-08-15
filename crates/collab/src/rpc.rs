@@ -2415,6 +2415,7 @@ async fn join_channel(
     let channel_id = ChannelId::from_proto(request.channel_id);
 
     let joined_room = {
+        leave_room_for_session(&session).await?;
         let db = session.db().await;
 
         let room_id = db.room_id_for_channel(channel_id).await?;

@@ -347,7 +347,18 @@ impl Room {
         }
 
         log::info!("leaving room");
+        Audio::play_sound(Sound::Leave, cx);
 
+        self.clear_state(cx);
+
+        let leave_room = self.client.request(proto::LeaveRoom {});
+        cx.background().spawn(async move {
+            leave_room.await?;
+            anyhow::Ok(())
+        })
+    }
+
+    pub(crate) fn clear_state(&mut self, cx: &mut AppContext) {
         for project in self.shared_projects.drain() {
             if let Some(project) = project.upgrade(cx) {
                 project.update(cx, |project, cx| {
@@ -364,8 +375,6 @@ impl Room {
             }
         }
 
-        Audio::play_sound(Sound::Leave, cx);
-
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.pending_participants.clear();
@@ -374,12 +383,6 @@ impl Room {
         self.live_kit.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
-
-        let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.background().spawn(async move {
-            leave_room.await?;
-            anyhow::Ok(())
-        })
     }
 
     async fn maintain_connection(

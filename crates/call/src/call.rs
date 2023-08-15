@@ -279,21 +279,17 @@ impl ActiveCall {
         channel_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let leave_room;
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
                 return Task::ready(Ok(()));
             } else {
-                leave_room = room.update(cx, |room, cx| room.leave(cx));
+                room.update(cx, |room, cx| room.clear_state(cx));
             }
-        } else {
-            leave_room = Task::ready(Ok(()));
         }
 
         let join = Room::join_channel(channel_id, self.client.clone(), self.user_store.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
-            leave_room.await?;
             let room = join.await?;
             this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
                 .await?;
