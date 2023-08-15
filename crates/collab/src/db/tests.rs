@@ -494,14 +494,9 @@ test_both_dbs!(
         )
         .await
         .unwrap();
-        db.join_room(
-            room_id,
-            user2.user_id,
-            None,
-            ConnectionId { owner_id, id: 1 },
-        )
-        .await
-        .unwrap();
+        db.join_room(room_id, user2.user_id, ConnectionId { owner_id, id: 1 })
+            .await
+            .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
         db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[])
@@ -1113,12 +1108,7 @@ test_both_dbs!(
 
         // can join a room with membership to its channel
         let joined_room = db
-            .join_room(
-                room_1,
-                user_1,
-                Some(channel_1),
-                ConnectionId { owner_id, id: 1 },
-            )
+            .join_room(room_1, user_1, ConnectionId { owner_id, id: 1 })
             .await
             .unwrap();
         assert_eq!(joined_room.room.participants.len(), 1);
@@ -1126,12 +1116,7 @@ test_both_dbs!(
         drop(joined_room);
         // cannot join a room without membership to its channel
         assert!(db
-            .join_room(
-                room_1,
-                user_2,
-                Some(channel_1),
-                ConnectionId { owner_id, id: 1 }
-            )
+            .join_room(room_1, user_2, ConnectionId { owner_id, id: 1 })
             .await
             .is_err());
     }

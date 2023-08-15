@@ -1376,15 +1376,27 @@ impl Database {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        channel_id: Option<ChannelId>,
         connection: ConnectionId,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryChannelId {
+                ChannelId,
+            }
+            let channel_id: Option<ChannelId> = room::Entity::find()
+                .select_only()
+                .column(room::Column::ChannelId)
+                .filter(room::Column::Id.eq(room_id))
+                .into_values::<_, QueryChannelId>()
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such room"))?;
+
             if let Some(channel_id) = channel_id {
                 self.check_user_is_channel_member(channel_id, user_id, &*tx)
                     .await?;
 
-                room_participant::ActiveModel {
+                room_participant::Entity::insert_many([room_participant::ActiveModel {
                     room_id: ActiveValue::set(room_id),
                     user_id: ActiveValue::set(user_id),
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
@@ -1392,15 +1404,23 @@ impl Database {
                         connection.owner_id as i32,
                     ))),
                     answering_connection_lost: ActiveValue::set(false),
-                    // Redundant for the channel join use case, used for channel and call invitations
                     calling_user_id: ActiveValue::set(user_id),
                     calling_connection_id: ActiveValue::set(connection.id as i32),
                     calling_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
                     ..Default::default()
-                }
-                .insert(&*tx)
+                }])
+                .on_conflict(
+                    OnConflict::columns([room_participant::Column::UserId])
+                        .update_columns([
+                            room_participant::Column::AnsweringConnectionId,
+                            room_participant::Column::AnsweringConnectionServerId,
+                            room_participant::Column::AnsweringConnectionLost,
+                        ])
+                        .to_owned(),
+                )
+                .exec(&*tx)
                 .await?;
             } else {
                 let result = room_participant::Entity::update_many()
@@ -4050,6 +4070,12 @@ impl<T> Deref for RoomGuard<T> {
 impl<T> DerefMut for RoomGuard<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.data
+    }
+}
+
+impl<T> RoomGuard<T> {
+    pub fn into_inner(self) -> T {
+        self.data
     }
 }
 

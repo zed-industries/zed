@@ -930,15 +930,25 @@ async fn join_room(
     session: Session,
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.id);
-    let room = {
+    let joined_room = {
         let room = session
             .db()
             .await
-            .join_room(room_id, session.user_id, None, session.connection_id)
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
         room_updated(&room.room, &session.peer);
-        room.room.clone()
+        room.into_inner()
     };
+
+    if let Some(channel_id) = joined_room.channel_id {
+        channel_updated(
+            channel_id,
+            &joined_room.room,
+            &joined_room.channel_members,
+            &session.peer,
+            &*session.connection_pool().await,
+        )
+    }
 
     for connection_id in session
         .connection_pool()
@@ -958,7 +968,10 @@ async fn join_room(
 
     let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
         if let Some(token) = live_kit
-            .room_token(&room.live_kit_room, &session.user_id.to_string())
+            .room_token(
+                &joined_room.room.live_kit_room,
+                &session.user_id.to_string(),
+            )
             .trace_err()
         {
             Some(proto::LiveKitConnectionInfo {
@@ -973,7 +986,8 @@ async fn join_room(
     };
 
     response.send(proto::JoinRoomResponse {
-        room: Some(room),
+        room: Some(joined_room.room),
+        channel_id: joined_room.channel_id.map(|id| id.to_proto()),
         live_kit_connection_info,
     })?;
 
@@ -1151,9 +1165,11 @@ async fn rejoin_room(
             }
         }
 
-        room = mem::take(&mut rejoined_room.room);
+        let rejoined_room = rejoined_room.into_inner();
+
+        room = rejoined_room.room;
         channel_id = rejoined_room.channel_id;
-        channel_members = mem::take(&mut rejoined_room.channel_members);
+        channel_members = rejoined_room.channel_members;
     }
 
     if let Some(channel_id) = channel_id {
@@ -2421,12 +2437,7 @@ async fn join_channel(
         let room_id = db.room_id_for_channel(channel_id).await?;
 
         let joined_room = db
-            .join_room(
-                room_id,
-                session.user_id,
-                Some(channel_id),
-                session.connection_id,
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
@@ -2445,12 +2456,13 @@ async fn join_channel(
 
         response.send(proto::JoinRoomResponse {
             room: Some(joined_room.room.clone()),
+            channel_id: joined_room.channel_id.map(|id| id.to_proto()),
             live_kit_connection_info,
         })?;
 
         room_updated(&joined_room.room, &session.peer);
 
-        joined_room.clone()
+        joined_room.into_inner()
     };
 
     channel_updated(

@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use call_settings::CallSettings;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto, ChannelId, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
@@ -73,6 +75,10 @@ impl ActiveCall {
             client,
             user_store,
         }
+    }
+
+    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
+        self.room()?.read(cx).channel_id()
     }
 
     async fn handle_incoming_call(

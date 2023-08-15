@@ -274,26 +274,13 @@ impl Room {
         user_store: ModelHandle<UserStore>,
         cx: &mut AppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let response = client.request(proto::JoinChannel { channel_id }).await?;
-            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| {
-                Self::new(
-                    room_proto.id,
-                    Some(channel_id),
-                    response.live_kit_connection_info,
-                    client,
-                    user_store,
-                    cx,
-                )
-            });
-
-            room.update(&mut cx, |room, cx| {
-                room.apply_room_update(room_proto, cx)?;
-                anyhow::Ok(())
-            })?;
-
-            Ok(room)
+        cx.spawn(|cx| async move {
+            Self::from_join_response(
+                client.request(proto::JoinChannel { channel_id }).await?,
+                client,
+                user_store,
+                cx,
+            )
         })
     }
 
@@ -303,28 +290,40 @@ impl Room {
         user_store: ModelHandle<UserStore>,
         cx: &mut AppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
-        let room_id = call.room_id;
-        cx.spawn(|mut cx| async move {
-            let response = client.request(proto::JoinRoom { id: room_id }).await?;
-            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| {
-                Self::new(
-                    room_id,
-                    None,
-                    response.live_kit_connection_info,
-                    client,
-                    user_store,
-                    cx,
-                )
-            });
-            room.update(&mut cx, |room, cx| {
-                room.leave_when_empty = true;
-                room.apply_room_update(room_proto, cx)?;
-                anyhow::Ok(())
-            })?;
-
-            Ok(room)
+        let id = call.room_id;
+        cx.spawn(|cx| async move {
+            Self::from_join_response(
+                client.request(proto::JoinRoom { id }).await?,
+                client,
+                user_store,
+                cx,
+            )
         })
+    }
+
+    fn from_join_response(
+        response: proto::JoinRoomResponse,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        mut cx: AsyncAppContext,
+    ) -> Result<ModelHandle<Self>> {
+        let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+        let room = cx.add_model(|cx| {
+            Self::new(
+                room_proto.id,
+                response.channel_id,
+                response.live_kit_connection_info,
+                client,
+                user_store,
+                cx,
+            )
+        });
+        room.update(&mut cx, |room, cx| {
+            room.leave_when_empty = room.channel_id.is_none();
+            room.apply_room_update(room_proto, cx)?;
+            anyhow::Ok(())
+        })?;
+        Ok(room)
     }
 
     fn should_leave(&self) -> bool {

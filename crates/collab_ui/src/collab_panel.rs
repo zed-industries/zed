@@ -1183,11 +1183,8 @@ impl CollabPanel {
         let text = match section {
             Section::ActiveCall => {
                 let channel_name = iife!({
-                    let channel_id = ActiveCall::global(cx)
-                        .read(cx)
-                        .room()?
-                        .read(cx)
-                        .channel_id()?;
+                    let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
+
                     let name = self
                         .channel_store
                         .read(cx)

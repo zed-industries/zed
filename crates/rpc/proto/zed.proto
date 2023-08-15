@@ -176,7 +176,8 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
-    optional LiveKitConnectionInfo live_kit_connection_info = 2;
+    optional uint64 channel_id = 2;
+    optional LiveKitConnectionInfo live_kit_connection_info = 3;
 }
 
 message RejoinRoom {
