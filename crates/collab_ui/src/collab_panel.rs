@@ -1834,10 +1834,13 @@ impl CollabPanel {
                     },
                     vec![
                         ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
-                        ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
-                        ContextMenuItem::action("Manage members", ManageMembers { channel_id }),
-                        ContextMenuItem::action("Invite members", InviteMembers { channel_id }),
-                        ContextMenuItem::action("Rename Channel", RenameChannel { channel_id }),
+                        ContextMenuItem::Separator,
+                        ContextMenuItem::action("Invite to Channel", InviteMembers { channel_id }),
+                        ContextMenuItem::Separator,
+                        ContextMenuItem::action("Rename", RenameChannel { channel_id }),
+                        ContextMenuItem::action("Manage", ManageMembers { channel_id }),
+                        ContextMenuItem::Separator,
+                        ContextMenuItem::action("Delete", RemoveChannel { channel_id }),
                     ],
                     cx,
                 );
