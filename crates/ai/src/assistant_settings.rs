@@ -15,7 +15,6 @@ pub enum OpenAIModel {
 
 impl Display for OpenAIModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // For some reason, serde_json::to_string() includes the quotes
         let model_name = serde_json::to_string(self).unwrap().replace("\"", "");
         write!(f, "{}", model_name)
     }
