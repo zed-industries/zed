@@ -35,7 +35,7 @@ impl View for DeployFeedbackButton {
         let theme = theme::current(cx).clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<Self, _>(0, cx, |state, _| {
                     let style = &theme
                         .workspace
                         .status_bar

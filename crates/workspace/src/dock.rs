@@ -509,7 +509,7 @@ impl View for PanelButtons {
                     Some(
                         Stack::new()
                             .with_child(
-                                MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
+                                MouseEventHandler::new::<Self, _>(panel_ix, cx, |state, cx| {
                                     let style = button_style.in_state(is_active);
 
                                     let style = style.style_for(state);

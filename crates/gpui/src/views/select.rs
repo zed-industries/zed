@@ -106,7 +106,7 @@ impl View for Select {
             Default::default()
         };
         let mut result = Flex::column().with_child(
-            MouseEventHandler::<Header, _>::new(self.handle.id(), cx, |mouse_state, cx| {
+            MouseEventHandler::new::<Header, _>(self.handle.id(), cx, |mouse_state, cx| {
                 (self.render_item)(
                     self.selected_item_ix,
                     ItemType::Header,
@@ -130,7 +130,7 @@ impl View for Select {
                         let selected_item_ix = this.selected_item_ix;
                         range.end = range.end.min(this.item_count);
                         items.extend(range.map(|ix| {
-                            MouseEventHandler::<Item, _>::new(ix, cx, |mouse_state, cx| {
+                            MouseEventHandler::new::<Item, _>(ix, cx, |mouse_state, cx| {
                                 (this.render_item)(
                                     ix,
                                     if ix == selected_item_ix {

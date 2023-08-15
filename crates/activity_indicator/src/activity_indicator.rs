@@ -318,7 +318,7 @@ impl View for ActivityIndicator {
             on_click,
         } = self.content_to_render(cx);
 
-        let mut element = MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
+        let mut element = MouseEventHandler::new::<Self, _>(0, cx, |state, cx| {
             let theme = &theme::current(cx).workspace.status_bar.lsp_status;
             let style = if state.hovered() && on_click.is_some() {
                 theme.hovered.as_ref().unwrap_or(&theme.default)

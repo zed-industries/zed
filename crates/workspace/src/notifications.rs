@@ -290,7 +290,7 @@ pub mod simple_message_notification {
                                 .flex(1., true),
                         )
                         .with_child(
-                            MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
+                            MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
                                 let style = theme.dismiss_button.style_for(state);
                                 Svg::new("icons/x_mark_8.svg")
                                     .with_color(style.color)
@@ -319,7 +319,7 @@ pub mod simple_message_notification {
                 .with_children({
                     click_message
                         .map(|click_message| {
-                            MouseEventHandler::<MessageNotificationTag, _>::new(
+                            MouseEventHandler::new::<MessageNotificationTag, _>(
                                 0,
                                 cx,
                                 |state, _| {

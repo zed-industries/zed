@@ -95,7 +95,7 @@ impl<V: View> Tooltip<V> {
         } else {
             None
         };
-        let child = MouseEventHandler::<MouseEventHandlerState<Tag>, _>::new(id, cx, |_, _| child)
+        let child = MouseEventHandler::new::<MouseEventHandlerState<Tag>, _>(id, cx, |_, _| child)
             .on_hover(move |e, _, cx| {
                 let position = e.position;
                 if e.started {

@@ -219,7 +219,7 @@ impl CollabTitlebarItem {
         let mut ret = Flex::row().with_child(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ToggleProjectMenu, Self>::new(0, cx, |mouse_state, cx| {
+                    MouseEventHandler::new::<ToggleProjectMenu, _>(0, cx, |mouse_state, cx| {
                         let style = project_style
                             .in_state(self.project_popover.is_some())
                             .style_for(mouse_state);
@@ -259,7 +259,7 @@ impl CollabTitlebarItem {
                     .with_child(
                         Stack::new()
                             .with_child(
-                                MouseEventHandler::<ToggleVcsMenu, Self>::new(
+                                MouseEventHandler::new::<ToggleVcsMenu, _>(
                                     0,
                                     cx,
                                     |mouse_state, cx| {
@@ -363,7 +363,7 @@ impl CollabTitlebarItem {
         self.branch_popover.as_ref().map(|child| {
             let theme = theme::current(cx).clone();
             let child = ChildView::new(child, cx);
-            let child = MouseEventHandler::<BranchList, Self>::new(0, cx, |_, _| {
+            let child = MouseEventHandler::new::<BranchList, _>(0, cx, |_, _| {
                 child
                     .flex(1., true)
                     .contained()
@@ -399,7 +399,7 @@ impl CollabTitlebarItem {
         self.project_popover.as_ref().map(|child| {
             let theme = theme::current(cx).clone();
             let child = ChildView::new(child, cx);
-            let child = MouseEventHandler::<RecentProjects, Self>::new(0, cx, |_, _| {
+            let child = MouseEventHandler::new::<RecentProjects, _>(0, cx, |_, _| {
                 child
                     .flex(1., true)
                     .contained()
@@ -505,7 +505,7 @@ impl CollabTitlebarItem {
 
         let active = room.read(cx).is_screen_sharing();
         let titlebar = &theme.titlebar;
-        MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<ToggleScreenSharing, _>(0, cx, |state, _| {
             let style = titlebar
                 .screen_share_button
                 .in_state(active)
@@ -554,7 +554,7 @@ impl CollabTitlebarItem {
         }
 
         let titlebar = &theme.titlebar;
-        MouseEventHandler::<ToggleMute, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<ToggleMute, _>(0, cx, |state, _| {
             let style = titlebar
                 .toggle_microphone_button
                 .in_state(is_muted)
@@ -607,7 +607,7 @@ impl CollabTitlebarItem {
         }
 
         let titlebar = &theme.titlebar;
-        MouseEventHandler::<ToggleDeafen, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<ToggleDeafen, _>(0, cx, |state, _| {
             let style = titlebar
                 .toggle_speakers_button
                 .in_state(is_deafened)
@@ -642,7 +642,7 @@ impl CollabTitlebarItem {
         let tooltip = "Leave call";
 
         let titlebar = &theme.titlebar;
-        MouseEventHandler::<LeaveCall, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<LeaveCall, _>(0, cx, |state, _| {
             let style = titlebar.leave_call_button.style_for(state);
             Svg::new(icon)
                 .with_color(style.color)
@@ -696,7 +696,7 @@ impl CollabTitlebarItem {
         Some(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
+                    MouseEventHandler::new::<ShareUnshare, _>(0, cx, |state, _| {
                         //TODO: Ensure this button has consistent width for both text variations
                         let style = titlebar.share_button.inactive_state().style_for(state);
                         Label::new(label, style.text.clone())
@@ -742,7 +742,7 @@ impl CollabTitlebarItem {
         let avatar_style = &user_menu_button_style.avatar;
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<ToggleUserMenu, _>(0, cx, |state, _| {
                     let style = user_menu_button_style
                         .user_menu
                         .inactive_state()
@@ -802,7 +802,7 @@ impl CollabTitlebarItem {
 
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.titlebar;
-        MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<SignIn, _>(0, cx, |state, _| {
             let style = titlebar.sign_in_button.inactive_state().style_for(state);
             Label::new("Sign In", style.text.clone())
                 .contained()
@@ -1020,7 +1020,7 @@ impl CollabTitlebarItem {
             if let Some(replica_id) = replica_id {
                 enum ToggleFollow {}
 
-                content = MouseEventHandler::<ToggleFollow, Self>::new(
+                content = MouseEventHandler::new::<ToggleFollow, _>(
                     replica_id.into(),
                     cx,
                     move |_, _| content,
@@ -1051,7 +1051,7 @@ impl CollabTitlebarItem {
                 enum JoinProject {}
 
                 let user_id = user.id;
-                content = MouseEventHandler::<JoinProject, Self>::new(
+                content = MouseEventHandler::new::<JoinProject, _>(
                     peer_id.as_u64() as usize,
                     cx,
                     move |_, _| content,
@@ -1139,7 +1139,7 @@ impl CollabTitlebarItem {
                     .into_any(),
             ),
             client::Status::UpgradeRequired => Some(
-                MouseEventHandler::<ConnectionStatusButton, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<ConnectionStatusButton, _>(0, cx, |_, _| {
                     Label::new(
                         "Please update Zed to collaborate",
                         theme.titlebar.outdated_warning.text.clone(),

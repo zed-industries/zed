@@ -3280,7 +3280,11 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
+        self.mouse_state_dynamic(TypeTag::new::<Tag>(), region_id)
+    }
+
+    pub fn mouse_state_dynamic(&self, tag: TypeTag, region_id: usize) -> MouseState {
+        let region_id = MouseRegionId::new(tag, self.view_id, region_id);
         MouseState {
             hovered: self.window.hovered_region_ids.contains(&region_id),
             clicked: if let Some((clicked_region_id, button)) = self.window.clicked_region {
@@ -3318,6 +3322,36 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         element_id: usize,
     ) -> ElementStateHandle<T> {
         self.element_state::<Tag, T>(element_id, T::default())
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeTag {
+    tag: TypeId,
+    #[cfg(debug_assertions)]
+    tag_type_name: &'static str,
+}
+
+impl TypeTag {
+    pub fn new<Tag: 'static>() -> Self {
+        Self {
+            tag: TypeId::of::<Tag>(),
+            #[cfg(debug_assertions)]
+            tag_type_name: std::any::type_name::<Tag>(),
+        }
+    }
+
+    pub fn dynamic(tag: TypeId, #[cfg(debug_assertions)] type_name: &'static str) -> Self {
+        Self {
+            tag,
+            #[cfg(debug_assertions)]
+            tag_type_name: type_name,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn type_name(&self) -> &'static str {
+        self.tag_type_name
     }
 }
 
@@ -5171,7 +5205,7 @@ mod tests {
             fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new())
+                MouseEventHandler::new::<Handler, _>(0, cx, |_, _| Empty::new())
                     .on_down(MouseButton::Left, move |_, _, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
                     })

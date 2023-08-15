@@ -164,7 +164,7 @@ impl View for ChannelModal {
             cx: &mut ViewContext<ChannelModal>,
         ) -> AnyElement<ChannelModal> {
             let active = mode == current_mode;
-            MouseEventHandler::<T, _>::new(0, cx, move |state, _| {
+            MouseEventHandler::new::<T, _>(0, cx, move |state, _| {
                 let contained_text = theme.tab_button.style_for(active, state);
                 Label::new(text, contained_text.text.clone())
                     .contained()

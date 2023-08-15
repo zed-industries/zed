@@ -981,7 +981,7 @@ impl CollabPanel {
             worktree_root_names.join(", ")
         };
 
-        MouseEventHandler::<JoinProject, Self>::new(project_id as usize, cx, |mouse_state, _| {
+        MouseEventHandler::new::<JoinProject, _>(project_id as usize, cx, |mouse_state, _| {
             let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
             let row = theme
                 .project_row
@@ -1075,7 +1075,7 @@ impl CollabPanel {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::<OpenSharedScreen, Self>::new(
+        MouseEventHandler::new::<OpenSharedScreen, _>(
             peer_id.as_u64() as usize,
             cx,
             |mouse_state, _| {
@@ -1193,7 +1193,7 @@ impl CollabPanel {
         enum AddContact {}
         let button = match section {
             Section::ActiveCall => Some(
-                MouseEventHandler::<AddContact, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<AddContact, _>(0, cx, |state, _| {
                     render_icon_button(
                         theme
                             .collab_panel
@@ -1215,7 +1215,7 @@ impl CollabPanel {
                 ),
             ),
             Section::Contacts => Some(
-                MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<LeaveCallContactList, _>(0, cx, |state, _| {
                     render_icon_button(
                         theme
                             .collab_panel
@@ -1237,7 +1237,7 @@ impl CollabPanel {
                 ),
             ),
             Section::Channels => Some(
-                MouseEventHandler::<AddChannel, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<AddChannel, _>(0, cx, |state, _| {
                     render_icon_button(
                         theme
                             .collab_panel
@@ -1261,7 +1261,7 @@ impl CollabPanel {
 
         let can_collapse = depth > 0;
         let icon_size = (&theme.collab_panel).section_icon_size;
-        MouseEventHandler::<Header, Self>::new(section as usize, cx, |state, _| {
+        MouseEventHandler::new::<Header, _>(section as usize, cx, |state, _| {
             let header_style = if can_collapse {
                 theme
                     .collab_panel
@@ -1330,7 +1330,7 @@ impl CollabPanel {
         let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
         let mut event_handler =
-            MouseEventHandler::<Contact, Self>::new(contact.user.id as usize, cx, |state, cx| {
+            MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
                         let status_badge = if contact.online {
@@ -1369,7 +1369,7 @@ impl CollabPanel {
                         .flex(1., true),
                     )
                     .with_child(
-                        MouseEventHandler::<Cancel, Self>::new(
+                        MouseEventHandler::new::<Cancel, _>(
                             contact.user.id as usize,
                             cx,
                             |mouse_state, _| {
@@ -1421,7 +1421,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         enum AddContacts {}
-        MouseEventHandler::<AddContacts, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<AddContacts, _>(0, cx, |state, _| {
             let style = theme.list_empty_state.style_for(is_selected, state);
             Flex::row()
                 .with_child(
@@ -1516,7 +1516,7 @@ impl CollabPanel {
 
         const FACEPILE_LIMIT: usize = 4;
 
-        MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
             Flex::row()
                 .with_child(
                     Svg::new("icons/hash.svg")
@@ -1618,18 +1618,14 @@ impl CollabPanel {
                     .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Decline, Self>::new(
-                    channel.id as usize,
-                    cx,
-                    |mouse_state, _| {
-                        let button_style = if is_invite_pending {
-                            &theme.disabled_button
-                        } else {
-                            theme.contact_button.style_for(mouse_state)
-                        };
-                        render_icon_button(button_style, "icons/x.svg").aligned()
-                    },
-                )
+                MouseEventHandler::new::<Decline, _>(channel.id as usize, cx, |mouse_state, _| {
+                    let button_style = if is_invite_pending {
+                        &theme.disabled_button
+                    } else {
+                        theme.contact_button.style_for(mouse_state)
+                    };
+                    render_icon_button(button_style, "icons/x.svg").aligned()
+                })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
                     this.respond_to_channel_invite(channel_id, false, cx);
@@ -1638,20 +1634,16 @@ impl CollabPanel {
                 .with_margin_right(button_spacing),
             )
             .with_child(
-                MouseEventHandler::<Accept, Self>::new(
-                    channel.id as usize,
-                    cx,
-                    |mouse_state, _| {
-                        let button_style = if is_invite_pending {
-                            &theme.disabled_button
-                        } else {
-                            theme.contact_button.style_for(mouse_state)
-                        };
-                        render_icon_button(button_style, "icons/check_8.svg")
-                            .aligned()
-                            .flex_float()
-                    },
-                )
+                MouseEventHandler::new::<Accept, _>(channel.id as usize, cx, |mouse_state, _| {
+                    let button_style = if is_invite_pending {
+                        &theme.disabled_button
+                    } else {
+                        theme.contact_button.style_for(mouse_state)
+                    };
+                    render_icon_button(button_style, "icons/check_8.svg")
+                        .aligned()
+                        .flex_float()
+                })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
                     this.respond_to_channel_invite(channel_id, true, cx);
@@ -1710,7 +1702,7 @@ impl CollabPanel {
 
         if is_incoming {
             row.add_child(
-                MouseEventHandler::<Decline, Self>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::new::<Decline, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1727,7 +1719,7 @@ impl CollabPanel {
             );
 
             row.add_child(
-                MouseEventHandler::<Accept, Self>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::new::<Accept, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1744,7 +1736,7 @@ impl CollabPanel {
             );
         } else {
             row.add_child(
-                MouseEventHandler::<Cancel, Self>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::new::<Cancel, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -2266,7 +2258,7 @@ impl View for CollabPanel {
 
             return Flex::column()
                 .with_child(
-                    MouseEventHandler::<LogInButton, _>::new(0, cx, |state, _| {
+                    MouseEventHandler::new::<LogInButton, _>(0, cx, |state, _| {
                         let button = theme.log_in_button.style_for(state);
                         Label::new("Sign in to collaborate", button.text.clone())
                             .contained()
@@ -2287,7 +2279,7 @@ impl View for CollabPanel {
         }
 
         enum PanelFocus {}
-        MouseEventHandler::<PanelFocus, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<PanelFocus, _>(0, cx, |_, cx| {
             Stack::new()
                 .with_child(
                     Flex::column()

@@ -295,7 +295,7 @@ impl PickerDelegate for BranchListDelegate {
             let style = theme.picker.footer.clone();
             enum BranchCreateButton {}
             Some(
-                Flex::row().with_child(MouseEventHandler::<BranchCreateButton, _>::new(0, cx, |state, _| {
+                Flex::row().with_child(MouseEventHandler::new::<BranchCreateButton, _>(0, cx, |state, _| {
                     let style = style.style_for(state);
                     Label::new("Create branch", style.label.clone())
                         .contained()

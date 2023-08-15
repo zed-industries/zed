@@ -173,7 +173,7 @@ impl IncomingCallNotification {
         let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Accept, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Accept, _>(0, cx, |_, _| {
                     let theme = &theme.incoming_call_notification;
                     Label::new("Accept", theme.accept_button.text.clone())
                         .aligned()
@@ -187,7 +187,7 @@ impl IncomingCallNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Decline, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Decline, _>(0, cx, |_, _| {
                     let theme = &theme.incoming_call_notification;
                     Label::new("Decline", theme.decline_button.text.clone())
                         .aligned()
