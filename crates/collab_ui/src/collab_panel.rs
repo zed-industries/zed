@@ -2167,7 +2167,7 @@ impl CollabPanel {
             let mut answer =
                 cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
             let window = cx.window();
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 if answer.next().await == Some(0) {
                     if let Err(e) = channel_store
                         .update(&mut cx, |channels, _| channels.remove_channel(channel_id))
@@ -2180,6 +2180,7 @@ impl CollabPanel {
                             &mut cx,
                         );
                     }
+                    this.update(&mut cx, |_, cx| cx.focus_self()).ok();
                 }
             })
             .detach();
