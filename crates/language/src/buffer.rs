@@ -149,6 +149,7 @@ pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CodeLabel,
+    pub server_id: LanguageServerId,
     pub lsp_completion: lsp::CompletionItem,
 }
 

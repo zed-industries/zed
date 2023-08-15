@@ -4470,7 +4470,8 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = match self.primary_language_server_for_buffer(buffer, cx) {
+            let server_id = completion.server_id;
+            let lang_server = match self.language_server_for_buffer(buffer, server_id, cx) {
                 Some((_, server)) => server.clone(),
                 _ => return Task::ready(Ok(Default::default())),
             };

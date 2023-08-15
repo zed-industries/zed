@@ -630,7 +630,8 @@ message Completion {
     Anchor old_start = 1;
     Anchor old_end = 2;
     string new_text = 3;
-    bytes lsp_completion = 4;
+    uint64 server_id = 4;
+    bytes lsp_completion = 5;
 }
 
 message GetCodeActions {

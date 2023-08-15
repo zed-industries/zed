@@ -1338,7 +1338,7 @@ impl LspCommand for GetCompletions {
         completions: Option<lsp::CompletionResponse>,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        _: LanguageServerId,
+        server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
         let completions = if let Some(completions) = completions {
@@ -1425,6 +1425,7 @@ impl LspCommand for GetCompletions {
                                     lsp_completion.filter_text.as_deref(),
                                 )
                             }),
+                            server_id,
                             lsp_completion,
                         }
                     })
