@@ -1156,7 +1156,6 @@ async fn rejoin_room(
         channel_members = mem::take(&mut rejoined_room.channel_members);
     }
 
-    //TODO: move this into the room guard
     if let Some(channel_id) = channel_id {
         channel_updated(
             channel_id,
@@ -2453,9 +2452,6 @@ async fn join_channel(
         joined_room.clone()
     };
 
-    // TODO - do this while still holding the room guard,
-    // currently there's a possible race condition if someone joins the channel
-    // after we've dropped the lock but before we finish sending these updates
     channel_updated(
         channel_id,
         &joined_room.room,
@@ -2748,7 +2744,6 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         return Ok(());
     }
 
-    // TODO - do this while holding the room guard.
     if let Some(channel_id) = channel_id {
         channel_updated(
             channel_id,

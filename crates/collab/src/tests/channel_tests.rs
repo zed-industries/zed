@@ -290,6 +290,7 @@ async fn test_core_channels(
     );
 }
 
+#[track_caller]
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
     assert_eq!(
         participants.iter().map(|p| p.id).collect::<Vec<_>>(),
@@ -297,6 +298,7 @@ fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u
     );
 }
 
+#[track_caller]
 fn assert_members_eq(
     members: &[ChannelMembership],
     expected_members: &[(u64, bool, proto::channel_member::Kind)],

@@ -2037,8 +2037,6 @@ impl CollabPanel {
         self.show_channel_modal(action.channel_id, channel_modal::Mode::ManageMembers, cx);
     }
 
-    // TODO: Make join into a toggle
-    // TODO: Make enter work on channel editor
     fn remove(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
         if let Some(channel) = self.selected_channel() {
             self.remove_channel(channel.id, cx)

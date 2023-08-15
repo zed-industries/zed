@@ -139,7 +139,8 @@ fn update_channels(
     message: proto::UpdateChannels,
     cx: &mut AppContext,
 ) {
-    channel_store.update(cx, |store, cx| store.update_channels(message, cx));
+    let task = channel_store.update(cx, |store, cx| store.update_channels(message, cx));
+    assert!(task.is_none());
 }
 
 #[track_caller]
