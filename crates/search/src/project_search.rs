@@ -328,7 +328,7 @@ impl View for ProjectSearchView {
                 editor.set_placeholder_text(new_placeholder_text, cx);
             });
 
-            MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
+            MouseEventHandler::new::<Status, _>(0, cx, |_, _| {
                 Label::new(text, theme.search.results_status.clone())
                     .aligned()
                     .contained()
@@ -1103,7 +1103,7 @@ impl ProjectSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
+        MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme.search.option_button.inactive_state().style_for(state);
             Label::new(icon, style.text.clone())
@@ -1134,7 +1134,7 @@ impl ProjectSearchBar {
     ) -> AnyElement<Self> {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Self, _>(option.bits as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
                 .search
@@ -1170,7 +1170,7 @@ impl ProjectSearchBar {
 
         let region_id = 3;
 
-        MouseEventHandler::<Self, _>::new(region_id, cx, |state, cx| {
+        MouseEventHandler::new::<Self, _>(region_id, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
                 .search

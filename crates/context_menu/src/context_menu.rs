@@ -439,14 +439,14 @@ impl ContextMenu {
 
         let style = theme::current(cx).context_menu.clone();
 
-        MouseEventHandler::<Menu, ContextMenu>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<Menu, _>(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, action } => {
                             let action = action.clone();
                             let view_id = self.parent_view_id;
-                            MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
+                            MouseEventHandler::new::<MenuItem, _>(ix, cx, |state, _| {
                                 let style = style.item.in_state(self.selected_index == Some(ix));
                                 let style = style.style_for(state);
                                 let keystroke = match &action {

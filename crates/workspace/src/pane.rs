@@ -1211,7 +1211,7 @@ impl Pane {
 
                             enum Tab {}
                             let mouse_event_handler =
-                                MouseEventHandler::<Tab, Pane>::new(ix, cx, |_, cx| {
+                                MouseEventHandler::new::<Tab, _>(ix, cx, |_, cx| {
                                     Self::render_tab(
                                         &item,
                                         pane.clone(),
@@ -1420,7 +1420,7 @@ impl Pane {
             let item_id = item.id();
             enum TabCloseButton {}
             let icon = Svg::new("icons/x_mark_8.svg");
-            MouseEventHandler::<TabCloseButton, _>::new(item_id, cx, |mouse_state, _| {
+            MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered() {
                     icon.with_color(tab_style.icon_close_active)
                 } else {
@@ -1485,7 +1485,7 @@ impl Pane {
     ) -> AnyElement<Pane> {
         enum TabBarButton {}
 
-        let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
+        let mut button = MouseEventHandler::new::<TabBarButton, _>(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
             let style = theme.pane_button.in_state(is_active).style_for(mouse_state);
             Svg::new(icon)
@@ -1547,7 +1547,7 @@ impl View for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum MouseNavigationHandler {}
 
-        MouseEventHandler::<MouseNavigationHandler, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
             let active_item_index = self.active_item_index;
 
             if let Some(active_item) = self.active_item() {
@@ -1559,7 +1559,7 @@ impl View for Pane {
 
                         enum TabBarEventHandler {}
                         stack.add_child(
-                            MouseEventHandler::<TabBarEventHandler, _>::new(0, cx, |_, _| {
+                            MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
                                 Empty::new()
                                     .contained()
                                     .with_style(theme.workspace.tab_bar.container)

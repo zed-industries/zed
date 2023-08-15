@@ -113,7 +113,7 @@ impl View for ContactsPopover {
             Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
-        MouseEventHandler::<ContactsPopover, Self>::new(0, cx, |_, _| {
+        MouseEventHandler::new::<ContactsPopover, _>(0, cx, |_, _| {
             Flex::column()
                 .with_child(child.flex(1., true))
                 .contained()

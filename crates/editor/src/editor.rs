@@ -867,7 +867,7 @@ impl CompletionsMenu {
                     let completion = &completions[mat.candidate_id];
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::<CompletionTag, _>::new(
+                        MouseEventHandler::new::<CompletionTag, _>(
                             mat.candidate_id,
                             cx,
                             |state, _| {
@@ -1044,7 +1044,7 @@ impl CodeActionsMenu {
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::<ActionTag, _>::new(item_ix, cx, |state, _| {
+                        MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
                             } else if state.hovered() {
@@ -3547,7 +3547,7 @@ impl Editor {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
-                MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<CodeActions, _>(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg").with_color(
                         style
                             .code_actions
@@ -3594,7 +3594,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            MouseEventHandler::<FoldIndicators, _>::new(
+                            MouseEventHandler::new::<FoldIndicators, _>(
                                 ix as usize,
                                 cx,
                                 |mouse_state, _| {
@@ -8663,7 +8663,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
         let anchor_x = cx.anchor_x;
         enum BlockContextToolip {}
-        MouseEventHandler::<BlockContext, _>::new(cx.block_id, cx, |_, _| {
+        MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
             Flex::column()
                 .with_children(highlighted_lines.iter().map(|(line, highlights)| {
                     Label::new(

@@ -53,7 +53,7 @@ impl View for ActiveBufferLanguage {
                 "Unknown".to_string()
             };
 
-            MouseEventHandler::<Self, Self>::new(0, cx, |state, cx| {
+            MouseEventHandler::new::<Self, _>(0, cx, |state, cx| {
                 let theme = &theme::current(cx).workspace.status_bar;
                 let style = theme.active_language.style_for(state);
                 Label::new(active_language_text, style.text.clone())

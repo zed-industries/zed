@@ -223,7 +223,7 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
     action_name: &'static str,
     cx: &mut ViewContext<Toolbar>,
 ) -> AnyElement<Toolbar> {
-    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
+    MouseEventHandler::new::<A, _>(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state)
         } else {

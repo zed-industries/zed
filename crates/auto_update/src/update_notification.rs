@@ -31,7 +31,7 @@ impl View for UpdateNotification {
 
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
-        MouseEventHandler::<ViewReleaseNotes, _>::new(0, cx, |state, cx| {
+        MouseEventHandler::new::<ViewReleaseNotes, _>(0, cx, |state, cx| {
             Flex::column()
                 .with_child(
                     Flex::row()
@@ -48,7 +48,7 @@ impl View for UpdateNotification {
                             .flex(1., true),
                         )
                         .with_child(
-                            MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
+                            MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
                                 let style = theme.dismiss_button.style_for(state);
                                 Svg::new("icons/x_mark_8.svg")
                                     .with_color(style.color)

@@ -1637,7 +1637,7 @@ impl EditorElement {
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         enum JumpIcon {}
-                        MouseEventHandler::<JumpIcon, _>::new((*id).into(), cx, |state, _| {
+                        MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
                             let style = style.jump_icon.style_for(state);
                             Svg::new("icons/arrow_up_right_8.svg")
                                 .with_color(style.color)

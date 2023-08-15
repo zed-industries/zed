@@ -416,7 +416,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.search_options.contains(option);
         Some(
-            MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
+            MouseEventHandler::new::<Self, _>(option.bits as usize, cx, |state, cx| {
                 let theme = theme::current(cx);
                 let style = theme
                     .search
@@ -463,7 +463,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
+        MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme.search.option_button.inactive_state().style_for(state);
             Label::new(icon, style.text.clone())
@@ -497,7 +497,7 @@ impl BufferSearchBar {
         let action_type_id = 0_usize;
 
         enum ActionButton {}
-        MouseEventHandler::<ActionButton, _>::new(action_type_id, cx, |state, cx| {
+        MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme.search.action_button.style_for(state);
             Label::new(icon, style.text.clone())
@@ -527,7 +527,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum CloseButton {}
-        MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<CloseButton, _>(0, cx, |state, _| {
             let style = theme.dismiss_button.style_for(state);
             Svg::new("icons/x_mark_8.svg")
                 .with_color(style.color)

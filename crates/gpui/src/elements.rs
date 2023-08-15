@@ -193,11 +193,11 @@ pub trait Element<V: View>: 'static {
         Resizable::new(self.into_any(), side, size, on_resize)
     }
 
-    fn mouse<Tag>(self, region_id: usize) -> MouseEventHandler<Tag, V>
+    fn mouse<Tag: 'static>(self, region_id: usize) -> MouseEventHandler<V>
     where
         Self: Sized,
     {
-        MouseEventHandler::for_child(self.into_any(), region_id)
+        MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
 }
 
