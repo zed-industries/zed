@@ -512,6 +512,7 @@ impl PickerDelegate for BranchListDelegate {
                 .into_any_element()
         } else {
             HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
+                .single_line()
                 .truncate()
                 .into_any_element()
         };
