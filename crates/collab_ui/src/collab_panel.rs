@@ -1272,7 +1272,7 @@ impl CollabPanel {
                 .on_click(MouseButton::Left, |_, this, cx| this.new_root_channel(cx))
                 .with_tooltip::<AddChannel>(
                     0,
-                    "Add or join a channel",
+                    "Create a channel",
                     None,
                     tooltip_style.clone(),
                     cx,
@@ -1836,7 +1836,7 @@ impl CollabPanel {
                         gpui::elements::AnchorCorner::BottomLeft
                     },
                     vec![
-                        ContextMenuItem::action("New Channel", NewChannel { channel_id }),
+                        ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
                         ContextMenuItem::action("Remove Channel", RemoveChannel { channel_id }),
                         ContextMenuItem::action("Manage members", ManageMembers { channel_id }),
                         ContextMenuItem::action("Invite members", InviteMembers { channel_id }),
