@@ -1514,6 +1514,8 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
 
+        const FACEPILE_LIMIT: usize = 4;
+
         MouseEventHandler::<Channel, Self>::new(channel.id as usize, cx, |state, cx| {
             Flex::row()
                 .with_child(
@@ -1532,20 +1534,37 @@ impl CollabPanel {
                         .left()
                         .flex(1., true),
                 )
-                .with_child(
-                    FacePile::new(theme.face_overlap).with_children(
-                        self.channel_store
-                            .read(cx)
-                            .channel_participants(channel_id)
-                            .iter()
-                            .filter_map(|user| {
-                                Some(
-                                    Image::from_data(user.avatar.clone()?)
-                                        .with_style(theme.contact_avatar),
+                .with_children({
+                    let participants = self.channel_store.read(cx).channel_participants(channel_id);
+                    if !participants.is_empty() {
+                        let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+
+                        Some(
+                            FacePile::new(theme.face_overlap)
+                                .with_children(
+                                    participants
+                                        .iter()
+                                        .filter_map(|user| {
+                                            Some(
+                                                Image::from_data(user.avatar.clone()?)
+                                                    .with_style(theme.contact_avatar),
+                                            )
+                                        })
+                                        .take(FACEPILE_LIMIT),
                                 )
-                            }),
-                    ),
-                )
+                                .with_children((extra_count > 0).then(|| {
+                                    Label::new(
+                                        format!("+{}", extra_count),
+                                        theme.extra_participant_label.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(theme.extra_participant_label.container)
+                                })),
+                        )
+                    } else {
+                        None
+                    }
+                })
                 .align_children_center()
                 .constrained()
                 .with_height(theme.row_height)

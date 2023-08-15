@@ -245,6 +245,15 @@ export default function contacts_panel(): any {
             corner_radius: 10,
             width: 20,
         },
+        extra_participant_label: {
+            corner_radius: 10,
+            padding: {
+                left: 10,
+                right: 4,
+            },
+            background: background(layer, "hovered"),
+            ...text(layer, "ui_sans", "hovered", { size: "xs" })
+        },
         contact_status_free: indicator({ layer, color: "positive" }),
         contact_status_busy: indicator({ layer, color: "negative" }),
         contact_username: {

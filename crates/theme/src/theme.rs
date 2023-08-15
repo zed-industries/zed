@@ -241,6 +241,7 @@ pub struct CollabPanel {
     pub project_row: Toggleable<Interactive<ProjectRow>>,
     pub tree_branch: Toggleable<Interactive<TreeBranch>>,
     pub contact_avatar: ImageStyle,
+    pub extra_participant_label: ContainedText,
     pub contact_status_free: ContainerStyle,
     pub contact_status_busy: ContainerStyle,
     pub contact_username: ContainedText,

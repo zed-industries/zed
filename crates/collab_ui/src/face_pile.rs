@@ -68,6 +68,7 @@ impl<V: View> Element<V> for FacePile<V> {
         for face in self.faces.iter_mut().rev() {
             let size = face.size();
             origin_x -= size.x();
+            let origin_y = origin_y + (bounds.height() - size.y()) / 2.0;
             scene.paint_layer(None, |scene| {
                 face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
             });
