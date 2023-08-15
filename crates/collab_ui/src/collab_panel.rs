@@ -1677,7 +1677,7 @@ impl CollabPanel {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/check_8.svg")
+                    render_icon_button(button_style, "icons/check.svg")
                         .aligned()
                         .flex_float()
                 })
@@ -1762,7 +1762,7 @@ impl CollabPanel {
                     } else {
                         theme.contact_button.style_for(mouse_state)
                     };
-                    render_icon_button(button_style, "icons/check_8.svg")
+                    render_icon_button(button_style, "icons/check.svg")
                         .aligned()
                         .flex_float()
                 })
