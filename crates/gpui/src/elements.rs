@@ -1,6 +1,7 @@
 mod align;
 mod canvas;
 mod clipped;
+mod component;
 mod constrained_box;
 mod container;
 mod empty;
@@ -21,9 +22,9 @@ mod tooltip;
 mod uniform_list;
 
 pub use self::{
-    align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
-    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
-    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
+    align::*, canvas::*, component::*, constrained_box::*, container::*, empty::*, flex::*,
+    hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
+    resizable::*, stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::window::ChildView;
 
