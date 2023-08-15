@@ -197,7 +197,7 @@ export default function search(): any {
             },
             container: {
                 margin: { right: 6 },
-                padding: { left: 4 }
+                padding: { left: 2, right: 2 },
             }
         },
         mode_button: toggleable({
