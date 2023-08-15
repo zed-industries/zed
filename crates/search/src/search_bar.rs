@@ -77,7 +77,7 @@ pub(super) fn render_nav_button<V: View>(
             .style_for(state)
             .clone();
         let mut container_style = style.container.clone();
-        let label = Label::new(icon, style.label.clone()).contained();
+        let label = Label::new(icon, style.label.clone()).aligned().contained();
         container_style.corner_radii = match direction {
             Direction::Prev => CornerRadii {
                 bottom_right: 0.,
@@ -128,7 +128,9 @@ pub(crate) fn render_search_mode_button<V: View>(
         style.container.border.left = mode.border_left();
         style.container.border.right = mode.border_right();
 
-        let label = Label::new(mode.label(), style.text.clone()).contained();
+        let label = Label::new(mode.label(), style.text.clone())
+            .aligned()
+            .contained();
         let mut container_style = style.container.clone();
         if let Some(button_side) = mode.button_side() {
             if button_side == Side::Left {
@@ -150,6 +152,8 @@ pub(crate) fn render_search_mode_button<V: View>(
             container_style.corner_radii = CornerRadii::default();
             label.with_style(container_style)
         }
+        .constrained()
+        .with_height(theme.search.search_bar_row_height)
     })
     .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)

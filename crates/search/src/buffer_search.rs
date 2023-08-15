@@ -221,38 +221,23 @@ impl View for BufferSearchBar {
         };
 
         let icon_style = theme.search.editor_icon.clone();
-        let nav_column = Flex::column()
-            .with_child(
-                Flex::row()
-                    .align_children_center()
-                    .with_child(
-                        Flex::row()
-                            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
-                            .with_child(nav_button_for_direction(">", Direction::Next, cx))
-                            .aligned(),
-                    )
-                    .with_children(match_count)
-                    .aligned()
-                    .left()
-                    .top()
-                    .flex(1., true)
-                    .constrained()
-                    .with_max_height(theme.search.search_bar_row_height),
-            )
-            .contained();
+        let side_column_min_width = 165.;
+        let button_height = 32.;
+        let nav_column = Flex::row()
+            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+            .with_child(nav_button_for_direction(">", Direction::Next, cx))
+            .with_children(match_count)
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
+            .with_min_width(side_column_min_width);
 
         let query = Flex::row()
             .with_child(
                 Svg::for_style(icon_style.icon)
                     .contained()
-                    .with_style(icon_style.container)
-                    .constrained(),
+                    .with_style(icon_style.container),
             )
-            .with_child(
-                ChildView::new(&self.query_editor, cx)
-                    .constrained()
-                    .flex(1., true),
-            )
+            .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
             .with_child(
                 Flex::row()
                     .with_children(render_search_option(
@@ -271,76 +256,53 @@ impl View for BufferSearchBar {
                     .contained(),
             )
             .align_children_center()
-            .aligned()
-            .left()
             .flex(1., true);
         let row_spacing = theme.workspace.toolbar.container.padding.bottom;
-        let editor_column = Flex::column()
-            .align_children_center()
+        let editor_column = Flex::row()
             .with_child(
-                Flex::row()
-                    .with_child(
-                        Flex::row()
-                            .with_child(query)
-                            .contained()
-                            .with_style(query_container_style)
-                            .aligned()
-                            .constrained()
-                            .with_min_width(theme.search.editor.min_width)
-                            .with_max_width(theme.search.editor.max_width)
-                            .with_max_height(theme.search.search_bar_row_height)
-                            .flex(1., false),
-                    )
-                    .with_child(
-                        Flex::row()
-                            .with_child(self.render_action_button("Select All", cx))
-                            .aligned(),
-                    )
+                query
                     .contained()
-                    .with_margin_bottom(row_spacing)
+                    .with_style(query_container_style)
+                    .constrained()
+                    .with_min_width(theme.search.editor.min_width)
+                    .with_max_width(theme.search.editor.max_width)
                     .flex(1., false),
             )
+            .with_child(self.render_action_button("Select All", cx))
             .contained()
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
             .aligned()
             .top()
             .flex(1., false);
-        let mode_column = Flex::column().with_child(
-            Flex::row()
-                .align_children_center()
-                .with_child(
-                    Flex::row()
-                        .with_child(search_button_for_mode(SearchMode::Text, cx))
-                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                        .aligned()
-                        .left()
-                        .contained()
-                        .with_style(theme.search.modes_container),
-                )
-                .with_child(
-                    super::search_bar::render_close_button(
-                        "Dismiss Buffer Search",
-                        &theme.search,
-                        cx,
-                        |_, this, cx| this.dismiss(&Default::default(), cx),
-                        Some(Box::new(Dismiss)),
-                    )
-                    .aligned()
-                    .right(),
-                )
-                .constrained()
-                .with_height(theme.search.search_bar_row_height)
-                .aligned()
-                .right()
-                .top()
-                .flex(1., true),
-        );
+        let mode_column = Flex::row()
+            .with_child(
+                Flex::row()
+                    .with_child(search_button_for_mode(SearchMode::Text, cx))
+                    .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                    .contained()
+                    .with_style(theme.search.modes_container),
+            )
+            .with_child(super::search_bar::render_close_button(
+                "Dismiss Buffer Search",
+                &theme.search,
+                cx,
+                |_, this, cx| this.dismiss(&Default::default(), cx),
+                Some(Box::new(Dismiss)),
+            ))
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
+            .aligned()
+            .right()
+            .constrained()
+            .with_min_width(side_column_min_width)
+            .flex_float();
         Flex::row()
             .with_child(nav_column)
             .with_child(editor_column)
             .with_child(mode_column)
             .contained()
             .with_style(theme.search.container)
-            .flex_float()
             .into_any_named("search bar")
     }
 }
@@ -536,6 +498,7 @@ impl BufferSearchBar {
             let theme = theme::current(cx);
             let style = theme.search.action_button.style_for(state);
             Label::new(icon, style.text.clone())
+                .aligned()
                 .contained()
                 .with_style(style.container)
         })

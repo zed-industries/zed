@@ -1556,17 +1556,13 @@ impl View for ProjectSearchBar {
                     Flex::row()
                         .align_children_center()
                         .with_child(
-                            Flex::row()
+                            Flex::row().align_children_center()
                                 .with_child(nav_button_for_direction("<", Direction::Prev, cx))
                                 .with_child(nav_button_for_direction(">", Direction::Next, cx))
                                 .aligned(),
                         )
                         .with_children(matches)
                         .aligned()
-                        .top()
-                        .left()
-                        .constrained()
-                        .with_height(theme.search.search_bar_row_height),
                 )
                 .flex(1., true);
             let editor_column = Flex::column()

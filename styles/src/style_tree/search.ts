@@ -17,7 +17,7 @@ export default function search(): any {
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
         margin: {
-            right: 12,
+            right: 9,
         },
         padding: {
             top: 4,
@@ -51,10 +51,8 @@ export default function search(): any {
                         width: 1., color: background(theme.highest, "on")
                     },
                     padding: {
-                        bottom: 4,
                         left: 4,
                         right: 4,
-                        top: 4,
                     },
                 },
                 state: {
@@ -97,14 +95,11 @@ export default function search(): any {
                 background: background(theme.highest, "on"),
                 corner_radius: 6,
                 border: border(theme.highest, "on"),
-                margin: {
-                    right: 4,
-                },
                 padding: {
-                    bottom: 2,
+                    // bottom: 2,
                     left: 10,
                     right: 10,
-                    top: 2,
+                    // top: 2,
                 },
             },
             state: {
@@ -140,8 +135,8 @@ export default function search(): any {
             padding: {
                 left: 12,
                 right: 12,
-                top: 3,
-                bottom: 3,
+                // top: 3,
+                // bottom: 3,
             },
         },
         include_exclude_inputs: {
@@ -165,8 +160,8 @@ export default function search(): any {
                 button_width: 32,
                 corner_radius: 6,
                 padding: {
-                    top: 10,
-                    bottom: 10,
+                    // // top: 10,
+                    // bottom: 10,
                     left: 10,
                     right: 10,
                 },
@@ -213,10 +208,10 @@ export default function search(): any {
                     },
 
                     padding: {
-                        bottom: 4,
+                        // bottom: 4,
                         left: 10,
                         right: 10,
-                        top: 5,
+                        // top: 5,
                     },
                     corner_radius: 6,
                 },
@@ -264,10 +259,10 @@ export default function search(): any {
                         },
 
                         padding: {
-                            bottom: 3,
+                            bottom: 0,
                             left: 10,
                             right: 10,
-                            top: 3,
+                            top: 0,
                         },
                     },
                     state: {
@@ -286,10 +281,10 @@ export default function search(): any {
                         },
 
                         padding: {
-                            bottom: 3,
+                            bottom: 0,
                             left: 10,
                             right: 10,
-                            top: 3,
+                            top: 0,
                         },
                     },
                     state: {
