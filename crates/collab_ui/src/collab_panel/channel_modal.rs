@@ -27,6 +27,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ChannelModal::toggle_mode);
     cx.add_action(ChannelModal::toggle_member_admin);
     cx.add_action(ChannelModal::remove_member);
+    cx.add_action(ChannelModal::dismiss);
 }
 
 pub struct ChannelModal {
@@ -130,6 +131,10 @@ impl ChannelModal {
         self.picker.update(cx, |picker, cx| {
             picker.delegate_mut().remove_selected_member(cx);
         });
+    }
+
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(PickerEvent::Dismiss);
     }
 }
 

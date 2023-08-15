@@ -9,6 +9,7 @@ use workspace::Modal;
 
 pub fn init(cx: &mut AppContext) {
     Picker::<ContactFinderDelegate>::init(cx);
+    cx.add_action(ContactFinder::dismiss)
 }
 
 pub struct ContactFinder {
@@ -42,6 +43,10 @@ impl ContactFinder {
         self.picker.update(cx, |picker, cx| {
             picker.set_query(query, cx);
         });
+    }
+
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(PickerEvent::Dismiss);
     }
 }
 
