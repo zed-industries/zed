@@ -118,6 +118,38 @@ export default function contacts_panel(): any {
         },
     }
 
+    const item_row = toggleable({
+        base: interactive({
+            base: {
+                padding: {
+                    left: SPACING,
+                    right: SPACING,
+                },
+            },
+            state: {
+                clicked: {
+                    background: background(layer, "pressed"),
+                },
+            },
+        }),
+        state: {
+            inactive: {
+                hovered: {
+                    background: background(layer, "hovered"),
+                },
+            },
+            active: {
+                default: {
+                    ...text(layer, "ui_sans", "active", { size: "sm" }),
+                    background: background(layer, "active"),
+                },
+                clicked: {
+                    background: background(layer, "pressed"),
+                },
+            },
+        },
+    })
+
     return {
         ...collab_modals(),
         log_in_button: text_button(),
@@ -198,6 +230,13 @@ export default function contacts_panel(): any {
                 },
             },
         }),
+        channel_row: item_row,
+        channel_name: {
+            ...text(layer, "ui_sans", { size: "sm" }),
+            margin: {
+                left: NAME_MARGIN,
+            },
+        },
         list_empty_label_container: {
             margin: {
                 left: NAME_MARGIN,
@@ -242,6 +281,10 @@ export default function contacts_panel(): any {
             },
         }),
         contact_avatar: {
+            corner_radius: 10,
+            width: 20,
+        },
+        channel_avatar: {
             corner_radius: 10,
             width: 20,
         },

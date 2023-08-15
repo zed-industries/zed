@@ -1550,7 +1550,7 @@ impl CollabPanel {
         })
         .unwrap_or(false);
 
-        const FACEPILE_LIMIT: usize = 4;
+        const FACEPILE_LIMIT: usize = 3;
 
         MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
             Flex::row()
@@ -1563,9 +1563,9 @@ impl CollabPanel {
                         .left(),
                 )
                 .with_child(
-                    Label::new(channel.name.clone(), theme.contact_username.text.clone())
+                    Label::new(channel.name.clone(), theme.channel_name.text.clone())
                         .contained()
-                        .with_style(theme.contact_username.container)
+                        .with_style(theme.channel_name.container)
                         .aligned()
                         .left()
                         .flex(1., true),
@@ -1583,7 +1583,7 @@ impl CollabPanel {
                                         .filter_map(|user| {
                                             Some(
                                                 Image::from_data(user.avatar.clone()?)
-                                                    .with_style(theme.contact_avatar),
+                                                    .with_style(theme.channel_avatar),
                                             )
                                         })
                                         .take(FACEPILE_LIMIT),
@@ -1605,9 +1605,9 @@ impl CollabPanel {
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
-                .with_style(*theme.contact_row.style_for(is_selected || is_active, state))
+                .with_style(*theme.channel_row.style_for(is_selected || is_active, state))
                 .with_padding_left(
-                    theme.contact_row.default_style().padding.left
+                    theme.channel_row.default_style().padding.left
                         + theme.channel_indent * depth as f32,
                 )
         })
