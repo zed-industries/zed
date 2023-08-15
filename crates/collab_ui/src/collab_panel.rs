@@ -1283,7 +1283,7 @@ impl CollabPanel {
 
         let can_collapse = depth > 0;
         let icon_size = (&theme.collab_panel).section_icon_size;
-        MouseEventHandler::new::<Header, _>(section as usize, cx, |state, _| {
+        let mut result = MouseEventHandler::new::<Header, _>(section as usize, cx, |state, _| {
             let header_style = if can_collapse {
                 theme
                     .collab_panel
@@ -1328,14 +1328,19 @@ impl CollabPanel {
                 .with_height(theme.collab_panel.row_height)
                 .contained()
                 .with_style(header_style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            if can_collapse {
-                this.toggle_expanded(section, cx);
-            }
-        })
-        .into_any()
+        });
+
+        if can_collapse {
+            result = result
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    if can_collapse {
+                        this.toggle_expanded(section, cx);
+                    }
+                })
+        }
+
+        result.into_any()
     }
 
     fn render_contact(
@@ -1612,6 +1617,7 @@ impl CollabPanel {
         .on_click(MouseButton::Right, move |e, this, cx| {
             this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
         })
+        .with_cursor_style(CursorStyle::PointingHand)
         .into_any()
     }
 
