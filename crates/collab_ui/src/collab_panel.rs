@@ -1535,6 +1535,15 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
+        let is_active = iife!({
+            let call_channel = ActiveCall::global(cx)
+                .read(cx)
+                .room()?
+                .read(cx)
+                .channel_id()?;
+            Some(call_channel == channel_id)
+        })
+        .unwrap_or(false);
 
         const FACEPILE_LIMIT: usize = 4;
 
@@ -1591,7 +1600,7 @@ impl CollabPanel {
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
-                .with_style(*theme.contact_row.style_for(is_selected, state))
+                .with_style(*theme.contact_row.style_for(is_selected || is_active, state))
                 .with_padding_left(
                     theme.contact_row.default_style().padding.left
                         + theme.channel_indent * depth as f32,
