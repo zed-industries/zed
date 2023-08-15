@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings},
+    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     MessageId, MessageMetadata, MessageStatus, OpenAIRequest, OpenAIResponseStreamEvent,
     RequestMessage, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
 };
@@ -47,9 +47,6 @@ use workspace::{
 };
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
-
-const GPT_3_5_TURBO_0613: &'static str = "gpt-3.5-turbo-0613";
-const GPT_4_0613: &'static str = "gpt-4-0613";
 
 actions!(
     assistant,
@@ -833,7 +830,7 @@ struct Conversation {
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    model: String,
+    model: OpenAIModel,
     token_count: Option<usize>,
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
@@ -853,7 +850,6 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let model = GPT_3_5_TURBO_0613;
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
@@ -872,6 +868,9 @@ impl Conversation {
             buffer
         });
 
+        let settings = settings::get::<AssistantSettings>(cx);
+        let model = settings.default_open_ai_model.clone();
+
         let mut this = Self {
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
@@ -881,9 +880,9 @@ impl Conversation {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
-            max_token_count: tiktoken_rs::model::get_context_size(model),
+            max_token_count: tiktoken_rs::model::get_context_size(&model.to_string()),
             pending_token_count: Task::ready(None),
-            model: model.into(),
+            model: model.clone(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -977,7 +976,7 @@ impl Conversation {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
-            max_token_count: tiktoken_rs::model::get_context_size(&model),
+            max_token_count: tiktoken_rs::model::get_context_size(&model.to_string()),
             pending_token_count: Task::ready(None),
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1031,13 +1030,16 @@ impl Conversation {
                 cx.background().timer(Duration::from_millis(200)).await;
                 let token_count = cx
                     .background()
-                    .spawn(async move { tiktoken_rs::num_tokens_from_messages(&model, &messages) })
+                    .spawn(async move {
+                        tiktoken_rs::num_tokens_from_messages(&model.to_string(), &messages)
+                    })
                     .await?;
 
                 this.upgrade(&cx)
                     .ok_or_else(|| anyhow!("conversation was dropped"))?
                     .update(&mut cx, |this, cx| {
-                        this.max_token_count = tiktoken_rs::model::get_context_size(&this.model);
+                        this.max_token_count =
+                            tiktoken_rs::model::get_context_size(&this.model.to_string());
                         this.token_count = Some(token_count);
                         cx.notify()
                     });
@@ -1051,7 +1053,7 @@ impl Conversation {
         Some(self.max_token_count as isize - self.token_count? as isize)
     }
 
-    fn set_model(&mut self, model: String, cx: &mut ModelContext<Self>) {
+    fn set_model(&mut self, model: OpenAIModel, cx: &mut ModelContext<Self>) {
         self.model = model;
         self.count_remaining_tokens(cx);
         cx.notify();
@@ -1093,7 +1095,7 @@ impl Conversation {
                 }
             } else {
                 let request = OpenAIRequest {
-                    model: self.model.clone(),
+                    model: self.model.to_string(),
                     messages: self
                         .messages(cx)
                         .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -1419,7 +1421,7 @@ impl Conversation {
                                 .into(),
                     }));
                 let request = OpenAIRequest {
-                    model: self.model.clone(),
+                    model: self.model.to_string(),
                     messages: messages.collect(),
                     stream: true,
                 };
@@ -2023,11 +2025,8 @@ impl ConversationEditor {
 
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
-            let new_model = match conversation.model.as_str() {
-                GPT_4_0613 => GPT_3_5_TURBO_0613,
-                _ => GPT_4_0613,
-            };
-            conversation.set_model(new_model.into(), cx);
+            let new_model = conversation.model.cycle();
+            conversation.set_model(new_model, cx);
         });
     }
 
@@ -2049,12 +2048,7 @@ impl ConversationEditor {
 
         MouseEventHandler::<Model, _>::new(0, cx, |state, cx| {
             let style = style.model.style_for(state);
-            let model = self.conversation.read(cx).model.as_ref();
-            let model_display_name = match model {
-                GPT_3_5_TURBO_0613 => "gpt-3.5-turbo",
-                GPT_4_0613 => "gpt-4",
-                _ => panic!("Invalid model name: {}", model),
-            };
+            let model_display_name = self.conversation.read(cx).model.display_name();
             Label::new(model_display_name, style.text.clone())
                 .contained()
                 .with_style(style.container)
