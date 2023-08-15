@@ -3861,7 +3861,7 @@ impl Project {
                     let file = File::from_dyn(buffer.file())?;
                     let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
                     let server = self
-                        .primary_language_servers_for_buffer(buffer, cx)
+                        .primary_language_server_for_buffer(buffer, cx)
                         .map(|s| s.1.clone());
                     Some((buffer_handle, buffer_abs_path, server))
                 })
@@ -4166,7 +4166,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
+        self.request_primary_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
     pub fn type_definition<T: ToPointUtf16>(
@@ -4176,7 +4176,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetTypeDefinition { position }, cx)
+        self.request_primary_lsp(buffer.clone(), GetTypeDefinition { position }, cx)
     }
 
     pub fn references<T: ToPointUtf16>(
@@ -4186,7 +4186,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetReferences { position }, cx)
+        self.request_primary_lsp(buffer.clone(), GetReferences { position }, cx)
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
@@ -4196,7 +4196,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
+        self.request_primary_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -4424,7 +4424,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetHover { position }, cx)
+        self.request_primary_lsp(buffer.clone(), GetHover { position }, cx)
     }
 
     pub fn completions<T: ToPointUtf16>(
@@ -4434,7 +4434,29 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetCompletions { position }, cx)
+        let server_ids: Vec<_> = self
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .map(|(_, server)| server.server_id())
+            .collect();
+
+        let buffer = buffer.clone();
+        cx.spawn(|this, mut cx| async move {
+            let mut completions = Vec::new();
+
+            for server_id in server_ids {
+                let new_completions = this
+                    .update(&mut cx, |this, cx| {
+                        this.request_lsp(buffer.clone(), server_id, GetCompletions { position }, cx)
+                    })
+                    .await;
+
+                if let Ok(new_completions) = new_completions {
+                    completions.extend_from_slice(&new_completions);
+                }
+            }
+
+            Ok(completions)
+        })
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -4448,7 +4470,7 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = match self.primary_language_servers_for_buffer(buffer, cx) {
+            let lang_server = match self.primary_language_server_for_buffer(buffer, cx) {
                 Some((_, server)) => server.clone(),
                 _ => return Task::ready(Ok(Default::default())),
             };
@@ -4545,7 +4567,7 @@ impl Project {
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.request_lsp(buffer_handle.clone(), GetCodeActions { range }, cx)
+        self.request_primary_lsp(buffer_handle.clone(), GetCodeActions { range }, cx)
     }
 
     pub fn apply_code_action(
@@ -4901,7 +4923,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer, PrepareRename { position }, cx)
+        self.request_primary_lsp(buffer, PrepareRename { position }, cx)
     }
 
     pub fn perform_rename<T: ToPointUtf16>(
@@ -4913,7 +4935,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
+        self.request_primary_lsp(
             buffer,
             PerformRename {
                 position,
@@ -4940,7 +4962,7 @@ impl Project {
                     .tab_size,
             )
         });
-        self.request_lsp(
+        self.request_primary_lsp(
             buffer.clone(),
             OnTypeFormatting {
                 position,
@@ -4967,7 +4989,7 @@ impl Project {
         let lsp_request = InlayHints { range };
 
         if self.is_local() {
-            let lsp_request_task = self.request_lsp(buffer_handle.clone(), lsp_request, cx);
+            let lsp_request_task = self.request_primary_lsp(buffer_handle.clone(), lsp_request, cx);
             cx.spawn(|_, mut cx| async move {
                 buffer_handle
                     .update(&mut cx, |buffer, _| {
@@ -5223,8 +5245,7 @@ impl Project {
         }
     }
 
-    // TODO: Wire this up to allow selecting a server?
-    fn request_lsp<R: LspCommand>(
+    fn request_primary_lsp<R: LspCommand>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
         request: R,
@@ -5234,12 +5255,32 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Result: Send,
     {
         let buffer = buffer_handle.read(cx);
+        let server_id = match self.primary_language_server_for_buffer(buffer, cx) {
+            Some((_, server)) => server.server_id(),
+            None => return Task::ready(Ok(Default::default())),
+        };
+
+        self.request_lsp(buffer_handle, server_id, request, cx)
+    }
+
+    fn request_lsp<R: LspCommand>(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        request: R,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<R::Response>>
+    where
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+    {
+        let buffer = buffer_handle.read(cx);
         if self.is_local() {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            if let Some((file, language_server)) = file.zip(
-                self.primary_language_servers_for_buffer(buffer, cx)
-                    .map(|(_, server)| server.clone()),
-            ) {
+            let language_server = self
+                .language_server_for_buffer(buffer, server_id, cx)
+                .map(|(_, server)| server.clone());
+
+            if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 return cx.spawn(|this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
@@ -5294,6 +5335,7 @@ impl Project {
                 }
             });
         }
+
         Task::ready(Ok(Default::default()))
     }
 
@@ -6842,7 +6884,7 @@ impl Project {
         let buffer_version = buffer_handle.read_with(&cx, |buffer, _| buffer.version());
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle, request, cx)
+                this.request_primary_lsp(buffer_handle, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -7558,7 +7600,7 @@ impl Project {
             })
     }
 
-    fn primary_language_servers_for_buffer(
+    fn primary_language_server_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
