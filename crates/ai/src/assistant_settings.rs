@@ -29,13 +29,10 @@ impl OpenAIModel {
     }
 
     pub fn cycle(&mut self) -> Self {
-        let models = [OpenAIModel::GptThreeFiveTurbo0613, OpenAIModel::GptFour0613];
-        let index = models
-            .iter()
-            .position(|model| model == self)
-            .map(|index| (index + 1) % models.len())
-            .unwrap_or_default();
-        models[index].clone()
+        match self {
+            OpenAIModel::GptThreeFiveTurbo0613 => OpenAIModel::GptFour0613,
+            OpenAIModel::GptFour0613 => OpenAIModel::GptThreeFiveTurbo0613,
+        }
     }
 }
 
