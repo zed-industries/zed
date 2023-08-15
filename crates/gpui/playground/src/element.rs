@@ -1,3 +1,5 @@
+use std::{any::Any, sync::Arc};
+
 use crate::{
     adapter::Adapter,
     style::{DefinedLength, Display, Fill, Length, Overflow, Position, Style},
@@ -24,8 +26,11 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
 }
 
 pub trait Element<V: 'static>: 'static + Clone {
+    type Layout: 'static;
+
     fn style_mut(&mut self) -> &mut Style;
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
+        -> Result<(NodeId, Self::Layout)>;
     fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
         -> Result<()>;
 
@@ -36,7 +41,7 @@ pub trait Element<V: 'static>: 'static + Clone {
     {
         AnyElement {
             element: Box::new(self) as Box<dyn ElementObject<V>>,
-            layout_node_id: None,
+            layout: None,
         }
     }
 
@@ -261,7 +266,8 @@ pub trait Element<V: 'static>: 'static + Clone {
 
 pub trait ElementObject<V> {
     fn style_mut(&mut self) -> &mut Style;
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
+        -> Result<(NodeId, Arc<dyn Any>)>;
     fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
         -> Result<()>;
     fn clone_object(&self) -> Box<dyn ElementObject<V>>;
@@ -272,8 +278,14 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
         self.style_mut()
     }
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
-        self.layout(view, cx)
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(NodeId, Arc<dyn Any>)> {
+        let (node_id, layout) = self.layout(view, cx)?;
+        let layout = Arc::new(layout) as Arc<dyn Any>;
+        Ok((node_id, layout))
     }
 
     fn paint(
@@ -292,24 +304,18 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
 
 pub struct AnyElement<V> {
     element: Box<dyn ElementObject<V>>,
-    layout_node_id: Option<NodeId>,
+    layout: Option<(NodeId, Arc<dyn Any>)>,
 }
-
-// enum LayoutState {
-//     None,
-//     Registered(NodeId, Box<dyn Any>),
-//     Computed(Layout, Box<dyn Any>),
-// }
 
 impl<V> AnyElement<V> {
     pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
-        let layout_node_id = self.element.layout(view, cx)?;
-        self.layout_node_id = Some(layout_node_id);
-        Ok(layout_node_id)
+        let (node_id, layout) = self.element.layout(view, cx)?;
+        self.layout = Some((node_id, layout));
+        Ok(node_id)
     }
 
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
-        let layout_node_id = self.layout_node_id.expect("paint called before layout");
+        let (layout_node_id, layout) = self.layout.clone().expect("paint called before layout");
         let layout = cx
             .layout_engine()
             .unwrap()
@@ -323,18 +329,24 @@ impl<V> Clone for AnyElement<V> {
     fn clone(&self) -> Self {
         Self {
             element: self.element.clone_object(),
-            layout_node_id: self.layout_node_id,
+            layout: self.layout.clone(),
         }
     }
 }
 
 impl<V: 'static> Element<V> for AnyElement<V> {
+    type Layout = ();
+
     fn style_mut(&mut self) -> &mut Style {
         self.element.style_mut()
     }
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
-        self.layout(view, cx)
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(NodeId, Self::Layout)> {
+        Ok((self.layout(view, cx)?, ()))
     }
 
     fn paint(

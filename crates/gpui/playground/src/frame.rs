@@ -1,10 +1,9 @@
-use anyhow::{anyhow, Result};
-use gpui::{EngineLayout, LayoutNodeId};
-
 use crate::{
-    element::{AnyElement, Element, LayoutContext, PaintContext},
+    element::{AnyElement, Element, LayoutContext, NodeId, PaintContext},
     style::Style,
 };
+use anyhow::{anyhow, Result};
+use gpui::{EngineLayout, LayoutNodeId};
 
 pub struct Frame<V> {
     style: Style,
@@ -19,11 +18,17 @@ pub fn frame<V>() -> Frame<V> {
 }
 
 impl<V: 'static> Element<V> for Frame<V> {
+    type Layout = ();
+
     fn style_mut(&mut self) -> &mut Style {
         &mut self.style
     }
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<taffy::tree::NodeId> {
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(NodeId, Self::Layout)> {
         let child_layout_node_ids = self
             .children
             .iter_mut()
@@ -31,9 +36,12 @@ impl<V: 'static> Element<V> for Frame<V> {
             .collect::<Result<Vec<LayoutNodeId>>>()?;
 
         let rem_size = cx.rem_pixels();
-        cx.layout_engine()
+        let node_id = cx
+            .layout_engine()
             .ok_or_else(|| anyhow!("no layout engine"))?
-            .add_node(self.style.to_taffy(rem_size), child_layout_node_ids)
+            .add_node(self.style.to_taffy(rem_size), child_layout_node_ids)?;
+
+        Ok((node_id, ()))
     }
 
     fn paint(
