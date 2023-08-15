@@ -212,7 +212,7 @@ impl Member {
                                 let leader_user_id = leader.user.id;
                                 let app_state = Arc::downgrade(app_state);
                                 Some(
-                                    MouseEventHandler::<FollowIntoExternalProject, _>::new(
+                                    MouseEventHandler::new::<FollowIntoExternalProject, _>(
                                         pane.id(),
                                         cx,
                                         |_, _| {

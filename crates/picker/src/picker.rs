@@ -112,7 +112,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                             let selected_ix = this.delegate.selected_index();
                             range.end = cmp::min(range.end, this.delegate.match_count());
                             items.extend(range.map(move |ix| {
-                                MouseEventHandler::<D, _>::new(ix, cx, |state, cx| {
+                                MouseEventHandler::new::<D, _>(ix, cx, |state, cx| {
                                     this.delegate.render_match(ix, state, ix == selected_ix, cx)
                                 })
                                 // Capture mouse events

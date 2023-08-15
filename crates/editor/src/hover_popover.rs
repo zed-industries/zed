@@ -565,7 +565,7 @@ impl InfoPopover {
             )
         });
 
-        MouseEventHandler::<InfoPopover, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
             let mut region_id = 0;
             let view_id = cx.view_id();
 
@@ -654,7 +654,7 @@ impl DiagnosticPopover {
 
         let tooltip_style = theme::current(cx).tooltip.clone();
 
-        MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
+        MouseEventHandler::new::<DiagnosticPopover, _>(0, cx, |_, _| {
             text.with_soft_wrap(true)
                 .contained()
                 .with_style(container_style)

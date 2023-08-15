@@ -41,7 +41,7 @@ impl View for FeedbackInfoText {
                 .aligned(),
             )
             .with_child(
-                MouseEventHandler::<OpenZedCommunityRepo, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<OpenZedCommunityRepo, _>(0, cx, |state, _| {
                     let contained_text = if state.hovered() {
                         &theme.feedback.link_text_hover
                     } else {
