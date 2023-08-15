@@ -224,12 +224,17 @@ impl View for BufferSearchBar {
         let side_column_min_width = 165.;
         let button_height = 32.;
         let nav_column = Flex::row()
+            .with_child(
+                Flex::row()
+                    .with_children(match_count)
+                    .constrained()
+                    .with_min_width(100.),
+            )
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
-            .with_children(match_count)
+            .with_child(self.render_action_button("Select All", cx))
             .constrained()
-            .with_height(theme.search.search_bar_row_height)
-            .with_min_width(side_column_min_width);
+            .with_height(theme.search.search_bar_row_height);
 
         let query = Flex::row()
             .with_child(
@@ -257,7 +262,6 @@ impl View for BufferSearchBar {
             )
             .align_children_center()
             .flex(1., true);
-        let row_spacing = theme.workspace.toolbar.container.padding.bottom;
         let editor_column = Flex::row()
             .with_child(
                 query
@@ -268,12 +272,9 @@ impl View for BufferSearchBar {
                     .with_max_width(theme.search.editor.max_width)
                     .flex(1., false),
             )
-            .with_child(self.render_action_button("Select All", cx))
             .contained()
             .constrained()
             .with_height(theme.search.search_bar_row_height)
-            .aligned()
-            .top()
             .flex(1., false);
         let mode_column = Flex::row()
             .with_child(
@@ -298,8 +299,8 @@ impl View for BufferSearchBar {
             .with_min_width(side_column_min_width)
             .flex_float();
         Flex::row()
-            .with_child(nav_column)
             .with_child(editor_column)
+            .with_child(nav_column)
             .with_child(mode_column)
             .contained()
             .with_style(theme.search.container)
