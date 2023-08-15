@@ -1,6 +1,6 @@
 use button_component::Button;
 
-use component::AdaptComponent;
+use component::Component;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, Flex, Label, ParentElement},
@@ -13,6 +13,8 @@ use pathfinder_geometry::vector::vec2f;
 use simplelog::SimpleLogger;
 use theme::Toggleable;
 use toggleable_button::ToggleableButton;
+
+// cargo run -p gpui --example components
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
@@ -155,14 +157,8 @@ mod toggleable_button {
         }
     }
 
-    impl<V: View> Component for ToggleableButton<V> {
-        type View = V;
-
-        fn render(
-            self,
-            v: &mut Self::View,
-            cx: &mut gpui::ViewContext<Self::View>,
-        ) -> gpui::AnyElement<V> {
+    impl<V: View> Component<V> for ToggleableButton<V> {
+        fn render(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             let button = if let Some(style) = self.style {
                 self.button.with_style(*style.style_for(self.active))
             } else {
@@ -219,10 +215,8 @@ mod button_component {
         }
     }
 
-    impl<V: View> Component for Button<V> {
-        type View = V;
-
-        fn render(self, _: &mut Self::View, cx: &mut ViewContext<V>) -> AnyElement<Self::View> {
+    impl<V: View> Component<V> for Button<V> {
+        fn render(self, _: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
             let click_handler = self.click_handler;
 
             let result = MouseEventHandler::new_dynamic(self.tag, 0, cx, |_, _| {
@@ -250,45 +244,41 @@ mod component {
     use gpui::{AnyElement, Element, View, ViewContext};
     use pathfinder_geometry::vector::Vector2F;
 
-    // Public API:
-    pub trait Component {
-        type View: View;
+    pub trait Component<V: View> {
+        fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-        fn render(
-            self,
-            v: &mut Self::View,
-            cx: &mut ViewContext<Self::View>,
-        ) -> AnyElement<Self::View>;
-    }
-
-    pub struct ComponentAdapter<E> {
-        component: Option<E>,
-    }
-
-    impl<E> ComponentAdapter<E> {
-        pub fn new(e: E) -> Self {
-            Self { component: Some(e) }
-        }
-    }
-
-    pub trait AdaptComponent<C: Component>: Sized {
-        fn into_element(self) -> ComponentAdapter<Self> {
+        fn into_element(self) -> ComponentAdapter<V, Self>
+        where
+            Self: Sized,
+        {
             ComponentAdapter::new(self)
         }
     }
 
-    impl<C: Component> AdaptComponent<C> for C {}
+    pub struct ComponentAdapter<V, E> {
+        component: Option<E>,
+        phantom: std::marker::PhantomData<V>,
+    }
 
-    impl<C: Component + 'static> Element<C::View> for ComponentAdapter<C> {
-        type LayoutState = AnyElement<C::View>;
+    impl<E, V> ComponentAdapter<V, E> {
+        pub fn new(e: E) -> Self {
+            Self {
+                component: Some(e),
+                phantom: std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
+        type LayoutState = AnyElement<V>;
 
         type PaintState = ();
 
         fn layout(
             &mut self,
             constraint: gpui::SizeConstraint,
-            view: &mut C::View,
-            cx: &mut gpui::LayoutContext<C::View>,
+            view: &mut V,
+            cx: &mut gpui::LayoutContext<V>,
         ) -> (Vector2F, Self::LayoutState) {
             let component = self.component.take().unwrap();
             let mut element = component.render(view, cx.view_context());
@@ -302,8 +292,8 @@ mod component {
             bounds: gpui::geometry::rect::RectF,
             visible_bounds: gpui::geometry::rect::RectF,
             layout: &mut Self::LayoutState,
-            view: &mut C::View,
-            cx: &mut gpui::PaintContext<C::View>,
+            view: &mut V,
+            cx: &mut gpui::PaintContext<V>,
         ) -> Self::PaintState {
             layout.paint(scene, bounds.origin(), visible_bounds, view, cx)
         }
@@ -315,8 +305,8 @@ mod component {
             _: gpui::geometry::rect::RectF,
             _: &Self::LayoutState,
             _: &Self::PaintState,
-            _: &C::View,
-            _: &ViewContext<C::View>,
+            _: &V,
+            _: &ViewContext<V>,
         ) -> Option<gpui::geometry::rect::RectF> {
             todo!()
         }
@@ -326,8 +316,8 @@ mod component {
             _: gpui::geometry::rect::RectF,
             _: &Self::LayoutState,
             _: &Self::PaintState,
-            _: &C::View,
-            _: &ViewContext<C::View>,
+            _: &V,
+            _: &ViewContext<V>,
         ) -> serde_json::Value {
             todo!()
         }
