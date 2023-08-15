@@ -4,7 +4,9 @@ use crate::{
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
-use gpui::{Layout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext};
+use gpui::{
+    EngineLayout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext,
+};
 use playground_macros::tailwind_lengths;
 pub use taffy::tree::NodeId;
 
@@ -24,7 +26,8 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
 pub trait Element<V: 'static>: 'static + Clone {
     fn style_mut(&mut self) -> &mut Style;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
+    fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
+        -> Result<()>;
 
     /// Convert to a dynamically-typed element suitable for layout and paint.
     fn into_any(self) -> AnyElement<V>
@@ -259,7 +262,8 @@ pub trait Element<V: 'static>: 'static + Clone {
 pub trait ElementObject<V> {
     fn style_mut(&mut self) -> &mut Style;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId>;
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()>;
+    fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
+        -> Result<()>;
     fn clone_object(&self) -> Box<dyn ElementObject<V>>;
 }
 
@@ -272,7 +276,12 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
         self.layout(view, cx)
     }
 
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+    fn paint(
+        &mut self,
+        layout: EngineLayout,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
+    ) -> Result<()> {
         self.paint(layout, view, cx)
     }
 
@@ -285,6 +294,12 @@ pub struct AnyElement<V> {
     element: Box<dyn ElementObject<V>>,
     layout_node_id: Option<NodeId>,
 }
+
+// enum LayoutState {
+//     None,
+//     Registered(NodeId, Box<dyn Any>),
+//     Computed(Layout, Box<dyn Any>),
+// }
 
 impl<V> AnyElement<V> {
     pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
@@ -322,7 +337,12 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         self.layout(view, cx)
     }
 
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+    fn paint(
+        &mut self,
+        layout: EngineLayout,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
+    ) -> Result<()> {
         self.paint(view, cx)
     }
 }

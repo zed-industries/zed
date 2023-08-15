@@ -1264,17 +1264,17 @@ impl LayoutEngine {
         Ok(())
     }
 
-    pub fn computed_layout(&mut self, node: LayoutNodeId) -> Result<Layout> {
+    pub fn computed_layout(&mut self, node: LayoutNodeId) -> Result<EngineLayout> {
         Ok(self.0.layout(node)?.into())
     }
 }
 
-pub struct Layout {
+pub struct EngineLayout {
     pub bounds: RectF,
     pub order: u32,
 }
 
-impl From<&taffy::tree::Layout> for Layout {
+impl From<&taffy::tree::Layout> for EngineLayout {
     fn from(value: &taffy::tree::Layout) -> Self {
         Self {
             bounds: RectF::new(

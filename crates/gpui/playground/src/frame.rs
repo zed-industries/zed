@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui::{Layout, LayoutNodeId};
+use gpui::{EngineLayout, LayoutNodeId};
 
 use crate::{
     element::{AnyElement, Element, LayoutContext, PaintContext},
@@ -36,7 +36,12 @@ impl<V: 'static> Element<V> for Frame<V> {
             .add_node(self.style.to_taffy(rem_size), child_layout_node_ids)
     }
 
-    fn paint(&mut self, layout: Layout, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+    fn paint(
+        &mut self,
+        layout: EngineLayout,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
+    ) -> Result<()> {
         cx.scene.push_quad(gpui::scene::Quad {
             bounds: layout.bounds,
             background: self.style.fill.color().map(Into::into),

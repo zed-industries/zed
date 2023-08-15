@@ -28,7 +28,8 @@ pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
 pub use window::{
-    Axis, Layout, LayoutEngine, LayoutNodeId, RectFExt, SizeConstraint, Vector2FExt, WindowContext,
+    Axis, EngineLayout, LayoutEngine, LayoutNodeId, RectFExt, SizeConstraint, Vector2FExt,
+    WindowContext,
 };
 
 pub use anyhow;
