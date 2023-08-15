@@ -784,7 +784,7 @@ impl Panel for AssistantPanel {
     fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
         settings::get::<AssistantSettings>(cx)
             .button
-            .then(|| "icons/robot_14.svg")
+            .then(|| "icons/ai.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
