@@ -141,7 +141,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
 
     // works in visuial mode
     cx.simulate_keystrokes(["shift-v", "down", ">"]);
-    cx.assert_editor_state("aa\n    b«b\n    cˇ»c");
+    cx.assert_editor_state("aa\n    b«b\n    ccˇ»");
 }
 
 #[gpui::test]
@@ -155,6 +155,16 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystroke("escape");
     assert!(!cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
     cx.assert_state("aˇbc\n", Mode::Insert);
+}
+
+#[gpui::test]
+async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("aˇbˇc", Mode::Normal);
+    cx.simulate_keystrokes(["escape"]);
+
+    cx.assert_state("aˇbc", Mode::Normal);
 }
 
 #[gpui::test]

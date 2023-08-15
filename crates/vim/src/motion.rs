@@ -383,8 +383,7 @@ impl Motion {
 
 fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        *point.column_mut() = point.column().saturating_sub(1);
-        point = map.clip_point(point, Bias::Left);
+        point = movement::saturating_left(map, point);
         if point.column() == 0 {
             break;
         }
@@ -425,9 +424,7 @@ fn up(
 
 pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        let mut new_point = point;
-        *new_point.column_mut() += 1;
-        let new_point = map.clip_point(new_point, Bias::Right);
+        let new_point = movement::saturating_right(map, point);
         if point == new_point {
             break;
         }

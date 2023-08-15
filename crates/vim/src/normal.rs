@@ -3,7 +3,7 @@ mod change;
 mod delete;
 mod scroll;
 mod search;
-mod substitute;
+pub mod substitute;
 mod yank;
 
 use std::{borrow::Cow, sync::Arc};

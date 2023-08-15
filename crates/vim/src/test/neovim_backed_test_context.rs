@@ -61,6 +61,9 @@ pub struct NeovimBackedTestContext<'a> {
     // bindings are exempted. If None, all bindings are ignored for that insertion text.
     exemptions: HashMap<String, Option<HashSet<String>>>,
     neovim: NeovimConnection,
+
+    last_set_state: Option<String>,
+    recent_keystrokes: Vec<String>,
 }
 
 impl<'a> NeovimBackedTestContext<'a> {
@@ -71,6 +74,9 @@ impl<'a> NeovimBackedTestContext<'a> {
             cx,
             exemptions: Default::default(),
             neovim: NeovimConnection::new(function_name).await,
+
+            last_set_state: None,
+            recent_keystrokes: Default::default(),
         }
     }
 
@@ -102,13 +108,21 @@ impl<'a> NeovimBackedTestContext<'a> {
         keystroke_texts: [&str; COUNT],
     ) -> ContextHandle {
         for keystroke_text in keystroke_texts.into_iter() {
+            self.recent_keystrokes.push(keystroke_text.to_string());
             self.neovim.send_keystroke(keystroke_text).await;
         }
         self.simulate_keystrokes(keystroke_texts)
     }
 
     pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
-        let context_handle = self.set_state(marked_text, Mode::Normal);
+        let mode = if marked_text.contains("»") {
+            Mode::Visual { line: false }
+        } else {
+            Mode::Normal
+        };
+        let context_handle = self.set_state(marked_text, mode);
+        self.last_set_state = Some(marked_text.to_string());
+        self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
         context_handle
     }
@@ -116,15 +130,25 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
         let neovim = self.neovim_state().await;
         if neovim != marked_text {
+            let initial_state = self
+                .last_set_state
+                .as_ref()
+                .unwrap_or(&"N/A".to_string())
+                .clone();
             panic!(
                 indoc! {"Test is incorrect (currently expected != neovim state)
-
+                # initial state:
+                {}
+                # keystrokes:
+                {}
                 # currently expected:
                 {}
                 # neovim state:
                 {}
                 # zed state:
                 {}"},
+                initial_state,
+                self.recent_keystrokes.join(" "),
                 marked_text,
                 neovim,
                 self.editor_state(),
@@ -141,28 +165,40 @@ impl<'a> NeovimBackedTestContext<'a> {
         )
     }
 
+    pub async fn neovim_mode(&mut self) -> Mode {
+        self.neovim.mode().await.unwrap()
+    }
+
     async fn neovim_selection(&mut self) -> Range<usize> {
-        let mut neovim_selection = self.neovim.selection().await;
-        // Zed selections adjust themselves to make the end point visually make sense
-        if neovim_selection.start > neovim_selection.end {
-            neovim_selection.start.column += 1;
-        }
+        let neovim_selection = self.neovim.selection().await;
         neovim_selection.to_offset(&self.buffer_snapshot())
     }
 
     pub async fn assert_state_matches(&mut self) {
-        assert_eq!(
-            self.neovim.text().await,
-            self.buffer_text(),
-            "{}",
-            self.assertion_context()
-        );
+        let neovim = self.neovim_state().await;
+        let editor = self.editor_state();
+        let initial_state = self
+            .last_set_state
+            .as_ref()
+            .unwrap_or(&"N/A".to_string())
+            .clone();
 
-        let selections = vec![self.neovim_selection().await];
-        self.assert_editor_selections(selections);
-
-        if let Some(neovim_mode) = self.neovim.mode().await {
-            assert_eq!(neovim_mode, self.mode(), "{}", self.assertion_context(),);
+        if neovim != editor {
+            panic!(
+                indoc! {"Test failed (zed does not match nvim behaviour)
+                    # initial state:
+                    {}
+                    # keystrokes:
+                    {}
+                    # neovim state:
+                    {}
+                    # zed state:
+                    {}"},
+                initial_state,
+                self.recent_keystrokes.join(" "),
+                neovim,
+                editor,
+            )
         }
     }
 
@@ -205,6 +241,29 @@ impl<'a> NeovimBackedTestContext<'a> {
 
             self.assert_binding_matches(keystrokes, &marked_text).await;
         }
+    }
+
+    pub fn each_marked_position(&self, marked_positions: &str) -> Vec<String> {
+        let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
+        let mut ret = Vec::with_capacity(cursor_offsets.len());
+
+        for cursor_offset in cursor_offsets.iter() {
+            let mut marked_text = unmarked_text.clone();
+            marked_text.insert(*cursor_offset, 'ˇ');
+            ret.push(marked_text)
+        }
+
+        ret
+    }
+
+    pub async fn assert_neovim_compatible<const COUNT: usize>(
+        &mut self,
+        marked_positions: &str,
+        keystrokes: [&str; COUNT],
+    ) {
+        self.set_shared_state(&marked_positions).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.assert_state_matches().await;
     }
 
     pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(

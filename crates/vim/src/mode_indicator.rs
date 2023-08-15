@@ -87,7 +87,7 @@ impl View for ModeIndicator {
             Mode::Normal => "-- NORMAL --",
             Mode::Insert => "-- INSERT --",
             Mode::Visual { line: false } => "-- VISUAL --",
-            Mode::Visual { line: true } => "VISUAL LINE ",
+            Mode::Visual { line: true } => "VISUAL  LINE",
         };
         Label::new(text, theme.vim_mode_indicator.text.clone())
             .contained()

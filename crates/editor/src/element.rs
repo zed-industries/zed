@@ -63,6 +63,7 @@ struct SelectionLayout {
     cursor_shape: CursorShape,
     is_newest: bool,
     range: Range<DisplayPoint>,
+    active_rows: Range<u32>,
 }
 
 impl SelectionLayout {
@@ -73,24 +74,43 @@ impl SelectionLayout {
         map: &DisplaySnapshot,
         is_newest: bool,
     ) -> Self {
+        let point_selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
+        let display_selection = point_selection.map(|p| p.to_display_point(map));
+        let mut range = display_selection.range();
+        let mut head = display_selection.head();
+        let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
+            ..map.next_line_boundary(point_selection.end).1.row();
+
+        // vim visual line mode
         if line_mode {
-            let selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
-            let point_range = map.expand_to_line(selection.range());
-            Self {
-                head: selection.head().to_display_point(map),
-                cursor_shape,
-                is_newest,
-                range: point_range.start.to_display_point(map)
-                    ..point_range.end.to_display_point(map),
+            let point_range = map.expand_to_line(point_selection.range());
+            range = point_range.start.to_display_point(map)..point_range.end.to_display_point(map);
+        }
+
+        // any vim visual mode (including line mode)
+        if cursor_shape == CursorShape::Block && !range.is_empty() && !selection.reversed {
+            if head.column() > 0 {
+                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left)
+            } else if head.row() > 0 && head != map.max_point() {
+                head = map.clip_point(
+                    DisplayPoint::new(head.row() - 1, map.line_len(head.row() - 1)),
+                    Bias::Left,
+                );
+                // updating range.end is a no-op unless you're cursor is
+                // on the newline containing a multi-buffer divider
+                // in which case the clip_point may have moved the head up
+                // an additional row.
+                range.end = DisplayPoint::new(head.row() + 1, 0);
+                active_rows.end = head.row();
             }
-        } else {
-            let selection = selection.map(|p| p.to_display_point(map));
-            Self {
-                head: selection.head(),
-                cursor_shape,
-                is_newest,
-                range: selection.range(),
-            }
+        }
+
+        Self {
+            head,
+            cursor_shape,
+            is_newest,
+            range,
+            active_rows,
         }
     }
 }
@@ -2152,22 +2172,37 @@ impl Element<Editor> for EditorElement {
         }
         selections.extend(remote_selections);
 
+        let mut newest_selection_head = None;
+
         if editor.show_local_selections {
-            let mut local_selections = editor
+            let mut local_selections: Vec<Selection<Point>> = editor
                 .selections
                 .disjoint_in_range(start_anchor..end_anchor, cx);
             local_selections.extend(editor.selections.pending(cx));
+            let mut layouts = Vec::new();
             let newest = editor.selections.newest(cx);
-            for selection in &local_selections {
+            for selection in local_selections.drain(..) {
                 let is_empty = selection.start == selection.end;
-                let selection_start = snapshot.prev_line_boundary(selection.start).1;
-                let selection_end = snapshot.next_line_boundary(selection.end).1;
-                for row in cmp::max(selection_start.row(), start_row)
-                    ..=cmp::min(selection_end.row(), end_row)
+                let is_newest = selection == newest;
+
+                let layout = SelectionLayout::new(
+                    selection,
+                    editor.selections.line_mode,
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    is_newest,
+                );
+                if is_newest {
+                    newest_selection_head = Some(layout.head);
+                }
+
+                for row in cmp::max(layout.active_rows.start, start_row)
+                    ..=cmp::min(layout.active_rows.end, end_row)
                 {
                     let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
                     *contains_non_empty_selection |= !is_empty;
                 }
+                layouts.push(layout);
             }
 
             // Render the local selections in the leader's color when following.
@@ -2175,22 +2210,7 @@ impl Element<Editor> for EditorElement {
                 .leader_replica_id
                 .unwrap_or_else(|| editor.replica_id(cx));
 
-            selections.push((
-                local_replica_id,
-                local_selections
-                    .into_iter()
-                    .map(|selection| {
-                        let is_newest = selection == newest;
-                        SelectionLayout::new(
-                            selection,
-                            editor.selections.line_mode,
-                            editor.cursor_shape,
-                            &snapshot.display_snapshot,
-                            is_newest,
-                        )
-                    })
-                    .collect(),
-            ));
+            selections.push((local_replica_id, layouts));
         }
 
         let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
@@ -2295,28 +2315,26 @@ impl Element<Editor> for EditorElement {
             snapshot = editor.snapshot(cx);
         }
 
-        let newest_selection_head = editor
-            .selections
-            .newest::<usize>(cx)
-            .head()
-            .to_display_point(&snapshot);
         let style = editor.style(cx);
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
-        if (start_row..end_row).contains(&newest_selection_head.row()) {
-            if editor.context_menu_visible() {
-                context_menu = editor.render_context_menu(newest_selection_head, style.clone(), cx);
+        if let Some(newest_selection_head) = newest_selection_head {
+            if (start_row..end_row).contains(&newest_selection_head.row()) {
+                if editor.context_menu_visible() {
+                    context_menu =
+                        editor.render_context_menu(newest_selection_head, style.clone(), cx);
+                }
+
+                let active = matches!(
+                    editor.context_menu,
+                    Some(crate::ContextMenu::CodeActions(_))
+                );
+
+                code_actions_indicator = editor
+                    .render_code_actions_indicator(&style, active, cx)
+                    .map(|indicator| (newest_selection_head.row(), indicator));
             }
-
-            let active = matches!(
-                editor.context_menu,
-                Some(crate::ContextMenu::CodeActions(_))
-            );
-
-            code_actions_indicator = editor
-                .render_code_actions_indicator(&style, active, cx)
-                .map(|indicator| (newest_selection_head.row(), indicator));
         }
 
         let visible_rows = start_row..start_row + line_layouts.len() as u32;
@@ -2993,6 +3011,154 @@ mod tests {
                 .0
         });
         assert_eq!(layouts.len(), 6);
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_selections(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+        let (_, state) = editor.update(cx, |editor, cx| {
+            editor.cursor_shape = CursorShape::Block;
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
+                    Point::new(0, 0)..Point::new(1, 0),
+                    Point::new(3, 2)..Point::new(3, 3),
+                    Point::new(5, 6)..Point::new(6, 0),
+                ]);
+            });
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            element.layout(
+                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                editor,
+                &mut layout_cx,
+            )
+        });
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 3);
+        // moves cursor back one line
+        assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
+        );
+
+        // moves cursor back one column
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
+
+        // leaves cursor on the max point
+        assert_eq!(
+            local_selections[2].range,
+            DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
+
+        // active lines does not include 1 (even though the range of the selection does)
+        assert_eq!(
+            state.active_rows.keys().cloned().collect::<Vec<u32>>(),
+            vec![0, 3, 5, 6]
+        );
+
+        // multi-buffer support
+        // in DisplayPoint co-ordinates, this is what we're dealing with:
+        //  0: [[file
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: ...
+        //  7: ffffff
+        //  8: gggggg
+        //  9: hhhhhh
+        // 10:
+        // 11: [[file
+        // 12:   header]]
+        // 13: bbbbbb
+        // 14: cccccc
+        // 15: dddddd
+        let editor = cx
+            .add_window(|cx| {
+                let buffer = MultiBuffer::build_multi(
+                    [
+                        (
+                            &(sample_text(8, 6, 'a') + "\n"),
+                            vec![
+                                Point::new(0, 0)..Point::new(3, 0),
+                                Point::new(4, 0)..Point::new(7, 0),
+                            ],
+                        ),
+                        (
+                            &(sample_text(8, 6, 'a') + "\n"),
+                            vec![Point::new(1, 0)..Point::new(3, 0)],
+                        ),
+                    ],
+                    cx,
+                );
+                Editor::new(EditorMode::Full, buffer, None, None, cx)
+            })
+            .root(cx);
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+        let (_, state) = editor.update(cx, |editor, cx| {
+            editor.cursor_shape = CursorShape::Block;
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
+                    DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
+                ]);
+            });
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            element.layout(
+                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                editor,
+                &mut layout_cx,
+            )
+        });
+
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 2);
+
+        // moves cursor on excerpt boundary back a line
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+
+        // moves cursor on buffer boundary back two lines
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
     }
 
     #[gpui::test]
