@@ -34,9 +34,9 @@ use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
 use staff_mode::StaffMode;
-use std::{mem, sync::Arc};
+use std::{borrow::Cow, mem, sync::Arc};
 use theme::IconButton;
-use util::{ResultExt, TryFutureExt};
+use util::{iife, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     item::ItemHandle,
@@ -1181,13 +1181,35 @@ impl CollabPanel {
 
         let tooltip_style = &theme.tooltip;
         let text = match section {
-            Section::ActiveCall => "Current Call",
-            Section::ContactRequests => "Requests",
-            Section::Contacts => "Contacts",
-            Section::Channels => "Channels",
-            Section::ChannelInvites => "Invites",
-            Section::Online => "Online",
-            Section::Offline => "Offline",
+            Section::ActiveCall => {
+                let channel_name = iife!({
+                    let channel_id = ActiveCall::global(cx)
+                        .read(cx)
+                        .room()?
+                        .read(cx)
+                        .channel_id()?;
+                    let name = self
+                        .channel_store
+                        .read(cx)
+                        .channel_for_id(channel_id)?
+                        .name
+                        .as_str();
+
+                    Some(name)
+                });
+
+                if let Some(name) = channel_name {
+                    Cow::Owned(format!("Current Call - #{}", name))
+                } else {
+                    Cow::Borrowed("Current Call")
+                }
+            }
+            Section::ContactRequests => Cow::Borrowed("Requests"),
+            Section::Contacts => Cow::Borrowed("Contacts"),
+            Section::Channels => Cow::Borrowed("Channels"),
+            Section::ChannelInvites => Cow::Borrowed("Invites"),
+            Section::Online => Cow::Borrowed("Online"),
+            Section::Offline => Cow::Borrowed("Offline"),
         };
 
         enum AddContact {}
