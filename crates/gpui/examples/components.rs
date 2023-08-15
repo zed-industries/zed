@@ -1,9 +1,8 @@
 use button_component::Button;
 
-use component::Component;
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, Flex, Label, ParentElement},
+    elements::{Component, ContainerStyle, Flex, Label, ParentElement},
     fonts::{self, TextStyle},
     platform::WindowOptions,
     AnyElement, App, Element, Entity, View, ViewContext,
@@ -115,12 +114,12 @@ mod theme {
 // Component creation:
 mod toggleable_button {
     use gpui::{
-        elements::{ContainerStyle, LabelStyle},
+        elements::{Component, ContainerStyle, LabelStyle},
         scene::MouseClick,
         EventContext, View,
     };
 
-    use crate::{button_component::Button, component::Component, theme::Toggleable};
+    use crate::{button_component::Button, theme::Toggleable};
 
     pub struct ToggleableButton<V: View> {
         active: bool,
@@ -172,13 +171,11 @@ mod toggleable_button {
 mod button_component {
 
     use gpui::{
-        elements::{ContainerStyle, Label, LabelStyle, MouseEventHandler},
+        elements::{Component, ContainerStyle, Label, LabelStyle, MouseEventHandler},
         platform::MouseButton,
         scene::MouseClick,
         AnyElement, Element, EventContext, TypeTag, View, ViewContext,
     };
-
-    use crate::component::Component;
 
     type ClickHandler<V> = Box<dyn Fn(MouseClick, &mut V, &mut EventContext<V>)>;
 
@@ -235,91 +232,6 @@ mod button_component {
             };
 
             result.into_any()
-        }
-    }
-}
-
-mod component {
-
-    use gpui::{AnyElement, Element, View, ViewContext};
-    use pathfinder_geometry::vector::Vector2F;
-
-    pub trait Component<V: View> {
-        fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
-
-        fn into_element(self) -> ComponentAdapter<V, Self>
-        where
-            Self: Sized,
-        {
-            ComponentAdapter::new(self)
-        }
-    }
-
-    pub struct ComponentAdapter<V, E> {
-        component: Option<E>,
-        phantom: std::marker::PhantomData<V>,
-    }
-
-    impl<E, V> ComponentAdapter<V, E> {
-        pub fn new(e: E) -> Self {
-            Self {
-                component: Some(e),
-                phantom: std::marker::PhantomData,
-            }
-        }
-    }
-
-    impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
-        type LayoutState = AnyElement<V>;
-
-        type PaintState = ();
-
-        fn layout(
-            &mut self,
-            constraint: gpui::SizeConstraint,
-            view: &mut V,
-            cx: &mut gpui::LayoutContext<V>,
-        ) -> (Vector2F, Self::LayoutState) {
-            let component = self.component.take().unwrap();
-            let mut element = component.render(view, cx.view_context());
-            let constraint = element.layout(constraint, view, cx);
-            (constraint, element)
-        }
-
-        fn paint(
-            &mut self,
-            scene: &mut gpui::SceneBuilder,
-            bounds: gpui::geometry::rect::RectF,
-            visible_bounds: gpui::geometry::rect::RectF,
-            layout: &mut Self::LayoutState,
-            view: &mut V,
-            cx: &mut gpui::PaintContext<V>,
-        ) -> Self::PaintState {
-            layout.paint(scene, bounds.origin(), visible_bounds, view, cx)
-        }
-
-        fn rect_for_text_range(
-            &self,
-            _: std::ops::Range<usize>,
-            _: gpui::geometry::rect::RectF,
-            _: gpui::geometry::rect::RectF,
-            _: &Self::LayoutState,
-            _: &Self::PaintState,
-            _: &V,
-            _: &ViewContext<V>,
-        ) -> Option<gpui::geometry::rect::RectF> {
-            todo!()
-        }
-
-        fn debug(
-            &self,
-            _: gpui::geometry::rect::RectF,
-            _: &Self::LayoutState,
-            _: &Self::PaintState,
-            _: &V,
-            _: &ViewContext<V>,
-        ) -> serde_json::Value {
-            todo!()
         }
     }
 }
