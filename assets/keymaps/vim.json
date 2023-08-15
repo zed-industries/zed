@@ -101,6 +101,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "v": "vim::ToggleVisual",
+      "shift-v": "vim::ToggleVisualLine",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
@@ -274,22 +276,6 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
-      "v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": false
-          }
-        }
-      ],
-      "shift-v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": true
-          }
-        }
-      ],
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
@@ -382,12 +368,14 @@
     "context": "Editor && vim_mode == visual && !VimWaiting",
     "bindings": {
       "u": "editor::Undo",
-      "c": "vim::VisualChange",
+      "o": "vim::OtherEnd",
+      "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
       "s": "vim::Substitute",
+      "c": "vim::Substitute",
       "~": "vim::ChangeCase",
       "r": [
         "vim::PushOperator",

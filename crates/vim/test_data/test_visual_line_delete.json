@@ -29,3 +29,8 @@
 {"Key":"j"}
 {"Key":"x"}
 {"Get":{"state":"The quick brown\nfox juˇmps over","mode":"Normal"}}
+{"Put":{"state":"The ˇlong line\nshould not\ncrash\n"}}
+{"Key":"shift-v"}
+{"Key":"$"}
+{"Key":"x"}
+{"Get":{"state":"should noˇt\ncrash\n","mode":"Normal"}}

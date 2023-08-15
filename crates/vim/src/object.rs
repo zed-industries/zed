@@ -369,7 +369,7 @@ fn surrounding_markers(
                     start = Some(point)
                 } else {
                     *point.column_mut() += char.len_utf8() as u32;
-                    start = Some(point);
+                    start = Some(point)
                 }
                 break;
             }
@@ -420,11 +420,38 @@ fn surrounding_markers(
         }
     }
 
-    if let (Some(start), Some(end)) = (start, end) {
-        Some(start..end)
-    } else {
-        None
+    let (Some(mut start), Some(mut end)) = (start, end) else {
+        return None;
+    };
+
+    if !around {
+        // if a block starts with a newline, move the start to after the newline.
+        let mut was_newline = false;
+        for (char, point) in map.chars_at(start) {
+            if was_newline {
+                start = point;
+            } else if char == '\n' {
+                was_newline = true;
+                continue;
+            }
+            break;
+        }
+        // if a block ends with a newline, then whitespace, then the delimeter,
+        // move the end to after the newline.
+        let mut new_end = end;
+        for (char, point) in map.reverse_chars_at(end) {
+            if char == '\n' {
+                end = new_end;
+                break;
+            }
+            if !char.is_whitespace() {
+                break;
+            }
+            new_end = point
+        }
     }
+
+    Some(start..end)
 }
 
 #[cfg(test)]
@@ -480,6 +507,12 @@ mod test {
     #[gpui::test]
     async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("The quick ˇbrown\nfox").await;
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+        cx.simulate_shared_keystrokes(["i", "w"]).await;
+        cx.assert_shared_state("The quick «brownˇ»\nfox").await;
 
         cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
             .await;
@@ -673,6 +706,48 @@ mod test {
             cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_multiline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+               if a == \"\" {
+                  return true
+               }
+               ˇreturn false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+            «   if a == \"\" {
+                  return true
+               }
+               return false
+            ˇ»}"})
+            .await;
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+                 if a == \"\" {
+                     ˇreturn true
+                 }
+                 return false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+                 if a == \"\" {
+            «         return true
+            ˇ»     }
+                 return false
+            }"})
+            .await;
     }
 
     #[gpui::test]

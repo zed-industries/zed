@@ -12,6 +12,15 @@ pub enum Mode {
     Visual { line: bool },
 }
 
+impl Mode {
+    pub fn is_visual(&self) -> bool {
+        match self {
+            Mode::Normal | Mode::Insert => false,
+            Mode::Visual { .. } => true,
+        }
+    }
+}
+
 impl Default for Mode {
     fn default() -> Self {
         Self::Normal
@@ -78,12 +87,11 @@ impl VimState {
             )
     }
 
-    pub fn clip_at_line_end(&self) -> bool {
-        !matches!(self.mode, Mode::Insert | Mode::Visual { .. })
-    }
-
-    pub fn empty_selections_only(&self) -> bool {
-        !matches!(self.mode, Mode::Visual { .. })
+    pub fn clip_at_line_ends(&self) -> bool {
+        match self.mode {
+            Mode::Insert | Mode::Visual { .. } => false,
+            Mode::Normal => true,
+        }
     }
 
     pub fn keymap_context_layer(&self) -> KeymapContext {

@@ -214,7 +214,9 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {
