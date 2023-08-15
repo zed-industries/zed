@@ -237,6 +237,14 @@
     }
   },
   {
+    // escape is in its own section so that it cancels a pending count.
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "ctrl+[": "editor::Cancel"
+    }
+  },
+  {
     "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
       "c": [
@@ -386,6 +394,14 @@
         "Replace"
       ],
       "ctrl-c": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl+[": [
         "vim::SwitchMode",
         "Normal"
       ],
