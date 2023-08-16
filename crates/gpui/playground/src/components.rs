@@ -9,7 +9,7 @@ use playground_macros::Element;
 use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
-    click: Option<Rc<dyn Fn(&mut V, &D)>>,
+    click: Option<Rc<dyn Fn(&mut V, &D, &mut ViewContext<V>)>>,
 }
 
 impl<V, D> Default for ButtonHandlers<V, D> {
@@ -67,10 +67,10 @@ impl<V: 'static, D: 'static> Button<V, D> {
         self
     }
 
-    pub fn click(self, handler: impl Fn(&mut V, &D) + 'static) -> Self {
+    pub fn click(self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
         let data = self.data.clone();
-        Element::click(self, move |view, _| {
-            handler(view, data.as_ref());
+        Element::left_click(self, move |view, _, cx| {
+            handler(view, data.as_ref(), cx);
         })
     }
 }
@@ -89,7 +89,7 @@ impl<V: 'static, D: 'static> Button<V, D> {
 
         if let Some(handler) = self.handlers.click.clone() {
             let data = self.data.clone();
-            button.click(move |view, event| handler(view, data.as_ref()))
+            button.left_click(move |view, event, cx| handler(view, data.as_ref(), cx))
         } else {
             button
         }

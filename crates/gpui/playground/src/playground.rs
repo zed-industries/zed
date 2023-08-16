@@ -18,6 +18,7 @@ mod color;
 mod components;
 mod element;
 mod frame;
+mod paint_context;
 mod style;
 mod text;
 mod themes;
@@ -48,7 +49,7 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_half()
         .fill(theme.success(0.5))
-        .child(button().label("Hello").click(|_, _| (println!("hey!"))))
+        .child(button().label("Hello").click(|_, _, _| (println!("hey!"))))
 }
 
 //     todo!()

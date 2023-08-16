@@ -1,5 +1,6 @@
 mod mouse_event;
 mod mouse_region;
+mod region;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;

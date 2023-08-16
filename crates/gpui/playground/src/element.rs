@@ -4,38 +4,18 @@ use crate::{
     style::{Display, ElementStyle, Fill, Overflow, Position},
 };
 use anyhow::Result;
-use derive_more::{Deref, DerefMut};
 pub use gpui::LayoutContext;
 use gpui::{
     geometry::{DefinedLength, Length},
+    platform::MouseButton,
     scene::MouseClick,
-    EngineLayout, PaintContext as LegacyPaintContext, RenderContext,
+    EngineLayout, RenderContext, ViewContext, WindowContext,
 };
 use playground_macros::tailwind_lengths;
 use std::{any::Any, rc::Rc};
+
+pub use crate::paint_context::PaintContext;
 pub use taffy::tree::NodeId;
-
-#[derive(Deref, DerefMut)]
-pub struct PaintContext<'a, 'b, 'c, 'd, V> {
-    #[deref]
-    #[deref_mut]
-    pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
-    pub(crate) scene: &'d mut gpui::SceneBuilder,
-}
-
-impl<V> RenderContext for PaintContext<'_, '_, '_, '_, V> {
-    fn text_style(&self) -> gpui::fonts::TextStyle {
-        self.legacy_cx.text_style()
-    }
-
-    fn push_text_style(&mut self, style: gpui::fonts::TextStyle) {
-        self.legacy_cx.push_text_style(style)
-    }
-
-    fn pop_text_style(&mut self) {
-        self.legacy_cx.pop_text_style()
-    }
-}
 
 pub struct Layout<'a, E: ?Sized> {
     pub from_engine: EngineLayout,
@@ -43,7 +23,7 @@ pub struct Layout<'a, E: ?Sized> {
 }
 
 pub struct ElementHandlers<V> {
-    click: Option<Rc<dyn Fn(&mut V, MouseClick)>>,
+    click: Option<Rc<dyn Fn(&mut V, MouseClick, &mut WindowContext, usize)>>,
 }
 
 pub struct ElementMetadata<V> {
@@ -99,12 +79,35 @@ pub trait Element<V: 'static>: 'static {
         Adapter(self.into_any())
     }
 
-    fn click(mut self, handler: impl Fn(&mut V, MouseClick) + 'static) -> Self
+    fn left_click(self, handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.handlers_mut().click = Some(Rc::new(move |view, event| {
-            handler(view, event);
+        self.click(MouseButton::Left, handler)
+    }
+
+    fn right_click(
+        self,
+        handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.click(MouseButton::Right, handler)
+    }
+
+    fn click(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.handlers_mut().click = Some(Rc::new(move |view, event, window_cx, view_id| {
+            if event.button == button {
+                handler(view, event, &mut ViewContext::mutable(window_cx, view_id));
+            }
         }));
         self
     }
@@ -422,6 +425,8 @@ impl<V> AnyElement<V> {
                 .expect("you can currently only use playground elements within an adapter"),
             from_element: element_layout.as_mut(),
         };
+
+        if let Some(click_handler) = self.element.handlers_mut().click.clone() {}
 
         self.element.paint(layout, view, cx)?;
         if pushed_text_style {

@@ -38,7 +38,7 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         legacy_cx: &mut gpui::PaintContext<V>,
     ) -> Self::PaintState {
         legacy_cx.push_layout_engine(layout_engine.take().unwrap());
-        let mut cx = PaintContext { legacy_cx, scene };
+        let mut cx = PaintContext::new(legacy_cx, scene);
         self.0.paint(view, &mut cx).log_err();
         *layout_engine = legacy_cx.pop_layout_engine();
         debug_assert!(layout_engine.is_some());

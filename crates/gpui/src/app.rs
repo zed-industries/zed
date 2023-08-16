@@ -2879,7 +2879,7 @@ impl<'a, 'b, V> DerefMut for ViewContext<'a, 'b, V> {
 }
 
 impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
-    pub(crate) fn mutable(window_context: &'b mut WindowContext<'a>, view_id: usize) -> Self {
+    pub fn mutable(window_context: &'b mut WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Mutable(window_context),
             view_id,
@@ -2887,7 +2887,7 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
         }
     }
 
-    pub(crate) fn immutable(window_context: &'b WindowContext<'a>, view_id: usize) -> Self {
+    pub fn immutable(window_context: &'b WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Immutable(window_context),
             view_id,
@@ -3618,7 +3618,7 @@ pub struct EventContext<'a, 'b, 'c, V> {
 }
 
 impl<'a, 'b, 'c, V> EventContext<'a, 'b, 'c, V> {
-    pub(crate) fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         EventContext {
             view_context,
             handled: true,
