@@ -192,6 +192,7 @@ impl AssistantPanel {
                                 old_dock_position = new_dock_position;
                                 cx.emit(AssistantPanelEvent::DockPositionChanged);
                             }
+                            cx.notify();
                         })];
 
                     this
@@ -780,8 +781,10 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/robot_14.svg"
+    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
+        settings::get::<AssistantSettings>(cx)
+            .button
+            .then(|| "icons/ai.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {

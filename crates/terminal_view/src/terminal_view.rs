@@ -673,7 +673,7 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                gpui::elements::Svg::new("icons/terminal_12.svg")
+                gpui::elements::Svg::new("icons/terminal.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)

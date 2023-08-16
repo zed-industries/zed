@@ -107,6 +107,16 @@ pub struct IconStyle {
     pub container: ContainerStyle,
 }
 
+impl IconStyle {
+    pub fn width(&self) -> f32 {
+        self.icon.dimensions.width
+            + self.container.padding.left
+            + self.container.padding.right
+            + self.container.margin.left
+            + self.container.margin.right
+    }
+}
+
 pub fn icon<V: View>(style: &IconStyle) -> Container<V> {
     svg(&style.icon).contained().with_style(style.container)
 }

@@ -105,7 +105,7 @@ impl View for DiagnosticIndicator {
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
                     summary_row.add_child(
-                        Svg::new("icons/circle_x_mark_16.svg")
+                        Svg::new("icons/error.svg")
                             .with_color(style.icon_color_error)
                             .constrained()
                             .with_width(style.icon_width)
@@ -121,7 +121,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.warning_count > 0 {
                     summary_row.add_child(
-                        Svg::new("icons/triangle_exclamation_16.svg")
+                        Svg::new("icons/warning.svg")
                             .with_color(style.icon_color_warning)
                             .constrained()
                             .with_width(style.icon_width)
@@ -142,7 +142,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.error_count == 0 && self.summary.warning_count == 0 {
                     summary_row.add_child(
-                        Svg::new("icons/circle_check_16.svg")
+                        Svg::new("icons/check_circle.svg")
                             .with_color(style.icon_color_ok)
                             .constrained()
                             .with_width(style.icon_width)

@@ -48,6 +48,10 @@ pub trait Element<V: View>: 'static {
     type LayoutState;
     type PaintState;
 
+    fn view_name(&self) -> &'static str {
+        V::ui_name()
+    }
+
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -272,8 +276,16 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
             | ElementState::PostLayout { mut element, .. }
             | ElementState::PostPaint { mut element, .. } => {
                 let (size, layout) = element.layout(constraint, view, cx);
-                debug_assert!(size.x().is_finite());
-                debug_assert!(size.y().is_finite());
+                debug_assert!(
+                    size.x().is_finite(),
+                    "Element for {:?} had infinite x size after layout",
+                    element.view_name()
+                );
+                debug_assert!(
+                    size.y().is_finite(),
+                    "Element for {:?} had infinite y size after layout",
+                    element.view_name()
+                );
 
                 result = size;
                 ElementState::PostLayout {

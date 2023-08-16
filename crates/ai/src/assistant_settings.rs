@@ -13,6 +13,7 @@ pub enum AssistantDockPosition {
 
 #[derive(Deserialize, Debug)]
 pub struct AssistantSettings {
+    pub button: bool,
     pub dock: AssistantDockPosition,
     pub default_width: f32,
     pub default_height: f32,
@@ -20,6 +21,7 @@ pub struct AssistantSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AssistantSettingsContent {
+    pub button: Option<bool>,
     pub dock: Option<AssistantDockPosition>,
     pub default_width: Option<f32>,
     pub default_height: Option<f32>,
