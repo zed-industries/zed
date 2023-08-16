@@ -105,7 +105,7 @@ fn render_quick_action_bar_button<
     let theme = theme::current(cx);
     let (tooltip_text, action) = tooltip;
 
-    MouseEventHandler::<QuickActionBarButton, _>::new(index, cx, |mouse_state, _| {
+    MouseEventHandler::new::<QuickActionBarButton, _>(index, cx, |mouse_state, _| {
         let style = theme
             .workspace
             .toolbar
