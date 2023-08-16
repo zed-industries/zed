@@ -1,9 +1,10 @@
 use crate::{
-    element::{AnyElement, Element, ElementMetadata},
+    element::{Element, ElementMetadata},
     frame,
     themes::rose_pine,
 };
 use gpui::ViewContext;
+use playground_macros::Element;
 use std::{borrow::Cow, marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
@@ -16,6 +17,8 @@ impl<V, D> Default for ButtonHandlers<V, D> {
     }
 }
 
+#[derive(Element)]
+#[element_crate = "crate"]
 pub struct Button<V: 'static, D: 'static> {
     metadata: ElementMetadata<V>,
     handlers: ButtonHandlers<V, D>,
@@ -89,34 +92,34 @@ impl<V: 'static, D: 'static> Button<V, D> {
     }
 }
 
-impl<V: 'static, D> Element<V> for Button<V, D> {
-    type Layout = AnyElement<V>;
+// impl<V: 'static, D> Element<V> for Button<V, D> {
+//     type Layout = AnyElement<V>;
 
-    fn style_mut(&mut self) -> &mut crate::style::ElementStyle {
-        &mut self.metadata.style
-    }
+//     fn style_mut(&mut self) -> &mut crate::style::ElementStyle {
+//         &mut self.metadata.style
+//     }
 
-    fn handlers_mut(&mut self) -> &mut crate::element::ElementHandlers<V> {
-        &mut self.metadata.handlers
-    }
+//     fn handlers_mut(&mut self) -> &mut crate::element::ElementHandlers<V> {
+//         &mut self.metadata.handlers
+//     }
 
-    fn layout(
-        &mut self,
-        view: &mut V,
-        cx: &mut crate::element::LayoutContext<V>,
-    ) -> anyhow::Result<(taffy::tree::NodeId, Self::Layout)> {
-        let mut element = self.render(view, cx).into_any();
-        let node_id = element.layout(view, cx)?;
-        Ok((node_id, element))
-    }
+//     fn layout(
+//         &mut self,
+//         view: &mut V,
+//         cx: &mut crate::element::LayoutContext<V>,
+//     ) -> anyhow::Result<(taffy::tree::NodeId, Self::Layout)> {
+//         let mut element = self.render(view, cx).into_any();
+//         let node_id = element.layout(view, cx)?;
+//         Ok((node_id, element))
+//     }
 
-    fn paint<'a>(
-        &mut self,
-        layout: crate::element::Layout<'a, Self::Layout>,
-        view: &mut V,
-        cx: &mut crate::element::PaintContext<V>,
-    ) -> anyhow::Result<()> {
-        layout.from_element.paint(view, cx)?;
-        Ok(())
-    }
-}
+//     fn paint<'a>(
+//         &mut self,
+//         layout: crate::element::Layout<'a, Self::Layout>,
+//         view: &mut V,
+//         cx: &mut crate::element::PaintContext<V>,
+//     ) -> anyhow::Result<()> {
+//         layout.from_element.paint(view, cx)?;
+//         Ok(())
+//     }
+// }

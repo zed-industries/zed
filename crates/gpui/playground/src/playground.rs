@@ -42,7 +42,6 @@ fn main() {
 }
 
 fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-    // frame().w_full().h_half().fill(theme.success(0.5))
     frame()
         .h_full()
         .w(percent(50.))

@@ -7,3 +7,8 @@ mod tailwind_lengths;
 pub fn tailwind_lengths(attr: TokenStream, item: TokenStream) -> TokenStream {
     tailwind_lengths::tailwind_lengths(attr, item)
 }
+
+#[proc_macro_derive(Element, attributes(element_crate))]
+pub fn derive_element(input: TokenStream) -> TokenStream {
+    derive_element::derive_element(input)
+}
