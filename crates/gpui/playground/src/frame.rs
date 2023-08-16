@@ -1,18 +1,20 @@
 use crate::{
-    element::{AnyElement, Element, LayoutContext, NodeId, PaintContext},
-    style::Style,
+    element::{AnyElement, Element, ElementHandlers, Layout, LayoutContext, NodeId, PaintContext},
+    style::ElementStyle,
 };
 use anyhow::{anyhow, Result};
-use gpui::{EngineLayout, LayoutNodeId};
+use gpui::LayoutNodeId;
 
 pub struct Frame<V> {
-    style: Style,
+    style: ElementStyle,
+    handlers: ElementHandlers<V>,
     children: Vec<AnyElement<V>>,
 }
 
 pub fn frame<V>() -> Frame<V> {
     Frame {
-        style: Style::default(),
+        style: ElementStyle::default(),
+        handlers: ElementHandlers::default(),
         children: Vec::new(),
     }
 }
@@ -20,8 +22,12 @@ pub fn frame<V>() -> Frame<V> {
 impl<V: 'static> Element<V> for Frame<V> {
     type Layout = ();
 
-    fn style_mut(&mut self) -> &mut Style {
+    fn style_mut(&mut self) -> &mut ElementStyle {
         &mut self.style
+    }
+
+    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+        &mut self.handlers
     }
 
     fn layout(
@@ -44,14 +50,9 @@ impl<V: 'static> Element<V> for Frame<V> {
         Ok((node_id, ()))
     }
 
-    fn paint(
-        &mut self,
-        layout: EngineLayout,
-        view: &mut V,
-        cx: &mut PaintContext<V>,
-    ) -> Result<()> {
+    fn paint(&mut self, layout: Layout<()>, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         cx.scene.push_quad(gpui::scene::Quad {
-            bounds: layout.bounds,
+            bounds: layout.from_engine.bounds,
             background: self.style.fill.color().map(Into::into),
             border: Default::default(),
             corner_radii: Default::default(),
@@ -61,14 +62,5 @@ impl<V: 'static> Element<V> for Frame<V> {
             child.paint(view, cx)?;
         }
         Ok(())
-    }
-}
-
-impl<V> Clone for Frame<V> {
-    fn clone(&self) -> Self {
-        Self {
-            style: self.style.clone(),
-            children: self.children.clone(),
-        }
     }
 }

@@ -1,13 +1,14 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, rc::Rc};
 
 use crate::{
     adapter::Adapter,
-    style::{DefinedLength, Display, Fill, Length, Overflow, Position, Style},
+    style::{DefinedLength, Display, ElementStyle, Fill, Length, Overflow, Position},
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    EngineLayout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext,
+    scene::MouseClick, EngineLayout, LayoutContext as LegacyLayoutContext,
+    PaintContext as LegacyPaintContext,
 };
 use playground_macros::tailwind_lengths;
 pub use taffy::tree::NodeId;
@@ -25,14 +26,48 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
-pub trait Element<V: 'static>: 'static + Clone {
+pub struct Layout<'a, E: ?Sized> {
+    pub from_engine: EngineLayout,
+    pub from_element: &'a mut E,
+}
+
+pub struct ElementHandlers<V> {
+    click: Option<Rc<dyn Fn(&mut V, MouseClick)>>,
+}
+
+pub struct ElementMetadata<V> {
+    pub style: ElementStyle,
+    pub handlers: ElementHandlers<V>,
+}
+
+impl<V> Default for ElementMetadata<V> {
+    fn default() -> Self {
+        Self {
+            style: ElementStyle::default(),
+            handlers: ElementHandlers::default(),
+        }
+    }
+}
+
+impl<V> Default for ElementHandlers<V> {
+    fn default() -> Self {
+        ElementHandlers { click: None }
+    }
+}
+
+pub trait Element<V: 'static>: 'static {
     type Layout: 'static;
 
-    fn style_mut(&mut self) -> &mut Style;
+    fn style_mut(&mut self) -> &mut ElementStyle;
+    fn handlers_mut(&mut self) -> &mut ElementHandlers<V>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Self::Layout)>;
-    fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
-        -> Result<()>;
+    fn paint<'a>(
+        &mut self,
+        layout: Layout<Self::Layout>,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
+    ) -> Result<()>;
 
     /// Convert to a dynamically-typed element suitable for layout and paint.
     fn into_any(self) -> AnyElement<V>
@@ -51,6 +86,16 @@ pub trait Element<V: 'static>: 'static + Clone {
         Self: Element<V>,
     {
         Adapter(self.into_any())
+    }
+
+    fn click(mut self, handler: impl Fn(&mut V, MouseClick) + 'static) -> Self
+    where
+        Self: Sized,
+    {
+        self.handlers_mut().click = Some(Rc::new(move |view, event| {
+            handler(view, event);
+        }));
+        self
     }
 
     // Display ////////////////////
@@ -265,46 +310,59 @@ pub trait Element<V: 'static>: 'static + Clone {
 }
 
 pub trait ElementObject<V> {
-    fn style_mut(&mut self) -> &mut Style;
+    fn style_mut(&mut self) -> &mut ElementStyle;
+    fn handlers_mut(&mut self) -> &mut ElementHandlers<V>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
-        -> Result<(NodeId, Arc<dyn Any>)>;
-    fn paint(&mut self, layout: EngineLayout, view: &mut V, cx: &mut PaintContext<V>)
-        -> Result<()>;
-    fn clone_object(&self) -> Box<dyn ElementObject<V>>;
+        -> Result<(NodeId, Box<dyn Any>)>;
+    fn paint(
+        &mut self,
+        layout: Layout<dyn Any>,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
+    ) -> Result<()>;
 }
 
 impl<V: 'static, E: Element<V>> ElementObject<V> for E {
-    fn style_mut(&mut self) -> &mut Style {
-        self.style_mut()
+    fn style_mut(&mut self) -> &mut ElementStyle {
+        Element::style_mut(self)
+    }
+
+    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+        Element::handlers_mut(self)
     }
 
     fn layout(
         &mut self,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> Result<(NodeId, Arc<dyn Any>)> {
+    ) -> Result<(NodeId, Box<dyn Any>)> {
         let (node_id, layout) = self.layout(view, cx)?;
-        let layout = Arc::new(layout) as Arc<dyn Any>;
+        let layout = Box::new(layout) as Box<dyn Any>;
         Ok((node_id, layout))
     }
 
     fn paint(
         &mut self,
-        layout: EngineLayout,
+        layout: Layout<dyn Any>,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Result<()> {
+        let layout = Layout {
+            from_engine: layout.from_engine,
+            from_element: layout.from_element.downcast_mut::<E::Layout>().unwrap(),
+        };
+
         self.paint(layout, view, cx)
     }
 
-    fn clone_object(&self) -> Box<dyn ElementObject<V>> {
-        Box::new(Clone::clone(self))
-    }
+    // fn clone_object(&self) -> Box<dyn ElementObject<V>> {
+    //     Box::new(Clone::clone(self))
+    // }
 }
 
 pub struct AnyElement<V> {
     element: Box<dyn ElementObject<V>>,
-    layout: Option<(NodeId, Arc<dyn Any>)>,
+    layout: Option<(NodeId, Box<dyn Any>)>,
 }
 
 impl<V> AnyElement<V> {
@@ -315,30 +373,31 @@ impl<V> AnyElement<V> {
     }
 
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
-        let (layout_node_id, layout) = self.layout.clone().expect("paint called before layout");
-        let layout = cx
-            .layout_engine()
-            .unwrap()
-            .computed_layout(layout_node_id)
-            .expect("you can currently only use playground elements within an adapter");
-        self.element.paint(layout, view, cx)
-    }
-}
+        let (layout_node_id, element_layout) =
+            self.layout.as_mut().expect("paint called before layout");
 
-impl<V> Clone for AnyElement<V> {
-    fn clone(&self) -> Self {
-        Self {
-            element: self.element.clone_object(),
-            layout: self.layout.clone(),
-        }
+        let layout = Layout {
+            from_engine: cx
+                .layout_engine()
+                .unwrap()
+                .computed_layout(*layout_node_id)
+                .expect("you can currently only use playground elements within an adapter"),
+            from_element: element_layout.as_mut(),
+        };
+
+        self.element.paint(layout, view, cx)
     }
 }
 
 impl<V: 'static> Element<V> for AnyElement<V> {
     type Layout = ();
 
-    fn style_mut(&mut self) -> &mut Style {
+    fn style_mut(&mut self) -> &mut ElementStyle {
         self.element.style_mut()
+    }
+
+    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+        self.element.handlers_mut()
     }
 
     fn layout(
@@ -349,12 +408,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         Ok((self.layout(view, cx)?, ()))
     }
 
-    fn paint(
-        &mut self,
-        layout: EngineLayout,
-        view: &mut V,
-        cx: &mut PaintContext<V>,
-    ) -> Result<()> {
+    fn paint(&mut self, layout: Layout<()>, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         self.paint(view, cx)
     }
 }

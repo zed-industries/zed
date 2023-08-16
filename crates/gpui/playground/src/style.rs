@@ -5,7 +5,7 @@ pub use taffy::style::{
 };
 
 #[derive(Clone)]
-pub struct Style {
+pub struct ElementStyle {
     /// What layout strategy should be used?
     pub display: Display,
 
@@ -67,8 +67,8 @@ pub struct Style {
     pub fill: Fill,
 }
 
-impl Style {
-    pub const DEFAULT: Style = Style {
+impl ElementStyle {
+    pub const DEFAULT: ElementStyle = ElementStyle {
         display: Display::DEFAULT,
         overflow: Point {
             x: Overflow::Visible,
@@ -137,7 +137,7 @@ impl Style {
     }
 }
 
-impl Default for Style {
+impl Default for ElementStyle {
     fn default() -> Self {
         Self::DEFAULT.clone()
     }

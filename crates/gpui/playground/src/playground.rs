@@ -14,6 +14,7 @@ use view::view;
 
 mod adapter;
 mod color;
+mod components;
 mod element;
 mod frame;
 mod style;

@@ -4,7 +4,6 @@ use util::ResultExt;
 
 use crate::element::AnyElement;
 
-#[derive(Clone)]
 pub struct Adapter<V>(pub(crate) AnyElement<V>);
 
 impl<V: 'static> gpui::Element<V> for Adapter<V> {
