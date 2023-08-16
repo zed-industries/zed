@@ -3,7 +3,6 @@ mod assistant_settings;
 
 use anyhow::Result;
 pub use assistant::AssistantPanel;
-use assistant_settings::OpenAIModel;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use fs::Fs;
@@ -61,7 +60,7 @@ struct SavedConversation {
     messages: Vec<SavedMessage>,
     message_metadata: HashMap<MessageId, MessageMetadata>,
     summary: String,
-    model: OpenAIModel,
+    model: String,
 }
 
 impl SavedConversation {

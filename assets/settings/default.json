@@ -134,7 +134,7 @@
     //
     // 1. "gpt-3.5-turbo-0613""
     // 2. "gpt-4-0613""
-    "default_open_ai_model": "gpt-4-0613"
+    "default_open_ai_model": "gpt-4"
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
