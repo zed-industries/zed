@@ -2514,7 +2514,6 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        dbg!("insert!");
         self.insert_with_autoindent_mode(
             text,
             Some(AutoindentMode::Block {

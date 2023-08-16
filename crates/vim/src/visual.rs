@@ -129,62 +129,37 @@ pub fn visual_block_motion(
 
         let was_reversed = tail.column() > head.column();
 
-        if !was_reversed && !(head.column() == 0 && head == map.max_point()) {
+        if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
 
-        let Some((new_head, new_goal)) = move_selection(&map, head, goal) else {
+        let Some((new_head, _)) = move_selection(&map, head, goal) else {
             return
         };
         head = new_head;
-        if goal == SelectionGoal::None {
-            goal = new_goal;
-        }
 
-        let mut is_reversed = tail.column() > head.column();
+        let is_reversed = tail.column() > head.column();
         if was_reversed && !is_reversed {
             tail = movement::left(map, tail)
         } else if !was_reversed && is_reversed {
             tail = movement::right(map, tail)
         }
-        if !is_reversed {
+        if !is_reversed && !preserve_goal {
             head = movement::saturating_right(map, head)
         }
 
-        if !preserve_goal
-            || !matches!(
-                goal,
-                SelectionGoal::ColumnRange { .. } | SelectionGoal::Column(_)
-            )
-        {
-            goal = SelectionGoal::ColumnRange {
-                start: tail.column(),
-                end: head.column(),
-            }
-        }
-
-        let mut columns = if let SelectionGoal::ColumnRange { start, end } = goal {
-            if start > end {
-                is_reversed = true;
-                end..start
-            } else {
-                is_reversed = false;
-                start..end
-            }
-        } else if let SelectionGoal::Column(column) = goal {
-            is_reversed = false;
-            column..(column + 1)
-        } else {
-            unreachable!()
+        let (start, end) = match goal {
+            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
+            _ => (tail.column(), head.column()),
         };
+        goal = SelectionGoal::ColumnRange { start, end };
 
-        if columns.start >= map.line_len(head.row()) {
-            columns.start = map.line_len(head.row()).saturating_sub(1);
-        }
-        if columns.start >= map.line_len(tail.row()) {
-            columns.start = map.line_len(tail.row()).saturating_sub(1);
-        }
-
+        let columns = if is_reversed {
+            head.column()..tail.column()
+        } else {
+            tail.column()..head.column()
+        };
         let mut selections = Vec::new();
         let mut row = tail.row();
 
@@ -291,37 +266,39 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
 
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    if line_mode {
-                        let mut position = selection.head();
-                        if !selection.reversed {
-                            position = movement::left(map, position);
+            editor.transact(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        if line_mode {
+                            let mut position = selection.head();
+                            if !selection.reversed {
+                                position = movement::left(map, position);
+                            }
+                            original_columns.insert(selection.id, position.to_point(map).column);
                         }
-                        original_columns.insert(selection.id, position.to_point(map).column);
-                    }
-                    selection.goal = SelectionGoal::None;
+                        selection.goal = SelectionGoal::None;
+                    });
                 });
-            });
-            copy_selections_content(editor, line_mode, cx);
-            editor.insert("", cx);
+                copy_selections_content(editor, line_mode, cx);
+                editor.insert("", cx);
 
-            // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    let mut cursor = selection.head().to_point(map);
+                // Fixup cursor position after the deletion
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let mut cursor = selection.head().to_point(map);
 
-                    if let Some(column) = original_columns.get(&selection.id) {
-                        cursor.column = *column
+                        if let Some(column) = original_columns.get(&selection.id) {
+                            cursor.column = *column
+                        }
+                        let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
+                        selection.collapse_to(cursor, selection.goal)
+                    });
+                    if vim.state.mode == Mode::VisualBlock {
+                        s.select_anchors(vec![s.first_anchor()])
                     }
-                    let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
-                    selection.collapse_to(cursor, selection.goal)
                 });
-                if vim.state.mode == Mode::VisualBlock {
-                    s.select_anchors(vec![s.first_anchor()])
-                }
-            });
+            })
         });
         vim.switch_mode(Mode::Normal, true, cx);
     });
@@ -948,8 +925,19 @@ mod test {
             "
         })
         .await;
-        cx.simulate_shared_keystrokes(["ctrl-v", "down", "down", "down"])
+        cx.simulate_shared_keystrokes(["ctrl-v", "down", "down"])
             .await;
+        cx.assert_shared_state(indoc! {
+            "The«ˇ q»uick
+            bro«ˇwn»
+            foxˇ
+            jumps over the
+
+            lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["down"]).await;
         cx.assert_shared_state(indoc! {
             "The «qˇ»uick
             brow«nˇ»

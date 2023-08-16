@@ -21,6 +21,7 @@
 {"Key":"ctrl-v"}
 {"Key":"down"}
 {"Key":"down"}
+{"Get":{"state":"The«ˇ q»uick\nbro«ˇwn»\nfoxˇ\njumps over the\n\nlazy dog\n","mode":"VisualBlock"}}
 {"Key":"down"}
 {"Get":{"state":"The «qˇ»uick\nbrow«nˇ»\nfox\njump«sˇ» over the\n\nlazy dog\n","mode":"VisualBlock"}}
 {"Key":"left"}

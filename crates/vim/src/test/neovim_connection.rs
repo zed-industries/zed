@@ -520,5 +520,5 @@ fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
             byte_range
         })
         .collect::<Vec<_>>();
-    util::test::generate_marked_text(text, &byte_ranges[..], true);
+    util::test::generate_marked_text(text, &byte_ranges[..], true)
 }
