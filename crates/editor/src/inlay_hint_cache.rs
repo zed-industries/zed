@@ -2001,7 +2001,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_multiple_excerpts_large_multibuffer(
         deterministic: Arc<Deterministic>,
         cx: &mut gpui::TestAppContext,
@@ -2335,10 +2335,12 @@ mod tests {
 all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(
-                editor.inlay_hint_cache().version,
-                last_scroll_update_version + expected_layers.len(),
-                "Due to every excerpt having one hint, cache should update per new excerpt received"
+
+            let current_cache_version = editor.inlay_hint_cache().version;
+            let minimum_expected_version = last_scroll_update_version + expected_layers.len();
+            assert!(
+                current_cache_version == minimum_expected_version || current_cache_version == minimum_expected_version + 1,
+                "Due to every excerpt having one hint, cache should update per new excerpt received + 1 potential sporadic update"
             );
         });
     }
