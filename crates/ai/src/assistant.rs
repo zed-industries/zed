@@ -2238,10 +2238,14 @@ mod tests {
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        init(cx);
+        dbg!("here1");
         let registry = Arc::new(LanguageRegistry::test());
         let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
+        dbg!("here2");
         let message_1 = conversation.read(cx).message_anchors[0].clone();
         assert_eq!(
             messages(&conversation, cx),
@@ -2253,6 +2257,7 @@ mod tests {
                 .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
                 .unwrap()
         });
+        dbg!("here3");
         assert_eq!(
             messages(&conversation, cx),
             vec![
@@ -2264,6 +2269,7 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
         });
+        dbg!("here6");
         assert_eq!(
             messages(&conversation, cx),
             vec![
@@ -2277,6 +2283,7 @@ mod tests {
                 .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
                 .unwrap()
         });
+        dbg!("here7");
         assert_eq!(
             messages(&conversation, cx),
             vec![
@@ -2291,6 +2298,7 @@ mod tests {
                 .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
                 .unwrap()
         });
+        dbg!("here8");
         assert_eq!(
             messages(&conversation, cx),
             vec![
@@ -2304,6 +2312,7 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
         });
+        dbg!("here9");
         assert_eq!(
             messages(&conversation, cx),
             vec![
@@ -2364,6 +2373,8 @@ mod tests {
 
     #[gpui::test]
     fn test_message_splitting(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
@@ -2458,6 +2469,8 @@ mod tests {
 
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
@@ -2538,6 +2551,8 @@ mod tests {
 
     #[gpui::test]
     fn test_serialization(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let conversation =
             cx.add_model(|cx| Conversation::new(Default::default(), registry.clone(), cx));
