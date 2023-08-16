@@ -9,7 +9,7 @@ import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
 import collab_modals from "./collab_modals"
 import { text_button } from "../component/text_button"
-import { toggleable_icon_button } from "../component/icon_button"
+import { icon_button, toggleable_icon_button } from "../component/icon_button"
 import { indicator } from "../component/indicator"
 
 export default function contacts_panel(): any {
@@ -27,7 +27,7 @@ export default function contacts_panel(): any {
         color: foreground(layer, "on"),
         icon_width: 14,
         button_width: 16,
-        corner_radius: 8,
+        corner_radius: 8
     }
 
     const project_row = {
@@ -62,8 +62,9 @@ export default function contacts_panel(): any {
     }
 
     const header_icon_button = toggleable_icon_button(theme, {
-        layer: theme.middle,
         variant: "ghost",
+        size: "sm",
+        active_layer: theme.lowest,
     })
 
     const subheader_row = toggleable({
@@ -87,8 +88,8 @@ export default function contacts_panel(): any {
         state: {
             active: {
                 default: {
-                    ...text(layer, "ui_sans", "active", { size: "sm" }),
-                    background: background(layer, "active"),
+                    ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                    background: background(theme.lowest),
                 },
                 clicked: {
                     background: background(layer, "pressed"),
@@ -140,8 +141,8 @@ export default function contacts_panel(): any {
             },
             active: {
                 default: {
-                    ...text(layer, "ui_sans", "active", { size: "sm" }),
-                    background: background(layer, "active"),
+                    ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                    background: background(theme.lowest),
                 },
                 clicked: {
                     background: background(layer, "pressed"),
@@ -221,8 +222,8 @@ export default function contacts_panel(): any {
                 },
                 active: {
                     default: {
-                        ...text(layer, "ui_sans", "active", { size: "sm" }),
-                        background: background(layer, "active"),
+                        ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                        background: background(theme.lowest),
                     },
                     clicked: {
                         background: background(layer, "pressed"),
@@ -271,8 +272,8 @@ export default function contacts_panel(): any {
                 },
                 active: {
                     default: {
-                        ...text(layer, "ui_sans", "active", { size: "sm" }),
-                        background: background(layer, "active"),
+                        ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                        background: background(theme.lowest),
                     },
                     clicked: {
                         background: background(layer, "pressed"),
@@ -306,13 +307,10 @@ export default function contacts_panel(): any {
             },
         },
         contact_button_spacing: NAME_MARGIN,
-        contact_button: interactive({
-            base: { ...contact_button },
-            state: {
-                hovered: {
-                    background: background(layer, "hovered"),
-                },
-            },
+        contact_button: icon_button({
+            variant: "ghost",
+            color: "variant",
+            size: "sm",
         }),
         disabled_button: {
             ...contact_button,
@@ -364,7 +362,7 @@ export default function contacts_panel(): any {
             }),
             state: {
                 active: {
-                    default: { background: background(layer, "active") },
+                    default: { background: background(theme.lowest) },
                 },
             },
         }),

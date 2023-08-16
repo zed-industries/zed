@@ -3,7 +3,7 @@ import { DeepPartial } from "utility-types"
 
 type ToggleState = "inactive" | "active"
 
-type Toggleable<T> = Record<ToggleState, T>
+export type Toggleable<T> = Record<ToggleState, T>
 
 export const NO_INACTIVE_OR_BASE_ERROR =
     "A toggleable object must have an inactive state, or a base property."
