@@ -770,6 +770,19 @@ async fn test_call_from_channel(
     });
 }
 
+#[gpui::test]
+async fn test_lost_channel_creation(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    // Invite a member
+    // Create a new sub channel
+    // Member accepts invite
+    // Make sure that member can see new channel
+    todo!();
+}
+
 #[derive(Debug, PartialEq)]
 struct ExpectedChannel {
     depth: usize,
