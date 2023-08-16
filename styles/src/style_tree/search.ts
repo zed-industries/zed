@@ -2,6 +2,7 @@ import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
+import { toggleable_icon_button } from "../component/icon_button"
 
 export default function search(): any {
     const theme = useTheme()
@@ -43,7 +44,9 @@ export default function search(): any {
         option_button: toggleable({
             base: interactive({
                 base: {
-                    ...text(theme.highest, "mono", "variant"),
+                    icon_width: 14,
+                    button_width: 32,
+                    color: foreground(theme.highest, "variant"),
                     background: background(theme.highest, "on"),
                     corner_radius: 2,
                     margin: { right: 2 },
@@ -53,6 +56,8 @@ export default function search(): any {
                     padding: {
                         left: 4,
                         right: 4,
+                        top: 4,
+                        bottom: 4,
                     },
                 },
                 state: {
@@ -75,6 +80,9 @@ export default function search(): any {
             state: {
                 active: {
                     default: {
+                        icon_width: 14,
+                        button_width: 32,
+                        color: foreground(theme.highest, "variant"),
                         background: background(theme.highest, "accent"),
                         border: border(theme.highest, "accent"),
                     },
@@ -272,10 +280,8 @@ export default function search(): any {
                         },
 
                         padding: {
-                            bottom: 0,
                             left: 10,
                             right: 10,
-                            top: 0,
                         },
                     },
                     state: {
@@ -294,10 +300,8 @@ export default function search(): any {
                         },
 
                         padding: {
-                            bottom: 0,
                             left: 10,
                             right: 10,
-                            top: 0,
                         },
                     },
                     state: {

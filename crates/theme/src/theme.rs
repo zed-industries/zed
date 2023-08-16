@@ -379,7 +379,7 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Toggleable<Interactive<ContainedText>>,
+    pub option_button: Toggleable<Interactive<IconButton>>,
     pub action_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,

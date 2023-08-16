@@ -250,7 +250,7 @@ impl View for BufferSearchBar {
                         SearchOptions::WHOLE_WORD,
                         cx,
                     ))
-                    .flex(1., true)
+                    .flex_float()
                     .contained(),
             )
             .align_children_center()

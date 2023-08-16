@@ -1447,7 +1447,8 @@ impl View for ProjectSearchBar {
                         .with_child(filter_button)
                         .with_children(case_sensitive)
                         .with_children(whole_word)
-                        .flex(1., true)
+                        .flex(1., false)
+                        .constrained()
                         .contained(),
                 )
                 .align_children_center()
