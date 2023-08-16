@@ -221,7 +221,6 @@ impl View for BufferSearchBar {
         };
 
         let icon_style = theme.search.editor_icon.clone();
-        let side_column_min_width = 165.;
         let nav_column = Flex::row()
             .with_child(self.render_action_button("Select All", cx))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
@@ -289,8 +288,6 @@ impl View for BufferSearchBar {
             .with_height(theme.search.search_bar_row_height)
             .aligned()
             .right()
-            .constrained()
-            .with_min_width(side_column_min_width)
             .flex_float();
         Flex::row()
             .with_child(editor_column)

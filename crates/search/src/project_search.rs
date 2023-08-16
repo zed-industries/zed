@@ -327,10 +327,8 @@ impl View for ProjectSearchView {
 
             let semantic_status = if let Some(semantic) = &self.semantic_state {
                 if semantic.outstanding_file_count > 0 {
-                    let dots_count = semantic.outstanding_file_count % 3 + 1;
-                    let dots: String = std::iter::repeat('.').take(dots_count).collect();
                     format!(
-                        "Indexing: {} of {}{dots}",
+                        "Indexing: {} of {}...",
                         semantic.file_count - semantic.outstanding_file_count,
                         semantic.file_count
                     )
@@ -1473,10 +1471,10 @@ impl View for ProjectSearchBar {
 
             let included_files_view = ChildView::new(&search.included_files_editor, cx)
                 .contained()
-                .flex(1.0, true);
+                .flex(1., true);
             let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
                 .contained()
-                .flex(1.0, true);
+                .flex(1., true);
             let filters = search.filters_enabled.then(|| {
                 Flex::row()
                     .with_child(
@@ -1569,7 +1567,6 @@ impl View for ProjectSearchBar {
                 .constrained()
                 .with_height(theme.search.search_bar_row_height);
 
-            let side_column_min_width = 200.;
             let mode_column = Flex::row()
                 .with_child(
                     Flex::row()
@@ -1595,8 +1592,6 @@ impl View for ProjectSearchBar {
                 .aligned()
                 .right()
                 .top()
-                .constrained()
-                .with_min_width(side_column_min_width)
                 .flex_float();
 
             Flex::row()

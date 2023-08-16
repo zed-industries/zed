@@ -152,8 +152,6 @@ export default function search(): any {
             padding: {
                 left: 12,
                 right: 12,
-                // top: 3,
-                // bottom: 3,
             },
         },
         include_exclude_inputs: {
