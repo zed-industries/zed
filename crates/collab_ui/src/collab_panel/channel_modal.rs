@@ -423,30 +423,39 @@ impl PickerDelegate for ChannelModalDelegate {
             .with_children({
                 let svg = match self.mode {
                     Mode::ManageMembers => Some(
-                        Svg::new("icons/ellipsis_14.svg")
+                        Svg::new("icons/ellipsis.svg")
                             .with_color(theme.member_icon.color)
                             .constrained()
-                            .with_width(theme.member_icon.width)
+                            .with_width(theme.member_icon.icon_width)
                             .aligned()
+                            .constrained()
+                            .with_width(theme.member_icon.button_width)
+                            .with_height(theme.member_icon.button_width)
                             .contained()
                             .with_style(theme.member_icon.container),
                     ),
                     Mode::InviteMembers => match request_status {
                         Some(proto::channel_member::Kind::Member) => Some(
-                            Svg::new("icons/check_8.svg")
+                            Svg::new("icons/check.svg")
                                 .with_color(theme.member_icon.color)
                                 .constrained()
-                                .with_width(theme.member_icon.width)
+                                .with_width(theme.member_icon.icon_width)
                                 .aligned()
+                                .constrained()
+                                .with_width(theme.member_icon.button_width)
+                                .with_height(theme.member_icon.button_width)
                                 .contained()
                                 .with_style(theme.member_icon.container),
                         ),
                         Some(proto::channel_member::Kind::Invitee) => Some(
-                            Svg::new("icons/check_8.svg")
+                            Svg::new("icons/check.svg")
                                 .with_color(theme.invitee_icon.color)
                                 .constrained()
-                                .with_width(theme.invitee_icon.width)
+                                .with_width(theme.invitee_icon.icon_width)
                                 .aligned()
+                                .constrained()
+                                .with_width(theme.invitee_icon.button_width)
+                                .with_height(theme.invitee_icon.button_width)
                                 .contained()
                                 .with_style(theme.invitee_icon.container),
                         ),

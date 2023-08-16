@@ -276,8 +276,8 @@ pub struct ChannelModal {
     pub contact_username: ContainerStyle,
     pub remove_member_button: ContainedText,
     pub cancel_invite_button: ContainedText,
-    pub member_icon: Icon,
-    pub invitee_icon: Icon,
+    pub member_icon: IconButton,
+    pub invitee_icon: IconButton,
     pub member_tag: ContainedText,
 }
 

@@ -4,6 +4,7 @@ import picker from "./picker"
 import { input } from "../component/input"
 import contact_finder from "./contact_finder"
 import { tab } from "../component/tab"
+import { icon_button } from "../component/icon_button"
 
 export default function channel_modal(): any {
     const theme = useTheme()
@@ -25,6 +26,11 @@ export default function channel_modal(): any {
     delete picker_style.border
 
     const picker_input = input()
+
+    const member_icon_style = icon_button({
+        variant: "ghost",
+        size: "sm",
+    }).default
 
     return {
         contact_finder: contact_finder(),
@@ -93,29 +99,9 @@ export default function channel_modal(): any {
         },
         channel_modal: {
             // This is used for the icons that are rendered to the right of channel Members in both UIs
-            member_icon: {
-                background: background(theme.middle),
-                padding: {
-                    bottom: 4,
-                    left: 4,
-                    right: 4,
-                    top: 4,
-                },
-                width: 5,
-                color: foreground(theme.middle, "accent"),
-            },
+            member_icon: member_icon_style,
             // This is used for the icons that are rendered to the right of channel invites in both UIs
-            invitee_icon: {
-                background: background(theme.middle),
-                padding: {
-                    bottom: 4,
-                    left: 4,
-                    right: 4,
-                    top: 4,
-                },
-                width: 5,
-                color: foreground(theme.middle, "accent"),
-            },
+            invitee_icon: member_icon_style,
             remove_member_button: {
                 ...text(theme.middle, "sans", { size: "xs" }),
                 background: background(theme.middle),
