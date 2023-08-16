@@ -153,7 +153,37 @@ export default function contacts_panel(): any {
 
     return {
         ...collab_modals(),
-        log_in_button: text_button(),
+        log_in_button: interactive({
+            base: {
+                background: background(theme.middle),
+                border: border(theme.middle, "active"),
+                corner_radius: 4,
+                margin: {
+                    top: 4,
+                    left: 16,
+                    right: 16,
+                },
+                padding: {
+                    top: 3,
+                    bottom: 3,
+                    left: 7,
+                    right: 7,
+                },
+                ...text(theme.middle, "sans", "default", { size: "sm" }),
+            },
+            state: {
+                hovered: {
+                    ...text(theme.middle, "sans", "default", { size: "sm" }),
+                    background: background(theme.middle, "hovered"),
+                    border: border(theme.middle, "active"),
+                },
+                clicked: {
+                    ...text(theme.middle, "sans", "default", { size: "sm" }),
+                    background: background(theme.middle, "pressed"),
+                    border: border(theme.middle, "active"),
+                },
+            },
+        }),
         background: background(layer),
         padding: {
             top: SPACING,

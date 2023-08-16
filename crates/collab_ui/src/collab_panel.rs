@@ -2299,6 +2299,8 @@ impl View for CollabPanel {
                     MouseEventHandler::new::<LogInButton, _>(0, cx, |state, _| {
                         let button = theme.log_in_button.style_for(state);
                         Label::new("Sign in to collaborate", button.text.clone())
+                            .aligned()
+                            .left()
                             .contained()
                             .with_style(button.container)
                     })
