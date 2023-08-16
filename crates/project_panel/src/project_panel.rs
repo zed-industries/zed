@@ -1407,7 +1407,7 @@ impl ProjectPanel {
 
         let show_editor = details.is_editing && !details.is_processing;
 
-        MouseEventHandler::<Self, _>::new(entry_id.to_usize(), cx, |state, cx| {
+        MouseEventHandler::new::<Self, _>(entry_id.to_usize(), cx, |state, cx| {
             let mut style = entry_style
                 .in_state(details.is_selected)
                 .style_for(state)
@@ -1519,7 +1519,7 @@ impl View for ProjectPanel {
         if has_worktree {
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ProjectPanel, _>::new(0, cx, |_, cx| {
+                    MouseEventHandler::new::<ProjectPanel, _>(0, cx, |_, cx| {
                         UniformList::new(
                             self.list.clone(),
                             self.visible_entries
@@ -1563,7 +1563,7 @@ impl View for ProjectPanel {
         } else {
             Flex::column()
                 .with_child(
-                    MouseEventHandler::<Self, _>::new(2, cx, {
+                    MouseEventHandler::new::<Self, _>(2, cx, {
                         let button_style = theme.open_project_button.clone();
                         let context_menu_item_style = theme::current(cx).context_menu.item.clone();
                         move |state, cx| {

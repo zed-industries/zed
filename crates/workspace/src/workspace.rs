@@ -2560,7 +2560,7 @@ impl Workspace {
         };
 
         enum TitleBar {}
-        MouseEventHandler::<TitleBar, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<TitleBar, _>(0, cx, |_, cx| {
             Stack::new()
                 .with_children(
                     self.titlebar_item
@@ -2649,7 +2649,7 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
-                MouseEventHandler::<DisconnectedOverlay, _>::new(0, cx, |_, cx| {
+                MouseEventHandler::new::<DisconnectedOverlay, _>(0, cx, |_, cx| {
                     let theme = &theme::current(cx);
                     Label::new(
                         "Your connection to the remote project has been lost.",

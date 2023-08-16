@@ -143,6 +143,61 @@ impl View for Toolbar {
     }
 }
 
+// <<<<<<< HEAD
+// =======
+// #[allow(clippy::too_many_arguments)]
+// fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
+//     svg_path: &'static str,
+//     style: theme::Interactive<theme::IconButton>,
+//     nav_button_height: f32,
+//     tooltip_style: TooltipStyle,
+//     enabled: bool,
+//     spacing: f32,
+//     on_click: F,
+//     tooltip_action: A,
+//     action_name: &'static str,
+//     cx: &mut ViewContext<Toolbar>,
+// ) -> AnyElement<Toolbar> {
+//     MouseEventHandler::new::<A, _>(0, cx, |state, _| {
+//         let style = if enabled {
+//             style.style_for(state)
+//         } else {
+//             style.disabled_style()
+//         };
+//         Svg::new(svg_path)
+//             .with_color(style.color)
+//             .constrained()
+//             .with_width(style.icon_width)
+//             .aligned()
+//             .contained()
+//             .with_style(style.container)
+//             .constrained()
+//             .with_width(style.button_width)
+//             .with_height(nav_button_height)
+//             .aligned()
+//             .top()
+//     })
+//     .with_cursor_style(if enabled {
+//         CursorStyle::PointingHand
+//     } else {
+//         CursorStyle::default()
+//     })
+//     .on_click(MouseButton::Left, move |_, toolbar, cx| {
+//         on_click(toolbar, cx)
+//     })
+//     .with_tooltip::<A>(
+//         0,
+//         action_name,
+//         Some(Box::new(tooltip_action)),
+//         tooltip_style,
+//         cx,
+//     )
+//     .contained()
+//     .with_margin_right(spacing)
+//     .into_any_named("nav button")
+// }
+
+// >>>>>>> 139cbbfd3aebd0863a7d51b0c12d748764cf0b2e
 impl Toolbar {
     pub fn new() -> Self {
         Self {

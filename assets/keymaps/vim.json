@@ -101,6 +101,8 @@
         "vim::SwitchMode",
         "Normal"
       ],
+      "v": "vim::ToggleVisual",
+      "shift-v": "vim::ToggleVisualLine",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
@@ -237,6 +239,14 @@
     }
   },
   {
+    // escape is in its own section so that it cancels a pending count.
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "ctrl+[": "editor::Cancel"
+    }
+  },
+  {
     "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
       "c": [
@@ -266,22 +276,6 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
-      "v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": false
-          }
-        }
-      ],
-      "shift-v": [
-        "vim::SwitchMode",
-        {
-          "Visual": {
-            "line": true
-          }
-        }
-      ],
       "p": "vim::Paste",
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
@@ -374,18 +368,28 @@
     "context": "Editor && vim_mode == visual && !VimWaiting",
     "bindings": {
       "u": "editor::Undo",
-      "c": "vim::VisualChange",
+      "o": "vim::OtherEnd",
+      "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::VisualPaste",
       "s": "vim::Substitute",
+      "c": "vim::Substitute",
       "~": "vim::ChangeCase",
       "r": [
         "vim::PushOperator",
         "Replace"
       ],
       "ctrl-c": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl+[": [
         "vim::SwitchMode",
         "Normal"
       ],

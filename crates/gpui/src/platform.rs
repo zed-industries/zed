@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
 pub use event::*;
+use pathfinder_geometry::vector::vec2f;
 use postage::oneshot;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -178,6 +179,16 @@ pub struct WindowOptions<'a> {
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
+}
+
+impl<'a> WindowOptions<'a> {
+    pub fn with_bounds(bounds: Vector2F) -> Self {
+        Self {
+            bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), bounds)),
+            center: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug)]

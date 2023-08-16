@@ -434,7 +434,9 @@ impl LanguageServer {
                         ..Default::default()
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
-                        resolve_support: None,
+                        resolve_support: Some(InlayHintResolveClientCapabilities {
+                            properties: vec!["textEdits".to_string(), "tooltip".to_string()],
+                        }),
                         dynamic_registration: Some(false),
                     }),
                     ..Default::default()

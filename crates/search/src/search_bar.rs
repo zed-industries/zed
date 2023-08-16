@@ -23,7 +23,7 @@ pub(super) fn render_close_button<V: View>(
     let tooltip_style = theme::current(cx).tooltip.clone();
 
     enum CloseButton {}
-    MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
+    MouseEventHandler::new::<CloseButton, _>(0, cx, |state, _| {
         let style = theme.dismiss_button.style_for(state);
         Svg::new("icons/x_mark_8.svg")
             .with_color(style.color)
@@ -68,7 +68,7 @@ pub(super) fn render_nav_button<V: View>(
         CursorStyle::default()
     };
     enum NavButton {}
-    MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
+    MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
         let theme = theme::current(cx);
         let style = theme
             .search
@@ -117,7 +117,7 @@ pub(crate) fn render_search_mode_button<V: View>(
 ) -> AnyElement<V> {
     let tooltip_style = theme::current(cx).tooltip.clone();
     enum SearchModeButton {}
-    MouseEventHandler::<SearchModeButton, _>::new(mode.region_id(), cx, |state, cx| {
+    MouseEventHandler::new::<SearchModeButton, _>(mode.region_id(), cx, |state, cx| {
         let theme = theme::current(cx);
         let mut style = theme
             .search
@@ -177,7 +177,7 @@ pub(crate) fn render_option_button_icon<V: View>(
     cx: &mut ViewContext<V>,
 ) -> AnyElement<V> {
     let tooltip_style = theme::current(cx).tooltip.clone();
-    MouseEventHandler::<V, _>::new(id, cx, |state, cx| {
+    MouseEventHandler::new::<V, _>(id, cx, |state, cx| {
         let theme = theme::current(cx);
         let style = theme
             .search

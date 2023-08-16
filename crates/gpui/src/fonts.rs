@@ -72,6 +72,13 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
+    pub fn for_color(color: Color) -> Self {
+        Self {
+            color,
+            ..Default::default()
+        }
+    }
+
     pub fn refine(self, refinement: TextStyleRefinement) -> TextStyle {
         TextStyle {
             color: refinement.color.unwrap_or(self.color),

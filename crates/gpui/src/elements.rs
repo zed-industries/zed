@@ -1,6 +1,7 @@
 mod align;
 mod canvas;
 mod clipped;
+mod component;
 mod constrained_box;
 mod container;
 mod empty;
@@ -21,9 +22,9 @@ mod tooltip;
 mod uniform_list;
 
 pub use self::{
-    align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
-    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
-    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
+    align::*, canvas::*, component::*, constrained_box::*, container::*, empty::*, flex::*,
+    hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
+    resizable::*, stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::window::ChildView;
 
@@ -193,11 +194,11 @@ pub trait Element<V: View>: 'static {
         Resizable::new(self.into_any(), side, size, on_resize)
     }
 
-    fn mouse<Tag>(self, region_id: usize) -> MouseEventHandler<Tag, V>
+    fn mouse<Tag: 'static>(self, region_id: usize) -> MouseEventHandler<V>
     where
         Self: Sized,
     {
-        MouseEventHandler::for_child(self.into_any(), region_id)
+        MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
 }
 

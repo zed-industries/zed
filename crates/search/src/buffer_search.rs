@@ -494,7 +494,7 @@ impl BufferSearchBar {
             CursorStyle::default()
         };
         enum ActionButton {}
-        MouseEventHandler::<ActionButton, _>::new(action_type_id, cx, |state, cx| {
+        MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme
                 .search
@@ -519,6 +519,7 @@ impl BufferSearchBar {
         )
         .into_any()
     }
+
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         assert_ne!(
             mode,

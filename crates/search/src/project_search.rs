@@ -406,7 +406,7 @@ impl View for ProjectSearchView {
                 editor.set_placeholder_text(new_placeholder_text, cx);
             });
 
-            MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
+            MouseEventHandler::new::<Status, _>(0, cx, |_, _| {
                 Flex::column()
                     .with_child(Flex::column().contained().flex(1., true))
                     .with_child(

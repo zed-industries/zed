@@ -170,7 +170,7 @@ impl ProjectSharedNotification {
         let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Open, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
@@ -182,7 +182,7 @@ impl ProjectSharedNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Dismiss, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()

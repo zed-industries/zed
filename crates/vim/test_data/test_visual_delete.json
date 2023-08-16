@@ -1,6 +1,10 @@
 {"Put":{"state":"The quick ˇbrown"}}
 {"Key":"v"}
 {"Key":"w"}
+{"Get":{"state":"The quick «brownˇ»","mode":{"Visual":{"line":false}}}}
+{"Put":{"state":"The quick ˇbrown"}}
+{"Key":"v"}
+{"Key":"w"}
 {"Key":"x"}
 {"Get":{"state":"The quickˇ ","mode":"Normal"}}
 {"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog"}}

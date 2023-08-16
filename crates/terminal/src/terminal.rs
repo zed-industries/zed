@@ -987,6 +987,14 @@ impl Terminal {
         }
     }
 
+    pub fn select_all(&mut self) {
+        let term = self.term.lock();
+        let start = Point::new(term.topmost_line(), Column(0));
+        let end = Point::new(term.bottommost_line(), term.last_column());
+        drop(term);
+        self.set_selection(Some((make_selection(&(start..=end)), end)));
+    }
+
     fn set_selection(&mut self, selection: Option<(Selection, Point)>) {
         self.events
             .push_back(InternalEvent::SetSelection(selection));

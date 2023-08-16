@@ -80,6 +80,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
+    cx.add_action(TerminalView::select_all)
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -310,6 +311,11 @@ impl TerminalView {
                 )
             });
         }
+    }
+
+    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.select_all());
+        cx.notify();
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
