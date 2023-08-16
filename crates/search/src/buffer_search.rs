@@ -222,17 +222,11 @@ impl View for BufferSearchBar {
 
         let icon_style = theme.search.editor_icon.clone();
         let side_column_min_width = 165.;
-        let button_height = 32.;
         let nav_column = Flex::row()
-            .with_child(
-                Flex::row()
-                    .with_children(match_count)
-                    .constrained()
-                    .with_min_width(100.),
-            )
+            .with_child(self.render_action_button("Select All", cx))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
-            .with_child(self.render_action_button("Select All", cx))
+            .with_child(Flex::row().with_children(match_count))
             .constrained()
             .with_height(theme.search.search_bar_row_height);
 
@@ -493,11 +487,20 @@ impl BufferSearchBar {
         let tooltip = "Select All Matches";
         let tooltip_style = theme::current(cx).tooltip.clone();
         let action_type_id = 0_usize;
-
+        let has_matches = self.active_match_index.is_some();
+        let cursor_style = if has_matches {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::default()
+        };
         enum ActionButton {}
         MouseEventHandler::<ActionButton, _>::new(action_type_id, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.action_button.style_for(state);
+            let style = theme
+                .search
+                .action_button
+                .in_state(has_matches)
+                .style_for(state);
             Label::new(icon, style.text.clone())
                 .aligned()
                 .contained()
@@ -506,7 +509,7 @@ impl BufferSearchBar {
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.select_all_matches(&SelectAllMatches, cx)
         })
-        .with_cursor_style(CursorStyle::PointingHand)
+        .with_cursor_style(cursor_style)
         .with_tooltip::<ActionButton>(
             action_type_id,
             tooltip.to_string(),
