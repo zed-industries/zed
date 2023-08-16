@@ -190,7 +190,6 @@ pub(crate) fn render_option_button_icon<V: View>(
             .with_width(style.icon_width)
             .contained()
             .with_style(style.container)
-            // .aligned()
             .constrained()
             .with_height(theme.search.option_button_height)
             .with_width(style.button_width)
