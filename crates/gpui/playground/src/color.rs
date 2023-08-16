@@ -116,6 +116,15 @@ pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     }
 }
 
+pub fn black() -> Hsla {
+    Hsla {
+        h: 0.,
+        s: 0.,
+        l: 0.,
+        a: 1.,
+    }
+}
+
 impl From<Rgba> for Hsla {
     fn from(color: Rgba) -> Self {
         let r = color.r;

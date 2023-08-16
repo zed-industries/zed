@@ -3361,11 +3361,21 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     }
 }
 
+/// Methods shared by both LayoutContext and PaintContext
+///
+/// It's that PaintContext should be implemented in terms of layout context and
+/// deref to it, in which case we wouldn't need this.
+pub trait RenderContext {
+    fn text_style(&self) -> TextStyle;
+    fn push_text_style(&mut self, style: TextStyle);
+    fn pop_text_style(&mut self);
+}
+
 pub struct LayoutContext<'a, 'b, 'c, V> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-    text_style_stack: Vec<Arc<TextStyle>>,
+    text_style_stack: Vec<TextStyle>,
     pub refreshing: bool,
 }
 
@@ -3433,30 +3443,31 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
             .push(self_view_id);
     }
 
-    pub fn text_style(&self) -> Arc<TextStyle> {
-        self.text_style_stack
-            .last()
-            .cloned()
-            .unwrap_or(Arc::new(TextStyle::default(&self.font_cache)))
-    }
-
-    pub fn push_text_style<S: Into<Arc<TextStyle>>>(&mut self, style: S) {
-        self.text_style_stack.push(style.into());
-    }
-
-    pub fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
-    }
-
-    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    pub fn with_text_style<F, T>(&mut self, style: TextStyle, f: F) -> T
     where
-        S: Into<Arc<TextStyle>>,
         F: FnOnce(&mut Self) -> T,
     {
         self.push_text_style(style);
         let result = f(self);
         self.pop_text_style();
         result
+    }
+}
+
+impl<'a, 'b, 'c, V> RenderContext for LayoutContext<'a, 'b, 'c, V> {
+    fn text_style(&self) -> TextStyle {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(TextStyle::default(&self.font_cache))
+    }
+
+    fn push_text_style(&mut self, style: TextStyle) {
+        self.text_style_stack.push(style);
+    }
+
+    fn pop_text_style(&mut self) {
+        self.text_style_stack.pop();
     }
 }
 
@@ -3516,7 +3527,7 @@ impl<V> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
 
 pub struct PaintContext<'a, 'b, 'c, V> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
-    text_style_stack: Vec<Arc<TextStyle>>,
+    text_style_stack: Vec<TextStyle>,
 }
 
 impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
@@ -3526,23 +3537,22 @@ impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
             text_style_stack: Vec::new(),
         }
     }
+}
 
-    pub fn text_style(&self) -> Arc<TextStyle> {
+impl<'a, 'b, 'c, V> RenderContext for PaintContext<'a, 'b, 'c, V> {
+    fn text_style(&self) -> TextStyle {
         self.text_style_stack
             .last()
             .cloned()
-            .unwrap_or(Arc::new(TextStyle::default(&self.font_cache)))
+            .unwrap_or(TextStyle::default(&self.font_cache))
     }
 
-    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
-    where
-        S: Into<Arc<TextStyle>>,
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.text_style_stack.push(style.into());
-        let result = f(self);
+    fn push_text_style(&mut self, style: TextStyle) {
+        self.text_style_stack.push(style);
+    }
+
+    fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
-        result
     }
 }
 

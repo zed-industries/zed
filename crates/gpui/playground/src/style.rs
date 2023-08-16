@@ -66,6 +66,8 @@ pub struct ElementStyle {
 
     /// The fill color of this element
     pub fill: Fill,
+    /// The color of text within this element. Cascades to children unless overridden.
+    pub text_color: Option<Hsla>,
 }
 
 impl ElementStyle {
@@ -103,6 +105,7 @@ impl ElementStyle {
             l: 0.,
             a: 0.,
         }),
+        text_color: None,
     };
 
     pub fn new() -> Self {
@@ -136,11 +139,33 @@ impl ElementStyle {
             ..Default::default() // Ignore grid properties for now
         }
     }
+
+    pub fn text_style(&self) -> Option<OptionalTextStyle> {
+        if self.text_color.is_some() {
+            Some(OptionalTextStyle {
+                color: self.text_color,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for ElementStyle {
     fn default() -> Self {
         Self::DEFAULT.clone()
+    }
+}
+
+pub struct OptionalTextStyle {
+    color: Option<Hsla>,
+}
+
+impl OptionalTextStyle {
+    pub fn apply(&self, style: &mut gpui::fonts::TextStyle) {
+        if let Some(color) = self.color {
+            style.color = color.into();
+        }
     }
 }
 

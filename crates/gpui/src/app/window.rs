@@ -1300,6 +1300,7 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct EngineLayout {
     pub bounds: RectF,
     pub order: u32,

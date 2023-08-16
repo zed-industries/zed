@@ -212,7 +212,7 @@ pub struct Glyph {
 }
 
 impl Line {
-    fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
+    pub fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
         let mut style_runs = SmallVec::new();
         for (len, style) in runs {
             style_runs.push(StyleRun {
@@ -364,13 +364,13 @@ impl Line {
                         origin: glyph_origin,
                     });
                 } else {
-                    scene.push_glyph(scene::Glyph {
+                    scene.push_glyph(dbg!(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
                         origin: glyph_origin,
                         color,
-                    });
+                    }));
                 }
             }
         }

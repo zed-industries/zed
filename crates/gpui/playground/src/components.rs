@@ -1,11 +1,12 @@
 use crate::{
     element::{Element, ElementMetadata},
     frame,
+    text::ArcCow,
     themes::rose_pine,
 };
 use gpui::ViewContext;
 use playground_macros::Element;
-use std::{borrow::Cow, marker::PhantomData, rc::Rc};
+use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
     click: Option<Rc<dyn Fn(&mut V, &D)>>,
@@ -22,8 +23,8 @@ impl<V, D> Default for ButtonHandlers<V, D> {
 pub struct Button<V: 'static, D: 'static> {
     metadata: ElementMetadata<V>,
     handlers: ButtonHandlers<V, D>,
-    label: Option<Cow<'static, str>>,
-    icon: Option<Cow<'static, str>>,
+    label: Option<ArcCow<'static, str>>,
+    icon: Option<ArcCow<'static, str>>,
     data: Rc<D>,
     view_type: PhantomData<V>,
 }
@@ -56,17 +57,17 @@ impl<V: 'static> Button<V, ()> {
 
 // Impl block for *any* button.
 impl<V: 'static, D: 'static> Button<V, D> {
-    fn label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+    pub fn label(mut self, label: impl Into<ArcCow<'static, str>>) -> Self {
         self.label = Some(label.into());
         self
     }
 
-    fn icon(mut self, icon: impl Into<Cow<'static, str>>) -> Self {
+    pub fn icon(mut self, icon: impl Into<ArcCow<'static, str>>) -> Self {
         self.icon = Some(icon.into());
         self
     }
 
-    fn click(self, handler: impl Fn(&mut V, &D) + 'static) -> Self {
+    pub fn click(self, handler: impl Fn(&mut V, &D) + 'static) -> Self {
         let data = self.data.clone();
         Element::click(self, move |view, _| {
             handler(view, data.as_ref());
@@ -80,8 +81,11 @@ pub fn button<V>() -> Button<V, ()> {
 
 impl<V: 'static, D: 'static> Button<V, D> {
     fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        // TODO: Drive from the context
-        let button = frame().fill(rose_pine::dawn().error(0.5)).h_5().w_9();
+        // TODO: Drive theme from the context
+        let button = frame()
+            .fill(rose_pine::dawn().error(0.5))
+            .h_4()
+            .children(self.label.clone());
 
         if let Some(handler) = self.handlers.click.clone() {
             let data = self.data.clone();

@@ -1,5 +1,6 @@
 use crate::{
     adapter::Adapter,
+    color::Hsla,
     style::{Display, ElementStyle, Fill, Overflow, Position},
 };
 use anyhow::Result;
@@ -8,7 +9,7 @@ pub use gpui::LayoutContext;
 use gpui::{
     geometry::{DefinedLength, Length},
     scene::MouseClick,
-    EngineLayout, PaintContext as LegacyPaintContext,
+    EngineLayout, PaintContext as LegacyPaintContext, RenderContext,
 };
 use playground_macros::tailwind_lengths;
 use std::{any::Any, rc::Rc};
@@ -20,6 +21,20 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
     pub(crate) scene: &'d mut gpui::SceneBuilder,
+}
+
+impl<V> RenderContext for PaintContext<'_, '_, '_, '_, V> {
+    fn text_style(&self) -> gpui::fonts::TextStyle {
+        self.legacy_cx.text_style()
+    }
+
+    fn push_text_style(&mut self, style: gpui::fonts::TextStyle) {
+        self.legacy_cx.push_text_style(style)
+    }
+
+    fn pop_text_style(&mut self) {
+        self.legacy_cx.pop_text_style()
+    }
 }
 
 pub struct Layout<'a, E: ?Sized> {
@@ -303,9 +318,18 @@ pub trait Element<V: 'static>: 'static {
         self.style_mut().fill = fill.into();
         self
     }
+
+    fn text_color(mut self, color: impl Into<Hsla>) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().text_color = Some(color.into());
+        self
+    }
 }
 
-pub trait ElementObject<V> {
+// Object-safe counterpart of Element used by AnyElement to store elements as trait objects.
+trait ElementObject<V> {
     fn style_mut(&mut self) -> &mut ElementStyle;
     fn handlers_mut(&mut self) -> &mut ElementHandlers<V>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
@@ -360,12 +384,33 @@ pub struct AnyElement<V> {
 
 impl<V> AnyElement<V> {
     pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
+        let pushed_text_style = self.push_text_style(cx);
+
         let (node_id, layout) = self.element.layout(view, cx)?;
         self.layout = Some((node_id, layout));
+
+        if pushed_text_style {
+            cx.pop_text_style();
+        }
+
         Ok(node_id)
     }
 
+    pub fn push_text_style(&mut self, cx: &mut impl RenderContext) -> bool {
+        let text_style = self.element.style_mut().text_style();
+        if let Some(text_style) = text_style {
+            let mut current_text_style = cx.text_style();
+            text_style.apply(&mut current_text_style);
+            cx.push_text_style(current_text_style);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
+        let pushed_text_style = self.push_text_style(cx);
+
         let (layout_node_id, element_layout) =
             self.layout.as_mut().expect("paint called before layout");
 
@@ -378,7 +423,12 @@ impl<V> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
-        self.element.paint(layout, view, cx)
+        self.element.paint(layout, view, cx)?;
+        if pushed_text_style {
+            cx.pop_text_style();
+        }
+
+        Ok(())
     }
 }
 
@@ -403,5 +453,18 @@ impl<V: 'static> Element<V> for AnyElement<V> {
 
     fn paint(&mut self, layout: Layout<()>, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         self.paint(view, cx)
+    }
+}
+
+pub trait IntoElement<V: 'static> {
+    type Element: Element<V>;
+
+    fn into_element(self) -> Self::Element;
+
+    fn into_any_element(self) -> AnyElement<V>
+    where
+        Self: Sized,
+    {
+        self.into_element().into_any()
     }
 }

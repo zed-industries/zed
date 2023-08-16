@@ -1,9 +1,10 @@
 #![allow(dead_code, unused_variables)]
+use color::black;
 use components::button;
 use element::Element;
 use frame::frame;
 use gpui::{
-    geometry::{percent, rect::RectF, vector::vec2f},
+    geometry::{rect::RectF, vector::vec2f},
     platform::WindowOptions,
 };
 use log::LevelFilter;
@@ -35,19 +36,21 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| view(|_| workspace(&rose_pine::moon())),
+            |_| view(|_| playground(&rose_pine::moon())),
         );
         cx.platform().activate(true);
     });
 }
 
-fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
+fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     frame()
+        .text_color(black())
         .h_full()
-        .w(percent(50.))
+        .w_half()
         .fill(theme.success(0.5))
-        .child(button())
+        .child(button().label("Hello").click(|_, _| (println!("hey!"))))
 }
+
 //     todo!()
 //     // column()
 //     // .size(auto())

@@ -5,9 +5,7 @@ use syn::{
     WhereClause,
 };
 
-use crate::derive_into_element::impl_into_element;
-
-pub fn derive_element(input: TokenStream) -> TokenStream {
+pub fn derive_into_element(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = ast.ident;
 
@@ -64,52 +62,34 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
         }
     }
 
-    let impl_into_element = impl_into_element(
+    impl_into_element(
         &impl_generics,
         &crate_name,
         &view_type_name,
         &type_name,
         &type_generics,
         &where_clause,
-    );
+    )
+    .into()
+}
 
-    let gen = quote! {
-        impl #impl_generics #crate_name::element::Element<#view_type_name> for #type_name #type_generics
+pub fn impl_into_element(
+    impl_generics: &syn::ImplGenerics<'_>,
+    crate_name: &Ident,
+    view_type_name: &Ident,
+    type_name: &Ident,
+    type_generics: &Option<syn::TypeGenerics<'_>>,
+    where_clause: &Option<&WhereClause>,
+) -> proc_macro2::TokenStream {
+    quote! {
+        impl #impl_generics #crate_name::element::IntoElement<#view_type_name> for #type_name #type_generics
         #where_clause
         {
-            type Layout = #crate_name::element::AnyElement<V>;
+            type Element = Self;
 
-            fn style_mut(&mut self) -> &mut #crate_name::style::ElementStyle {
-                &mut self.metadata.style
-            }
-
-            fn handlers_mut(&mut self) -> &mut #crate_name::element::ElementHandlers<V> {
-                &mut self.metadata.handlers
-            }
-
-            fn layout(
-                &mut self,
-                view: &mut V,
-                cx: &mut #crate_name::element::LayoutContext<V>,
-            ) -> anyhow::Result<(taffy::tree::NodeId, Self::Layout)> {
-                let mut element = self.render(view, cx).into_any();
-                let node_id = element.layout(view, cx)?;
-                Ok((node_id, element))
-            }
-
-            fn paint<'a>(
-                &mut self,
-                layout: #crate_name::element::Layout<'a, Self::Layout>,
-                view: &mut V,
-                cx: &mut #crate_name::element::PaintContext<V>,
-            ) -> anyhow::Result<()> {
-                layout.from_element.paint(view, cx)?;
-                Ok(())
+            fn into_element(self) -> Self {
+                self
             }
         }
-
-        #impl_into_element
-    };
-
-    gen.into()
+    }
 }

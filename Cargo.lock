@@ -5304,6 +5304,7 @@ dependencies = [
  "gpui",
  "log",
  "optional_struct",
+ "parking_lot 0.11.2",
  "playground_macros",
  "serde",
  "simplelog",

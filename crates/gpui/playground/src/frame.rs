@@ -1,11 +1,17 @@
 use crate::{
-    element::{AnyElement, Element, ElementHandlers, Layout, LayoutContext, NodeId, PaintContext},
+    element::{
+        AnyElement, Element, ElementHandlers, IntoElement, Layout, LayoutContext, NodeId,
+        PaintContext,
+    },
     style::ElementStyle,
 };
 use anyhow::{anyhow, Result};
 use gpui::LayoutNodeId;
+use playground_macros::IntoElement;
 
-pub struct Frame<V> {
+#[derive(IntoElement)]
+#[element_crate = "crate"]
+pub struct Frame<V: 'static> {
     style: ElementStyle,
     handlers: ElementHandlers<V>,
     children: Vec<AnyElement<V>>,
@@ -66,8 +72,18 @@ impl<V: 'static> Element<V> for Frame<V> {
 }
 
 impl<V: 'static> Frame<V> {
-    pub fn child(mut self, child: impl Element<V>) -> Self {
-        self.children.push(child.into_any());
+    pub fn child(mut self, child: impl IntoElement<V>) -> Self {
+        self.children.push(child.into_any_element());
+        self
+    }
+
+    pub fn children<I, E>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = E>,
+        E: IntoElement<V>,
+    {
+        self.children
+            .extend(children.into_iter().map(|e| e.into_any_element()));
         self
     }
 }
