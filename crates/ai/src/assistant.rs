@@ -880,7 +880,7 @@ impl Conversation {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
-            max_token_count: tiktoken_rs::model::get_context_size(&model.to_string()),
+            max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             model: model.clone(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -976,7 +976,7 @@ impl Conversation {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
-            max_token_count: tiktoken_rs::model::get_context_size(&model.to_string()),
+            max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1031,7 +1031,7 @@ impl Conversation {
                 let token_count = cx
                     .background()
                     .spawn(async move {
-                        tiktoken_rs::num_tokens_from_messages(&model.to_string(), &messages)
+                        tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
                     })
                     .await?;
 
@@ -1039,7 +1039,7 @@ impl Conversation {
                     .ok_or_else(|| anyhow!("conversation was dropped"))?
                     .update(&mut cx, |this, cx| {
                         this.max_token_count =
-                            tiktoken_rs::model::get_context_size(&this.model.to_string());
+                            tiktoken_rs::model::get_context_size(&this.model.full_name());
                         this.token_count = Some(token_count);
                         cx.notify()
                     });
@@ -1095,7 +1095,7 @@ impl Conversation {
                 }
             } else {
                 let request = OpenAIRequest {
-                    model: self.model.to_string(),
+                    model: self.model.full_name().to_string(),
                     messages: self
                         .messages(cx)
                         .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -1421,7 +1421,7 @@ impl Conversation {
                                 .into(),
                     }));
                 let request = OpenAIRequest {
-                    model: self.model.to_string(),
+                    model: self.model.full_name().to_string(),
                     messages: messages.collect(),
                     stream: true,
                 };
@@ -2048,7 +2048,7 @@ impl ConversationEditor {
 
         MouseEventHandler::<Model, _>::new(0, cx, |state, cx| {
             let style = style.model.style_for(state);
-            let model_display_name = self.conversation.read(cx).model.display_name();
+            let model_display_name = self.conversation.read(cx).model.short_name();
             Label::new(model_display_name, style.text.clone())
                 .contained()
                 .with_style(style.container)

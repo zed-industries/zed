@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,15 +11,15 @@ pub enum OpenAIModel {
     GptFour0613,
 }
 
-impl Display for OpenAIModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let model_name = serde_json::to_string(self).unwrap().replace("\"", "");
-        write!(f, "{}", model_name)
-    }
-}
-
 impl OpenAIModel {
-    pub fn display_name(&self) -> &'static str {
+    pub fn full_name(&self) -> &'static str {
+        match self {
+            OpenAIModel::GptThreeFiveTurbo0613 => "gpt-3.5-turbo-0613",
+            OpenAIModel::GptFour0613 => "gpt-4-0613",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
         match self {
             OpenAIModel::GptThreeFiveTurbo0613 => "gpt-3.5-turbo",
             OpenAIModel::GptFour0613 => "gpt-4",
