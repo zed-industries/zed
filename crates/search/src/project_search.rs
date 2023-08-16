@@ -176,15 +176,6 @@ impl ProjectSearch {
         })
     }
 
-    fn kill_search(&mut self) {
-        dbg!("Killing search");
-        self.active_query = None;
-        self.match_ranges.clear();
-        self.pending_search = None;
-        self.no_results = None;
-        dbg!("Killed search");
-    }
-
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = self
             .project
@@ -688,7 +679,7 @@ impl ProjectSearchView {
         if previous_mode == mode {
             return;
         }
-        self.model.update(cx, |model, _| model.kill_search());
+
         self.current_mode = mode;
 
         match mode {
@@ -746,6 +737,10 @@ impl ProjectSearchView {
                 self.active_match_index = None;
             }
         }
+
+        if let Some(query) = self.build_search_query(cx) {
+            self.search(cx);
+        };
         cx.notify();
     }
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
