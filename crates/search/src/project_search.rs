@@ -64,7 +64,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::cycle_mode);
     cx.add_action(ProjectSearchBar::next_history_query);
     cx.add_action(ProjectSearchBar::previous_history_query);
-    cx.add_action(ProjectSearchBar::activate_regex_mode);
+    // cx.add_action(ProjectSearchBar::activate_regex_mode);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
@@ -1498,7 +1498,7 @@ impl View for ProjectSearchBar {
                             .with_max_width(theme.search.include_exclude_editor.max_width),
                     )
                     .contained()
-                    .with_padding_top(3.)
+                    .with_padding_top(theme.workspace.toolbar.container.padding.bottom)
             });
 
             let editor_column = Flex::column()
@@ -1513,8 +1513,6 @@ impl View for ProjectSearchBar {
                         .flex(1., false),
                 )
                 .with_children(filters)
-                .contained()
-                .with_background_color(gpui::color::Color::blue())
                 .flex(1., false);
 
             let matches = search.active_match_index.map(|match_ix| {
@@ -1569,9 +1567,7 @@ impl View for ProjectSearchBar {
                 .with_child(nav_button_for_direction(">", Direction::Next, cx))
                 .with_child(Flex::row().with_children(matches))
                 .constrained()
-                .with_height(theme.search.search_bar_row_height)
-                .contained()
-                .with_background_color(gpui::color::Color::red());
+                .with_height(theme.search.search_bar_row_height);
 
             let side_column_min_width = 200.;
             let mode_column = Flex::row()

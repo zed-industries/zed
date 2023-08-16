@@ -102,6 +102,9 @@ export default function search(): any {
                         right: 10,
                         // top: 2,
                     },
+                    margin: {
+                        right: 9,
+                    }
                 },
                 state: {
                     hovered: {}
@@ -112,14 +115,7 @@ export default function search(): any {
                     base: {
                         ...text(theme.highest, "mono", "on"),
                         background: background(theme.highest, "on"),
-                        corner_radius: 6,
                         border: border(theme.highest, "on"),
-                        padding: {
-                            // bottom: 2,
-                            left: 10,
-                            right: 10,
-                            // top: 2,
-                        },
                     },
                     state: {
                         hovered: {
