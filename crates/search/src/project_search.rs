@@ -24,7 +24,7 @@ use gpui::{
 use menu::Confirm;
 use postage::stream::Stream;
 use project::{
-    search::{PathMatcher, SearchQuery},
+    search::{PathMatcher, SearchInputs, SearchQuery},
     Entry, Project,
 };
 use semantic_index::SemanticIndex;
@@ -177,10 +177,12 @@ impl ProjectSearch {
     }
 
     fn kill_search(&mut self) {
+        dbg!("Killing search");
         self.active_query = None;
         self.match_ranges.clear();
         self.pending_search = None;
         self.no_results = None;
+        dbg!("Killed search");
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
@@ -226,22 +228,22 @@ impl ProjectSearch {
         cx.notify();
     }
 
-    fn semantic_search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
+    fn semantic_search(&mut self, inputs: &SearchInputs, cx: &mut ModelContext<Self>) {
         let search = SemanticIndex::global(cx).map(|index| {
             index.update(cx, |semantic_index, cx| {
                 semantic_index.search_project(
                     self.project.clone(),
-                    query.as_str().to_owned(),
+                    inputs.as_str().to_owned(),
                     10,
-                    query.files_to_include().to_vec(),
-                    query.files_to_exclude().to_vec(),
+                    inputs.files_to_include().to_vec(),
+                    inputs.files_to_exclude().to_vec(),
                     cx,
                 )
             })
         });
         self.search_id += 1;
         self.match_ranges.clear();
-        self.search_history.add(query.as_str().to_string());
+        self.search_history.add(inputs.as_str().to_string());
         self.no_results = Some(true);
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
@@ -682,6 +684,7 @@ impl ProjectSearchView {
 
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         let previous_mode = self.current_mode;
+        log::error!("Going from {previous_mode:?} to {:?}", mode);
         if previous_mode == mode {
             return;
         }
@@ -690,6 +693,7 @@ impl ProjectSearchView {
 
         match mode {
             SearchMode::Semantic => {
+                dbg!("Matched on Semantic");
                 let has_permission = self.semantic_permissioned(cx);
                 self.active_match_index = None;
                 cx.spawn(|this, mut cx| async move {
@@ -947,7 +951,7 @@ impl ProjectSearchView {
 
                     if let Some(query) = self.build_search_query(cx) {
                         self.model
-                            .update(cx, |model, cx| model.semantic_search(query, cx));
+                            .update(cx, |model, cx| model.semantic_search(query.as_inner(), cx));
                     }
                 }
             }
@@ -986,33 +990,34 @@ impl ProjectSearchView {
                     return None;
                 }
             };
-        if self.current_mode == SearchMode::Regex {
-            match SearchQuery::regex(
-                text,
-                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                included_files,
-                excluded_files,
-            ) {
-                Ok(query) => {
-                    self.panels_with_errors.remove(&InputPanel::Query);
-                    Some(query)
-                }
-                Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Query);
-                    cx.notify();
-                    None
+        let current_mode = self.current_mode;
+        match current_mode {
+            SearchMode::Regex => {
+                match SearchQuery::regex(
+                    text,
+                    self.search_options.contains(SearchOptions::WHOLE_WORD),
+                    self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                    included_files,
+                    excluded_files,
+                ) {
+                    Ok(query) => {
+                        self.panels_with_errors.remove(&InputPanel::Query);
+                        Some(query)
+                    }
+                    Err(_e) => {
+                        self.panels_with_errors.insert(InputPanel::Query);
+                        cx.notify();
+                        None
+                    }
                 }
             }
-        } else {
-            debug_assert_ne!(self.current_mode, SearchMode::Semantic);
-            Some(SearchQuery::text(
+            _ => Some(SearchQuery::text(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
-            ))
+            )),
         }
     }
 

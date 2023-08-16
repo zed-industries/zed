@@ -2,7 +2,6 @@ import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
-import { toggleable_icon_button } from "../component/icon_button"
 
 export default function search(): any {
     const theme = useTheme()
