@@ -3,13 +3,12 @@ use components::button;
 use element::Element;
 use frame::frame;
 use gpui::{
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{percent, rect::RectF, vector::vec2f},
     platform::WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
-use style::percent;
 use themes::{rose_pine, ThemeColors};
 use view::view;
 

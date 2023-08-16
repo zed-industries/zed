@@ -1,6 +1,6 @@
 use crate::{
     elements::AnyRootElement,
-    geometry::rect::RectF,
+    geometry::{rect::RectF, Size},
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
     platform::{
@@ -33,7 +33,10 @@ use std::{
     mem,
     ops::{Deref, DerefMut, Range, Sub},
 };
-use taffy::Taffy;
+use taffy::{
+    tree::{Measurable, MeasureFunc},
+    Taffy,
+};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -1253,6 +1256,15 @@ impl LayoutEngine {
             .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
     }
 
+    pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutNodeId>
+    where
+        F: Fn(MeasureParams) -> Size<f32> + Sync + Send + 'static,
+    {
+        Ok(self
+            .0
+            .new_leaf_with_measure(style, MeasureFunc::Boxed(Box::new(MeasureFn(measure))))?)
+    }
+
     pub fn compute_layout(&mut self, root: LayoutNodeId, available_space: Vector2F) -> Result<()> {
         self.0.compute_layout(
             root,
@@ -1269,9 +1281,52 @@ impl LayoutEngine {
     }
 }
 
+pub struct MeasureFn<F>(F);
+
+impl<F: Send + Sync> Measurable for MeasureFn<F>
+where
+    F: Fn(MeasureParams) -> Size<f32>,
+{
+    fn measure(
+        &self,
+        known_dimensions: taffy::prelude::Size<Option<f32>>,
+        available_space: taffy::prelude::Size<taffy::style::AvailableSpace>,
+    ) -> taffy::prelude::Size<f32> {
+        (self.0)(MeasureParams {
+            known_dimensions: known_dimensions.into(),
+            available_space: available_space.into(),
+        })
+        .into()
+    }
+}
+
 pub struct EngineLayout {
     pub bounds: RectF,
     pub order: u32,
+}
+
+pub struct MeasureParams {
+    pub known_dimensions: Size<Option<f32>>,
+    pub available_space: Size<AvailableSpace>,
+}
+
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Pixels(f32),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
+}
+
+impl From<taffy::prelude::AvailableSpace> for AvailableSpace {
+    fn from(value: taffy::prelude::AvailableSpace) -> Self {
+        match value {
+            taffy::prelude::AvailableSpace::Definite(pixels) => Self::Pixels(pixels),
+            taffy::prelude::AvailableSpace::MinContent => Self::MinContent,
+            taffy::prelude::AvailableSpace::MaxContent => Self::MaxContent,
+        }
+    }
 }
 
 impl From<&taffy::tree::Layout> for EngineLayout {

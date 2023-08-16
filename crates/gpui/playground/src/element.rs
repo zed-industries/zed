@@ -2,13 +2,14 @@ use std::{any::Any, rc::Rc};
 
 use crate::{
     adapter::Adapter,
-    style::{DefinedLength, Display, ElementStyle, Fill, Length, Overflow, Position},
+    style::{Display, ElementStyle, Fill, Overflow, Position},
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    scene::MouseClick, EngineLayout, LayoutContext as LegacyLayoutContext,
-    PaintContext as LegacyPaintContext,
+    geometry::{DefinedLength, Length},
+    scene::MouseClick,
+    EngineLayout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext,
 };
 use playground_macros::tailwind_lengths;
 pub use taffy::tree::NodeId;
