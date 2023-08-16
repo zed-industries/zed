@@ -386,6 +386,17 @@ impl InlayHintCache {
         self.hints.clear();
     }
 
+    pub fn hint_by_id(&self, excerpt_id: ExcerptId, hint_id: InlayId) -> Option<InlayHint> {
+        self.hints
+            .get(&excerpt_id)?
+            .read()
+            .hints
+            .iter()
+            .find(|&(id, _)| id == &hint_id)
+            .map(|(_, hint)| hint)
+            .cloned()
+    }
+
     pub fn hints(&self) -> Vec<InlayHint> {
         let mut hints = Vec::new();
         for excerpt_hints in self.hints.values() {

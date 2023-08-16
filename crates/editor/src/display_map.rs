@@ -27,7 +27,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::inlay_map::Inlay;
+pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -387,12 +387,25 @@ impl DisplaySnapshot {
     }
 
     fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
+        self.inlay_snapshot
+            .to_buffer_point(self.display_point_to_inlay_point(point, bias))
+    }
+
+    pub fn display_point_to_inlay_offset(&self, point: DisplayPoint, bias: Bias) -> InlayOffset {
+        self.inlay_snapshot
+            .to_offset(self.display_point_to_inlay_point(point, bias))
+    }
+
+    pub fn inlay_point_to_inlay_offset(&self, point: InlayPoint) -> InlayOffset {
+        self.inlay_snapshot.to_offset(point)
+    }
+
+    fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
-        let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-        self.inlay_snapshot.to_buffer_point(inlay_point)
+        fold_point.to_inlay_point(&self.fold_snapshot)
     }
 
     pub fn max_point(&self) -> DisplayPoint {

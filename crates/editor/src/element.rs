@@ -4,7 +4,7 @@ use super::{
     MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, InlayPoint, TransformBlock},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
@@ -42,7 +42,7 @@ use language::{
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
-    ProjectPath,
+    InlayHintLabelPart, ProjectPath,
 };
 use smallvec::SmallVec;
 use std::{
@@ -455,11 +455,67 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = position_to_display_point(position, text_bounds, position_map);
+        if text_bounds.contains_point(position) {
+            let (nearest_valid_position, unclipped_position) =
+                position_map.point_for_position(text_bounds, position);
+            if nearest_valid_position == unclipped_position {
+                update_go_to_definition_link(editor, Some(nearest_valid_position), cmd, shift, cx);
+                hover_at(editor, Some(nearest_valid_position), cx);
+                return true;
+            } else {
+                let buffer = editor.buffer().read(cx);
+                let snapshot = buffer.snapshot(cx);
+                let previous_valid_position = position_map
+                    .snapshot
+                    .clip_point(unclipped_position, Bias::Left)
+                    .to_point(&position_map.snapshot.display_snapshot);
+                let previous_valid_anchor = snapshot.anchor_at(previous_valid_position, Bias::Left);
+                let next_valid_position = position_map
+                    .snapshot
+                    .clip_point(unclipped_position, Bias::Right)
+                    .to_point(&position_map.snapshot.display_snapshot);
+                let next_valid_anchor = snapshot.anchor_at(next_valid_position, Bias::Right);
+                if let Some(hovered_hint) = editor
+                    .visible_inlay_hints(cx)
+                    .into_iter()
+                    .skip_while(|hint| hint.position.cmp(&previous_valid_anchor, &snapshot).is_lt())
+                    .take_while(|hint| hint.position.cmp(&next_valid_anchor, &snapshot).is_le())
+                    .max_by_key(|hint| hint.id)
+                {
+                    if let Some(cached_hint) = editor
+                        .inlay_hint_cache()
+                        .hint_by_id(previous_valid_anchor.excerpt_id, hovered_hint.id)
+                    {
+                        match &cached_hint.label {
+                            project::InlayHintLabel::String(regular_label) => {
+                                // TODO kb remove + check for tooltip for hover and resolve, if needed
+                                eprintln!("regular string: {regular_label}");
+                            }
+                            project::InlayHintLabel::LabelParts(label_parts) => {
+                                // TODO kb how to properly convert it?
+                                let unclipped_inlay_position = InlayPoint::new(
+                                    unclipped_position.row(),
+                                    unclipped_position.column(),
+                                );
+                                if let Some(hovered_hint_part) = find_hovered_hint_part(
+                                    &position_map.snapshot,
+                                    &label_parts,
+                                    previous_valid_position,
+                                    next_valid_position,
+                                    unclipped_inlay_position,
+                                ) {
+                                    // TODO kb remove + check for tooltip and location and resolve, if needed
+                                    eprintln!("hint_part: {hovered_hint_part:?}");
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+        };
 
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
-        hover_at(editor, point, cx);
-
+        update_go_to_definition_link(editor, None, cmd, shift, cx);
+        hover_at(editor, None, cx);
         true
     }
 
@@ -909,7 +965,7 @@ impl EditorElement {
                                         &text,
                                         cursor_row_layout.font_size(),
                                         &[(
-                                            text.len(),
+                                            text.chars().count(),
                                             RunStyle {
                                                 font_id,
                                                 color: style.background,
@@ -1804,6 +1860,40 @@ impl EditorElement {
     }
 }
 
+fn find_hovered_hint_part<'a>(
+    snapshot: &EditorSnapshot,
+    label_parts: &'a [InlayHintLabelPart],
+    hint_start: Point,
+    hint_end: Point,
+    hovered_position: InlayPoint,
+) -> Option<&'a InlayHintLabelPart> {
+    let hint_start_offset =
+        snapshot.display_point_to_inlay_offset(hint_start.to_display_point(&snapshot), Bias::Left);
+    let hint_end_offset =
+        snapshot.display_point_to_inlay_offset(hint_end.to_display_point(&snapshot), Bias::Right);
+    dbg!((
+        "~~~~~~~~~",
+        hint_start,
+        hint_start_offset,
+        hint_end,
+        hint_end_offset,
+        hovered_position
+    ));
+    let hovered_offset = snapshot.inlay_point_to_inlay_offset(hovered_position);
+    if hovered_offset >= hint_start_offset && hovered_offset <= hint_end_offset {
+        let mut hovered_character = (hovered_offset - hint_start_offset).0;
+        for part in label_parts {
+            let part_len = part.value.chars().count();
+            if hovered_character >= part_len {
+                hovered_character -= part_len;
+            } else {
+                return Some(part);
+            }
+        }
+    }
+    None
+}
+
 struct HighlightedChunk<'a> {
     chunk: &'a str,
     style: Option<HighlightStyle>,
@@ -2663,6 +2753,7 @@ impl PositionMap {
 
         let mut target_point = DisplayPoint::new(row, column);
         let point = self.snapshot.clip_point(target_point, Bias::Left);
+        // TODO kb looks wrong, need to construct inlay point instead? operate offsets?
         *target_point.column_mut() += (x_overshoot / self.em_advance) as u32;
 
         (point, target_point)
@@ -2916,23 +3007,6 @@ impl HighlightedRange {
         path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(self.color, Some(bounds)));
-    }
-}
-
-fn position_to_display_point(
-    position: Vector2F,
-    text_bounds: RectF,
-    position_map: &PositionMap,
-) -> Option<DisplayPoint> {
-    if text_bounds.contains_point(position) {
-        let (point, target_point) = position_map.point_for_position(text_bounds, position);
-        if point == target_point {
-            Some(point)
-        } else {
-            None
-        }
-    } else {
-        None
     }
 }
 
