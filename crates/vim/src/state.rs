@@ -90,6 +90,10 @@ impl VimState {
             )
     }
 
+    pub fn should_autoindent(&self) -> bool {
+        !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
+    }
+
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
             Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => false,

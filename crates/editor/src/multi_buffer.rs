@@ -364,6 +364,7 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        dbg!("edit", &autoindent_mode);
         if self.buffers.borrow().is_empty() {
             return;
         }

@@ -575,6 +575,7 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     collapse_matches: bool,
+    autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
@@ -1409,6 +1410,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
             keymap_context_layers: Default::default(),
@@ -1587,6 +1589,14 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
+    pub fn set_autoindent(&mut self, autoindent: bool) {
+        if autoindent {
+            self.autoindent_mode = Some(AutoindentMode::EachLine);
+        } else {
+            self.autoindent_mode = None;
+        }
+    }
+
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
     }
@@ -1719,7 +1729,7 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
+            buffer.edit(edits, self.autoindent_mode.clone(), cx)
         });
     }
 
@@ -2194,7 +2204,7 @@ impl Editor {
         drop(snapshot);
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+                buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
 
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
@@ -2504,6 +2514,7 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        dbg!("insert!");
         self.insert_with_autoindent_mode(
             text,
             Some(AutoindentMode::Block {
@@ -3003,7 +3014,7 @@ impl Editor {
                 this.buffer.update(cx, |buffer, cx| {
                     buffer.edit(
                         ranges.iter().map(|range| (range.clone(), text)),
-                        Some(AutoindentMode::EachLine),
+                        this.autoindent_mode.clone(),
                         cx,
                     );
                 });

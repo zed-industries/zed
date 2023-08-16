@@ -192,7 +192,7 @@ pub fn visual_block_motion(
             let start = map.clip_point(DisplayPoint::new(row, columns.start), Bias::Left);
             let end = map.clip_point(DisplayPoint::new(row, columns.end), Bias::Left);
             if columns.start <= map.line_len(row) {
-                let mut selection = Selection {
+                let selection = Selection {
                     id: s.new_selection_id(),
                     start: start.to_point(map),
                     end: end.to_point(map),
@@ -392,7 +392,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                                     linewise = all_selections_were_entire_line;
                                 }
 
-                                let selection = selection.clone();
+                                let mut selection = selection.clone();
                                 if !selection.reversed {
                                     let adjusted = selection.end;
                                     // If the selection is empty, move both the start and end forward one
