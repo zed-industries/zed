@@ -18,6 +18,7 @@ mod components;
 mod element;
 mod frame;
 mod style;
+mod text;
 mod themes;
 mod view;
 

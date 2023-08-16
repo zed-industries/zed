@@ -1,23 +1,18 @@
-use std::{any::Any, rc::Rc};
-
 use crate::{
     adapter::Adapter,
     style::{Display, ElementStyle, Fill, Overflow, Position},
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
+pub use gpui::LayoutContext;
 use gpui::{
     geometry::{DefinedLength, Length},
     scene::MouseClick,
-    EngineLayout, LayoutContext as LegacyLayoutContext, PaintContext as LegacyPaintContext,
+    EngineLayout, PaintContext as LegacyPaintContext,
 };
 use playground_macros::tailwind_lengths;
+use std::{any::Any, rc::Rc};
 pub use taffy::tree::NodeId;
-
-#[derive(Deref, DerefMut)]
-pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
-    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
-}
 
 #[derive(Deref, DerefMut)]
 pub struct PaintContext<'a, 'b, 'c, 'd, V> {
@@ -355,12 +350,9 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
 
         self.paint(layout, view, cx)
     }
-
-    // fn clone_object(&self) -> Box<dyn ElementObject<V>> {
-    //     Box::new(Clone::clone(self))
-    // }
 }
 
+/// A dynamically typed element.
 pub struct AnyElement<V> {
     element: Box<dyn ElementObject<V>>,
     layout: Option<(NodeId, Box<dyn Any>)>,
