@@ -64,3 +64,10 @@ impl<V: 'static> Element<V> for Frame<V> {
         Ok(())
     }
 }
+
+impl<V: 'static> Frame<V> {
+    pub fn child(mut self, child: impl Element<V>) -> Self {
+        self.children.push(child.into_any());
+        self
+    }
+}

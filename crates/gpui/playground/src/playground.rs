@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_variables)]
+use components::button;
 use element::Element;
 use frame::frame;
 use gpui::{
@@ -42,7 +43,11 @@ fn main() {
 
 fn workspace<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     // frame().w_full().h_half().fill(theme.success(0.5))
-    frame().h_full().w(percent(50.)).fill(theme.success(0.5))
+    frame()
+        .h_full()
+        .w(percent(50.))
+        .fill(theme.success(0.5))
+        .child(button())
 }
 //     todo!()
 //     // column()

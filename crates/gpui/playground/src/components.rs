@@ -18,18 +18,22 @@ impl<V, D> Default for ButtonHandlers<V, D> {
 
 pub struct Button<V: 'static, D: 'static> {
     metadata: ElementMetadata<V>,
-    button_handlers: ButtonHandlers<V, D>,
-    label: Cow<'static, str>,
+    handlers: ButtonHandlers<V, D>,
+    label: Option<Cow<'static, str>>,
+    icon: Option<Cow<'static, str>>,
     data: Rc<D>,
     view_type: PhantomData<V>,
 }
 
+// Impl block for buttons without data.
+// See below for an impl block for any button.
 impl<V: 'static> Button<V, ()> {
-    fn new(label: impl Into<Cow<'static, str>>) -> Self {
+    fn new() -> Self {
         Self {
             metadata: Default::default(),
-            button_handlers: ButtonHandlers::default(),
-            label: label.into(),
+            handlers: ButtonHandlers::default(),
+            label: None,
+            icon: None,
             data: Rc::new(()),
             view_type: PhantomData,
         }
@@ -38,15 +42,27 @@ impl<V: 'static> Button<V, ()> {
     pub fn data<D: 'static>(self, data: D) -> Button<V, D> {
         Button {
             metadata: Default::default(),
-            button_handlers: ButtonHandlers::default(),
+            handlers: ButtonHandlers::default(),
             label: self.label,
+            icon: self.icon,
             data: Rc::new(data),
             view_type: PhantomData,
         }
     }
 }
 
+// Impl block for *any* button.
 impl<V: 'static, D: 'static> Button<V, D> {
+    fn label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    fn icon(mut self, icon: impl Into<Cow<'static, str>>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
     fn click(self, handler: impl Fn(&mut V, &D) + 'static) -> Self {
         let data = self.data.clone();
         Element::click(self, move |view, _| {
@@ -55,8 +71,8 @@ impl<V: 'static, D: 'static> Button<V, D> {
     }
 }
 
-pub fn button<V>(label: impl Into<Cow<'static, str>>) -> Button<V, ()> {
-    Button::new(label)
+pub fn button<V>() -> Button<V, ()> {
+    Button::new()
 }
 
 impl<V: 'static, D: 'static> Button<V, D> {
@@ -64,7 +80,7 @@ impl<V: 'static, D: 'static> Button<V, D> {
         // TODO: Drive from the context
         let button = frame().fill(rose_pine::dawn().error(0.5)).h_5().w_9();
 
-        if let Some(handler) = self.button_handlers.click.clone() {
+        if let Some(handler) = self.handlers.click.clone() {
             let data = self.data.clone();
             button.click(move |view, event| handler(view, data.as_ref()))
         } else {
