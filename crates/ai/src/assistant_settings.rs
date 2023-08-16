@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -5,44 +7,31 @@ use settings::Setting;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAIModel {
-    #[serde(rename = "gpt-3.5")]
-    GptThreePointFive,
-    #[serde(rename = "gpt-4")]
-    GptFour,
+    #[serde(rename = "gpt-3.5-turbo-0613")]
+    GptThreeFiveTurbo0613,
+    #[serde(rename = "gpt-4-0613")]
+    GptFour0613,
 }
 
-impl<T> From<T> for OpenAIModel
-where
-    T: AsRef<str>,
-{
-    fn from(s: T) -> Self {
-        match s.as_ref() {
-            "gpt-3.5-turbo-0613" => OpenAIModel::GptThreePointFive,
-            "gpt-4-0613" => OpenAIModel::GptFour,
-            _ => panic!("Unknown OpenAI model: {}", s.as_ref()),
-        }
+impl Display for OpenAIModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let model_name = serde_json::to_string(self).unwrap().replace("\"", "");
+        write!(f, "{}", model_name)
     }
 }
 
 impl OpenAIModel {
-    pub fn full_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &'static str {
         match self {
-            OpenAIModel::GptThreePointFive => "gpt-3.5-turbo-0613",
-            OpenAIModel::GptFour => "gpt-4-0613",
-        }
-    }
-
-    pub fn short_name(&self) -> &'static str {
-        match self {
-            OpenAIModel::GptThreePointFive => "gpt-3.5",
-            OpenAIModel::GptFour => "gpt-4",
+            OpenAIModel::GptThreeFiveTurbo0613 => "gpt-3.5-turbo",
+            OpenAIModel::GptFour0613 => "gpt-4",
         }
     }
 
     pub fn cycle(&mut self) -> Self {
         match self {
-            OpenAIModel::GptThreePointFive => OpenAIModel::GptFour,
-            OpenAIModel::GptFour => OpenAIModel::GptThreePointFive,
+            OpenAIModel::GptThreeFiveTurbo0613 => OpenAIModel::GptFour0613,
+            OpenAIModel::GptFour0613 => OpenAIModel::GptThreeFiveTurbo0613,
         }
     }
 }
