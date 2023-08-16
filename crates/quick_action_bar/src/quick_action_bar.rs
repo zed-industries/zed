@@ -45,10 +45,10 @@ impl View for QuickActionBar {
         let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
         let mut bar = Flex::row().with_child(render_quick_action_bar_button(
             0,
-            "icons/hamburger_15.svg",
+            "icons/inlay_hint.svg",
             inlay_hints_enabled,
             (
-                "Inlay hints".to_string(),
+                "Toggle Inlay Hints".to_string(),
                 Some(Box::new(editor::ToggleInlayHints)),
             ),
             cx,
@@ -67,10 +67,10 @@ impl View for QuickActionBar {
 
             bar = bar.with_child(render_quick_action_bar_button(
                 1,
-                "icons/magnifying_glass_12.svg",
+                "icons/magnifying_glass.svg",
                 search_bar_shown,
                 (
-                    "Buffer search".to_string(),
+                    "Buffer Search".to_string(),
                     Some(Box::new(search_action.clone())),
                 ),
                 cx,
