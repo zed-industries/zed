@@ -18,6 +18,7 @@ mod python;
 mod ruby;
 mod rust;
 mod svelte;
+mod tailwind;
 mod typescript;
 mod yaml;
 
@@ -116,7 +117,11 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
     language(
         "html",
         tree_sitter_html::language(),
-        vec![Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))],
+        vec![
+            // Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
+            // Arc::new(emmet::EmmetLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "ruby",
