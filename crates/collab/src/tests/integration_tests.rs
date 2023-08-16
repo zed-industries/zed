@@ -7867,7 +7867,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .insert_tree(
             "/a",
             json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
@@ -8177,7 +8177,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .insert_tree(
             "/a",
             json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )

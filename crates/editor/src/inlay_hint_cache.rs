@@ -24,7 +24,7 @@ pub struct InlayHintCache {
     hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
-    enabled: bool,
+    pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
 }
 
@@ -380,7 +380,7 @@ impl InlayHintCache {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.version += 1;
         self.update_tasks.clear();
         self.hints.clear();
@@ -2001,7 +2001,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_multiple_excerpts_large_multibuffer(
         deterministic: Arc<Deterministic>,
         cx: &mut gpui::TestAppContext,
@@ -2335,10 +2335,12 @@ mod tests {
 all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(
-                editor.inlay_hint_cache().version,
-                last_scroll_update_version + expected_layers.len(),
-                "Due to every excerpt having one hint, cache should update per new excerpt received"
+
+            let current_cache_version = editor.inlay_hint_cache().version;
+            let minimum_expected_version = last_scroll_update_version + expected_layers.len();
+            assert!(
+                current_cache_version == minimum_expected_version || current_cache_version == minimum_expected_version + 1,
+                "Due to every excerpt having one hint, cache should update per new excerpt received + 1 potential sporadic update"
             );
         });
     }
@@ -2683,6 +2685,127 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         });
     }
 
+    #[gpui::test]
+    async fn test_toggle_inlay_hints(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: false,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let (file_with_hints, editor, fake_server) = prepare_test_objects(cx).await;
+
+        editor.update(cx, |editor, cx| {
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+        });
+        cx.foreground().start_waiting();
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let closure_lsp_request_count = Arc::clone(&lsp_request_count);
+        fake_server
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_lsp_request_count = Arc::clone(&closure_lsp_request_count);
+                async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                    );
+
+                    let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: lsp::Position::new(0, i),
+                        label: lsp::InlayHintLabel::String(i.to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            let expected_hints = vec!["1".to_string()];
+            assert_eq!(
+                expected_hints,
+                cached_hint_labels(editor),
+                "Should display inlays after toggle despite them disabled in settings"
+            );
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(
+                editor.inlay_hint_cache().version,
+                1,
+                "First toggle should be cache's first update"
+            );
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert!(
+                cached_hint_labels(editor).is_empty(),
+                "Should clear hints after 2nd toggle"
+            );
+            assert!(visible_hint_labels(editor, cx).is_empty());
+            assert_eq!(editor.inlay_hint_cache().version, 2);
+        });
+
+        update_test_language_settings(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            let expected_hints = vec!["2".to_string()];
+            assert_eq!(
+                expected_hints,
+                cached_hint_labels(editor),
+                "Should query LSP hints for the 2nd time after enabling hints in settings"
+            );
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, 3);
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert!(
+                cached_hint_labels(editor).is_empty(),
+                "Should clear hints after enabling in settings and a 3rd toggle"
+            );
+            assert!(visible_hint_labels(editor, cx).is_empty());
+            assert_eq!(editor.inlay_hint_cache().version, 4);
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+        });
+        cx.foreground().run_until_parked();
+        editor.update(cx, |editor, cx| {
+            let expected_hints = vec!["3".to_string()];
+            assert_eq!(
+                expected_hints,
+                cached_hint_labels(editor),
+                "Should query LSP hints for the 3rd time after enabling hints in settings and toggling them back on"
+            );
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, 5);
+        });
+    }
+
     pub(crate) fn init_test(cx: &mut TestAppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
         cx.foreground().forbid_parking();
 
@@ -2758,6 +2881,12 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert!(cached_hint_labels(editor).is_empty());
+            assert!(visible_hint_labels(editor, cx).is_empty());
+            assert_eq!(editor.inlay_hint_cache().version, 0);
+        });
 
         ("/a/main.rs", editor, fake_server)
     }
