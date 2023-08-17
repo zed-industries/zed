@@ -3,10 +3,7 @@ use cocoa::{
     foundation::{NSPoint, NSRect},
 };
 use objc::{msg_send, sel, sel_impl};
-use pathfinder_geometry::{
-    rect::RectF,
-    vector::{vec2f, Vector2F},
-};
+use pathfinder_geometry::vector::{vec2f, Vector2F};
 
 ///! Macos screen have a y axis that goings up from the bottom of the screen and
 ///! an origin at the bottom left of the main display.
@@ -15,6 +12,7 @@ pub trait Vector2FExt {
     /// Converts self to an NSPoint with y axis pointing up.
     fn to_screen_ns_point(&self, native_window: id, window_height: f64) -> NSPoint;
 }
+
 impl Vector2FExt for Vector2F {
     fn to_screen_ns_point(&self, native_window: id, window_height: f64) -> NSPoint {
         unsafe {
@@ -25,16 +23,13 @@ impl Vector2FExt for Vector2F {
 }
 
 pub trait NSRectExt {
-    fn to_rectf(&self) -> RectF;
+    fn size_vec(&self) -> Vector2F;
     fn intersects(&self, other: Self) -> bool;
 }
 
 impl NSRectExt for NSRect {
-    fn to_rectf(&self) -> RectF {
-        RectF::new(
-            vec2f(self.origin.x as f32, self.origin.y as f32),
-            vec2f(self.size.width as f32, self.size.height as f32),
-        )
+    fn size_vec(&self) -> Vector2F {
+        vec2f(self.size.width as f32, self.size.height as f32)
     }
 
     fn intersects(&self, other: Self) -> bool {
