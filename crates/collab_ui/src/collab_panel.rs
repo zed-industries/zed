@@ -397,7 +397,7 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
-                collapsed_sections: Vec::default(),
+                collapsed_sections: vec![Section::Offline],
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
@@ -2391,8 +2391,8 @@ impl Panel for CollabPanel {
             .unwrap_or_else(|| settings::get::<CollaborationPanelSettings>(cx).default_width)
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
-        self.width = Some(size);
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+        self.width = size;
         self.serialize(cx);
         cx.notify();
     }
