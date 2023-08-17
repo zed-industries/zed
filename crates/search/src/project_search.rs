@@ -673,9 +673,22 @@ impl ProjectSearchView {
         }
     }
 
+    fn clear_search(&mut self, cx: &mut ViewContext<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.pending_search = None;
+            model.no_results = None;
+            model.match_ranges.clear();
+
+            model.excerpts.update(cx, |excerpts, cx| {
+                excerpts.clear(cx);
+            });
+        });
+    }
+
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        self.clear_search(cx);
+
         let previous_mode = self.current_mode;
-        log::error!("Going from {previous_mode:?} to {:?}", mode);
         if previous_mode == mode {
             return;
         }
@@ -684,7 +697,6 @@ impl ProjectSearchView {
 
         match mode {
             SearchMode::Semantic => {
-                dbg!("Matched on Semantic");
                 let has_permission = self.semantic_permissioned(cx);
                 self.active_match_index = None;
                 cx.spawn(|this, mut cx| async move {
@@ -738,9 +750,6 @@ impl ProjectSearchView {
             }
         }
 
-        if let Some(query) = self.build_search_query(cx) {
-            self.search(cx);
-        };
         cx.notify();
     }
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
