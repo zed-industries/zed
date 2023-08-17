@@ -147,7 +147,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
     let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
     let operator = Vim::read(cx).active_operator();
-    match Vim::read(cx).state.mode {
+    match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, times, cx),
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
         Mode::Insert => {
@@ -158,7 +158,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 }
 
 fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).state.last_find.clone() {
+    let find = match Vim::read(cx).workspace_state.last_find.clone() {
         Some(Motion::FindForward { before, text }) => {
             if backwards {
                 Motion::FindBackward {

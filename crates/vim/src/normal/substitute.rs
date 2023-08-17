@@ -4,7 +4,7 @@ use language::Point;
 use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
-    let line_mode = vim.state.mode == Mode::VisualLine;
+    let line_mode = vim.state().mode == Mode::VisualLine;
     vim.switch_mode(Mode::Insert, true, cx);
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {

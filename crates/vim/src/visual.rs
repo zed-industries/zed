@@ -53,7 +53,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            if vim.state.mode == Mode::VisualBlock && !matches!(motion, Motion::EndOfLine) {
+            if vim.state().mode == Mode::VisualBlock && !matches!(motion, Motion::EndOfLine) {
                 let is_up_or_down = matches!(motion, Motion::Up | Motion::Down);
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
                     motion.move_point(map, point, goal, times)
@@ -85,7 +85,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
                         // ensure the current character is included in the selection.
                         if !selection.reversed {
-                            let next_point = if vim.state.mode == Mode::VisualBlock {
+                            let next_point = if vim.state().mode == Mode::VisualBlock {
                                 movement::saturating_right(map, selection.end)
                             } else {
                                 movement::right(map, selection.end)
@@ -240,7 +240,7 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
 
 fn toggle_mode(mode: Mode, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        if vim.state.mode == mode {
+        if vim.state().mode == mode {
             vim.switch_mode(Mode::Normal, false, cx);
         } else {
             vim.switch_mode(mode, false, cx);
@@ -294,7 +294,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                         let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
                     });
-                    if vim.state.mode == Mode::VisualBlock {
+                    if vim.state().mode == Mode::VisualBlock {
                         s.select_anchors(vec![s.first_anchor()])
                     }
                 });
@@ -313,7 +313,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                 s.move_with(|_, selection| {
                     selection.collapse_to(selection.start, SelectionGoal::None)
                 });
-                if vim.state.mode == Mode::VisualBlock {
+                if vim.state().mode == Mode::VisualBlock {
                     s.select_anchors(vec![s.first_anchor()])
                 }
             });
@@ -970,5 +970,16 @@ mod test {
             "
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_mode_across_command(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("aˇbc", Mode::Normal);
+        cx.simulate_keystrokes(["ctrl-v"]);
+        assert_eq!(cx.mode(), Mode::VisualBlock);
+        cx.simulate_keystrokes(["cmd-shift-p", "escape"]);
+        assert_eq!(cx.mode(), Mode::VisualBlock);
     }
 }

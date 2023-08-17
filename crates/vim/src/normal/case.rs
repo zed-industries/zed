@@ -13,7 +13,7 @@ pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Works
             let mut cursor_positions = Vec::new();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             for selection in editor.selections.all::<Point>(cx) {
-                match vim.state.mode {
+                match vim.state().mode {
                     Mode::VisualLine => {
                         let start = Point::new(selection.start.row, 0);
                         let end =

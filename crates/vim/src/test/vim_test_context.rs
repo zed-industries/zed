@@ -76,12 +76,12 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.cx.read(|cx| cx.global::<Vim>().state.mode)
+        self.cx.read(|cx| cx.global::<Vim>().state().mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
         self.cx
-            .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
+            .read(|cx| cx.global::<Vim>().state().operator_stack.last().copied())
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {

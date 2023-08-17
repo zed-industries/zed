@@ -12,7 +12,7 @@ mod utils;
 mod visual;
 
 use anyhow::Result;
-use collections::CommandPaletteFilter;
+use collections::{CommandPaletteFilter, HashMap};
 use editor::{movement, Editor, EditorMode, Event};
 use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
@@ -24,7 +24,7 @@ use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
 use settings::{Setting, SettingsStore};
-use state::{Mode, Operator, VimState};
+use state::{EditorState, Mode, Operator, WorkspaceState};
 use std::sync::Arc;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -127,7 +127,9 @@ pub struct Vim {
     active_editor: Option<WeakViewHandle<Editor>>,
     editor_subscription: Option<Subscription>,
     enabled: bool,
-    state: VimState,
+    editor_states: HashMap<usize, EditorState>,
+    workspace_state: WorkspaceState,
+    default_state: EditorState,
 }
 
 impl Vim {
@@ -143,7 +145,7 @@ impl Vim {
     }
 
     fn set_active_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut WindowContext) {
-        self.active_editor = Some(editor.downgrade());
+        self.active_editor = Some(editor.clone().downgrade());
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             Event::SelectionsChanged { local: true } => {
                 let editor = editor.read(cx);
@@ -163,7 +165,10 @@ impl Vim {
             let editor_mode = editor.mode();
             let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
-            if editor_mode == EditorMode::Full && !newest_selection_empty {
+            if editor_mode == EditorMode::Full
+                && !newest_selection_empty
+                && self.state().mode == Mode::Normal
+            {
                 self.switch_mode(Mode::Visual, true, cx);
             }
         }
@@ -181,11 +186,14 @@ impl Vim {
     }
 
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
-        let last_mode = self.state.mode;
-        let prior_mode = self.state.last_mode;
-        self.state.last_mode = last_mode;
-        self.state.mode = mode;
-        self.state.operator_stack.clear();
+        let state = self.state();
+        let last_mode = state.mode;
+        let prior_mode = state.last_mode;
+        self.update_state(|state| {
+            state.last_mode = last_mode;
+            state.mode = mode;
+            state.operator_stack.clear();
+        });
 
         cx.emit_global(VimEvent::ModeChanged { mode });
 
@@ -207,7 +215,9 @@ impl Vim {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
-                if last_mode == Mode::VisualBlock && mode != Mode::VisualBlock {
+                if last_mode == Mode::VisualBlock
+                    && (mode != Mode::VisualBlock && mode != Mode::Insert)
+                {
                     let tail = s.oldest_anchor().tail();
                     let head = s.newest_anchor().head();
                     s.select_anchor_ranges(vec![tail..head]);
@@ -237,7 +247,7 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
-        self.state.operator_stack.push(operator);
+        self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
     }
 
@@ -250,9 +260,13 @@ impl Vim {
         }
     }
 
+    fn maybe_pop_operator(&mut self) -> Option<Operator> {
+        self.update_state(|state| state.operator_stack.pop())
+    }
+
     fn pop_operator(&mut self, cx: &mut WindowContext) -> Operator {
-        let popped_operator = self.state.operator_stack.pop()
-            .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
+        let popped_operator = self.update_state( |state| state.operator_stack.pop()
+        )            .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
     }
@@ -266,12 +280,12 @@ impl Vim {
     }
 
     fn clear_operator(&mut self, cx: &mut WindowContext) {
-        self.state.operator_stack.clear();
+        self.update_state(|state| state.operator_stack.clear());
         self.sync_vim_settings(cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {
-        self.state.operator_stack.last().copied()
+        self.state().operator_stack.last().copied()
     }
 
     fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
@@ -282,15 +296,19 @@ impl Vim {
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
                 let find = Motion::FindForward { before, text };
-                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                Vim::update(cx, |vim, _| {
+                    vim.workspace_state.last_find = Some(find.clone())
+                });
                 motion::motion(find, cx)
             }
             Some(Operator::FindBackward { after }) => {
                 let find = Motion::FindBackward { after, text };
-                Vim::update(cx, |vim, _| vim.state.last_find = Some(find.clone()));
+                Vim::update(cx, |vim, _| {
+                    vim.workspace_state.last_find = Some(find.clone())
+                });
                 motion::motion(find, cx)
             }
-            Some(Operator::Replace) => match Vim::read(cx).state.mode {
+            Some(Operator::Replace) => match Vim::read(cx).state().mode {
                 Mode::Normal => normal_replace(text, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
@@ -302,7 +320,6 @@ impl Vim {
     fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
         if self.enabled != enabled {
             self.enabled = enabled;
-            self.state = Default::default();
 
             cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
                 if self.enabled {
@@ -329,8 +346,29 @@ impl Vim {
         }
     }
 
+    pub fn state(&self) -> &EditorState {
+        if let Some(active_editor) = self.active_editor.as_ref() {
+            if let Some(state) = self.editor_states.get(&active_editor.id()) {
+                return state;
+            }
+        }
+
+        &self.default_state
+    }
+
+    pub fn update_state<T>(&mut self, func: impl FnOnce(&mut EditorState) -> T) -> T {
+        let mut state = self.state().clone();
+        let ret = func(&mut state);
+
+        if let Some(active_editor) = self.active_editor.as_ref() {
+            self.editor_states.insert(active_editor.id(), state);
+        }
+
+        ret
+    }
+
     fn sync_vim_settings(&self, cx: &mut WindowContext) {
-        let state = &self.state;
+        let state = self.state();
         let cursor_shape = state.cursor_shape();
 
         self.update_active_editor(cx, |editor, cx| {
@@ -391,7 +429,7 @@ impl Setting for VimModeSetting {
 
 fn local_selections_changed(newest_empty: bool, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
+        if vim.enabled && vim.state().mode == Mode::Normal && !newest_empty {
             vim.switch_mode(Mode::Visual, false, cx)
         }
     })

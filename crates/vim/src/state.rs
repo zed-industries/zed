@@ -41,16 +41,20 @@ pub enum Operator {
     FindBackward { after: bool },
 }
 
-#[derive(Default)]
-pub struct VimState {
+#[derive(Default, Clone)]
+pub struct EditorState {
     pub mode: Mode,
     pub last_mode: Mode,
     pub operator_stack: Vec<Operator>,
-    pub search: SearchState,
+}
 
+#[derive(Default, Clone)]
+pub struct WorkspaceState {
+    pub search: SearchState,
     pub last_find: Option<Motion>,
 }
 
+#[derive(Clone)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
@@ -67,7 +71,7 @@ impl Default for SearchState {
     }
 }
 
-impl VimState {
+impl EditorState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {

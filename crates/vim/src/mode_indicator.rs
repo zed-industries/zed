@@ -34,7 +34,7 @@ impl ModeIndicator {
             if settings::get::<VimModeSetting>(cx).0 {
                 mode_indicator.mode = cx
                     .has_global::<Vim>()
-                    .then(|| cx.global::<Vim>().state.mode);
+                    .then(|| cx.global::<Vim>().state().mode);
             } else {
                 mode_indicator.mode.take();
             }
@@ -46,7 +46,7 @@ impl ModeIndicator {
             .has_global::<Vim>()
             .then(|| {
                 let vim = cx.global::<Vim>();
-                vim.enabled.then(|| vim.state.mode)
+                vim.enabled.then(|| vim.state().mode)
             })
             .flatten();
 
