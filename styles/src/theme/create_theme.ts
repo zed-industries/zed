@@ -1,4 +1,4 @@
-import chroma, { Scale, Color } from "chroma-js"
+import { Scale, Color } from "chroma-js"
 import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
 export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 import {

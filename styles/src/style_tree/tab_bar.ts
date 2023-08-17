@@ -90,6 +90,10 @@ export default function tab_bar(): any {
             icon_width: 12,
 
             button_width: active_pane_active_tab.height,
+            border: border(theme.lowest, "on", {
+                bottom: true,
+                overlay: true,
+            })
         },
         state: {
             hovered: {
@@ -97,10 +101,11 @@ export default function tab_bar(): any {
                 background: background(theme.highest, "on", "hovered"),
             },
             disabled: {
-                color: foreground(theme.highest, "on", "disabled"),
+                color: foreground(theme.highest, "on", "disabled")
             },
         },
     })
+
     const dragged_tab = {
         ...active_pane_active_tab,
         background: with_opacity(tab.background, 0.9),
