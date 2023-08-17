@@ -107,6 +107,14 @@
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "ctrl-f": "vim::PageDown",
+      "pagedown": "vim::PageDown",
+      "ctrl-b": "vim::PageUp",
+      "pageup": "vim::PageUp",
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp",
       // "g" commands
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
@@ -294,14 +302,6 @@
           "backwards": true
         }
       ],
-      "ctrl-f": "vim::PageDown",
-      "pagedown": "vim::PageDown",
-      "ctrl-b": "vim::PageUp",
-      "pageup": "vim::PageUp",
-      "ctrl-d": "vim::ScrollDown",
-      "ctrl-u": "vim::ScrollUp",
-      "ctrl-e": "vim::LineDown",
-      "ctrl-y": "vim::LineUp",
       "r": [
         "vim::PushOperator",
         "Replace"
