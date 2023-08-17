@@ -1,4 +1,4 @@
-use crate::element::{Element, ElementMetadata, IntoElement};
+use crate::element::{Element, ElementMetadata, EventHandler, IntoElement};
 use gpui::{geometry::Size, text_layout::LineLayout, RenderContext};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -24,10 +24,6 @@ impl<V: 'static> Element<V> for Text<V> {
 
     fn style_mut(&mut self) -> &mut crate::style::ElementStyle {
         &mut self.metadata.style
-    }
-
-    fn handlers_mut(&mut self) -> &mut crate::element::ElementHandlers<V> {
-        &mut self.metadata.handlers
     }
 
     fn layout(
@@ -94,6 +90,10 @@ impl<V: 'static> Element<V> for Text<V> {
             cx.legacy_cx,
         );
         Ok(())
+    }
+
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
+        &mut self.metadata.handlers
     }
 }
 

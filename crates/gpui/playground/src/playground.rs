@@ -49,12 +49,7 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_half()
         .fill(theme.success(0.5))
-        .child(
-            button()
-                .label("Hello")
-                .mouse_up(MouseButton::Left, |_, _, _| (println!("up!")))
-                .mouse_down(MouseButton::Left, |_, _, _| (println!("down!"))),
-        )
+        .child(button().label("Hello").click(|_, _, _| println!("click!")))
 }
 
 //     todo!()

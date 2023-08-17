@@ -41,12 +41,14 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         &mut self,
         order: u32,
         bounds: RectF,
+        outside_bounds: bool,
         handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
     ) {
         // We'll sort these by their order in `take_interactive_regions`.
         self.scene.interactive_regions.push(InteractiveRegion {
             order,
             bounds,
+            outside_bounds,
             event_handler: Rc::new(move |view, event, window_cx, view_id| {
                 let mut cx = ViewContext::mutable(window_cx, view_id);
                 let mut cx = EventContext::new(&mut cx);

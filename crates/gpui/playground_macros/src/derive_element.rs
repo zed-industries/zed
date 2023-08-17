@@ -83,7 +83,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 &mut self.metadata.style
             }
 
-            fn handlers_mut(&mut self) -> &mut #crate_name::element::ElementHandlers<V> {
+            fn handlers_mut(&mut self) -> &mut Vec<#crate_name::element::EventHandler<V>> {
                 &mut self.metadata.handlers
             }
 

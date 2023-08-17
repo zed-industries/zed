@@ -711,6 +711,7 @@ impl MouseRegion {
 pub struct InteractiveRegion {
     pub order: u32,
     pub bounds: RectF,
+    pub outside_bounds: bool,
     pub event_handler: Rc<dyn Fn(&mut dyn Any, &dyn Any, &mut WindowContext, usize)>,
     pub event_type: TypeId,
     pub view_id: usize,

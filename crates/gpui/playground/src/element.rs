@@ -11,8 +11,11 @@ use gpui::{
     EngineLayout, EventContext, RenderContext, ViewContext,
 };
 use playground_macros::tailwind_lengths;
-use smallvec::SmallVec;
-use std::{any::Any, cell::Cell, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    cell::Cell,
+    rc::Rc,
+};
 
 pub use crate::paint_context::PaintContext;
 pub use taffy::tree::NodeId;
@@ -22,28 +25,32 @@ pub struct Layout<'a, E: ?Sized> {
     pub from_element: &'a mut E,
 }
 
-pub struct ElementHandlers<V> {
-    mouse_button: SmallVec<[Rc<dyn Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>)>; 2]>,
-}
-
 pub struct ElementMetadata<V> {
     pub style: ElementStyle,
-    pub handlers: ElementHandlers<V>,
+    pub handlers: Vec<EventHandler<V>>,
+}
+
+pub struct EventHandler<V> {
+    handler: Rc<dyn Fn(&mut V, &dyn Any, &mut EventContext<V>)>,
+    event_type: TypeId,
+    outside_bounds: bool,
+}
+
+impl<V> Clone for EventHandler<V> {
+    fn clone(&self) -> Self {
+        Self {
+            handler: self.handler.clone(),
+            event_type: self.event_type,
+            outside_bounds: self.outside_bounds,
+        }
+    }
 }
 
 impl<V> Default for ElementMetadata<V> {
     fn default() -> Self {
         Self {
             style: ElementStyle::default(),
-            handlers: ElementHandlers::default(),
-        }
-    }
-}
-
-impl<V> Default for ElementHandlers<V> {
-    fn default() -> Self {
-        ElementHandlers {
-            mouse_button: Default::default(),
+            handlers: Vec::new(),
         }
     }
 }
@@ -52,7 +59,8 @@ pub trait Element<V: 'static>: 'static {
     type Layout: 'static;
 
     fn style_mut(&mut self) -> &mut ElementStyle;
-    fn handlers_mut(&mut self) -> &mut ElementHandlers<V>;
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>>;
+
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Self::Layout)>;
     fn paint<'a>(
@@ -96,6 +104,12 @@ pub trait Element<V: 'static>: 'static {
                 pressed.set(true);
             }
         })
+        .mouse_up_outside(button, {
+            let pressed = pressed.clone();
+            move |_, _, _| {
+                pressed.set(false);
+            }
+        })
         .mouse_up(button, move |view, event, event_cx| {
             if pressed.get() {
                 pressed.set(false);
@@ -112,13 +126,37 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.handlers_mut()
-            .mouse_button
-            .push(Rc::new(move |view, event, event_cx| {
+        self.handlers_mut().push(EventHandler {
+            handler: Rc::new(move |view, event, event_cx| {
+                let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
                 if event.button == button && event.is_down {
                     handler(view, event, event_cx);
                 }
-            }));
+            }),
+            event_type: TypeId::of::<MouseButtonEvent>(),
+            outside_bounds: false,
+        });
+        self
+    }
+
+    fn mouse_down_outside(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.handlers_mut().push(EventHandler {
+            handler: Rc::new(move |view, event, event_cx| {
+                let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                if event.button == button && event.is_down {
+                    handler(view, event, event_cx);
+                }
+            }),
+            event_type: TypeId::of::<MouseButtonEvent>(),
+            outside_bounds: true,
+        });
         self
     }
 
@@ -130,13 +168,37 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.handlers_mut()
-            .mouse_button
-            .push(Rc::new(move |view, event, event_cx| {
+        self.handlers_mut().push(EventHandler {
+            handler: Rc::new(move |view, event, event_cx| {
+                let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
                 if event.button == button && !event.is_down {
                     handler(view, event, event_cx);
                 }
-            }));
+            }),
+            event_type: TypeId::of::<MouseButtonEvent>(),
+            outside_bounds: false,
+        });
+        self
+    }
+
+    fn mouse_up_outside(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.handlers_mut().push(EventHandler {
+            handler: Rc::new(move |view, event, event_cx| {
+                let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                if event.button == button && !event.is_down {
+                    handler(view, event, event_cx);
+                }
+            }),
+            event_type: TypeId::of::<MouseButtonEvent>(),
+            outside_bounds: true,
+        });
         self
     }
 
@@ -362,7 +424,7 @@ pub trait Element<V: 'static>: 'static {
 // Object-safe counterpart of Element used by AnyElement to store elements as trait objects.
 trait ElementObject<V> {
     fn style_mut(&mut self) -> &mut ElementStyle;
-    fn handlers_mut(&mut self) -> &mut ElementHandlers<V>;
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Box<dyn Any>)>;
     fn paint(
@@ -378,7 +440,7 @@ impl<V: 'static, E: Element<V>> ElementObject<V> for E {
         Element::style_mut(self)
     }
 
-    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
         Element::handlers_mut(self)
     }
 
@@ -454,19 +516,27 @@ impl<V: 'static> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
-        for handler in self.element.handlers_mut().mouse_button.iter().cloned() {
+        for event_handler in self.element.handlers_mut().iter().cloned() {
             let EngineLayout { order, bounds } = layout.from_engine;
 
             let view_id = cx.view_id();
-            cx.draw_interactive_region(
-                order,
-                bounds,
-                move |view, event: &MouseButtonEvent, window_cx| {
-                    let mut view_cx = ViewContext::mutable(window_cx, view_id);
-                    let mut event_cx = EventContext::new(&mut view_cx);
-                    (handler)(view, event, &mut event_cx);
-                },
-            );
+            let view_event_handler = event_handler.handler.clone();
+
+            // TODO: Tuck this into a method on PaintContext.
+            cx.scene
+                .interactive_regions
+                .push(gpui::scene::InteractiveRegion {
+                    order,
+                    bounds,
+                    outside_bounds: event_handler.outside_bounds,
+                    event_handler: Rc::new(move |view, event, window_cx, view_id| {
+                        let mut view_context = ViewContext::mutable(window_cx, view_id);
+                        let mut event_context = EventContext::new(&mut view_context);
+                        view_event_handler(view.downcast_mut().unwrap(), event, &mut event_context);
+                    }),
+                    event_type: event_handler.event_type,
+                    view_id,
+                });
         }
 
         self.element.paint(layout, view, cx)?;
@@ -485,7 +555,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         self.element.style_mut()
     }
 
-    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
         self.element.handlers_mut()
     }
 

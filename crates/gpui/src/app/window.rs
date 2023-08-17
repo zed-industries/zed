@@ -118,6 +118,10 @@ impl Window {
             .as_ref()
             .expect("root_view called during window construction")
     }
+
+    pub fn take_interactive_regions(&mut self) -> Vec<InteractiveRegion> {
+        mem::take(&mut self.interactive_regions)
+    }
 }
 
 pub struct WindowContext<'a> {
@@ -875,11 +879,13 @@ impl<'a> WindowContext<'a> {
     fn dispatch_to_interactive_regions(&mut self, event: &Event) {
         if let Some(mouse_event) = event.mouse_event() {
             let mouse_position = event.position().expect("mouse events must have a position");
-            let interactive_regions = std::mem::take(&mut self.window.interactive_regions);
+            let interactive_regions = self.window.take_interactive_regions();
 
             for region in interactive_regions.iter().rev() {
                 if region.event_type == mouse_event.type_id() {
-                    if region.bounds.contains_point(mouse_position) {
+                    let in_bounds = region.bounds.contains_point(mouse_position);
+
+                    if in_bounds == !region.outside_bounds {
                         self.update_any_view(region.view_id, |view, window_cx| {
                             (region.event_handler)(
                                 view.as_any_mut(),

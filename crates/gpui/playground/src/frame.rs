@@ -1,7 +1,6 @@
 use crate::{
     element::{
-        AnyElement, Element, ElementHandlers, IntoElement, Layout, LayoutContext, NodeId,
-        PaintContext,
+        AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId, PaintContext,
     },
     style::ElementStyle,
 };
@@ -13,14 +12,14 @@ use playground_macros::IntoElement;
 #[element_crate = "crate"]
 pub struct Frame<V: 'static> {
     style: ElementStyle,
-    handlers: ElementHandlers<V>,
+    handlers: Vec<EventHandler<V>>,
     children: Vec<AnyElement<V>>,
 }
 
 pub fn frame<V>() -> Frame<V> {
     Frame {
         style: ElementStyle::default(),
-        handlers: ElementHandlers::default(),
+        handlers: Vec::new(),
         children: Vec::new(),
     }
 }
@@ -32,7 +31,7 @@ impl<V: 'static> Element<V> for Frame<V> {
         &mut self.style
     }
 
-    fn handlers_mut(&mut self) -> &mut ElementHandlers<V> {
+    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
         &mut self.handlers
     }
 
