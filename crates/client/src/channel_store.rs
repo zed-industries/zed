@@ -441,10 +441,12 @@ impl ChannelStore {
 
             for channel in payload.channels {
                 if let Some(existing_channel) = self.channels_by_id.get_mut(&channel.id) {
+                    // FIXME: We may be missing a path for this existing channel in certain cases
                     let existing_channel = Arc::make_mut(existing_channel);
                     existing_channel.name = channel.name;
                     continue;
                 }
+
                 self.channels_by_id.insert(
                     channel.id,
                     Arc::new(Channel {
