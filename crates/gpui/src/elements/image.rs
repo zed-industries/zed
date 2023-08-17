@@ -5,8 +5,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Border, Element, ImageData, LayoutContext, SceneBuilder, SizeConstraint, View,
-    ViewContext,
+    scene, Border, Element, ImageData, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
+    View, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -97,13 +97,13 @@ impl<V: View> Element<V> for Image {
         _: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut ViewContext<V>,
+        _: &mut PaintContext<V>,
     ) -> Self::PaintState {
         if let Some(data) = layout {
             scene.push_image(scene::Image {
                 bounds,
                 border: self.style.border,
-                corner_radius: self.style.corner_radius,
+                corner_radii: self.style.corner_radius.into(),
                 grayscale: self.style.grayscale,
                 data: data.clone(),
             });

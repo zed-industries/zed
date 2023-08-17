@@ -45,7 +45,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::http::HttpClient;
+use util::{http::HttpClient, paths::PathExt};
 use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -777,7 +777,7 @@ impl LanguageRegistry {
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
-        let extension = path.extension().and_then(|name| name.to_str());
+        let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
         self.get_or_load_language(|config| {
             let path_matches = config

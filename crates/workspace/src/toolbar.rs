@@ -220,10 +220,10 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
     spacing: f32,
     on_click: F,
     tooltip_action: A,
-    action_name: &str,
+    action_name: &'static str,
     cx: &mut ViewContext<Toolbar>,
 ) -> AnyElement<Toolbar> {
-    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
+    MouseEventHandler::new::<A, _>(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state)
         } else {
@@ -252,7 +252,7 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
     })
     .with_tooltip::<A>(
         0,
-        action_name.to_string(),
+        action_name,
         Some(Box::new(tooltip_action)),
         tooltip_style,
         cx,

@@ -6,12 +6,13 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint, Task, View,
-    ViewContext,
+    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
+    Task, View, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
@@ -52,9 +53,9 @@ pub struct KeystrokeStyle {
 }
 
 impl<V: View> Tooltip<V> {
-    pub fn new<Tag: 'static, T: View>(
+    pub fn new<Tag: 'static>(
         id: usize,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         child: AnyElement<V>,
@@ -66,6 +67,8 @@ impl<V: View> Tooltip<V> {
 
         let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
+        let text = text.into();
+
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
                 focused_view_id,
@@ -92,7 +95,7 @@ impl<V: View> Tooltip<V> {
         } else {
             None
         };
-        let child = MouseEventHandler::<MouseEventHandlerState<Tag>, _>::new(id, cx, |_, _| child)
+        let child = MouseEventHandler::new::<MouseEventHandlerState<Tag>, _>(id, cx, |_, _| child)
             .on_hover(move |e, _, cx| {
                 let position = e.position;
                 if e.started {
@@ -127,7 +130,7 @@ impl<V: View> Tooltip<V> {
 
     pub fn render_tooltip(
         focused_view_id: Option<usize>,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,
@@ -194,7 +197,7 @@ impl<V: View> Element<V> for Tooltip<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx);

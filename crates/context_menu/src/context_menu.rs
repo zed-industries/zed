@@ -1,5 +1,5 @@
 use gpui::{
-    anyhow,
+    anyhow::{self, anyhow},
     elements::*,
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
@@ -218,12 +218,14 @@ impl ContextMenu {
             if let Some(ContextMenuItem::Item { action, .. }) = self.items.get(ix) {
                 match action {
                     ContextMenuItemAction::Action(action) => {
-                        let window_id = cx.window_id();
+                        let window = cx.window();
                         let view_id = self.parent_view_id;
                         let action = action.boxed_clone();
                         cx.app_context()
                             .spawn(|mut cx| async move {
-                                cx.dispatch_action(window_id, view_id, action.as_ref())
+                                window
+                                    .dispatch_action(view_id, action.as_ref(), &mut cx)
+                                    .ok_or_else(|| anyhow!("window was closed"))
                             })
                             .detach_and_log_err(cx);
                     }
@@ -437,14 +439,14 @@ impl ContextMenu {
 
         let style = theme::current(cx).context_menu.clone();
 
-        MouseEventHandler::<Menu, ContextMenu>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<Menu, _>(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, action } => {
                             let action = action.clone();
                             let view_id = self.parent_view_id;
-                            MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
+                            MouseEventHandler::new::<MenuItem, _>(ix, cx, |state, _| {
                                 let style = style.item.in_state(self.selected_index == Some(ix));
                                 let style = style.style_for(state);
                                 let keystroke = match &action {
@@ -480,17 +482,19 @@ impl ContextMenu {
                             .on_down(MouseButton::Left, |_, _, _| {}) // Capture these events
                             .on_click(MouseButton::Left, move |_, menu, cx| {
                                 menu.cancel(&Default::default(), cx);
-                                let window_id = cx.window_id();
+                                let window = cx.window();
                                 match &action {
                                     ContextMenuItemAction::Action(action) => {
                                         let action = action.boxed_clone();
                                         cx.app_context()
                                             .spawn(|mut cx| async move {
-                                                cx.dispatch_action(
-                                                    window_id,
-                                                    view_id,
-                                                    action.as_ref(),
-                                                )
+                                                window
+                                                    .dispatch_action(
+                                                        view_id,
+                                                        action.as_ref(),
+                                                        &mut cx,
+                                                    )
+                                                    .ok_or_else(|| anyhow!("window was closed"))
                                             })
                                             .detach_and_log_err(cx);
                                     }

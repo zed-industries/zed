@@ -19,11 +19,12 @@ use crate::{
     },
     keymap_matcher::KeymapMatcher,
     text_layout::{LineLayout, RunStyle},
-    Action, ClipboardItem, Menu, Scene,
+    Action, AnyWindowHandle, ClipboardItem, Menu, Scene,
 };
 use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
 pub use event::*;
+use pathfinder_geometry::vector::vec2f;
 use postage::oneshot;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -58,13 +59,13 @@ pub trait Platform: Send + Sync {
 
     fn open_window(
         &self,
-        id: usize,
+        handle: AnyWindowHandle,
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
-    fn main_window_id(&self) -> Option<usize>;
+    fn main_window(&self) -> Option<AnyWindowHandle>;
 
-    fn add_status_item(&self, id: usize) -> Box<dyn Window>;
+    fn add_status_item(&self, handle: AnyWindowHandle) -> Box<dyn Window>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -178,6 +179,16 @@ pub struct WindowOptions<'a> {
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
+}
+
+impl<'a> WindowOptions<'a> {
+    pub fn with_bounds(bounds: Vector2F) -> Self {
+        Self {
+            bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), bounds)),
+            center: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug)]

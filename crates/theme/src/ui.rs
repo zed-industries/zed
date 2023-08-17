@@ -34,7 +34,7 @@ pub fn checkbox<Tag, V, F>(
     id: usize,
     cx: &mut ViewContext<V>,
     change: F,
-) -> MouseEventHandler<Tag, V>
+) -> MouseEventHandler<V>
 where
     Tag: 'static,
     V: View,
@@ -43,7 +43,7 @@ where
     let label = Label::new(label, style.label.text.clone())
         .contained()
         .with_style(style.label.container);
-    checkbox_with_label(label, style, checked, id, cx, change)
+    checkbox_with_label::<Tag, _, _, _>(label, style, checked, id, cx, change)
 }
 
 pub fn checkbox_with_label<Tag, D, V, F>(
@@ -53,14 +53,14 @@ pub fn checkbox_with_label<Tag, D, V, F>(
     id: usize,
     cx: &mut ViewContext<V>,
     change: F,
-) -> MouseEventHandler<Tag, V>
+) -> MouseEventHandler<V>
 where
     Tag: 'static,
     D: Element<V>,
     V: View,
     F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
 {
-    MouseEventHandler::new(id, cx, |state, _| {
+    MouseEventHandler::new::<Tag, _>(id, cx, |state, _| {
         let indicator = if checked {
             svg(&style.icon)
         } else {
@@ -107,6 +107,16 @@ pub struct IconStyle {
     pub container: ContainerStyle,
 }
 
+impl IconStyle {
+    pub fn width(&self) -> f32 {
+        self.icon.dimensions.width
+            + self.container.padding.left
+            + self.container.padding.right
+            + self.container.margin.left
+            + self.container.margin.right
+    }
+}
+
 pub fn icon<V: View>(style: &IconStyle) -> Container<V> {
     svg(&style.icon).contained().with_style(style.container)
 }
@@ -143,14 +153,14 @@ pub fn cta_button<Tag, L, V, F>(
     style: &ButtonStyle,
     cx: &mut ViewContext<V>,
     f: F,
-) -> MouseEventHandler<Tag, V>
+) -> MouseEventHandler<V>
 where
     Tag: 'static,
     L: Into<Cow<'static, str>>,
     V: View,
     F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
-    MouseEventHandler::<Tag, V>::new(0, cx, |state, _| {
+    MouseEventHandler::new::<Tag, _>(0, cx, |state, _| {
         let style = style.style_for(state);
         Label::new(label, style.text.to_owned())
             .aligned()
@@ -192,7 +202,6 @@ where
     F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;
-    // let active = cx.window_is_active(cx.window_id());
 
     Flex::column()
         .with_child(
@@ -206,7 +215,7 @@ where
                 ))
                 .with_child(
                     // FIXME: Get a better tag type
-                    MouseEventHandler::<Tag, V>::new(999999, cx, |state, _cx| {
+                    MouseEventHandler::new::<Tag, _>(999999, cx, |state, _cx| {
                         let style = style.close_icon.style_for(state);
                         icon(style)
                     })

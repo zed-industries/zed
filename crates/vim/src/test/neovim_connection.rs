@@ -214,6 +214,16 @@ impl NeovimConnection {
     }
 
     #[cfg(feature = "neovim")]
+    async fn read_position(&mut self, cmd: &str) -> u32 {
+        self.nvim
+            .command_output(cmd)
+            .await
+            .unwrap()
+            .parse::<u32>()
+            .unwrap()
+    }
+
+    #[cfg(feature = "neovim")]
     pub async fn state(&mut self) -> (Option<Mode>, String, Range<Point>) {
         let nvim_buffer = self
             .nvim
@@ -226,22 +236,12 @@ impl NeovimConnection {
             .expect("Could not get buffer text")
             .join("\n");
 
-        let cursor_row: u32 = self
-            .nvim
-            .command_output("echo line('.')")
-            .await
-            .unwrap()
-            .parse::<u32>()
-            .unwrap()
-            - 1; // Neovim rows start at 1
-        let cursor_col: u32 = self
-            .nvim
-            .command_output("echo col('.')")
-            .await
-            .unwrap()
-            .parse::<u32>()
-            .unwrap()
-            - 1; // Neovim columns start at 1
+        // nvim columns are 1-based, so -1.
+        let mut cursor_row = self.read_position("echo line('.')").await - 1;
+        let mut cursor_col = self.read_position("echo col('.')").await - 1;
+        let mut selection_row = self.read_position("echo line('v')").await - 1;
+        let mut selection_col = self.read_position("echo col('v')").await - 1;
+        let total_rows = self.read_position("echo line('$')").await - 1;
 
         let nvim_mode_text = self
             .nvim
@@ -266,46 +266,38 @@ impl NeovimConnection {
             _ => None,
         };
 
-        let (start, end) = if let Some(Mode::Visual { .. }) = mode {
-            self.nvim
-                .input("<escape>")
-                .await
-                .expect("Could not exit visual mode");
-            let nvim_buffer = self
-                .nvim
-                .get_current_buf()
-                .await
-                .expect("Could not get neovim buffer");
-            let (start_row, start_col) = nvim_buffer
-                .get_mark("<")
-                .await
-                .expect("Could not get selection start");
-            let (end_row, end_col) = nvim_buffer
-                .get_mark(">")
-                .await
-                .expect("Could not get selection end");
-            self.nvim
-                .input("gv")
-                .await
-                .expect("Could not reselect visual selection");
-
-            if cursor_row == start_row as u32 - 1 && cursor_col == start_col as u32 {
-                (
-                    Point::new(end_row as u32 - 1, end_col as u32),
-                    Point::new(start_row as u32 - 1, start_col as u32),
-                )
-            } else {
-                (
-                    Point::new(start_row as u32 - 1, start_col as u32),
-                    Point::new(end_row as u32 - 1, end_col as u32),
-                )
+        // Vim uses the index of the first and last character in the selection
+        // Zed uses the index of the positions between the characters, so we need
+        // to add one to the end in visual mode.
+        match mode {
+            Some(Mode::Visual { .. }) => {
+                if selection_col > cursor_col {
+                    let selection_line_length =
+                        self.read_position("echo strlen(getline(line('v')))").await;
+                    if selection_line_length > selection_col {
+                        selection_col += 1;
+                    } else if selection_row < total_rows {
+                        selection_col = 0;
+                        selection_row += 1;
+                    }
+                } else {
+                    let cursor_line_length =
+                        self.read_position("echo strlen(getline(line('.')))").await;
+                    if cursor_line_length > cursor_col {
+                        cursor_col += 1;
+                    } else if cursor_row < total_rows {
+                        cursor_col = 0;
+                        cursor_row += 1;
+                    }
+                }
             }
-        } else {
-            (
-                Point::new(cursor_row, cursor_col),
-                Point::new(cursor_row, cursor_col),
-            )
-        };
+            Some(Mode::Insert) | Some(Mode::Normal) | None => {}
+        }
+
+        let (start, end) = (
+            Point::new(selection_row, selection_col),
+            Point::new(cursor_row, cursor_col),
+        );
 
         let state = NeovimData::Get {
             mode,

@@ -13,13 +13,13 @@ use gpui::{
 };
 use language::{Bias, Point};
 use util::ResultExt;
-use workspace::{item::Item, WorkspaceId};
+use workspace::WorkspaceId;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayRefreshReason, MultiBufferSnapshot,
+    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason, MultiBufferSnapshot,
     ToPoint,
 };
 
@@ -301,7 +301,7 @@ impl Editor {
             cx.spawn(|editor, mut cx| async move {
                 editor
                     .update(&mut cx, |editor, cx| {
-                        editor.refresh_inlays(InlayRefreshReason::NewLinesShown, cx)
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
             })
@@ -333,9 +333,7 @@ impl Editor {
             cx,
         );
 
-        if !self.is_singleton(cx) {
-            self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
-        }
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {

@@ -23,6 +23,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+
+use derive_more::Deref;
 use parking_lot::Mutex;
 use postage::oneshot;
 use smallvec::SmallVec;
@@ -44,6 +46,7 @@ use window_input_handler::WindowInputHandler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
+    fonts::TextStyle,
     json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -132,12 +135,18 @@ pub trait BorrowAppContext {
 pub trait BorrowWindowContext {
     type Result<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T;
-    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>;
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
     where
         F: FnOnce(&mut WindowContext) -> T;
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>;
 }
 
 #[derive(Clone)]
@@ -300,13 +309,12 @@ impl App {
         result
     }
 
-    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, callback: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> T,
+    {
         let mut state = self.0.borrow_mut();
-        let result = state.update_window(window_id, callback);
+        let result = state.update_window(window, callback);
         state.pending_notifications.clear();
         result
     }
@@ -333,67 +341,8 @@ impl AsyncAppContext {
         self.0.borrow_mut().update(callback)
     }
 
-    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
-        &self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
-        self.0.borrow_mut().read_window(window_id, callback)
-    }
-
-    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
-        self.0.borrow_mut().update_window(window_id, callback)
-    }
-
-    pub fn debug_elements(&self, window_id: usize) -> Option<json::Value> {
-        self.0.borrow().read_window(window_id, |cx| {
-            let root_view = cx.window.root_view();
-            let root_element = cx.window.rendered_views.get(&root_view.id())?;
-            root_element.debug(cx).log_err()
-        })?
-    }
-
-    pub fn dispatch_action(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Result<()> {
-        self.0
-            .borrow_mut()
-            .update_window(window_id, |window| {
-                window.dispatch_action(Some(view_id), action);
-            })
-            .ok_or_else(|| anyhow!("window not found"))
-    }
-
-    pub fn available_actions(
-        &self,
-        window_id: usize,
-        view_id: usize,
-    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
-        self.read_window(window_id, |cx| cx.available_actions(view_id))
-            .unwrap_or_default()
-    }
-
-    pub fn has_window(&self, window_id: usize) -> bool {
-        self.read(|cx| cx.windows.contains_key(&window_id))
-    }
-
-    pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.read(|cx| cx.windows.get(&window_id).map_or(false, |w| w.is_active))
-    }
-
-    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
-        self.read(|cx| cx.windows.get(&window_id).map(|w| w.root_view().clone()))
-    }
-
-    pub fn window_ids(&self) -> Vec<usize> {
-        self.read(|cx| cx.windows.keys().copied().collect())
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.0.borrow().windows().collect()
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -414,25 +363,6 @@ impl AsyncAppContext {
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
         self.update(|cx| cx.add_window(window_options, build_root_view))
-    }
-
-    pub fn remove_window(&mut self, window_id: usize) {
-        self.update_window(window_id, |cx| cx.remove_window());
-    }
-
-    pub fn activate_window(&mut self, window_id: usize) {
-        self.update_window(window_id, |cx| cx.activate_window());
-    }
-
-    // TODO: Can we eliminate this method and move it to WindowContext then call it with update_window?s
-    pub fn prompt(
-        &mut self,
-        window_id: usize,
-        level: PromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> Option<oneshot::Receiver<usize>> {
-        self.update_window(window_id, |cx| cx.prompt(level, msg, answers))
     }
 
     pub fn platform(&self) -> Arc<dyn Platform> {
@@ -461,20 +391,36 @@ impl BorrowAppContext for AsyncAppContext {
 impl BorrowWindowContext for AsyncAppContext {
     type Result<T> = Option<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T,
     {
-        self.0.borrow().read_with(|cx| cx.read_window(window_id, f))
+        self.0.borrow().read_with(|cx| cx.read_window(window, f))
     }
 
-    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
     where
-        F: FnOnce(&mut WindowContext) -> T,
+        F: FnOnce(&WindowContext) -> Option<T>,
     {
         self.0
             .borrow_mut()
-            .update(|cx| cx.update_window(window_id, f))
+            .update(|cx| cx.read_window_optional(window, f))
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
+    where
+        F: FnOnce(&mut WindowContext) -> T,
+    {
+        self.0.borrow_mut().update(|cx| cx.update_window(window, f))
+    }
+
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        self.0
+            .borrow_mut()
+            .update(|cx| cx.update_window_optional(window, f))
     }
 }
 
@@ -499,9 +445,9 @@ type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> b
 
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
-    views: HashMap<(usize, usize), Box<dyn AnyView>>,
-    views_metadata: HashMap<(usize, usize), ViewMetadata>,
-    windows: HashMap<usize, Window>,
+    views: HashMap<(AnyWindowHandle, usize), Box<dyn AnyView>>,
+    views_metadata: HashMap<(AnyWindowHandle, usize), ViewMetadata>,
+    windows: HashMap<AnyWindowHandle, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
@@ -521,7 +467,7 @@ pub struct AppContext {
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: KeymapMatcher,
     next_id: usize,
-    // next_window_id: usize,
+    // next_window: AnyWindowHandle,
     next_subscription_id: usize,
     frame_count: usize,
 
@@ -532,10 +478,10 @@ pub struct AppContext {
     focus_observations: CallbackCollection<usize, FocusObservationCallback>,
     release_observations: CallbackCollection<usize, ReleaseObservationCallback>,
     action_dispatch_observations: CallbackCollection<(), ActionObservationCallback>,
-    window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
-    window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
-    window_bounds_observations: CallbackCollection<usize, WindowBoundsCallback>,
-    keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
+    window_activation_observations: CallbackCollection<AnyWindowHandle, WindowActivationCallback>,
+    window_fullscreen_observations: CallbackCollection<AnyWindowHandle, WindowFullscreenCallback>,
+    window_bounds_observations: CallbackCollection<AnyWindowHandle, WindowBoundsCallback>,
+    keystroke_observations: CallbackCollection<AnyWindowHandle, KeystrokeCallback>,
     active_labeled_task_observations: CallbackCollection<(), ActiveLabeledTasksCallback>,
 
     foreground: Rc<executor::Foreground>,
@@ -628,6 +574,14 @@ impl AppContext {
             global.downcast_ref().unwrap()
         } else {
             panic!("no global has been added for {}", type_name::<T>());
+        }
+    }
+
+    pub fn optional_global<T: 'static>(&self) -> Option<&T> {
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            Some(global.downcast_ref().unwrap())
+        } else {
+            None
         }
     }
 
@@ -781,13 +735,13 @@ impl AppContext {
         }
     }
 
-    pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
-        Some(self.views.get(&(window_id, view_id))?.ui_name())
+    pub fn view_ui_name(&self, window: AnyWindowHandle, view_id: usize) -> Option<&'static str> {
+        Some(self.views.get(&(window, view_id))?.ui_name())
     }
 
-    pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
+    pub fn view_type_id(&self, window: AnyWindowHandle, view_id: usize) -> Option<TypeId> {
         self.views_metadata
-            .get(&(window_id, view_id))
+            .get(&(window, view_id))
             .map(|metadata| metadata.type_id)
     }
 
@@ -810,37 +764,20 @@ impl AppContext {
 
     fn read_window<T, F: FnOnce(&WindowContext) -> T>(
         &self,
-        window_id: usize,
+        handle: AnyWindowHandle,
         callback: F,
     ) -> Option<T> {
-        let window = self.windows.get(&window_id)?;
-        let window_context = WindowContext::immutable(self, &window, window_id);
+        let window = self.windows.get(&handle)?;
+        let window_context = WindowContext::immutable(self, &window, handle);
         Some(callback(&window_context))
-    }
-
-    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        callback: F,
-    ) -> Option<T> {
-        self.update(|app_context| {
-            let mut window = app_context.windows.remove(&window_id)?;
-            let mut window_context = WindowContext::mutable(app_context, &mut window, window_id);
-            let result = callback(&mut window_context);
-            if !window_context.removed {
-                app_context.windows.insert(window_id, window);
-            }
-            Some(result)
-        })
     }
 
     pub fn update_active_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
         callback: F,
     ) -> Option<T> {
-        self.platform
-            .main_window_id()
-            .and_then(|id| self.update_window(id, callback))
+        self.active_window()
+            .and_then(|window| window.update(self, callback))
     }
 
     pub fn prompt_for_paths(
@@ -1078,10 +1015,10 @@ impl AppContext {
         }
     }
 
-    fn notify_view(&mut self, window_id: usize, view_id: usize) {
+    fn notify_view(&mut self, window: AnyWindowHandle, view_id: usize) {
         if self.pending_notifications.insert(view_id) {
             self.pending_effects
-                .push_back(Effect::ViewNotification { window_id, view_id });
+                .push_back(Effect::ViewNotification { window, view_id });
         }
     }
 
@@ -1099,13 +1036,13 @@ impl AppContext {
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let mut available_in_window = false;
         let action_id = action.id();
-        if let Some(window_id) = self.platform.main_window_id() {
+        if let Some(window) = self.active_window() {
             available_in_window = self
-                .read_window(window_id, |cx| {
+                .read_window(window, |cx| {
                     if let Some(focused_view_id) = cx.focused_view_id() {
                         for view_id in cx.ancestors(focused_view_id) {
                             if let Some(view_metadata) =
-                                cx.views_metadata.get(&(window_id, view_id))
+                                cx.views_metadata.get(&(cx.window_handle, view_id))
                             {
                                 if let Some(actions) = cx.actions.get(&view_metadata.type_id) {
                                     if actions.contains_key(&action_id) {
@@ -1331,39 +1268,34 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
+            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
             let platform_window =
                 this.platform
-                    .open_window(window_id, window_options, this.foreground.clone());
-            let window = this.build_window(window_id, platform_window, build_root_view);
-            this.windows.insert(window_id, window);
-            WindowHandle::new(window_id)
+                    .open_window(handle.into(), window_options, this.foreground.clone());
+            let window = this.build_window(handle.into(), platform_window, build_root_view);
+            this.windows.insert(handle.into(), window);
+            handle
         })
     }
 
-    pub fn add_status_bar_item<V, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<V>)
+    pub fn add_status_bar_item<V, F>(&mut self, build_root_view: F) -> WindowHandle<V>
     where
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update(|this| {
-            let window_id = post_inc(&mut this.next_id);
-            let platform_window = this.platform.add_status_item(window_id);
-            let window = this.build_window(window_id, platform_window, build_root_view);
-            let root_view = window.root_view().clone().downcast::<V>().unwrap();
-
-            this.windows.insert(window_id, window);
-            this.update_window(window_id, |cx| {
-                root_view.update(cx, |view, cx| view.focus_in(cx.handle().into_any(), cx))
-            });
-
-            (window_id, root_view)
+            let handle = WindowHandle::<V>::new(post_inc(&mut this.next_id));
+            let platform_window = this.platform.add_status_item(handle.into());
+            let window = this.build_window(handle.into(), platform_window, build_root_view);
+            this.windows.insert(handle.into(), window);
+            handle.update_root(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
+            handle
         })
     }
 
     pub fn build_window<V, F>(
         &mut self,
-        window_id: usize,
+        handle: AnyWindowHandle,
         mut platform_window: Box<dyn platform::Window>,
         build_root_view: F,
     ) -> Window
@@ -1375,7 +1307,7 @@ impl AppContext {
             let mut app = self.upgrade();
 
             platform_window.on_event(Box::new(move |event| {
-                app.update_window(window_id, |cx| {
+                app.update_window(handle, |cx| {
                     if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
                         if cx.dispatch_keystroke(keystroke) {
                             return true;
@@ -1391,35 +1323,35 @@ impl AppContext {
         {
             let mut app = self.upgrade();
             platform_window.on_active_status_change(Box::new(move |is_active| {
-                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
+                app.update(|cx| cx.window_changed_active_status(handle, is_active))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_resize(Box::new(move || {
-                app.update(|cx| cx.window_was_resized(window_id))
+                app.update(|cx| cx.window_was_resized(handle))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_moved(Box::new(move || {
-                app.update(|cx| cx.window_was_moved(window_id))
+                app.update(|cx| cx.window_was_moved(handle))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_fullscreen(Box::new(move |is_fullscreen| {
-                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
+                app.update(|cx| cx.window_was_fullscreen_changed(handle, is_fullscreen))
             }));
         }
 
         {
             let mut app = self.upgrade();
             platform_window.on_close(Box::new(move || {
-                app.update(|cx| cx.update_window(window_id, |cx| cx.remove_window()));
+                app.update(|cx| cx.update_window(handle, |cx| cx.remove_window()));
             }));
         }
 
@@ -1431,31 +1363,27 @@ impl AppContext {
 
         platform_window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
-            window_id,
+            window: handle,
         }));
 
-        let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let mut cx = WindowContext::mutable(self, &mut window, window_id);
+        let mut window = Window::new(handle, platform_window, self, build_root_view);
+        let mut cx = WindowContext::mutable(self, &mut window, handle);
         cx.layout(false).expect("initial layout should not error");
         let scene = cx.paint().expect("initial paint should not error");
         window.platform_window.present_scene(scene);
         window
     }
 
-    pub fn replace_root_view<V, F>(
-        &mut self,
-        window_id: usize,
-        build_root_view: F,
-    ) -> Option<WindowHandle<V>>
-    where
-        V: View,
-        F: FnOnce(&mut ViewContext<V>) -> V,
-    {
-        self.update_window(window_id, |cx| cx.replace_root_view(build_root_view))
+    pub fn active_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.main_window()
+    }
+
+    pub fn windows(&self) -> impl '_ + Iterator<Item = AnyWindowHandle> {
+        self.windows.keys().copied()
     }
 
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
+        if let Some(view) = self.views.get(&(handle.window, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
             panic!("circular view reference for type {}", type_name::<T>());
@@ -1465,7 +1393,7 @@ impl AppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         if self.ref_counts.lock().is_entity_alive(handle.view_id) {
             Some(ViewHandle::new(
-                handle.window_id,
+                handle.window,
                 handle.view_id,
                 &self.ref_counts,
             ))
@@ -1477,7 +1405,7 @@ impl AppContext {
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
         if self.ref_counts.lock().is_entity_alive(handle.view_id) {
             Some(AnyViewHandle::new(
-                handle.window_id,
+                handle.window,
                 handle.view_id,
                 handle.view_type,
                 self.ref_counts.clone(),
@@ -1507,13 +1435,13 @@ impl AppContext {
                     .push_back(Effect::ModelRelease { model_id, model });
             }
 
-            for (window_id, view_id) in dropped_views {
+            for (window, view_id) in dropped_views {
                 self.subscriptions.remove(view_id);
                 self.observations.remove(view_id);
-                self.views_metadata.remove(&(window_id, view_id));
-                let mut view = self.views.remove(&(window_id, view_id)).unwrap();
+                self.views_metadata.remove(&(window, view_id));
+                let mut view = self.views.remove(&(window, view_id)).unwrap();
                 view.release(self);
-                if let Some(window) = self.windows.get_mut(&window_id) {
+                if let Some(window) = self.windows.get_mut(&window) {
                     window.parents.remove(&view_id);
                     window
                         .invalidation
@@ -1541,7 +1469,7 @@ impl AppContext {
 
             let mut refreshing = false;
             let mut updated_windows = HashSet::default();
-            let mut focus_effects = HashMap::<usize, FocusEffect>::default();
+            let mut focus_effects = HashMap::<AnyWindowHandle, FocusEffect>::default();
             loop {
                 self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
@@ -1585,9 +1513,10 @@ impl AppContext {
                             observations.emit(model_id, |callback| callback(self));
                         }
 
-                        Effect::ViewNotification { window_id, view_id } => {
-                            self.handle_view_notification_effect(window_id, view_id)
-                        }
+                        Effect::ViewNotification {
+                            window: window_id,
+                            view_id,
+                        } => self.handle_view_notification_effect(window_id, view_id),
 
                         Effect::GlobalNotification { type_id } => {
                             let mut subscriptions = self.global_observations.clone();
@@ -1618,13 +1547,13 @@ impl AppContext {
 
                         Effect::Focus(mut effect) => {
                             if focus_effects
-                                .get(&effect.window_id())
+                                .get(&effect.window())
                                 .map_or(false, |prev_effect| prev_effect.is_forced())
                             {
                                 effect.force();
                             }
 
-                            focus_effects.insert(effect.window_id(), effect);
+                            focus_effects.insert(effect.window(), effect);
                         }
 
                         Effect::FocusObservation {
@@ -1639,42 +1568,38 @@ impl AppContext {
                             );
                         }
 
-                        Effect::ResizeWindow { window_id } => {
-                            if let Some(window) = self.windows.get_mut(&window_id) {
+                        Effect::ResizeWindow { window } => {
+                            if let Some(window) = self.windows.get_mut(&window) {
                                 window
                                     .invalidation
                                     .get_or_insert(WindowInvalidation::default());
                             }
-                            self.handle_window_moved(window_id);
+                            self.handle_window_moved(window);
                         }
 
-                        Effect::MoveWindow { window_id } => {
-                            self.handle_window_moved(window_id);
+                        Effect::MoveWindow { window } => {
+                            self.handle_window_moved(window);
                         }
 
                         Effect::WindowActivationObservation {
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         } => self.window_activation_observations.add_callback(
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         ),
 
-                        Effect::ActivateWindow {
-                            window_id,
-                            is_active,
-                        } => {
-                            if self.handle_window_activation_effect(window_id, is_active)
-                                && is_active
+                        Effect::ActivateWindow { window, is_active } => {
+                            if self.handle_window_activation_effect(window, is_active) && is_active
                             {
                                 focus_effects
-                                    .entry(window_id)
+                                    .entry(window)
                                     .or_insert_with(|| FocusEffect::View {
-                                        window_id,
+                                        window,
                                         view_id: self
-                                            .read_window(window_id, |cx| cx.focused_view_id())
+                                            .read_window(window, |cx| cx.focused_view_id())
                                             .flatten(),
                                         is_forced: true,
                                     })
@@ -1683,26 +1608,26 @@ impl AppContext {
                         }
 
                         Effect::WindowFullscreenObservation {
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         } => self.window_fullscreen_observations.add_callback(
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         ),
 
                         Effect::FullscreenWindow {
-                            window_id,
+                            window,
                             is_fullscreen,
-                        } => self.handle_fullscreen_effect(window_id, is_fullscreen),
+                        } => self.handle_fullscreen_effect(window, is_fullscreen),
 
                         Effect::WindowBoundsObservation {
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         } => self.window_bounds_observations.add_callback(
-                            window_id,
+                            window,
                             subscription_id,
                             callback,
                         ),
@@ -1714,18 +1639,15 @@ impl AppContext {
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
                         }
-                        Effect::WindowShouldCloseSubscription {
-                            window_id,
-                            callback,
-                        } => {
-                            self.handle_window_should_close_subscription_effect(window_id, callback)
+                        Effect::WindowShouldCloseSubscription { window, callback } => {
+                            self.handle_window_should_close_subscription_effect(window, callback)
                         }
                         Effect::Keystroke {
-                            window_id,
+                            window,
                             keystroke,
                             handled_by,
                             result,
-                        } => self.handle_keystroke_effect(window_id, keystroke, handled_by, result),
+                        } => self.handle_keystroke_effect(window, keystroke, handled_by, result),
                         Effect::ActiveLabeledTasksChanged => {
                             self.handle_active_labeled_tasks_changed_effect()
                         }
@@ -1740,8 +1662,8 @@ impl AppContext {
                     }
                     self.pending_notifications.clear();
                 } else {
-                    for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
-                        self.update_window(window_id, |cx| {
+                    for window in self.windows().collect::<Vec<_>>() {
+                        self.update_window(window, |cx| {
                             let invalidation = if refreshing {
                                 let mut invalidation =
                                     cx.window.invalidation.take().unwrap_or_default();
@@ -1757,7 +1679,7 @@ impl AppContext {
                                 let appearance = cx.window.platform_window.appearance();
                                 cx.invalidate(invalidation, appearance);
                                 if let Some(old_parents) = cx.layout(refreshing).log_err() {
-                                    updated_windows.insert(window_id);
+                                    updated_windows.insert(window);
 
                                     if let Some(focused_view_id) = cx.focused_view_id() {
                                         let old_ancestors = std::iter::successors(
@@ -1772,15 +1694,14 @@ impl AppContext {
                                         for old_ancestor in old_ancestors.iter().copied() {
                                             if !new_ancestors.contains(&old_ancestor) {
                                                 if let Some(mut view) =
-                                                    cx.views.remove(&(window_id, old_ancestor))
+                                                    cx.views.remove(&(window, old_ancestor))
                                                 {
                                                     view.focus_out(
                                                         focused_view_id,
                                                         cx,
                                                         old_ancestor,
                                                     );
-                                                    cx.views
-                                                        .insert((window_id, old_ancestor), view);
+                                                    cx.views.insert((window, old_ancestor), view);
                                                 }
                                             }
                                         }
@@ -1789,15 +1710,14 @@ impl AppContext {
                                         for new_ancestor in new_ancestors.iter().copied() {
                                             if !old_ancestors.contains(&new_ancestor) {
                                                 if let Some(mut view) =
-                                                    cx.views.remove(&(window_id, new_ancestor))
+                                                    cx.views.remove(&(window, new_ancestor))
                                                 {
                                                     view.focus_in(
                                                         focused_view_id,
                                                         cx,
                                                         new_ancestor,
                                                     );
-                                                    cx.views
-                                                        .insert((window_id, new_ancestor), view);
+                                                    cx.views.insert((window, new_ancestor), view);
                                                 }
                                             }
                                         }
@@ -1806,13 +1726,13 @@ impl AppContext {
                                         // there isn't any pending focus, focus the root view.
                                         let root_view_id = cx.window.root_view().id();
                                         if focused_view_id != root_view_id
-                                            && !cx.views.contains_key(&(window_id, focused_view_id))
-                                            && !focus_effects.contains_key(&window_id)
+                                            && !cx.views.contains_key(&(window, focused_view_id))
+                                            && !focus_effects.contains_key(&window)
                                         {
                                             focus_effects.insert(
-                                                window_id,
+                                                window,
                                                 FocusEffect::View {
-                                                    window_id,
+                                                    window,
                                                     view_id: Some(root_view_id),
                                                     is_forced: false,
                                                 },
@@ -1833,8 +1753,8 @@ impl AppContext {
                             callback(self);
                         }
 
-                        for window_id in updated_windows.drain() {
-                            self.update_window(window_id, |cx| {
+                        for window in updated_windows.drain() {
+                            self.update_window(window, |cx| {
                                 if let Some(scene) = cx.paint().log_err() {
                                     cx.window.platform_window.present_scene(scene);
                                 }
@@ -1855,39 +1775,37 @@ impl AppContext {
         }
     }
 
-    fn window_was_resized(&mut self, window_id: usize) {
+    fn window_was_resized(&mut self, window: AnyWindowHandle) {
         self.pending_effects
-            .push_back(Effect::ResizeWindow { window_id });
+            .push_back(Effect::ResizeWindow { window });
     }
 
-    fn window_was_moved(&mut self, window_id: usize) {
+    fn window_was_moved(&mut self, window: AnyWindowHandle) {
         self.pending_effects
-            .push_back(Effect::MoveWindow { window_id });
+            .push_back(Effect::MoveWindow { window });
     }
 
-    fn window_was_fullscreen_changed(&mut self, window_id: usize, is_fullscreen: bool) {
+    fn window_was_fullscreen_changed(&mut self, window: AnyWindowHandle, is_fullscreen: bool) {
         self.pending_effects.push_back(Effect::FullscreenWindow {
-            window_id,
+            window,
             is_fullscreen,
         });
     }
 
-    fn window_changed_active_status(&mut self, window_id: usize, is_active: bool) {
-        self.pending_effects.push_back(Effect::ActivateWindow {
-            window_id,
-            is_active,
-        });
+    fn window_changed_active_status(&mut self, window: AnyWindowHandle, is_active: bool) {
+        self.pending_effects
+            .push_back(Effect::ActivateWindow { window, is_active });
     }
 
     fn keystroke(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         keystroke: Keystroke,
         handled_by: Option<Box<dyn Action>>,
         result: MatchResult,
     ) {
         self.pending_effects.push_back(Effect::Keystroke {
-            window_id,
+            window,
             keystroke,
             handled_by,
             result,
@@ -1910,16 +1828,16 @@ impl AppContext {
 
     fn handle_view_notification_effect(
         &mut self,
-        observed_window_id: usize,
+        observed_window: AnyWindowHandle,
         observed_view_id: usize,
     ) {
-        let view_key = (observed_window_id, observed_view_id);
+        let view_key = (observed_window, observed_view_id);
         if let Some((view, mut view_metadata)) = self
             .views
             .remove(&view_key)
             .zip(self.views_metadata.remove(&view_key))
         {
-            if let Some(window) = self.windows.get_mut(&observed_window_id) {
+            if let Some(window) = self.windows.get_mut(&observed_window) {
                 window
                     .invalidation
                     .get_or_insert_with(Default::default)
@@ -1946,17 +1864,17 @@ impl AppContext {
             })
     }
 
-    fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
-        self.update_window(window_id, |cx| {
+    fn handle_fullscreen_effect(&mut self, window: AnyWindowHandle, is_fullscreen: bool) {
+        self.update_window(window, |cx| {
             cx.window.is_fullscreen = is_fullscreen;
 
             let mut fullscreen_observations = cx.window_fullscreen_observations.clone();
-            fullscreen_observations.emit(window_id, |callback| callback(is_fullscreen, cx));
+            fullscreen_observations.emit(window, |callback| callback(is_fullscreen, cx));
 
             if let Some(uuid) = cx.window_display_uuid() {
                 let bounds = cx.window_bounds();
                 let mut bounds_observations = cx.window_bounds_observations.clone();
-                bounds_observations.emit(window_id, |callback| callback(bounds, uuid, cx));
+                bounds_observations.emit(window, |callback| callback(bounds, uuid, cx));
             }
 
             Some(())
@@ -1965,42 +1883,42 @@ impl AppContext {
 
     fn handle_keystroke_effect(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         keystroke: Keystroke,
         handled_by: Option<Box<dyn Action>>,
         result: MatchResult,
     ) {
-        self.update_window(window_id, |cx| {
+        self.update_window(window, |cx| {
             let mut observations = cx.keystroke_observations.clone();
-            observations.emit(window_id, move |callback| {
+            observations.emit(window, move |callback| {
                 callback(&keystroke, &result, handled_by.as_ref(), cx)
             });
         });
     }
 
-    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) -> bool {
-        self.update_window(window_id, |cx| {
+    fn handle_window_activation_effect(&mut self, window: AnyWindowHandle, active: bool) -> bool {
+        self.update_window(window, |cx| {
             if cx.window.is_active == active {
                 return false;
             }
             cx.window.is_active = active;
 
             let mut observations = cx.window_activation_observations.clone();
-            observations.emit(window_id, |callback| callback(active, cx));
+            observations.emit(window, |callback| callback(active, cx));
             true
         })
         .unwrap_or(false)
     }
 
     fn handle_focus_effect(&mut self, effect: FocusEffect) {
-        let window_id = effect.window_id();
-        self.update_window(window_id, |cx| {
+        let window = effect.window();
+        self.update_window(window, |cx| {
             // Ensure the newly-focused view still exists, otherwise focus
             // the root view instead.
             let focused_id = match effect {
                 FocusEffect::View { view_id, .. } => {
                     if let Some(view_id) = view_id {
-                        if cx.views.contains_key(&(window_id, view_id)) {
+                        if cx.views.contains_key(&(window, view_id)) {
                             Some(view_id)
                         } else {
                             Some(cx.root_view().id())
@@ -2025,9 +1943,9 @@ impl AppContext {
             if focus_changed {
                 if let Some(blurred_id) = blurred_id {
                     for view_id in cx.ancestors(blurred_id).collect::<Vec<_>>() {
-                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                        if let Some(mut view) = cx.views.remove(&(window, view_id)) {
                             view.focus_out(blurred_id, cx, view_id);
-                            cx.views.insert((window_id, view_id), view);
+                            cx.views.insert((window, view_id), view);
                         }
                     }
 
@@ -2039,9 +1957,9 @@ impl AppContext {
             if focus_changed || effect.is_forced() {
                 if let Some(focused_id) = focused_id {
                     for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
-                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                        if let Some(mut view) = cx.views.remove(&(window, view_id)) {
                             view.focus_in(focused_id, cx, view_id);
-                            cx.views.insert((window_id, view_id), view);
+                            cx.views.insert((window, view_id), view);
                         }
                     }
 
@@ -2063,24 +1981,24 @@ impl AppContext {
 
     fn handle_window_should_close_subscription_effect(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         mut callback: WindowShouldCloseSubscriptionCallback,
     ) {
         let mut app = self.upgrade();
-        if let Some(window) = self.windows.get_mut(&window_id) {
+        if let Some(window) = self.windows.get_mut(&window) {
             window
                 .platform_window
                 .on_should_close(Box::new(move || app.update(|cx| callback(cx))))
         }
     }
 
-    fn handle_window_moved(&mut self, window_id: usize) {
-        self.update_window(window_id, |cx| {
+    fn handle_window_moved(&mut self, window: AnyWindowHandle) {
+        self.update_window(window, |cx| {
             if let Some(display) = cx.window_display_uuid() {
                 let bounds = cx.window_bounds();
                 cx.window_bounds_observations
                     .clone()
-                    .emit(window_id, move |callback| {
+                    .emit(window, move |callback| {
                         callback(bounds, display, cx);
                         true
                     });
@@ -2097,10 +2015,10 @@ impl AppContext {
             });
     }
 
-    pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
+    pub fn focus(&mut self, window: AnyWindowHandle, view_id: Option<usize>) {
         self.pending_effects
             .push_back(Effect::Focus(FocusEffect::View {
-                window_id,
+                window,
                 view_id,
                 is_forced: false,
             }));
@@ -2185,18 +2103,40 @@ impl BorrowAppContext for AppContext {
 impl BorrowWindowContext for AppContext {
     type Result<T> = Option<T>;
 
-    fn read_window_with<T, F>(&self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
     where
         F: FnOnce(&WindowContext) -> T,
     {
-        AppContext::read_window(self, window_id, f)
+        AppContext::read_window(self, window, f)
     }
 
-    fn update_window<T, F>(&mut self, window_id: usize, f: F) -> Self::Result<T>
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        AppContext::read_window(self, window, f).flatten()
+    }
+
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, f: F) -> Self::Result<T>
     where
         F: FnOnce(&mut WindowContext) -> T,
     {
-        AppContext::update_window(self, window_id, f)
+        self.update(|cx| {
+            let mut window = cx.windows.remove(&handle)?;
+            let mut window_context = WindowContext::mutable(cx, &mut window, handle);
+            let result = f(&mut window_context);
+            if !window_context.removed {
+                cx.windows.insert(handle, window);
+            }
+            Some(result)
+        })
+    }
+
+    fn update_window_optional<T, F>(&mut self, handle: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        AppContext::update_window(self, handle, f).flatten()
     }
 }
 
@@ -2220,22 +2160,22 @@ pub struct WindowInvalidation {
 #[derive(Debug)]
 pub enum FocusEffect {
     View {
-        window_id: usize,
+        window: AnyWindowHandle,
         view_id: Option<usize>,
         is_forced: bool,
     },
     ViewParent {
-        window_id: usize,
+        window: AnyWindowHandle,
         view_id: usize,
         is_forced: bool,
     },
 }
 
 impl FocusEffect {
-    fn window_id(&self) -> usize {
+    fn window(&self) -> AnyWindowHandle {
         match self {
-            FocusEffect::View { window_id, .. } => *window_id,
-            FocusEffect::ViewParent { window_id, .. } => *window_id,
+            FocusEffect::View { window, .. } => *window,
+            FocusEffect::ViewParent { window, .. } => *window,
         }
     }
 
@@ -2281,7 +2221,7 @@ pub enum Effect {
         model_id: usize,
     },
     ViewNotification {
-        window_id: usize,
+        window: AnyWindowHandle,
         view_id: usize,
     },
     Deferred {
@@ -2306,36 +2246,36 @@ pub enum Effect {
         callback: FocusObservationCallback,
     },
     ResizeWindow {
-        window_id: usize,
+        window: AnyWindowHandle,
     },
     MoveWindow {
-        window_id: usize,
+        window: AnyWindowHandle,
     },
     ActivateWindow {
-        window_id: usize,
+        window: AnyWindowHandle,
         is_active: bool,
     },
     WindowActivationObservation {
-        window_id: usize,
+        window: AnyWindowHandle,
         subscription_id: usize,
         callback: WindowActivationCallback,
     },
     FullscreenWindow {
-        window_id: usize,
+        window: AnyWindowHandle,
         is_fullscreen: bool,
     },
     WindowFullscreenObservation {
-        window_id: usize,
+        window: AnyWindowHandle,
         subscription_id: usize,
         callback: WindowFullscreenCallback,
     },
     WindowBoundsObservation {
-        window_id: usize,
+        window: AnyWindowHandle,
         subscription_id: usize,
         callback: WindowBoundsCallback,
     },
     Keystroke {
-        window_id: usize,
+        window: AnyWindowHandle,
         keystroke: Keystroke,
         handled_by: Option<Box<dyn Action>>,
         result: MatchResult,
@@ -2345,7 +2285,7 @@ pub enum Effect {
         action_id: TypeId,
     },
     WindowShouldCloseSubscription {
-        window_id: usize,
+        window: AnyWindowHandle,
         callback: WindowShouldCloseSubscriptionCallback,
     },
     ActiveLabeledTasksChanged,
@@ -2397,9 +2337,9 @@ impl Debug for Effect {
                 .debug_struct("Effect::ModelNotification")
                 .field("model_id", model_id)
                 .finish(),
-            Effect::ViewNotification { window_id, view_id } => f
+            Effect::ViewNotification { window, view_id } => f
                 .debug_struct("Effect::ViewNotification")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("view_id", view_id)
                 .finish(),
             Effect::GlobalNotification { type_id } => f
@@ -2429,71 +2369,68 @@ impl Debug for Effect {
                 .debug_struct("Effect::ActionDispatchNotification")
                 .field("action_id", action_id)
                 .finish(),
-            Effect::ResizeWindow { window_id } => f
+            Effect::ResizeWindow { window } => f
                 .debug_struct("Effect::RefreshWindow")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .finish(),
-            Effect::MoveWindow { window_id } => f
+            Effect::MoveWindow { window } => f
                 .debug_struct("Effect::MoveWindow")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .finish(),
             Effect::WindowActivationObservation {
-                window_id,
+                window,
                 subscription_id,
                 ..
             } => f
                 .debug_struct("Effect::WindowActivationObservation")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("subscription_id", subscription_id)
                 .finish(),
-            Effect::ActivateWindow {
-                window_id,
-                is_active,
-            } => f
+            Effect::ActivateWindow { window, is_active } => f
                 .debug_struct("Effect::ActivateWindow")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("is_active", is_active)
                 .finish(),
             Effect::FullscreenWindow {
-                window_id,
+                window,
                 is_fullscreen,
             } => f
                 .debug_struct("Effect::FullscreenWindow")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("is_fullscreen", is_fullscreen)
                 .finish(),
             Effect::WindowFullscreenObservation {
-                window_id,
+                window,
                 subscription_id,
                 callback: _,
             } => f
                 .debug_struct("Effect::WindowFullscreenObservation")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("subscription_id", subscription_id)
                 .finish(),
 
             Effect::WindowBoundsObservation {
-                window_id,
+                window,
                 subscription_id,
                 callback: _,
             } => f
                 .debug_struct("Effect::WindowBoundsObservation")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("subscription_id", subscription_id)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
-            Effect::WindowShouldCloseSubscription { window_id, .. } => f
+            Effect::WindowShouldCloseSubscription { window, .. } => f
                 .debug_struct("Effect::WindowShouldCloseSubscription")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .finish(),
             Effect::Keystroke {
-                window_id,
+                window,
                 keystroke,
                 handled_by,
                 result,
             } => f
                 .debug_struct("Effect::Keystroke")
-                .field("window_id", window_id)
+                .field("window_id", &window.id())
                 .field("keystroke", keystroke)
                 .field(
                     "keystroke",
@@ -2591,9 +2528,14 @@ pub trait AnyView {
         cx: &mut WindowContext,
         view_id: usize,
     );
-    fn any_handle(&self, window_id: usize, view_id: usize, cx: &AppContext) -> AnyViewHandle {
+    fn any_handle(
+        &self,
+        window: AnyWindowHandle,
+        view_id: usize,
+        cx: &AppContext,
+    ) -> AnyViewHandle {
         AnyViewHandle::new(
-            window_id,
+            window,
             view_id,
             self.as_any().type_id(),
             cx.ref_counts.clone(),
@@ -2631,7 +2573,7 @@ where
     fn render(&mut self, cx: &mut WindowContext, view_id: usize) -> Box<dyn AnyRootElement> {
         let mut view_context = ViewContext::mutable(cx, view_id);
         let element = V::render(self, &mut view_context);
-        let view = WeakViewHandle::new(cx.window_id, view_id);
+        let view = WeakViewHandle::new(cx.window_handle, view_id);
         Box::new(RootElement::new(element, view))
     }
 
@@ -2642,11 +2584,11 @@ where
         } else {
             let focused_type = cx
                 .views_metadata
-                .get(&(cx.window_id, focused_id))
+                .get(&(cx.window_handle, focused_id))
                 .unwrap()
                 .type_id;
             AnyViewHandle::new(
-                cx.window_id,
+                cx.window_handle,
                 focused_id,
                 focused_type,
                 cx.ref_counts.clone(),
@@ -2662,11 +2604,11 @@ where
         } else {
             let blurred_type = cx
                 .views_metadata
-                .get(&(cx.window_id, blurred_id))
+                .get(&(cx.window_handle, blurred_id))
                 .unwrap()
                 .type_id;
             AnyViewHandle::new(
-                cx.window_id,
+                cx.window_handle,
                 blurred_id,
                 blurred_type,
                 cx.ref_counts.clone(),
@@ -2973,18 +2915,18 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
 
     pub fn handle(&self) -> ViewHandle<V> {
         ViewHandle::new(
-            self.window_id,
+            self.window_handle,
             self.view_id,
             &self.window_context.ref_counts,
         )
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<V> {
-        WeakViewHandle::new(self.window_id, self.view_id)
+        WeakViewHandle::new(self.window_handle, self.view_id)
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_id
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window_handle
     }
 
     pub fn view_id(&self) -> usize {
@@ -3032,11 +2974,11 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn focus_parent(&mut self) {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let view_id = self.view_id;
         self.pending_effects
             .push_back(Effect::Focus(FocusEffect::ViewParent {
-                window_id,
+                window,
                 view_id,
                 is_forced: false,
             }));
@@ -3050,13 +2992,13 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     where
         F: 'static + FnMut(&mut V, &mut ViewContext<V>) -> bool,
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let view = self.weak_handle();
         self.pending_effects
             .push_back(Effect::WindowShouldCloseSubscription {
-                window_id,
+                window,
                 callback: Box::new(move |cx| {
-                    cx.update_window(window_id, |cx| {
+                    cx.update_window(window, |cx| {
                         if let Some(view) = view.upgrade(cx) {
                             view.update(cx, |view, cx| callback(view, cx))
                         } else {
@@ -3095,11 +3037,11 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, H, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let observer = self.weak_handle();
         self.window_context
             .observe_internal(handle, move |observed, cx| {
-                cx.update_window(window_id, |cx| {
+                cx.update_window(window, |cx| {
                     if let Some(observer) = observer.upgrade(cx) {
                         observer.update(cx, |observer, cx| {
                             callback(observer, observed, cx);
@@ -3118,10 +3060,10 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         G: Any,
         F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let observer = self.weak_handle();
         self.window_context.observe_global::<G, _>(move |cx| {
-            cx.update_window(window_id, |cx| {
+            cx.update_window(window, |cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| callback(observer, cx));
                 }
@@ -3154,11 +3096,11 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, &E, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let observer = self.weak_handle();
         self.window_context
             .observe_release(handle, move |released, cx| {
-                cx.update_window(window_id, |cx| {
+                cx.update_window(window, |cx| {
                     if let Some(observer) = observer.upgrade(cx) {
                         observer.update(cx, |observer, cx| {
                             callback(observer, released, cx);
@@ -3172,10 +3114,10 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     where
         F: 'static + FnMut(&mut V, TypeId, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let observer = self.weak_handle();
         self.window_context.observe_actions(move |action_id, cx| {
-            cx.update_window(window_id, |cx| {
+            cx.update_window(window, |cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, action_id, cx);
@@ -3267,10 +3209,10 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     where
         F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let observer = self.weak_handle();
         self.window_context.observe_active_labeled_tasks(move |cx| {
-            cx.update_window(window_id, |cx| {
+            cx.update_window(window, |cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, cx);
@@ -3294,9 +3236,9 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn notify(&mut self) {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let view_id = self.view_id;
-        self.window_context.notify_view(window_id, view_id);
+        self.window_context.notify_view(window, view_id);
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
@@ -3309,10 +3251,10 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         &mut self,
         callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>),
     ) {
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let handle = self.handle();
         self.window_context.after_window_update(move |cx| {
-            cx.update_window(window_id, |cx| {
+            cx.update_window(window, |cx| {
                 handle.update(cx, |view, cx| {
                     callback(view, cx);
                 })
@@ -3346,7 +3288,11 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
+        self.mouse_state_dynamic(TypeTag::new::<Tag>(), region_id)
+    }
+
+    pub fn mouse_state_dynamic(&self, tag: TypeTag, region_id: usize) -> MouseState {
+        let region_id = MouseRegionId::new(tag, self.view_id, region_id);
         MouseState {
             hovered: self.window.hovered_region_ids.contains(&region_id),
             clicked: if let Some((clicked_region_id, button)) = self.window.clicked_region {
@@ -3387,6 +3333,36 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeTag {
+    tag: TypeId,
+    #[cfg(debug_assertions)]
+    tag_type_name: &'static str,
+}
+
+impl TypeTag {
+    pub fn new<Tag: 'static>() -> Self {
+        Self {
+            tag: TypeId::of::<Tag>(),
+            #[cfg(debug_assertions)]
+            tag_type_name: std::any::type_name::<Tag>(),
+        }
+    }
+
+    pub fn dynamic(tag: TypeId, #[cfg(debug_assertions)] type_name: &'static str) -> Self {
+        Self {
+            tag,
+            #[cfg(debug_assertions)]
+            tag_type_name: type_name,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn type_name(&self) -> &'static str {
+        self.tag_type_name
+    }
+}
+
 impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
         BorrowAppContext::read_with(&*self.window_context, f)
@@ -3400,16 +3376,30 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
 impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.window_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.window_context, window, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.window_context, window, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         f: F,
     ) -> T {
-        BorrowWindowContext::update_window(&mut *self.window_context, window_id, f)
+        BorrowWindowContext::update_window(&mut *self.window_context, window, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.window_context, window, f)
     }
 }
 
@@ -3417,6 +3407,7 @@ pub struct LayoutContext<'a, 'b, 'c, V: View> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
+    text_style_stack: Vec<Arc<TextStyle>>,
     pub refreshing: bool,
 }
 
@@ -3431,6 +3422,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             view_context,
             new_parents,
             views_to_notify_if_ancestors_change,
+            text_style_stack: Vec::new(),
             refreshing,
         }
     }
@@ -3447,11 +3439,11 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.notify_if_view_ancestors_change(view_id);
 
-        let window_id = self.window_id;
+        let window = self.window_handle;
         let mut contexts = Vec::new();
         let mut handler_depth = None;
         for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
+            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
                 if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     if actions.contains_key(&action.id()) {
                         handler_depth = Some(i);
@@ -3482,6 +3474,24 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             .or_default()
             .push(self_view_id);
     }
+
+    pub fn text_style(&self) -> Arc<TextStyle> {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(Default::default())
+    }
+
+    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    where
+        S: Into<Arc<TextStyle>>,
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.text_style_stack.push(style.into());
+        let result = f(self);
+        self.text_style_stack.pop();
+        result
+    }
 }
 
 impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
@@ -3511,16 +3521,118 @@ impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
 impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.view_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.view_context, window, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.view_context, window, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         f: F,
     ) -> T {
-        BorrowWindowContext::update_window(&mut *self.view_context, window_id, f)
+        BorrowWindowContext::update_window(&mut *self.view_context, window, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.view_context, window, f)
+    }
+}
+
+pub struct PaintContext<'a, 'b, 'c, V: View> {
+    view_context: &'c mut ViewContext<'a, 'b, V>,
+    text_style_stack: Vec<Arc<TextStyle>>,
+}
+
+impl<'a, 'b, 'c, V: View> PaintContext<'a, 'b, 'c, V> {
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
+        Self {
+            view_context,
+            text_style_stack: Vec::new(),
+        }
+    }
+
+    pub fn text_style(&self) -> Arc<TextStyle> {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(Default::default())
+    }
+
+    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    where
+        S: Into<Arc<TextStyle>>,
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.text_style_stack.push(style.into());
+        let result = f(self);
+        self.text_style_stack.pop();
+        result
+    }
+}
+
+impl<'a, 'b, 'c, V: View> Deref for PaintContext<'a, 'b, 'c, V> {
+    type Target = ViewContext<'a, 'b, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_context
+    }
+}
+
+impl<V: View> DerefMut for PaintContext<'_, '_, '_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view_context
+    }
+}
+
+impl<V: View> BorrowAppContext for PaintContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.view_context, f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.view_context, f)
+    }
+}
+
+impl<V: View> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
+    type Result<T> = T;
+
+    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
+    where
+        F: FnOnce(&WindowContext) -> T,
+    {
+        BorrowWindowContext::read_window(self.view_context, window, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(self.view_context, window, f)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
+    where
+        F: FnOnce(&mut WindowContext) -> T,
+    {
+        BorrowWindowContext::update_window(self.view_context, window, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(self.view_context, window, f)
     }
 }
 
@@ -3569,16 +3681,30 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
     type Result<T> = T;
 
-    fn read_window_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
-        BorrowWindowContext::read_window_with(&*self.view_context, window_id, f)
+    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
+        BorrowWindowContext::read_window(&*self.view_context, window, f)
+    }
+
+    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::read_window_optional(&*self.view_context, window, f)
     }
 
     fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        window_id: usize,
+        window: AnyWindowHandle,
         f: F,
     ) -> T {
-        BorrowWindowContext::update_window(&mut *self.view_context, window_id, f)
+        BorrowWindowContext::update_window(&mut *self.view_context, window, f)
+    }
+
+    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut WindowContext) -> Option<T>,
+    {
+        BorrowWindowContext::update_window_optional(&mut *self.view_context, window, f)
     }
 }
 
@@ -3862,64 +3988,34 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
-pub struct WindowHandle<T> {
-    window_id: usize,
-    root_view_type: PhantomData<T>,
+#[derive(Deref)]
+pub struct WindowHandle<V> {
+    #[deref]
+    any_handle: AnyWindowHandle,
+    root_view_type: PhantomData<V>,
 }
 
-#[allow(dead_code)]
+impl<V> Clone for WindowHandle<V> {
+    fn clone(&self) -> Self {
+        Self {
+            any_handle: self.any_handle.clone(),
+            root_view_type: PhantomData,
+        }
+    }
+}
+
+impl<V> Copy for WindowHandle<V> {}
+
 impl<V: View> WindowHandle<V> {
     fn new(window_id: usize) -> Self {
         WindowHandle {
-            window_id,
+            any_handle: AnyWindowHandle::new(window_id, TypeId::of::<V>()),
             root_view_type: PhantomData,
         }
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
     pub fn root<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<ViewHandle<V>> {
         self.read_with(cx, |cx| cx.root_view().clone().downcast().unwrap())
-    }
-
-    pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
-    where
-        C: BorrowWindowContext,
-        F: FnOnce(&WindowContext) -> R,
-    {
-        cx.read_window_with(self.window_id(), |cx| read(cx))
-    }
-
-    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
-    where
-        C: BorrowWindowContext,
-        F: FnOnce(&mut WindowContext) -> R,
-    {
-        cx.update_window(self.window_id(), update)
-    }
-
-    // pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<Option<R>>
-    // where
-    //     C: BorrowWindowContext,
-    //     F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    // {
-    //     cx.update_window(self.window_id, |cx| {
-    //         cx.root_view()
-    //             .clone()
-    //             .downcast::<V>()
-    //             .map(|v| v.update(cx, update))
-    //     })
-    // }
-
-    pub fn read_root<'a>(&self, cx: &'a AppContext) -> &'a V {
-        let root_view = cx
-            .read_window(self.window_id(), |cx| {
-                cx.root_view().clone().downcast().unwrap()
-            })
-            .unwrap();
-        root_view.read(cx)
     }
 
     pub fn read_root_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
@@ -3935,6 +4031,90 @@ impl<V: View> WindowHandle<V> {
         })
     }
 
+    pub fn update_root<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    {
+        cx.update_window(self.any_handle, |cx| {
+            cx.root_view()
+                .clone()
+                .downcast::<V>()
+                .unwrap()
+                .update(cx, update)
+        })
+    }
+
+    pub fn replace_root<C, F>(&self, cx: &mut C, build_root: F) -> C::Result<ViewHandle<V>>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        cx.update_window(self.any_handle, |cx| {
+            let root_view = self.add_view(cx, |cx| build_root(cx));
+            cx.window.root_view = Some(root_view.clone().into_any());
+            cx.window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+}
+
+impl<V> Into<AnyWindowHandle> for WindowHandle<V> {
+    fn into(self) -> AnyWindowHandle {
+        self.any_handle
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct AnyWindowHandle {
+    window_id: usize,
+    root_view_type: TypeId,
+}
+
+impl AnyWindowHandle {
+    fn new(window_id: usize, root_view_type: TypeId) -> Self {
+        Self {
+            window_id,
+            root_view_type,
+        }
+    }
+
+    pub fn id(&self) -> usize {
+        self.window_id
+    }
+
+    pub fn read_with<C, F, R>(&self, cx: &C, read: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&WindowContext) -> R,
+    {
+        cx.read_window(*self, |cx| read(cx))
+    }
+
+    pub fn read_optional_with<C, F, R>(&self, cx: &C, read: F) -> Option<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&WindowContext) -> Option<R>,
+    {
+        cx.read_window_optional(*self, |cx| read(cx))
+    }
+
+    pub fn update<C, F, R>(&self, cx: &mut C, update: F) -> C::Result<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut WindowContext) -> R,
+    {
+        cx.update_window(*self, update)
+    }
+
+    pub fn update_optional<C, F, R>(&self, cx: &mut C, update: F) -> Option<R>
+    where
+        C: BorrowWindowContext,
+        F: FnOnce(&mut WindowContext) -> Option<R>,
+    {
+        cx.update_window_optional(*self, update)
+    }
+
     pub fn add_view<C, U, F>(&self, cx: &mut C, build_view: F) -> C::Result<ViewHandle<U>>
     where
         C: BorrowWindowContext,
@@ -3942,6 +4122,93 @@ impl<V: View> WindowHandle<V> {
         F: FnOnce(&mut ViewContext<U>) -> U,
     {
         self.update(cx, |cx| cx.add_view(build_view))
+    }
+
+    pub fn downcast<V: View>(self) -> Option<WindowHandle<V>> {
+        if self.root_view_type == TypeId::of::<V>() {
+            Some(WindowHandle {
+                any_handle: self,
+                root_view_type: PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn root_is<V: View>(&self) -> bool {
+        self.root_view_type == TypeId::of::<V>()
+    }
+
+    pub fn is_active<C: BorrowWindowContext>(&self, cx: &C) -> C::Result<bool> {
+        self.read_with(cx, |cx| cx.window.is_active)
+    }
+
+    pub fn remove<C: BorrowWindowContext>(&self, cx: &mut C) -> C::Result<()> {
+        self.update(cx, |cx| cx.remove_window())
+    }
+
+    pub fn debug_elements<C: BorrowWindowContext>(&self, cx: &C) -> Option<json::Value> {
+        self.read_optional_with(cx, |cx| {
+            let root_view = cx.window.root_view();
+            let root_element = cx.window.rendered_views.get(&root_view.id())?;
+            root_element.debug(cx).log_err()
+        })
+    }
+
+    pub fn activate<C: BorrowWindowContext>(&mut self, cx: &mut C) -> C::Result<()> {
+        self.update(cx, |cx| cx.activate_window())
+    }
+
+    pub fn prompt<C: BorrowWindowContext>(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+        cx: &mut C,
+    ) -> C::Result<oneshot::Receiver<usize>> {
+        self.update(cx, |cx| cx.prompt(level, msg, answers))
+    }
+
+    pub fn dispatch_action<C: BorrowWindowContext>(
+        &self,
+        view_id: usize,
+        action: &dyn Action,
+        cx: &mut C,
+    ) -> C::Result<()> {
+        self.update(cx, |cx| {
+            cx.dispatch_action(Some(view_id), action);
+        })
+    }
+
+    pub fn available_actions<C: BorrowWindowContext>(
+        &self,
+        view_id: usize,
+        cx: &C,
+    ) -> C::Result<Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)>> {
+        self.read_with(cx, |cx| cx.available_actions(view_id))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_activation(&self, cx: &mut TestAppContext) {
+        self.update(cx, |cx| {
+            let other_windows = cx
+                .windows()
+                .filter(|window| *window != *self)
+                .collect::<Vec<_>>();
+
+            for window in other_windows {
+                cx.window_changed_active_status(window, false)
+            }
+
+            cx.window_changed_active_status(*self, true)
+        });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_deactivation(&self, cx: &mut TestAppContext) {
+        self.update(cx, |cx| {
+            cx.window_changed_active_status(*self, false);
+        })
     }
 }
 
@@ -3960,28 +4227,23 @@ impl<T> Deref for ViewHandle<T> {
 }
 
 impl<T: View> ViewHandle<T> {
-    fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+    fn new(window: AnyWindowHandle, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         Self {
-            any_handle: AnyViewHandle::new(
-                window_id,
-                view_id,
-                TypeId::of::<T>(),
-                ref_counts.clone(),
-            ),
+            any_handle: AnyViewHandle::new(window, view_id, TypeId::of::<T>(), ref_counts.clone()),
             view_type: PhantomData,
         }
     }
 
     pub fn downgrade(&self) -> WeakViewHandle<T> {
-        WeakViewHandle::new(self.window_id, self.view_id)
+        WeakViewHandle::new(self.window, self.view_id)
     }
 
     pub fn into_any(self) -> AnyViewHandle {
         self.any_handle
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_id
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window
     }
 
     pub fn id(&self) -> usize {
@@ -3997,7 +4259,7 @@ impl<T: View> ViewHandle<T> {
         C: BorrowWindowContext,
         F: FnOnce(&T, &ViewContext<T>) -> S,
     {
-        cx.read_window_with(self.window_id, |cx| {
+        cx.read_window(self.window, |cx| {
             let cx = ViewContext::immutable(cx, self.view_id);
             read(cx.read_view(self), &cx)
         })
@@ -4010,7 +4272,7 @@ impl<T: View> ViewHandle<T> {
     {
         let mut update = Some(update);
 
-        cx.update_window(self.window_id, |cx| {
+        cx.update_window(self.window, |cx| {
             cx.update_view(self, &mut |view, cx| {
                 let update = update.take().unwrap();
                 update(view, cx)
@@ -4025,31 +4287,31 @@ impl<T: View> ViewHandle<T> {
 
 impl<T: View> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        ViewHandle::new(self.window_id, self.view_id, &self.ref_counts)
+        ViewHandle::new(self.window, self.view_id, &self.ref_counts)
     }
 }
 
 impl<T> PartialEq for ViewHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
 impl<T> PartialEq<AnyViewHandle> for ViewHandle<T> {
     fn eq(&self, other: &AnyViewHandle) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
 impl<T> PartialEq<WeakViewHandle<T>> for ViewHandle<T> {
     fn eq(&self, other: &WeakViewHandle<T>) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
 impl<T> PartialEq<ViewHandle<T>> for WeakViewHandle<T> {
     fn eq(&self, other: &ViewHandle<T>) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
@@ -4057,7 +4319,7 @@ impl<T> Eq for ViewHandle<T> {}
 
 impl<T> Hash for ViewHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window_id.hash(state);
+        self.window.hash(state);
         self.view_id.hash(state);
     }
 }
@@ -4065,7 +4327,7 @@ impl<T> Hash for ViewHandle<T> {
 impl<T> Debug for ViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(&format!("ViewHandle<{}>", type_name::<T>()))
-            .field("window_id", &self.window_id)
+            .field("window_id", &self.window)
             .field("view_id", &self.view_id)
             .finish()
     }
@@ -4079,7 +4341,7 @@ impl<T: View> Handle<T> for ViewHandle<T> {
     }
 
     fn location(&self) -> EntityLocation {
-        EntityLocation::View(self.window_id, self.view_id)
+        EntityLocation::View(self.window.id(), self.view_id)
     }
 
     fn downgrade(&self) -> Self::Weak {
@@ -4095,7 +4357,7 @@ impl<T: View> Handle<T> for ViewHandle<T> {
 }
 
 pub struct AnyViewHandle {
-    window_id: usize,
+    window: AnyWindowHandle,
     view_id: usize,
     view_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
@@ -4106,12 +4368,12 @@ pub struct AnyViewHandle {
 
 impl AnyViewHandle {
     fn new(
-        window_id: usize,
+        window: AnyWindowHandle,
         view_id: usize,
         view_type: TypeId,
         ref_counts: Arc<Mutex<RefCounts>>,
     ) -> Self {
-        ref_counts.lock().inc_view(window_id, view_id);
+        ref_counts.lock().inc_view(window, view_id);
 
         #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
@@ -4121,7 +4383,7 @@ impl AnyViewHandle {
             .handle_created(None, view_id);
 
         Self {
-            window_id,
+            window,
             view_id,
             view_type,
             ref_counts,
@@ -4130,8 +4392,8 @@ impl AnyViewHandle {
         }
     }
 
-    pub fn window_id(&self) -> usize {
-        self.window_id
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window
     }
 
     pub fn id(&self) -> usize {
@@ -4163,7 +4425,7 @@ impl AnyViewHandle {
 
     pub fn downgrade(&self) -> AnyWeakViewHandle {
         AnyWeakViewHandle {
-            window_id: self.window_id,
+            window: self.window,
             view_id: self.view_id,
             view_type: self.view_type,
         }
@@ -4175,7 +4437,7 @@ impl AnyViewHandle {
 
     pub fn debug_json<'a, 'b>(&self, cx: &'b WindowContext<'a>) -> serde_json::Value {
         cx.views
-            .get(&(self.window_id, self.view_id))
+            .get(&(self.window, self.view_id))
             .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
     }
 }
@@ -4183,7 +4445,7 @@ impl AnyViewHandle {
 impl Clone for AnyViewHandle {
     fn clone(&self) -> Self {
         Self::new(
-            self.window_id,
+            self.window,
             self.view_id,
             self.view_type,
             self.ref_counts.clone(),
@@ -4193,21 +4455,19 @@ impl Clone for AnyViewHandle {
 
 impl PartialEq for AnyViewHandle {
     fn eq(&self, other: &Self) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
 impl<T> PartialEq<ViewHandle<T>> for AnyViewHandle {
     fn eq(&self, other: &ViewHandle<T>) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
 impl Drop for AnyViewHandle {
     fn drop(&mut self) {
-        self.ref_counts
-            .lock()
-            .dec_view(self.window_id, self.view_id);
+        self.ref_counts.lock().dec_view(self.window, self.view_id);
         #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()
@@ -4220,7 +4480,7 @@ impl Drop for AnyViewHandle {
 impl Debug for AnyViewHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnyViewHandle")
-            .field("window_id", &self.window_id)
+            .field("window_id", &self.window.id())
             .field("view_id", &self.view_id)
             .finish()
     }
@@ -4356,10 +4616,10 @@ impl<T> WeakHandle for WeakViewHandle<T> {
 }
 
 impl<V: View> WeakViewHandle<V> {
-    fn new(window_id: usize, view_id: usize) -> Self {
+    fn new(window: AnyWindowHandle, view_id: usize) -> Self {
         Self {
             any_handle: AnyWeakViewHandle {
-                window_id,
+                window,
                 view_id,
                 view_type: TypeId::of::<V>(),
             },
@@ -4371,8 +4631,12 @@ impl<V: View> WeakViewHandle<V> {
         self.view_id
     }
 
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+
     pub fn window_id(&self) -> usize {
-        self.window_id
+        self.window.id()
     }
 
     pub fn into_any(self) -> AnyWeakViewHandle {
@@ -4392,7 +4656,7 @@ impl<V: View> WeakViewHandle<V> {
             let handle = cx
                 .upgrade_view_handle(self)
                 .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
-            cx.read_window(self.window_id, |cx| handle.read_with(cx, read))
+            cx.read_window(self.window, |cx| handle.read_with(cx, read))
                 .ok_or_else(|| anyhow!("window was removed"))
         })
     }
@@ -4406,7 +4670,7 @@ impl<V: View> WeakViewHandle<V> {
             let handle = cx
                 .upgrade_view_handle(self)
                 .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
-            cx.update_window(self.window_id, |cx| handle.update(cx, update))
+            cx.update_window(self.window, |cx| handle.update(cx, update))
                 .ok_or_else(|| anyhow!("window was removed"))
         })
     }
@@ -4431,7 +4695,7 @@ impl<T> Clone for WeakViewHandle<T> {
 
 impl<T> PartialEq for WeakViewHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.window == other.window && self.view_id == other.view_id
     }
 }
 
@@ -4445,7 +4709,7 @@ impl<T> Hash for WeakViewHandle<T> {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AnyWeakViewHandle {
-    window_id: usize,
+    window: AnyWindowHandle,
     view_id: usize,
     view_type: TypeId,
 }
@@ -4477,7 +4741,7 @@ impl AnyWeakViewHandle {
 
 impl Hash for AnyWeakViewHandle {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window_id.hash(state);
+        self.window.hash(state);
         self.view_id.hash(state);
         self.view_type.hash(state);
     }
@@ -4545,10 +4809,16 @@ pub enum Subscription {
     GlobalSubscription(callback_collection::Subscription<TypeId, GlobalSubscriptionCallback>),
     GlobalObservation(callback_collection::Subscription<TypeId, GlobalObservationCallback>),
     FocusObservation(callback_collection::Subscription<usize, FocusObservationCallback>),
-    WindowActivationObservation(callback_collection::Subscription<usize, WindowActivationCallback>),
-    WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
-    WindowBoundsObservation(callback_collection::Subscription<usize, WindowBoundsCallback>),
-    KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
+    WindowActivationObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowActivationCallback>,
+    ),
+    WindowFullscreenObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowFullscreenCallback>,
+    ),
+    WindowBoundsObservation(
+        callback_collection::Subscription<AnyWindowHandle, WindowBoundsCallback>,
+    ),
+    KeystrokeObservation(callback_collection::Subscription<AnyWindowHandle, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
     ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
     ActiveLabeledTasksObservation(
@@ -4943,7 +5213,7 @@ mod tests {
             fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new())
+                MouseEventHandler::new::<Handler, _>(0, cx, |_, _| Empty::new())
                     .on_down(MouseButton::Left, move |_, _, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
                     })
@@ -5329,7 +5599,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(window.read_root(cx).events, ["before emit"]);
+        window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before emit"]));
     }
 
     #[crate::test(self)]
@@ -5381,7 +5651,7 @@ mod tests {
             TestView { events: Vec::new() }
         });
 
-        assert_eq!(window.read_root(cx).events, ["before notify"]);
+        window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before notify"]));
     }
 
     #[crate::test(self)]
@@ -6218,7 +6488,7 @@ mod tests {
 
         // Check that global actions do not have a binding, even if a binding does exist in another view
         assert_eq!(
-            &available_actions(window.window_id(), view_1.id(), cx),
+            &available_actions(window.into(), view_1.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::GlobalAction", vec![])
@@ -6227,7 +6497,7 @@ mod tests {
 
         // Check that view 1 actions and bindings are available even when called from view 2
         assert_eq!(
-            &available_actions(window.window_id(), view_2.id(), cx),
+            &available_actions(window.into(), view_2.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
@@ -6237,11 +6507,11 @@ mod tests {
 
         // Produces a list of actions and key bindings
         fn available_actions(
-            window_id: usize,
+            window: AnyWindowHandle,
             view_id: usize,
             cx: &TestAppContext,
         ) -> Vec<(&'static str, Vec<Keystroke>)> {
-            cx.available_actions(window_id, view_id)
+            cx.available_actions(window.into(), view_id)
                 .into_iter()
                 .map(|(action_name, _, bindings)| {
                     (
@@ -6290,7 +6560,7 @@ mod tests {
             ]);
         });
 
-        let actions = cx.available_actions(window.window_id(), view.id());
+        let actions = cx.available_actions(window.into(), view.id());
         assert_eq!(
             actions[0].1.as_any().downcast_ref::<ActionWithArg>(),
             Some(&ActionWithArg { arg: false })
@@ -6576,25 +6846,25 @@ mod tests {
             [("window 2", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_2.window_id()));
+        window_2.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 3", false), ("window 2", true)]
         );
 
-        cx.simulate_window_activation(Some(window_1.window_id()));
+        window_1.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 2", false), ("window 1", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.window_id()));
+        window_3.simulate_activation(cx);
         assert_eq!(
             mem::take(&mut *events.borrow_mut()),
             [("window 1", false), ("window 3", true)]
         );
 
-        cx.simulate_window_activation(Some(window_3.window_id()));
+        window_3.simulate_activation(cx);
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 

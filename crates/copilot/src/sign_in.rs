@@ -113,7 +113,7 @@ impl CopilotCodeVerification {
 
         let device_code_style = &style.auth.prompting.device_code;
 
-        MouseEventHandler::<Self, _>::new(0, cx, |state, _cx| {
+        MouseEventHandler::new::<Self, _>(0, cx, |state, _cx| {
             Flex::row()
                 .with_child(
                     Label::new(data.user_code.clone(), device_code_style.text.clone())

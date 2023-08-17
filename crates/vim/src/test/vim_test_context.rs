@@ -85,13 +85,15 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
-        let window_id = self.window_id;
-        self.update_window(window_id, |cx| {
+        let window = self.window;
+        let context_handle = self.cx.set_state(text);
+        window.update(self.cx.cx.cx, |cx| {
             Vim::update(cx, |vim, cx| {
-                vim.switch_mode(mode, false, cx);
+                vim.switch_mode(mode, true, cx);
             })
         });
-        self.cx.set_state(text)
+        self.cx.foreground().run_until_parked();
+        context_handle
     }
 
     #[track_caller]

@@ -20,11 +20,11 @@ pub fn init(cx: &mut AppContext) {
                 {
                     status_indicator = Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
                 }
-            } else if let Some((window_id, _)) = status_indicator.take() {
-                cx.update_window(window_id, |cx| cx.remove_window());
+            } else if let Some(window) = status_indicator.take() {
+                window.update(cx, |cx| cx.remove_window());
             }
-        } else if let Some((window_id, _)) = status_indicator.take() {
-            cx.update_window(window_id, |cx| cx.remove_window());
+        } else if let Some(window) = status_indicator.take() {
+            window.update(cx, |cx| cx.remove_window());
         }
     })
     .detach();
@@ -47,7 +47,7 @@ impl View for SharingStatusIndicator {
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
         };
 
-        MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
+        MouseEventHandler::new::<Self, _>(0, cx, |_, _| {
             Svg::new("icons/disable_screen_sharing_12.svg")
                 .with_color(color)
                 .constrained()

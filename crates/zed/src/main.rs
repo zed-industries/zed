@@ -7,14 +7,16 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{
+    self, ChannelStore, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
+};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task, ViewContext};
+use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, Request};
 use language::{LanguageRegistry, Point};
 use log::LevelFilter;
@@ -43,7 +45,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::Bias;
-use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
 use util::{
     channel::ReleaseChannel,
     http::{self, HttpClient},
@@ -56,7 +57,7 @@ use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
+use workspace::AppState;
 use zed::{
     assets::Assets,
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -141,6 +142,8 @@ fn main() {
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -182,6 +185,7 @@ fn main() {
             languages,
             client: client.clone(),
             user_store,
+            channel_store,
             fs,
             build_window_options,
             initialize_workspace,
@@ -655,6 +659,10 @@ fn load_embedded_fonts(app: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     smol::block_on(app.background().scoped(|scope| {
         for font_path in &font_paths {
+            if !font_path.ends_with(".ttf") {
+                continue;
+            }
+
             scope.spawn(async {
                 let font_path = &*font_path;
                 let font_bytes = Assets.load(font_path).unwrap().to_vec();
@@ -920,35 +928,6 @@ async fn handle_cli_connection(
             }
         }
     }
-}
-
-pub fn dock_default_item_factory(
-    workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Box<dyn ItemHandle>> {
-    let strategy = settings::get::<TerminalSettings>(cx)
-        .working_directory
-        .clone();
-    let working_directory = get_working_directory(workspace, cx, strategy);
-
-    let window_id = cx.window_id();
-    let terminal = workspace
-        .project()
-        .update(cx, |project, cx| {
-            project.create_terminal(working_directory, window_id, cx)
-        })
-        .notify_err(workspace, cx)?;
-
-    let terminal_view = cx.add_view(|cx| {
-        TerminalView::new(
-            terminal,
-            workspace.weak_handle(),
-            workspace.database_id(),
-            cx,
-        )
-    });
-
-    Some(Box::new(terminal_view))
 }
 
 pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {

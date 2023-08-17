@@ -573,7 +573,7 @@ impl View for LspLogToolbarItemView {
             .with_children(if self.menu_open {
                 Some(
                     Overlay::new(
-                        MouseEventHandler::<Menu, _>::new(0, cx, move |_, cx| {
+                        MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
                             Flex::column()
                                 .with_children(menu_rows.into_iter().map(|row| {
                                     Self::render_language_server_menu_item(
@@ -672,7 +672,7 @@ impl LspLogToolbarItemView {
         cx: &mut ViewContext<Self>,
     ) -> impl Element<Self> {
         enum ToggleMenu {}
-        MouseEventHandler::<ToggleMenu, Self>::new(0, cx, move |state, cx| {
+        MouseEventHandler::new::<ToggleMenu, _>(0, cx, move |state, cx| {
             let label: Cow<str> = current_server
                 .and_then(|row| {
                     let worktree = row.worktree.read(cx);
@@ -728,7 +728,7 @@ impl LspLogToolbarItemView {
                 .with_height(theme.toolbar_dropdown_menu.row_height)
             })
             .with_child(
-                MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
+                MouseEventHandler::new::<ActivateLog, _>(id.0, cx, move |state, _| {
                     let style = theme
                         .toolbar_dropdown_menu
                         .item
@@ -746,7 +746,7 @@ impl LspLogToolbarItemView {
                 }),
             )
             .with_child(
-                MouseEventHandler::<ActivateRpcTrace, _>::new(id.0, cx, move |state, cx| {
+                MouseEventHandler::new::<ActivateRpcTrace, _>(id.0, cx, move |state, cx| {
                     let style = theme
                         .toolbar_dropdown_menu
                         .item

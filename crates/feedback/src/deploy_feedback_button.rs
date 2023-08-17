@@ -35,7 +35,7 @@ impl View for DeployFeedbackButton {
         let theme = theme::current(cx).clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self, Self>::new(0, cx, |state, _| {
+                MouseEventHandler::new::<Self, _>(0, cx, |state, _| {
                     let style = &theme
                         .workspace
                         .status_bar
@@ -44,7 +44,7 @@ impl View for DeployFeedbackButton {
                         .in_state(active)
                         .style_for(state);
 
-                    Svg::new("icons/feedback_16.svg")
+                    Svg::new("icons/feedback.svg")
                         .with_color(style.icon_color)
                         .constrained()
                         .with_width(style.icon_size)
@@ -66,7 +66,7 @@ impl View for DeployFeedbackButton {
                 })
                 .with_tooltip::<Self>(
                     0,
-                    "Send Feedback".into(),
+                    "Send Feedback",
                     Some(Box::new(GiveFeedback)),
                     theme.tooltip.clone(),
                     cx,

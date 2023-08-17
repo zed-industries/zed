@@ -1,11 +1,11 @@
-import picker from "./picker"
+// import picker from "./picker"
 import { background, border, foreground, text } from "./components"
 import { useTheme } from "../theme"
 
 export default function contact_finder(): any {
     const theme = useTheme()
 
-    const side_margin = 6
+    // const side_margin = 6
     const contact_button = {
         background: background(theme.middle, "variant"),
         color: foreground(theme.middle, "variant"),
@@ -14,42 +14,42 @@ export default function contact_finder(): any {
         corner_radius: 8,
     }
 
-    const picker_style = picker()
-    const picker_input = {
-        background: background(theme.middle, "on"),
-        corner_radius: 6,
-        text: text(theme.middle, "mono"),
-        placeholder_text: text(theme.middle, "mono", "on", "disabled", {
-            size: "xs",
-        }),
-        selection: theme.players[0],
-        border: border(theme.middle),
-        padding: {
-            bottom: 4,
-            left: 8,
-            right: 8,
-            top: 4,
-        },
-        margin: {
-            left: side_margin,
-            right: side_margin,
-        },
-    }
+    // const picker_style = picker()
+    // const picker_input = {
+    //     background: background(theme.middle, "on"),
+    //     corner_radius: 6,
+    //     text: text(theme.middle, "mono"),
+    //     placeholder_text: text(theme.middle, "mono", "on", "disabled", {
+    //         size: "xs",
+    //     }),
+    //     selection: theme.players[0],
+    //     border: border(theme.middle),
+    //     padding: {
+    //         bottom: 4,
+    //         left: 8,
+    //         right: 8,
+    //         top: 4,
+    //     },
+    //     margin: {
+    //         left: side_margin,
+    //         right: side_margin,
+    //     },
+    // }
 
     return {
-        picker: {
-            empty_container: {},
-            item: {
-                ...picker_style.item,
-                margin: { left: side_margin, right: side_margin },
-            },
-            no_matches: picker_style.no_matches,
-            input_editor: picker_input,
-            empty_input_editor: picker_input,
-            header: picker_style.header,
-            footer: picker_style.footer,
-        },
-        row_height: 28,
+        // picker: {
+        //     empty_container: {},
+        //     item: {
+        //         ...picker_style.item,
+        //         margin: { left: side_margin, right: side_margin },
+        //     },
+        //     no_matches: picker_style.no_matches,
+        //     input_editor: picker_input,
+        //     empty_input_editor: picker_input,
+        //     header: picker_style.header,
+        //     footer: picker_style.footer,
+        // },
+        // row_height: 28,
         contact_avatar: {
             corner_radius: 10,
             width: 18,

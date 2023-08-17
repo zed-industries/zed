@@ -283,8 +283,12 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
 
     // The name of the struct/enum
     let name = input.ident;
+    let must_implement = format_ident!("{}MustImplementRenderElement", name);
 
     let expanded = quote! {
+        trait #must_implement : gpui::elements::RenderElement {}
+        impl #must_implement for #name {}
+
         impl<V: gpui::View> gpui::elements::Element<V> for #name {
             type LayoutState = gpui::elements::AnyElement<V>;
             type PaintState = ();
@@ -307,7 +311,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 visible_bounds: gpui::geometry::rect::RectF,
                 element: &mut gpui::elements::AnyElement<V>,
                 view: &mut V,
-                cx: &mut gpui::ViewContext<V>,
+                cx: &mut gpui::PaintContext<V>,
             ) {
                 element.paint(scene, bounds.origin(), visible_bounds, view, cx);
             }
@@ -332,7 +336,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 _: &(),
                 view: &V,
                 cx: &gpui::ViewContext<V>,
-            ) -> serde_json::Value {
+            ) -> gpui::serde_json::Value {
                 element.debug(view, cx)
             }
         }

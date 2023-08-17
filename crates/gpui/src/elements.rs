@@ -1,6 +1,7 @@
 mod align;
 mod canvas;
 mod clipped;
+mod component;
 mod constrained_box;
 mod container;
 mod empty;
@@ -21,9 +22,9 @@ mod tooltip;
 mod uniform_list;
 
 pub use self::{
-    align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
-    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
-    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
+    align::*, canvas::*, component::*, constrained_box::*, container::*, empty::*, flex::*,
+    hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
+    resizable::*, stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::window::ChildView;
 
@@ -33,8 +34,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle,
-    WindowContext,
+    json, Action, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -46,6 +47,10 @@ use std::{any::Any, borrow::Cow, mem, ops::Range};
 pub trait Element<V: View>: 'static {
     type LayoutState;
     type PaintState;
+
+    fn view_name(&self) -> &'static str {
+        V::ui_name()
+    }
 
     fn layout(
         &mut self,
@@ -61,7 +66,7 @@ pub trait Element<V: View>: 'static {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState;
 
     fn rect_for_text_range(
@@ -170,7 +175,7 @@ pub trait Element<V: View>: 'static {
     fn with_tooltip<Tag: 'static>(
         self,
         id: usize,
-        text: String,
+        text: impl Into<Cow<'static, str>>,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         cx: &mut ViewContext<V>,
@@ -178,27 +183,42 @@ pub trait Element<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
+        Tooltip::new::<Tag>(id, text, action, style, self.into_any(), cx)
     }
 
-    fn resizable(
+    /// Uses the the given element to calculate resizes for the given tag
+    fn provide_resize_bounds<Tag: 'static>(self) -> BoundsProvider<V, Tag>
+    where
+        Self: 'static + Sized,
+    {
+        BoundsProvider::<_, Tag>::new(self.into_any())
+    }
+
+    /// Calls the given closure with the new size of the element whenever the
+    /// handle is dragged. This will be calculated in relation to the bounds
+    /// provided by the given tag
+    fn resizable<Tag: 'static>(
         self,
         side: HandleSide,
         size: f32,
-        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>),
+        on_resize: impl 'static + FnMut(&mut V, Option<f32>, &mut ViewContext<V>),
     ) -> Resizable<V>
     where
         Self: 'static + Sized,
     {
-        Resizable::new(self.into_any(), side, size, on_resize)
+        Resizable::new::<Tag>(self.into_any(), side, size, on_resize)
     }
 
-    fn mouse<Tag>(self, region_id: usize) -> MouseEventHandler<Tag, V>
+    fn mouse<Tag: 'static>(self, region_id: usize) -> MouseEventHandler<V>
     where
         Self: Sized,
     {
-        MouseEventHandler::for_child(self.into_any(), region_id)
+        MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
+}
+
+pub trait RenderElement {
+    fn render<V: View>(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 }
 
 trait AnyElementState<V: View> {
@@ -267,8 +287,16 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
             | ElementState::PostLayout { mut element, .. }
             | ElementState::PostPaint { mut element, .. } => {
                 let (size, layout) = element.layout(constraint, view, cx);
-                debug_assert!(size.x().is_finite());
-                debug_assert!(size.y().is_finite());
+                debug_assert!(
+                    size.x().is_finite(),
+                    "Element for {:?} had infinite x size after layout",
+                    element.view_name()
+                );
+                debug_assert!(
+                    size.y().is_finite(),
+                    "Element for {:?} had infinite y size after layout",
+                    element.view_name()
+                );
 
                 result = size;
                 ElementState::PostLayout {
@@ -298,7 +326,14 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                let paint = element.paint(
+                    scene,
+                    bounds,
+                    visible_bounds,
+                    &mut layout,
+                    view,
+                    &mut PaintContext::new(cx),
+                );
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -316,7 +351,14 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                let paint = element.paint(
+                    scene,
+                    bounds,
+                    visible_bounds,
+                    &mut layout,
+                    view,
+                    &mut PaintContext::new(cx),
+                );
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -513,7 +555,7 @@ impl<V: View> Element<V> for AnyElement<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         self.paint(scene, bounds.origin(), visible_bounds, view, cx);
     }

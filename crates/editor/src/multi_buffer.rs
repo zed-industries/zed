@@ -1565,6 +1565,25 @@ impl MultiBuffer {
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
+    pub fn build_multi<const COUNT: usize>(
+        excerpts: [(&str, Vec<Range<Point>>); COUNT],
+        cx: &mut gpui::AppContext,
+    ) -> ModelHandle<Self> {
+        let multi = cx.add_model(|_| Self::new(0));
+        for (text, ranges) in excerpts {
+            let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+            let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
+                context: range,
+                primary: None,
+            });
+            multi.update(cx, |multi, cx| {
+                multi.push_excerpts(buffer, excerpt_ranges, cx)
+            });
+        }
+
+        multi
+    }
+
     pub fn build_from_buffer(
         buffer: ModelHandle<Buffer>,
         cx: &mut gpui::AppContext,

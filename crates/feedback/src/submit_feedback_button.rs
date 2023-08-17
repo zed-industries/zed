@@ -52,7 +52,7 @@ impl View for SubmitFeedbackButton {
             .map_or(true, |i| i.read(cx).allow_submission);
 
         enum SubmitFeedbackButton {}
-        MouseEventHandler::<SubmitFeedbackButton, Self>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<SubmitFeedbackButton, _>(0, cx, |state, _| {
             let text;
             let style = if allow_submission {
                 text = "Submit as Markdown";
@@ -80,7 +80,7 @@ impl View for SubmitFeedbackButton {
         .with_margin_left(theme.feedback.button_margin)
         .with_tooltip::<Self>(
             0,
-            "cmd-s".into(),
+            "cmd-s",
             Some(Box::new(SubmitFeedback)),
             theme.tooltip.clone(),
             cx,

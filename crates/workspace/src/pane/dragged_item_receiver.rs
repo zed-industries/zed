@@ -19,7 +19,7 @@ pub fn dragged_item_receiver<Tag, D, F>(
     split_margin: Option<f32>,
     cx: &mut ViewContext<Pane>,
     render_child: F,
-) -> MouseEventHandler<Tag, Pane>
+) -> MouseEventHandler<Pane>
 where
     Tag: 'static,
     D: Element<Pane>,
@@ -28,18 +28,18 @@ where
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let drag_position = if (pane.can_drop)(drag_and_drop, cx) {
         drag_and_drop
-            .currently_dragged::<DraggedItem>(cx.window_id())
+            .currently_dragged::<DraggedItem>(cx.window())
             .map(|(drag_position, _)| drag_position)
             .or_else(|| {
                 drag_and_drop
-                    .currently_dragged::<ProjectEntryId>(cx.window_id())
+                    .currently_dragged::<ProjectEntryId>(cx.window())
                     .map(|(drag_position, _)| drag_position)
             })
     } else {
         None
     };
 
-    let mut handler = MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
+    let mut handler = MouseEventHandler::above::<Tag, _>(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
         let drag_position = if state.hovered() { drag_position } else { None };
@@ -61,7 +61,7 @@ where
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
                                 border: Default::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                         });
                     }
@@ -91,10 +91,10 @@ where
                 let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
 
                 if drag_and_drop
-                    .currently_dragged::<DraggedItem>(cx.window_id())
+                    .currently_dragged::<DraggedItem>(cx.window())
                     .is_some()
                     || drag_and_drop
-                        .currently_dragged::<ProjectEntryId>(cx.window_id())
+                        .currently_dragged::<ProjectEntryId>(cx.window())
                         .is_some()
                 {
                     cx.notify();
@@ -122,11 +122,11 @@ pub fn handle_dropped_item<V: View>(
     }
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let action = if let Some((_, dragged_item)) =
-        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id())
+        drag_and_drop.currently_dragged::<DraggedItem>(cx.window())
     {
         Action::Move(dragged_item.pane.clone(), dragged_item.handle.id())
     } else if let Some((_, project_entry)) =
-        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id())
+        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window())
     {
         Action::Open(*project_entry)
     } else {

@@ -28,6 +28,7 @@ module.exports = {
     },
     rules: {
         "linebreak-style": ["error", "unix"],
+        "@typescript-eslint/no-explicit-any": "off",
         semi: ["error", "never"],
     },
 }

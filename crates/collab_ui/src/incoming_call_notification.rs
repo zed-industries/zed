@@ -7,7 +7,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AnyElement, AppContext, Entity, View, ViewContext,
+    AnyElement, AppContext, Entity, View, ViewContext, WindowHandle,
 };
 use util::ResultExt;
 use workspace::AppState;
@@ -16,10 +16,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     let app_state = Arc::downgrade(app_state);
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
     cx.spawn(|mut cx| async move {
-        let mut notification_windows = Vec::new();
+        let mut notification_windows: Vec<WindowHandle<IncomingCallNotification>> = Vec::new();
         while let Some(incoming_call) = incoming_call.next().await {
-            for window_id in notification_windows.drain(..) {
-                cx.remove_window(window_id);
+            for window in notification_windows.drain(..) {
+                window.remove(&mut cx);
             }
 
             if let Some(incoming_call) = incoming_call {
@@ -49,7 +49,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         |_| IncomingCallNotification::new(incoming_call.clone(), app_state.clone()),
                     );
 
-                    notification_windows.push(window.window_id());
+                    notification_windows.push(window);
                 }
             }
         }
@@ -173,7 +173,7 @@ impl IncomingCallNotification {
         let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Accept, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Accept, _>(0, cx, |_, _| {
                     let theme = &theme.incoming_call_notification;
                     Label::new("Accept", theme.accept_button.text.clone())
                         .aligned()
@@ -187,7 +187,7 @@ impl IncomingCallNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Decline, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Decline, _>(0, cx, |_, _| {
                     let theme = &theme.incoming_call_notification;
                     Label::new("Decline", theme.decline_button.text.clone())
                         .aligned()

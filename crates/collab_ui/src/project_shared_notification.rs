@@ -52,20 +52,20 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
-                    .push(window.window_id());
+                    .push(window);
             }
         }
         room::Event::RemoteProjectUnshared { project_id } => {
-            if let Some(window_ids) = notification_windows.remove(&project_id) {
-                for window_id in window_ids {
-                    cx.update_window(window_id, |cx| cx.remove_window());
+            if let Some(windows) = notification_windows.remove(&project_id) {
+                for window in windows {
+                    window.remove(cx);
                 }
             }
         }
         room::Event::Left => {
-            for (_, window_ids) in notification_windows.drain() {
-                for window_id in window_ids {
-                    cx.update_window(window_id, |cx| cx.remove_window());
+            for (_, windows) in notification_windows.drain() {
+                for window in windows {
+                    window.remove(cx);
                 }
             }
         }
@@ -170,7 +170,7 @@ impl ProjectSharedNotification {
         let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Open, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
@@ -182,7 +182,7 @@ impl ProjectSharedNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Dismiss, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()

@@ -25,8 +25,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    LayoutContext, ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    LayoutContext, ModelHandle, MouseRegion, PaintContext, Quad, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -303,10 +303,10 @@ impl Pane {
                         let tooltip_label;
                         if pane.is_zoomed() {
                             icon_path = "icons/minimize_8.svg";
-                            tooltip_label = "Zoom In".into();
+                            tooltip_label = "Zoom In";
                         } else {
                             icon_path = "icons/maximize_8.svg";
-                            tooltip_label = "Zoom In".into();
+                            tooltip_label = "Zoom In";
                         }
 
                         Pane::render_tab_bar_button(
@@ -1211,7 +1211,7 @@ impl Pane {
 
                             enum Tab {}
                             let mouse_event_handler =
-                                MouseEventHandler::<Tab, Pane>::new(ix, cx, |_, cx| {
+                                MouseEventHandler::new::<Tab, _>(ix, cx, |_, cx| {
                                     Self::render_tab(
                                         &item,
                                         pane.clone(),
@@ -1397,7 +1397,7 @@ impl Pane {
                         bounds: square,
                         background: Some(color),
                         border: Default::default(),
-                        corner_radius: diameter / 2.,
+                        corner_radii: (diameter / 2.).into(),
                     });
                 }
             })
@@ -1420,7 +1420,7 @@ impl Pane {
             let item_id = item.id();
             enum TabCloseButton {}
             let icon = Svg::new("icons/x_mark_8.svg");
-            MouseEventHandler::<TabCloseButton, _>::new(item_id, cx, |mouse_state, _| {
+            MouseEventHandler::new::<TabCloseButton, _>(item_id, cx, |mouse_state, _| {
                 if mouse_state.hovered() {
                     icon.with_color(tab_style.icon_close_active)
                 } else {
@@ -1477,7 +1477,7 @@ impl Pane {
         index: usize,
         icon: &'static str,
         is_active: bool,
-        tooltip: Option<(String, Option<Box<dyn Action>>)>,
+        tooltip: Option<(&'static str, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F1,
         on_down: F2,
@@ -1485,7 +1485,7 @@ impl Pane {
     ) -> AnyElement<Pane> {
         enum TabBarButton {}
 
-        let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
+        let mut button = MouseEventHandler::new::<TabBarButton, _>(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
             let style = theme.pane_button.in_state(is_active).style_for(mouse_state);
             Svg::new(icon)
@@ -1547,7 +1547,7 @@ impl View for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum MouseNavigationHandler {}
 
-        MouseEventHandler::<MouseNavigationHandler, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
             let active_item_index = self.active_item_index;
 
             if let Some(active_item) = self.active_item() {
@@ -1559,7 +1559,7 @@ impl View for Pane {
 
                         enum TabBarEventHandler {}
                         stack.add_child(
-                            MouseEventHandler::<TabBarEventHandler, _>::new(0, cx, |_, _| {
+                            MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
                                 Empty::new()
                                     .contained()
                                     .with_style(theme.workspace.tab_bar.container)
@@ -1900,7 +1900,7 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let background = theme::current(cx).editor.background;
 
@@ -1917,8 +1917,8 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
                 move |_, _: &mut V, cx| {
-                    let window_id = cx.window_id();
-                    cx.app_context().focus(window_id, Some(child_view_id))
+                    let window = cx.window();
+                    cx.app_context().focus(window, Some(child_view_id))
                 },
             ),
         );

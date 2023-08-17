@@ -10,8 +10,9 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion, Quad,
-    SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
+    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion,
+    PaintContext, Quad, SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext,
+    WeakModelHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -152,7 +153,7 @@ impl LayoutRect {
             bounds: RectF::new(position, size),
             background: Some(self.color),
             border: Default::default(),
-            corner_radius: 0.,
+            corner_radii: Default::default(),
         })
     }
 }
@@ -399,7 +400,8 @@ impl TerminalElement {
         region = region
             // Start selections
             .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
-                cx.focus_parent();
+                let terminal_view = cx.handle();
+                cx.focus(&terminal_view);
                 v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
                 if let Some(conn_handle) = connection.upgrade(cx) {
                     conn_handle.update(cx, |terminal, cx| {
@@ -734,7 +736,7 @@ impl Element<TerminalView> for TerminalElement {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
+        cx: &mut PaintContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -762,7 +764,7 @@ impl Element<TerminalView> for TerminalElement {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
                     background: Some(layout.background_color),
                     border: Default::default(),
-                    corner_radius: 0.,
+                    corner_radii: Default::default(),
                 });
 
                 for rect in &layout.rects {

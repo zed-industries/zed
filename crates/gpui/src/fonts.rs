@@ -71,6 +71,39 @@ pub struct TextStyle {
     pub underline: Underline,
 }
 
+impl TextStyle {
+    pub fn for_color(color: Color) -> Self {
+        Self {
+            color,
+            ..Default::default()
+        }
+    }
+
+    pub fn refine(self, refinement: TextStyleRefinement) -> TextStyle {
+        TextStyle {
+            color: refinement.color.unwrap_or(self.color),
+            font_family_name: refinement
+                .font_family_name
+                .unwrap_or_else(|| self.font_family_name.clone()),
+            font_family_id: refinement.font_family_id.unwrap_or(self.font_family_id),
+            font_id: refinement.font_id.unwrap_or(self.font_id),
+            font_size: refinement.font_size.unwrap_or(self.font_size),
+            font_properties: refinement.font_properties.unwrap_or(self.font_properties),
+            underline: refinement.underline.unwrap_or(self.underline),
+        }
+    }
+}
+
+pub struct TextStyleRefinement {
+    pub color: Option<Color>,
+    pub font_family_name: Option<Arc<str>>,
+    pub font_family_id: Option<FamilyId>,
+    pub font_id: Option<FontId>,
+    pub font_size: Option<f32>,
+    pub font_properties: Option<Properties>,
+    pub underline: Option<Underline>,
+}
+
 #[derive(JsonSchema)]
 #[serde(remote = "Properties")]
 pub struct PropertiesDef {

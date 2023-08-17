@@ -1,6 +1,7 @@
 import { interactive, toggleable } from "../element"
 import { background, foreground } from "../style_tree/components"
-import { useTheme, Theme } from "../theme"
+import { useTheme, Theme, Layer } from "../theme"
+import { Button } from "./button"
 
 export type Margin = {
     top: number
@@ -16,16 +17,24 @@ interface IconButtonOptions {
     | Theme["highest"]
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
+    variant?: Button.Variant
+    size?: Button.Size
 }
 
 type ToggleableIconButtonOptions = IconButtonOptions & {
     active_color?: keyof Theme["lowest"]
+    active_layer?: Layer
 }
 
-export function icon_button({ color, margin, layer }: IconButtonOptions) {
+export function icon_button({ color, margin, layer, variant, size }: IconButtonOptions = {
+    variant: Button.variant.Default,
+    size: Button.size.Medium,
+}) {
     const theme = useTheme()
 
     if (!color) color = "base"
+
+    const background_color = variant === Button.variant.Ghost ? null : background(layer ?? theme.lowest, color)
 
     const m = {
         top: margin?.top ?? 0,
@@ -34,15 +43,17 @@ export function icon_button({ color, margin, layer }: IconButtonOptions) {
         right: margin?.right ?? 0,
     }
 
+    const padding = {
+        top: size === Button.size.Small ? 0 : 2,
+        bottom: size === Button.size.Small ? 0 : 2,
+        left: size === Button.size.Small ? 0 : 4,
+        right: size === Button.size.Small ? 0 : 4,
+    }
+
     return interactive({
         base: {
             corner_radius: 6,
-            padding: {
-                top: 2,
-                bottom: 2,
-                left: 4,
-                right: 4,
-            },
+            padding: padding,
             margin: m,
             icon_width: 14,
             icon_height: 14,
@@ -51,7 +62,7 @@ export function icon_button({ color, margin, layer }: IconButtonOptions) {
         },
         state: {
             default: {
-                background: background(layer ?? theme.lowest, color),
+                background: background_color,
                 color: foreground(layer ?? theme.lowest, color),
             },
             hovered: {
@@ -68,17 +79,18 @@ export function icon_button({ color, margin, layer }: IconButtonOptions) {
 
 export function toggleable_icon_button(
     theme: Theme,
-    { color, active_color, margin }: ToggleableIconButtonOptions
+    { color, active_color, margin, variant, size, active_layer }: ToggleableIconButtonOptions
 ) {
     if (!color) color = "base"
 
     return toggleable({
         state: {
-            inactive: icon_button({ color, margin }),
+            inactive: icon_button({ color, margin, variant, size }),
             active: icon_button({
                 color: active_color ? active_color : color,
                 margin,
-                layer: theme.middle,
+                layer: active_layer,
+                size
             }),
         },
     })

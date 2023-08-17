@@ -1,8 +1,10 @@
 import chroma from "chroma-js"
 export * from "./theme"
+export * from "./theme/theme_config"
 export { chroma }
 
 export const font_families = {
+    ui_sans: "IBM Plex Sans",
     sans: "Zed Sans",
     mono: "Zed Mono",
 }

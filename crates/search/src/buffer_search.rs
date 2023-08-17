@@ -36,7 +36,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(BufferSearchBar::deploy);
+    cx.add_action(BufferSearchBar::deploy_bar);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
     cx.add_action(BufferSearchBar::select_next_match);
@@ -327,6 +327,19 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
+        if self.show(cx) {
+            self.search_suggested(cx);
+            if deploy.focus {
+                self.select_query(cx);
+                cx.focus_self();
+            }
+            return true;
+        }
+
+        false
+    }
+
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.active_searchable_item.is_none() {
             return false;
@@ -416,7 +429,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.search_options.contains(option);
         Some(
-            MouseEventHandler::<Self, _>::new(option.bits as usize, cx, |state, cx| {
+            MouseEventHandler::new::<Self, _>(option.bits as usize, cx, |state, cx| {
                 let theme = theme::current(cx);
                 let style = theme
                     .search
@@ -463,7 +476,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
+        MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme.search.option_button.inactive_state().style_for(state);
             Label::new(icon, style.text.clone())
@@ -497,7 +510,7 @@ impl BufferSearchBar {
         let action_type_id = 0_usize;
 
         enum ActionButton {}
-        MouseEventHandler::<ActionButton, _>::new(action_type_id, cx, |state, cx| {
+        MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
             let theme = theme::current(cx);
             let style = theme.search.action_button.style_for(state);
             Label::new(icon, style.text.clone())
@@ -527,7 +540,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum CloseButton {}
-        MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<CloseButton, _>(0, cx, |state, _| {
             let style = theme.dismiss_button.style_for(state);
             Svg::new("icons/x_mark_8.svg")
                 .with_color(style.color)
@@ -553,21 +566,15 @@ impl BufferSearchBar {
         .into_any()
     }
 
-    fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
+    fn deploy_bar(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         let mut propagate_action = true;
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
-                if search_bar.show(cx) {
-                    search_bar.search_suggested(cx);
-                    if action.focus {
-                        search_bar.select_query(cx);
-                        cx.focus_self();
-                    }
+                if search_bar.deploy(action, cx) {
                     propagate_action = false;
                 }
             });
         }
-
         if propagate_action {
             cx.propagate_action();
         }
@@ -850,12 +857,9 @@ mod tests {
             )
         });
         let window = cx.add_window(|_| EmptyView);
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let editor = cx.add_view(window.window_id(), |cx| {
-            Editor::for_buffer(buffer.clone(), None, cx)
-        });
-
-        let search_bar = cx.add_view(window.window_id(), |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1232,11 +1236,9 @@ mod tests {
         );
         let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
         let window = cx.add_window(|_| EmptyView);
-        let window_id = window.window_id();
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
-
-        let search_bar = cx.add_view(window_id, |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1252,12 +1254,13 @@ mod tests {
             search_bar.activate_current_match(cx);
         });
 
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Initially, the editor should not be focused"
             );
         });
+
         let initial_selections = editor.update(cx, |editor, cx| {
             let initial_selections = editor.selections.display_ranges(cx);
             assert_eq!(
@@ -1274,7 +1277,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1298,7 +1301,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectNextMatch"
@@ -1327,7 +1330,7 @@ mod tests {
             cx.focus(search_bar.query_editor.as_any());
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should focus editor after successful SelectAllMatches"
@@ -1351,7 +1354,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 editor.is_focused(cx),
                 "Should still have editor focused after SelectPrevMatch"
@@ -1387,7 +1390,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_all_matches(&SelectAllMatches, cx);
         });
-        cx.read_window(window_id, |cx| {
+        window.read_with(cx, |cx| {
             assert!(
                 !editor.is_focused(cx),
                 "Should not switch focus to editor if SelectAllMatches does not find any matches"
@@ -1421,11 +1424,9 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
         let window = cx.add_window(|_| EmptyView);
 
-        let editor = cx.add_view(window.window_id(), |cx| {
-            Editor::for_buffer(buffer.clone(), None, cx)
-        });
+        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.add_view(window.window_id(), |cx| {
+        let search_bar = window.add_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);

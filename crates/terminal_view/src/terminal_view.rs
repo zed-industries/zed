@@ -80,6 +80,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
+    cx.add_action(TerminalView::select_all)
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -112,11 +113,11 @@ impl TerminalView {
         let working_directory =
             get_working_directory(workspace, cx, strategy.working_directory.clone());
 
-        let window_id = cx.window_id();
+        let window = cx.window();
         let terminal = workspace
             .project()
             .update(cx, |project, cx| {
-                project.create_terminal(working_directory, window_id, cx)
+                project.create_terminal(working_directory, window, cx)
             })
             .notify_err(workspace, cx);
 
@@ -310,6 +311,11 @@ impl TerminalView {
                 )
             });
         }
+    }
+
+    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.select_all());
+        cx.notify();
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
@@ -667,7 +673,7 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                gpui::elements::Svg::new("icons/terminal_12.svg")
+                gpui::elements::Svg::new("icons/terminal.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)
@@ -741,7 +747,7 @@ impl Item for TerminalView {
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        let window_id = cx.window_id();
+        let window = cx.window();
         cx.spawn(|pane, mut cx| async move {
             let cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
@@ -762,7 +768,7 @@ impl Item for TerminalView {
                 });
 
             let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, window_id, cx)
+                project.create_terminal(cwd, window, cx)
             })?;
             Ok(pane.update(&mut cx, |_, cx| {
                 cx.add_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))

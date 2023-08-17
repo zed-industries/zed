@@ -389,7 +389,7 @@ impl View for SyntaxTreeView {
         {
             let layer = layer.clone();
             let theme = editor_theme.clone();
-            return MouseEventHandler::<Self, Self>::new(0, cx, move |state, cx| {
+            return MouseEventHandler::new::<Self, _>(0, cx, move |state, cx| {
                 let list_hovered = state.hovered();
                 UniformList::new(
                     self.list_state.clone(),
@@ -505,7 +505,7 @@ impl SyntaxTreeToolbarItemView {
                 .with_child(Self::render_header(&theme, &active_layer, cx))
                 .with_children(self.menu_open.then(|| {
                     Overlay::new(
-                        MouseEventHandler::<Menu, _>::new(0, cx, move |_, cx| {
+                        MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
                             Flex::column()
                                 .with_children(active_buffer.syntax_layers().enumerate().map(
                                     |(ix, layer)| {
@@ -564,7 +564,7 @@ impl SyntaxTreeToolbarItemView {
         cx: &mut ViewContext<Self>,
     ) -> impl Element<Self> {
         enum ToggleMenu {}
-        MouseEventHandler::<ToggleMenu, Self>::new(0, cx, move |state, _| {
+        MouseEventHandler::new::<ToggleMenu, _>(0, cx, move |state, _| {
             let style = theme.toolbar_dropdown_menu.header.style_for(state);
             Flex::row()
                 .with_child(
@@ -596,7 +596,7 @@ impl SyntaxTreeToolbarItemView {
         cx: &mut ViewContext<Self>,
     ) -> impl Element<Self> {
         enum ActivateLayer {}
-        MouseEventHandler::<ActivateLayer, _>::new(layer_ix, cx, move |state, _| {
+        MouseEventHandler::new::<ActivateLayer, _>(layer_ix, cx, move |state, _| {
             let is_selected = layer.node() == active_layer.node();
             let style = theme
                 .toolbar_dropdown_menu
