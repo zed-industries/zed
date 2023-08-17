@@ -320,7 +320,6 @@ impl Pane {
             can_drop: Rc::new(|_, _| true),
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                let tooltip_style = theme::current(cx).tooltip.clone();
                 Flex::row()
                     // New menu
                     .with_child(Self::render_tab_bar_button(

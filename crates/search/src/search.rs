@@ -1,9 +1,14 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
-use gpui::{actions, Action, AppContext};
+use gpui::{
+    actions,
+    elements::{Component, StyleableComponent, TooltipStyle},
+    Action, AnyElement, AppContext, Element, View,
+};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
+use theme::components::{action_button::ActionButton, ComponentExt, ToggleIconButtonStyle};
 
 pub mod buffer_search;
 mod history;
@@ -68,5 +73,24 @@ impl SearchOptions {
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
         options
+    }
+
+    pub fn as_button<V: View>(
+        &self,
+        active: bool,
+        icon: &str,
+        tooltip_style: TooltipStyle,
+        button_style: ToggleIconButtonStyle,
+    ) -> AnyElement<V> {
+        ActionButton::new_dynamic(
+            self.to_toggle_action(),
+            format!("Toggle {}", self.label()),
+            tooltip_style,
+        )
+        .with_contents(theme::components::svg::Svg::new(icon.to_owned()))
+        .toggleable(active)
+        .with_style(button_style)
+        .into_element()
+        .into_any()
     }
 }

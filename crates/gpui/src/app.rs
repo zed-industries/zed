@@ -3314,10 +3314,19 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         element_id: usize,
         initial: T,
     ) -> ElementStateHandle<T> {
+        self.element_state_dynamic(TypeTag::new::<Tag>(), element_id, initial)
+    }
+
+    pub fn element_state_dynamic<T: 'static>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+        initial: T,
+    ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
             element_id,
-            tag: TypeId::of::<Tag>(),
+            tag,
         };
         self.element_states
             .entry(id)
@@ -3331,11 +3340,20 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     ) -> ElementStateHandle<T> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
+
+    pub fn default_element_state_dynamic<T: 'static + Default>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state_dynamic::<T>(tag, element_id, T::default())
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeTag {
     tag: TypeId,
+    composed: Option<TypeId>,
     #[cfg(debug_assertions)]
     tag_type_name: &'static str,
 }
@@ -3344,6 +3362,7 @@ impl TypeTag {
     pub fn new<Tag: 'static>() -> Self {
         Self {
             tag: TypeId::of::<Tag>(),
+            composed: None,
             #[cfg(debug_assertions)]
             tag_type_name: std::any::type_name::<Tag>(),
         }
@@ -3352,9 +3371,15 @@ impl TypeTag {
     pub fn dynamic(tag: TypeId, #[cfg(debug_assertions)] type_name: &'static str) -> Self {
         Self {
             tag,
+            composed: None,
             #[cfg(debug_assertions)]
             tag_type_name: type_name,
         }
+    }
+
+    pub fn compose(mut self, other: TypeTag) -> Self {
+        self.composed = Some(other.tag);
+        self
     }
 
     #[cfg(debug_assertions)]
@@ -4751,7 +4776,7 @@ impl Hash for AnyWeakViewHandle {
 pub struct ElementStateId {
     view_id: usize,
     element_id: usize,
-    tag: TypeId,
+    tag: TypeTag,
 }
 
 pub struct ElementStateHandle<T> {

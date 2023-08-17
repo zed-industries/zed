@@ -7,6 +7,34 @@ use crate::{
     ViewContext,
 };
 
+use super::Empty;
+
+pub trait GeneralComponent {
+    fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+}
+
+pub trait StyleableComponent {
+    type Style: Clone;
+    type Output: GeneralComponent;
+
+    fn with_style(self, style: Self::Style) -> Self::Output;
+}
+
+impl GeneralComponent for () {
+    fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
+        Empty::new().into_any()
+    }
+}
+
+impl StyleableComponent for () {
+    type Style = ();
+    type Output = ();
+
+    fn with_style(self, _: Self::Style) -> Self::Output {
+        ()
+    }
+}
+
 pub trait Component<V: View> {
     fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
@@ -15,6 +43,12 @@ pub trait Component<V: View> {
         Self: Sized,
     {
         ComponentAdapter::new(self)
+    }
+}
+
+impl<V: View, C: GeneralComponent> Component<V> for C {
+    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        self.render(v, cx)
     }
 }
 

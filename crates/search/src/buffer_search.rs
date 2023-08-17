@@ -19,6 +19,7 @@ use gpui::{
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
+
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -167,23 +168,17 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
-        let render_search_option =
-            |options: bool, icon, option, cx: &mut ViewContext<BufferSearchBar>| {
-                options.then(|| {
-                    let is_active = self.search_options.contains(option);
-                    crate::search_bar::render_option_button_icon::<Self>(
-                        is_active,
-                        icon,
-                        option.bits as usize,
-                        format!("Toggle {}", option.label()),
-                        option.to_toggle_action(),
-                        move |_, this, cx| {
-                            this.toggle_search_option(option, cx);
-                        },
-                        cx,
-                    )
-                })
-            };
+        let render_search_option = |options: bool, icon, option| {
+            options.then(|| {
+                let is_active = self.search_options.contains(option);
+                option.as_button(
+                    is_active,
+                    icon,
+                    theme.tooltip.clone(),
+                    theme.search.option_button_component.clone(),
+                )
+            })
+        };
         let match_count = self
             .active_searchable_item
             .as_ref()
@@ -242,13 +237,11 @@ impl View for BufferSearchBar {
                         supported_options.case,
                         "icons/case_insensitive_12.svg",
                         SearchOptions::CASE_SENSITIVE,
-                        cx,
                     ))
                     .with_children(render_search_option(
                         supported_options.word,
                         "icons/word_search_12.svg",
                         SearchOptions::WHOLE_WORD,
-                        cx,
                     ))
                     .flex_float()
                     .contained(),

@@ -1,10 +1,13 @@
 use std::any::{Any, TypeId};
 
+use crate::TypeTag;
+
 pub trait Action: 'static {
     fn id(&self) -> TypeId;
     fn namespace(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    fn type_tag(&self) -> TypeTag;
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn eq(&self, other: &dyn Action) -> bool;
 
@@ -105,6 +108,10 @@ macro_rules! __impl_action {
                 } else {
                     false
                 }
+            }
+
+            fn type_tag(&self) -> $crate::TypeTag {
+                $crate::TypeTag::new::<Self>()
             }
 
             $from_json_fn

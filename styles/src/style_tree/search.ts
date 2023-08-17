@@ -96,6 +96,63 @@ export default function search(): any {
                 },
             },
         }),
+        option_button_component: toggleable({
+            base: interactive({
+                base: {
+                    icon_size: 14,
+                    color: foreground(theme.highest, "variant"),
+
+                    button_width: 32,
+                    background: background(theme.highest, "on"),
+                    corner_radius: 2,
+                    margin: { right: 2 },
+                    border: {
+                        width: 1., color: background(theme.highest, "on")
+                    },
+                    padding: {
+                        left: 4,
+                        right: 4,
+                        top: 4,
+                        bottom: 4,
+                    },
+                },
+                state: {
+                    hovered: {
+                        ...text(theme.highest, "mono", "variant", "hovered"),
+                        background: background(theme.highest, "on", "hovered"),
+                        border: {
+                            width: 1., color: background(theme.highest, "on", "hovered")
+                        },
+                    },
+                    clicked: {
+                        ...text(theme.highest, "mono", "variant", "pressed"),
+                        background: background(theme.highest, "on", "pressed"),
+                        border: {
+                            width: 1., color: background(theme.highest, "on", "pressed")
+                        },
+                    },
+                },
+            }),
+            state: {
+                active: {
+                    default: {
+                        icon_size: 14,
+                        button_width: 32,
+                        color: foreground(theme.highest, "variant"),
+                        background: background(theme.highest, "accent"),
+                        border: border(theme.highest, "accent"),
+                    },
+                    hovered: {
+                        background: background(theme.highest, "accent", "hovered"),
+                        border: border(theme.highest, "accent", "hovered"),
+                    },
+                    clicked: {
+                        background: background(theme.highest, "accent", "pressed"),
+                        border: border(theme.highest, "accent", "pressed"),
+                    },
+                },
+            },
+        }),
         action_button: toggleable({
             base: interactive({
                 base: {

@@ -1,7 +1,9 @@
+pub mod components;
 mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
+use components::ToggleIconButtonStyle;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -13,7 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle};
+use ui::{CheckboxStyle, CopilotCTAButton, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
 pub use theme_settings::*;
@@ -182,7 +184,7 @@ pub struct CopilotAuth {
     pub prompting: CopilotAuthPrompting,
     pub not_authorized: CopilotAuthNotAuthorized,
     pub authorized: CopilotAuthAuthorized,
-    pub cta_button: ButtonStyle,
+    pub cta_button: CopilotCTAButton,
     pub header: IconStyle,
 }
 
@@ -196,7 +198,7 @@ pub struct CopilotAuthPrompting {
 #[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct DeviceCode {
     pub text: TextStyle,
-    pub cta: ButtonStyle,
+    pub cta: CopilotCTAButton,
     pub left: f32,
     pub left_container: ContainerStyle,
     pub right: f32,
@@ -420,6 +422,7 @@ pub struct Search {
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
     pub option_button: Toggleable<Interactive<IconButton>>,
+    pub option_button_component: ToggleIconButtonStyle,
     pub action_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
@@ -887,10 +890,30 @@ pub struct Interactive<T> {
     pub disabled: Option<T>,
 }
 
+impl Interactive<()> {
+    pub fn new_blank() -> Self {
+        Self {
+            default: (),
+            hovered: None,
+            clicked: None,
+            disabled: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct Toggleable<T> {
     active: T,
     inactive: T,
+}
+
+impl Toggleable<()> {
+    pub fn new_blank() -> Self {
+        Self {
+            active: (),
+            inactive: (),
+        }
+    }
 }
 
 impl<T> Toggleable<T> {
