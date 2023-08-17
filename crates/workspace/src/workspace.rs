@@ -553,6 +553,8 @@ struct FollowerState {
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
 
+enum WorkspaceBounds {}
+
 impl Workspace {
     pub fn new(
         workspace_id: WorkspaceId,
@@ -3776,6 +3778,7 @@ impl View for Workspace {
                                     }))
                                     .with_children(self.render_notifications(&theme.workspace, cx)),
                             ))
+                            .provide_resize_bounds::<WorkspaceBounds>()
                             .flex(1.0, true),
                     )
                     .with_child(ChildView::new(&self.status_bar, cx))
@@ -4859,7 +4862,9 @@ mod tests {
                 panel_1.size(cx)
             );
 
-            left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
+            left_dock.update(cx, |left_dock, cx| {
+                left_dock.resize_active_panel(Some(1337.), cx)
+            });
             assert_eq!(
                 workspace
                     .right_dock()

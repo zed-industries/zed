@@ -186,16 +186,27 @@ pub trait Element<V: View>: 'static {
         Tooltip::new::<Tag>(id, text, action, style, self.into_any(), cx)
     }
 
-    fn resizable(
+    /// Uses the the given element to calculate resizes for the given tag
+    fn provide_resize_bounds<Tag: 'static>(self) -> BoundsProvider<V, Tag>
+    where
+        Self: 'static + Sized,
+    {
+        BoundsProvider::<_, Tag>::new(self.into_any())
+    }
+
+    /// Calls the given closure with the new size of the element whenever the
+    /// handle is dragged. This will be calculated in relation to the bounds
+    /// provided by the given tag
+    fn resizable<Tag: 'static>(
         self,
         side: HandleSide,
         size: f32,
-        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>),
+        on_resize: impl 'static + FnMut(&mut V, Option<f32>, &mut ViewContext<V>),
     ) -> Resizable<V>
     where
         Self: 'static + Sized,
     {
-        Resizable::new(self.into_any(), side, size, on_resize)
+        Resizable::new::<Tag>(self.into_any(), side, size, on_resize)
     }
 
     fn mouse<Tag: 'static>(self, region_id: usize) -> MouseEventHandler<V>

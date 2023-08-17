@@ -3650,7 +3650,11 @@ impl Database {
         let ancestor_ids = self.get_channel_ancestors(id, tx).await?;
         let user_ids = channel_member::Entity::find()
             .distinct()
-            .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
+            .filter(
+                channel_member::Column::ChannelId
+                    .is_in(ancestor_ids.iter().copied())
+                    .and(channel_member::Column::Accepted.eq(true)),
+            )
             .select_only()
             .column(channel_member::Column::UserId)
             .into_values::<_, QueryUserIds>()

@@ -82,6 +82,9 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> serde_json::Value {
-        element.debug(view, cx)
+        serde_json::json!({
+            "type": "ComponentAdapter",
+            "child": element.debug(view, cx),
+        })
     }
 }

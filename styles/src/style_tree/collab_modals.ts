@@ -76,7 +76,8 @@ export default function channel_modal(): any {
                 },
 
             },
-            max_height: 400,
+            // FIXME: due to a bug in the picker's size calculation, this must be 600
+            max_height: 600,
             max_width: 540,
             title: {
                 ...text(theme.middle, "sans", "on", { size: "lg" }),
