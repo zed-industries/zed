@@ -776,11 +776,100 @@ async fn test_lost_channel_creation(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let channel_id = server.make_channel("x", (&client_a, cx_a), &mut []).await;
+
     // Invite a member
-    // Create a new sub channel
-    // Member accepts invite
-    // Make sure that member can see new channel
-    todo!();
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.invite_member(channel_id, client_b.user_id().unwrap(), false, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // Sanity check
+    assert_channel_invitations(
+        client_b.channel_store(),
+        cx_b,
+        &[ExpectedChannel {
+            depth: 0,
+            id: channel_id,
+            name: "x".to_string(),
+            user_is_admin: false,
+        }],
+    );
+
+    let subchannel_id = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("subchannel", Some(channel_id), cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // Make sure A sees their new channel
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            ExpectedChannel {
+                depth: 0,
+                id: channel_id,
+                name: "x".to_string(),
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                depth: 1,
+                id: subchannel_id,
+                name: "subchannel".to_string(),
+                user_is_admin: true,
+            },
+        ],
+    );
+
+    // Accept the invite
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| {
+            channel_store.respond_to_channel_invite(channel_id, true)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // B should now see the channel
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                depth: 0,
+                id: channel_id,
+                name: "x".to_string(),
+                user_is_admin: false,
+            },
+            ExpectedChannel {
+                depth: 1,
+                id: subchannel_id,
+                name: "subchannel".to_string(),
+                user_is_admin: false,
+            },
+        ],
+    );
 }
 
 #[derive(Debug, PartialEq)]
