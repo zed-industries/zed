@@ -397,7 +397,7 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
-                collapsed_sections: Vec::default(),
+                collapsed_sections: vec![Section::Offline],
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
