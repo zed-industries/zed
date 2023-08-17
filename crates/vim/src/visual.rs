@@ -157,9 +157,12 @@ pub fn visual_block_motion(
 
         let columns = if is_reversed {
             head.column()..tail.column()
+        } else if head.column() == tail.column() {
+            head.column()..(head.column() + 1)
         } else {
             tail.column()..head.column()
         };
+
         let mut selections = Vec::new();
         let mut row = tail.row();
 
@@ -968,6 +971,61 @@ mod test {
 
             lazy dog
             "
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_insert(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇThe quick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "9", "down"]).await;
+        cx.assert_shared_state(indoc! {
+            "«Tˇ»he quick brown
+            «fˇ»ox jumps over
+            «tˇ»he lazy dog
+            ˇ"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(["shift-i", "k", "escape"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "ˇkThe quick brown
+            kfox jumps over
+            kthe lazy dog
+            k"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "ˇThe quick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "9", "down"]).await;
+        cx.assert_shared_state(indoc! {
+            "«Tˇ»he quick brown
+            «fˇ»ox jumps over
+            «tˇ»he lazy dog
+            ˇ"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["c", "k", "escape"]).await;
+        cx.assert_shared_state(indoc! {
+            "ˇkhe quick brown
+            kox jumps over
+            khe lazy dog
+            k"
         })
         .await;
     }

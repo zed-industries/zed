@@ -232,7 +232,7 @@ impl Vim {
                 s.move_with(|map, selection| {
                     if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();
-                        if !selection.reversed {
+                        if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
