@@ -8,7 +8,6 @@ import {
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
 import collab_modals from "./collab_modals"
-import { text_button } from "../component/text_button"
 import { icon_button, toggleable_icon_button } from "../component/icon_button"
 import { indicator } from "../component/indicator"
 
