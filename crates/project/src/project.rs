@@ -5019,31 +5019,36 @@ impl Project {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
             unimplemented!();
-            // let request = self.client.request(query.to_proto(project_id));
-            // cx.spawn(|this, mut cx| async move {
-            //     let response = request.await?;
-            //     let mut result = HashMap::default();
-            //     for location in response.locations {
-            //         let target_buffer = this
-            //             .update(&mut cx, |this, cx| {
-            //                 this.wait_for_remote_buffer(location.buffer_id, cx)
-            //             })
-            //             .await?;
-            //         let start = location
-            //             .start
-            //             .and_then(deserialize_anchor)
-            //             .ok_or_else(|| anyhow!("missing target start"))?;
-            //         let end = location
-            //             .end
-            //             .and_then(deserialize_anchor)
-            //             .ok_or_else(|| anyhow!("missing target end"))?;
-            //         result
-            //             .entry(target_buffer)
-            //             .or_insert(Vec::new())
-            //             .push(start..end)
-            //     }
-            //     Ok(result)
-            // })
+            let (tx, rx) = smol::channel::unbounded();
+            let request = self.client.request(query.to_proto(project_id));
+            cx.spawn(|this, mut cx| async move {
+                let response = request.await?;
+                let mut result = HashMap::default();
+                for location in response.locations {
+                    let target_buffer = this
+                        .update(&mut cx, |this, cx| {
+                            this.wait_for_remote_buffer(location.buffer_id, cx)
+                        })
+                        .await?;
+                    let start = location
+                        .start
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target start"))?;
+                    let end = location
+                        .end
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target end"))?;
+                    result
+                        .entry(target_buffer)
+                        .or_insert(Vec::new())
+                        .push(start..end)
+                }
+                for (buffer, ranges) in result {
+                    tx.send((buffer, ranges));
+                }
+                Result::<(), anyhow::Error>::Ok(())
+            });
+            rx
         } else {
             unimplemented!();
         }
