@@ -378,6 +378,11 @@
       "s": "vim::Substitute",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "shift-i": [
+        "vim::SwitchMode",
+        "Insert"
+      ],
+      "shift-a": "vim::InsertAfter",
       "r": [
         "vim::PushOperator",
         "Replace"
