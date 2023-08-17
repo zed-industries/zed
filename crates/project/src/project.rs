@@ -2748,10 +2748,8 @@ impl Project {
     ) -> Result<Option<Arc<LanguageServer>>> {
         let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
         let language_server = match pending_server.task.await? {
-            Some(server) => server.initialize(initialization_options).await?,
-            None => {
-                return Ok(None);
-            }
+            Some(server) => server,
+            None => return Ok(None),
         };
 
         language_server
@@ -2909,7 +2907,9 @@ impl Project {
             )
             .ok();
 
-        Ok(Some(language_server))
+        Ok(Some(
+            language_server.initialize(initialization_options).await?,
+        ))
     }
 
     fn insert_newly_running_language_server(

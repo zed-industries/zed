@@ -282,7 +282,7 @@ impl LanguageServer {
             stdout.read_exact(&mut buffer).await?;
 
             if let Ok(message) = str::from_utf8(&buffer) {
-                log::trace!("incoming message:{}", message);
+                log::trace!("incoming message: {}", message);
                 for handler in io_handlers.lock().values_mut() {
                     handler(true, message);
                 }
