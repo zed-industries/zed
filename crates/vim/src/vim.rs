@@ -18,7 +18,7 @@ use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
     Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use language::CursorShape;
+use language::{CursorShape, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
@@ -150,8 +150,8 @@ impl Vim {
             Event::SelectionsChanged { local: true } => {
                 let editor = editor.read(cx);
                 if editor.leader_replica_id().is_none() {
-                    let newest_empty = editor.selections.newest::<usize>(cx).is_empty();
-                    local_selections_changed(newest_empty, cx);
+                    let newest = editor.selections.newest::<usize>(cx);
+                    local_selections_changed(newest, cx);
                 }
             }
             Event::InputIgnored { text } => {
@@ -427,10 +427,14 @@ impl Setting for VimModeSetting {
     }
 }
 
-fn local_selections_changed(newest_empty: bool, cx: &mut WindowContext) {
+fn local_selections_changed(newest: Selection<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        if vim.enabled && vim.state().mode == Mode::Normal && !newest_empty {
-            vim.switch_mode(Mode::Visual, false, cx)
+        if vim.enabled && vim.state().mode == Mode::Normal && !newest.is_empty() {
+            if matches!(newest.goal, SelectionGoal::ColumnRange { .. }) {
+                vim.switch_mode(Mode::VisualBlock, false, cx);
+            } else {
+                vim.switch_mode(Mode::Visual, false, cx)
+            }
         }
     })
 }
