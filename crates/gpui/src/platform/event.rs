@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{any::Any, ops::Deref};
 
 use pathfinder_geometry::vector::vec2f;
 
@@ -142,6 +142,7 @@ pub struct MouseButtonEvent {
     pub position: Vector2F,
     pub modifiers: Modifiers,
     pub click_count: usize,
+    pub is_down: bool,
 }
 
 impl Deref for MouseButtonEvent {
@@ -174,6 +175,7 @@ impl MouseMovedEvent {
             button: self.pressed_button.unwrap_or(button),
             modifiers: self.modifiers,
             click_count: 0,
+            is_down: self.pressed_button.is_some(),
         }
     }
 }
@@ -211,10 +213,25 @@ impl Event {
             Event::KeyDown { .. } => None,
             Event::KeyUp { .. } => None,
             Event::ModifiersChanged { .. } => None,
-            Event::MouseDown(event) | Event::MouseUp(event) => Some(event.position),
+            Event::MouseDown(event) => Some(event.position),
+            Event::MouseUp(event) => Some(event.position),
             Event::MouseMoved(event) => Some(event.position),
             Event::MouseExited(event) => Some(event.position),
             Event::ScrollWheel(event) => Some(event.position),
+        }
+    }
+
+    pub fn mouse_event<'a>(&'a self) -> Option<&'a dyn Any> {
+        match self {
+            Event::KeyDown { .. } => None,
+            Event::KeyUp { .. } => None,
+            Event::ModifiersChanged { .. } => None,
+            Event::MouseDown(event) => Some(event),
+            Event::MouseUp(event) => Some(event),
+            _ => None,
+            // Event::MouseMoved(event) => Some(event),
+            // Event::MouseExited(event) => Some(event),
+            // Event::ScrollWheel(event) => Some(event),
         }
     }
 }

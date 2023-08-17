@@ -7,12 +7,12 @@ use anyhow::Result;
 pub use gpui::LayoutContext;
 use gpui::{
     geometry::{DefinedLength, Length},
-    platform::MouseButton,
-    scene::MouseClick,
-    EngineLayout, RenderContext, ViewContext, WindowContext,
+    platform::{MouseButton, MouseButtonEvent},
+    EngineLayout, EventContext, RenderContext, ViewContext,
 };
 use playground_macros::tailwind_lengths;
-use std::{any::Any, rc::Rc};
+use smallvec::SmallVec;
+use std::{any::Any, cell::Cell, rc::Rc};
 
 pub use crate::paint_context::PaintContext;
 pub use taffy::tree::NodeId;
@@ -23,7 +23,7 @@ pub struct Layout<'a, E: ?Sized> {
 }
 
 pub struct ElementHandlers<V> {
-    click: Option<Rc<dyn Fn(&mut V, MouseClick, &mut WindowContext, usize)>>,
+    mouse_button: SmallVec<[Rc<dyn Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>)>; 2]>,
 }
 
 pub struct ElementMetadata<V> {
@@ -42,7 +42,9 @@ impl<V> Default for ElementMetadata<V> {
 
 impl<V> Default for ElementHandlers<V> {
     fn default() -> Self {
-        ElementHandlers { click: None }
+        ElementHandlers {
+            mouse_button: Default::default(),
+        }
     }
 }
 
@@ -79,36 +81,62 @@ pub trait Element<V: 'static>: 'static {
         Adapter(self.into_any())
     }
 
-    fn left_click(self, handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.click(MouseButton::Left, handler)
-    }
-
-    fn right_click(
+    fn click(
         self,
-        handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static,
+        button: MouseButton,
+        handler: impl Fn(&mut V, &MouseButtonEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
     {
-        self.click(MouseButton::Right, handler)
+        let pressed: Rc<Cell<bool>> = Default::default();
+        self.mouse_down(button, {
+            let pressed = pressed.clone();
+            move |_, _, _| {
+                pressed.set(true);
+            }
+        })
+        .mouse_up(button, move |view, event, event_cx| {
+            if pressed.get() {
+                pressed.set(false);
+                handler(view, event, event_cx);
+            }
+        })
     }
 
-    fn click(
+    fn mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, MouseClick, &mut ViewContext<V>) + 'static,
+        handler: impl Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
     {
-        self.handlers_mut().click = Some(Rc::new(move |view, event, window_cx, view_id| {
-            if event.button == button {
-                handler(view, event, &mut ViewContext::mutable(window_cx, view_id));
-            }
-        }));
+        self.handlers_mut()
+            .mouse_button
+            .push(Rc::new(move |view, event, event_cx| {
+                if event.button == button && event.is_down {
+                    handler(view, event, event_cx);
+                }
+            }));
+        self
+    }
+
+    fn mouse_up(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(&mut V, &MouseButtonEvent, &mut EventContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.handlers_mut()
+            .mouse_button
+            .push(Rc::new(move |view, event, event_cx| {
+                if event.button == button && !event.is_down {
+                    handler(view, event, event_cx);
+                }
+            }));
         self
     }
 
@@ -385,7 +413,7 @@ pub struct AnyElement<V> {
     layout: Option<(NodeId, Box<dyn Any>)>,
 }
 
-impl<V> AnyElement<V> {
+impl<V: 'static> AnyElement<V> {
     pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
         let pushed_text_style = self.push_text_style(cx);
 
@@ -426,7 +454,20 @@ impl<V> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
-        if let Some(click_handler) = self.element.handlers_mut().click.clone() {}
+        for handler in self.element.handlers_mut().mouse_button.iter().cloned() {
+            let EngineLayout { order, bounds } = layout.from_engine;
+
+            let view_id = cx.view_id();
+            cx.draw_interactive_region(
+                order,
+                bounds,
+                move |view, event: &MouseButtonEvent, window_cx| {
+                    let mut view_cx = ViewContext::mutable(window_cx, view_id);
+                    let mut event_cx = EventContext::new(&mut view_cx);
+                    (handler)(view, event, &mut event_cx);
+                },
+            );
+        }
 
         self.element.paint(layout, view, cx)?;
         if pushed_text_style {

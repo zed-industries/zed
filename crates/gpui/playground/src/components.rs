@@ -4,7 +4,7 @@ use crate::{
     text::ArcCow,
     themes::rose_pine,
 };
-use gpui::ViewContext;
+use gpui::{platform::MouseButton, ViewContext};
 use playground_macros::Element;
 use std::{marker::PhantomData, rc::Rc};
 
@@ -69,7 +69,7 @@ impl<V: 'static, D: 'static> Button<V, D> {
 
     pub fn click(self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
         let data = self.data.clone();
-        Element::left_click(self, move |view, _, cx| {
+        Element::click(self, MouseButton::Left, move |view, _, cx| {
             handler(view, data.as_ref(), cx);
         })
     }
@@ -89,7 +89,9 @@ impl<V: 'static, D: 'static> Button<V, D> {
 
         if let Some(handler) = self.handlers.click.clone() {
             let data = self.data.clone();
-            button.left_click(move |view, event, cx| handler(view, data.as_ref(), cx))
+            button.mouse_down(MouseButton::Left, move |view, event, cx| {
+                handler(view, data.as_ref(), cx)
+            })
         } else {
             button
         }

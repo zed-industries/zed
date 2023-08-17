@@ -364,13 +364,13 @@ impl Line {
                         origin: glyph_origin,
                     });
                 } else {
-                    scene.push_glyph(dbg!(scene::Glyph {
+                    scene.push_glyph(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
                         origin: glyph_origin,
                         color,
-                    }));
+                    });
                 }
             }
         }

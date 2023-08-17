@@ -5,7 +5,7 @@ use element::Element;
 use frame::frame;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
-    platform::WindowOptions,
+    platform::{MouseButton, WindowOptions},
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -49,7 +49,12 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_half()
         .fill(theme.success(0.5))
-        .child(button().label("Hello").click(|_, _, _| (println!("hey!"))))
+        .child(
+            button()
+                .label("Hello")
+                .mouse_up(MouseButton::Left, |_, _, _| (println!("up!")))
+                .mouse_down(MouseButton::Left, |_, _, _| (println!("down!"))),
+        )
 }
 
 //     todo!()

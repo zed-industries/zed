@@ -5216,6 +5216,7 @@ mod tests {
                     button: MouseButton::Left,
                     modifiers: Default::default(),
                     click_count: 1,
+                    is_down: true,
                 }),
                 false,
             );

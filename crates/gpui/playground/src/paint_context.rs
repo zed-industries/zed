@@ -1,11 +1,9 @@
-use std::{
-    any::{Any, TypeId},
-    collections::BTreeSet,
-    rc::Rc,
-};
+use std::{any::TypeId, rc::Rc};
 
 use derive_more::{Deref, DerefMut};
-use gpui::{geometry::rect::RectF, EventContext, RenderContext, ViewContext, WindowContext};
+use gpui::{
+    geometry::rect::RectF, scene::InteractiveRegion, EventContext, RenderContext, ViewContext,
+};
 pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
 pub use taffy::tree::NodeId;
 
@@ -15,7 +13,6 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
     pub(crate) scene: &'d mut gpui::SceneBuilder,
-    regions: BTreeSet<InteractiveRegion>,
 }
 
 impl<V> RenderContext for PaintContext<'_, '_, '_, '_, V> {
@@ -37,20 +34,17 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
         scene: &'d mut gpui::SceneBuilder,
     ) -> Self {
-        Self {
-            legacy_cx,
-            scene,
-            regions: BTreeSet::new(),
-        }
+        Self { legacy_cx, scene }
     }
 
-    pub fn paint_interactive<E: 'static>(
+    pub fn draw_interactive_region<E: 'static>(
         &mut self,
         order: u32,
         bounds: RectF,
-        handler: impl Fn(&mut V, E, &mut EventContext<V>) + 'static,
+        handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
     ) {
-        self.regions.insert(InteractiveRegion {
+        // We'll sort these by their order in `take_interactive_regions`.
+        self.scene.interactive_regions.push(InteractiveRegion {
             order,
             bounds,
             event_handler: Rc::new(move |view, event, window_cx, view_id| {
@@ -58,38 +52,12 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
                 let mut cx = EventContext::new(&mut cx);
                 handler(
                     view.downcast_mut().unwrap(),
-                    *event.downcast().unwrap(),
+                    event.downcast_ref().unwrap(),
                     &mut cx,
                 )
             }),
             event_type: TypeId::of::<E>(),
+            view_id: self.view_id(),
         });
-    }
-}
-
-struct InteractiveRegion {
-    order: u32,
-    bounds: RectF,
-    event_handler: Rc<dyn Fn(&mut dyn Any, Box<dyn Any>, &mut WindowContext, usize)>,
-    event_type: TypeId,
-}
-
-impl Eq for InteractiveRegion {}
-
-impl PartialEq for InteractiveRegion {
-    fn eq(&self, other: &Self) -> bool {
-        self.order == other.order
-    }
-}
-
-impl PartialOrd for InteractiveRegion {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        todo!()
-    }
-}
-
-impl Ord for InteractiveRegion {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
     }
 }

@@ -9,7 +9,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use serde_json::json;
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    rc::Rc,
+    sync::Arc,
+};
 
 use crate::{
     color::Color,
@@ -17,7 +22,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::{current::Surface, CursorStyle},
-    ImageData,
+    ImageData, WindowContext,
 };
 pub use mouse_event::*;
 pub use mouse_region::*;
@@ -26,6 +31,8 @@ pub struct SceneBuilder {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
+    /// Used by the playground crate.
+    pub interactive_regions: Vec<InteractiveRegion>,
     #[cfg(debug_assertions)]
     mouse_region_ids: HashSet<MouseRegionId>,
 }
@@ -33,6 +40,7 @@ pub struct SceneBuilder {
 pub struct Scene {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
+    interactive_regions: Vec<InteractiveRegion>,
 }
 
 struct StackingContext {
@@ -273,6 +281,12 @@ impl Scene {
             })
             .collect()
     }
+
+    pub fn take_interactive_regions(&mut self) -> Vec<InteractiveRegion> {
+        self.interactive_regions
+            .sort_by(|a, b| a.order.cmp(&b.order));
+        std::mem::take(&mut self.interactive_regions)
+    }
 }
 
 impl SceneBuilder {
@@ -284,6 +298,7 @@ impl SceneBuilder {
             active_stacking_context_stack: vec![0],
             #[cfg(debug_assertions)]
             mouse_region_ids: Default::default(),
+            interactive_regions: Vec::new(),
         }
     }
 
@@ -293,6 +308,7 @@ impl SceneBuilder {
         Scene {
             scale_factor: self.scale_factor,
             stacking_contexts: self.stacking_contexts,
+            interactive_regions: self.interactive_regions,
         }
     }
 
@@ -687,6 +703,17 @@ impl MouseRegion {
     pub fn id(&self) -> MouseRegionId {
         self.id
     }
+}
+
+/// This is currently only used in the playground crate. It represents a region
+/// with which the user can interact via a pointing device. It aims to replace
+/// MouseRegion and CursorRegion.
+pub struct InteractiveRegion {
+    pub order: u32,
+    pub bounds: RectF,
+    pub event_handler: Rc<dyn Fn(&mut dyn Any, &dyn Any, &mut WindowContext, usize)>,
+    pub event_type: TypeId,
+    pub view_id: usize,
 }
 
 fn can_draw(bounds: RectF) -> bool {
