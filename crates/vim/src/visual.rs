@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, cmp, sync::Arc};
 
 use collections::HashMap;
 use editor::{
@@ -198,6 +198,11 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         if let Some(Operator::Object { around }) = vim.active_operator() {
             vim.pop_operator(cx);
+            let current_mode = vim.state().mode;
+            let target_mode = object.target_visual_mode(current_mode);
+            if target_mode != current_mode {
+                vim.switch_mode(target_mode, true, cx);
+            }
 
             vim.update_active_editor(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -213,20 +218,21 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
 
                         if let Some(range) = object.range(map, head, around) {
                             if !range.is_empty() {
-                                let expand_both_ways = if selection.is_empty() {
-                                    true
-                                // contains only one character
-                                } else if let Some((_, start)) =
-                                    map.reverse_chars_at(selection.end).next()
-                                {
-                                    selection.start == start
-                                } else {
-                                    false
-                                };
+                                let expand_both_ways =
+                                    if object.always_expands_both_ways() || selection.is_empty() {
+                                        true
+                                        // contains only one character
+                                    } else if let Some((_, start)) =
+                                        map.reverse_chars_at(selection.end).next()
+                                    {
+                                        selection.start == start
+                                    } else {
+                                        false
+                                    };
 
                                 if expand_both_ways {
-                                    selection.start = range.start;
-                                    selection.end = range.end;
+                                    selection.start = cmp::min(selection.start, range.start);
+                                    selection.end = cmp::max(selection.end, range.end);
                                 } else if selection.reversed {
                                     selection.start = range.start;
                                 } else {
@@ -1028,6 +1034,28 @@ mod test {
             k"
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("hello (in [parˇens] o)").await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "l"]).await;
+        cx.simulate_shared_keystrokes(["a", "]"]).await;
+        cx.assert_shared_state("hello (in «[parens]ˇ» o)").await;
+        assert_eq!(cx.mode(), Mode::Visual);
+        cx.simulate_shared_keystrokes(["i", "("]).await;
+        cx.assert_shared_state("hello («in [parens] oˇ»)").await;
+
+        cx.set_shared_state("hello in a wˇord again.").await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "l", "i", "w"])
+            .await;
+        cx.assert_shared_state("hello in a w«ordˇ» again.").await;
+        assert_eq!(cx.mode(), Mode::VisualBlock);
+        cx.simulate_shared_keystrokes(["o", "a", "s"]).await;
+        cx.assert_shared_state("«ˇhello in a word» again.").await;
+        assert_eq!(cx.mode(), Mode::Visual);
     }
 
     #[gpui::test]

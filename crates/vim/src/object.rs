@@ -84,6 +84,35 @@ impl Object {
             | Object::SquareBrackets => true,
         }
     }
+
+    pub fn always_expands_both_ways(self) -> bool {
+        match self {
+            Object::Word { .. } | Object::Sentence => false,
+            Object::Quotes
+            | Object::BackQuotes
+            | Object::DoubleQuotes
+            | Object::Parentheses
+            | Object::SquareBrackets
+            | Object::CurlyBrackets
+            | Object::AngleBrackets => true,
+        }
+    }
+
+    pub fn target_visual_mode(self, current_mode: Mode) -> Mode {
+        match self {
+            Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
+            Object::Word { .. } => current_mode,
+            Object::Sentence
+            | Object::Quotes
+            | Object::BackQuotes
+            | Object::DoubleQuotes
+            | Object::Parentheses
+            | Object::SquareBrackets
+            | Object::CurlyBrackets
+            | Object::AngleBrackets => Mode::Visual,
+        }
+    }
+
     pub fn range(
         self,
         map: &DisplaySnapshot,

@@ -366,7 +366,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting",
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
       "u": "editor::Undo",
       "o": "vim::OtherEnd",
@@ -400,7 +400,23 @@
         "Normal"
       ],
       ">": "editor::Indent",
-      "<": "editor::Outdent"
+      "<": "editor::Outdent",
+      "i": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": false
+          }
+        }
+      ],
+      "a": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": true
+          }
+        }
+      ],
     }
   },
   {
