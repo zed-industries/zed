@@ -168,16 +168,13 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
-        let render_search_option = |options: bool, icon, option| {
-            options.then(|| {
-                let is_active = self.search_options.contains(option);
-                option.as_button(
-                    is_active,
-                    icon,
-                    theme.tooltip.clone(),
-                    theme.search.option_button_component.clone(),
-                )
-            })
+        let search_option_button = |option| {
+            let is_active = self.search_options.contains(option);
+            option.as_button(
+                is_active,
+                theme.tooltip.clone(),
+                theme.search.option_button_component.clone(),
+            )
         };
         let match_count = self
             .active_searchable_item
@@ -233,16 +230,16 @@ impl View for BufferSearchBar {
             .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
             .with_child(
                 Flex::row()
-                    .with_children(render_search_option(
-                        supported_options.case,
-                        "icons/case_insensitive_12.svg",
-                        SearchOptions::CASE_SENSITIVE,
-                    ))
-                    .with_children(render_search_option(
-                        supported_options.word,
-                        "icons/word_search_12.svg",
-                        SearchOptions::WHOLE_WORD,
-                    ))
+                    .with_children(
+                        supported_options
+                            .case
+                            .then(|| search_option_button(SearchOptions::CASE_SENSITIVE)),
+                    )
+                    .with_children(
+                        supported_options
+                            .word
+                            .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
+                    )
                     .flex_float()
                     .contained(),
             )

@@ -56,6 +56,14 @@ impl SearchOptions {
         }
     }
 
+    pub fn icon(&self) -> &'static str {
+        match *self {
+            SearchOptions::WHOLE_WORD => "icons/word_search_12.svg",
+            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive_12.svg",
+            _ => panic!("{:?} is not a named SearchOption", self),
+        }
+    }
+
     pub fn to_toggle_action(&self) -> Box<dyn Action> {
         match *self {
             SearchOptions::WHOLE_WORD => Box::new(ToggleWholeWord),
@@ -78,7 +86,6 @@ impl SearchOptions {
     pub fn as_button<V: View>(
         &self,
         active: bool,
-        icon: &str,
         tooltip_style: TooltipStyle,
         button_style: ToggleIconButtonStyle,
     ) -> AnyElement<V> {
@@ -87,7 +94,7 @@ impl SearchOptions {
             format!("Toggle {}", self.label()),
             tooltip_style,
         )
-        .with_contents(theme::components::svg::Svg::new(icon.to_owned()))
+        .with_contents(theme::components::svg::Svg::new(self.icon()))
         .toggleable(active)
         .with_style(button_style)
         .into_element()
