@@ -2,7 +2,7 @@ use crate::{
     element::{
         AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId, PaintContext,
     },
-    style::ElementStyle,
+    style::{ElementStyle, Fill},
 };
 use anyhow::{anyhow, Result};
 use gpui::LayoutNodeId;
@@ -58,7 +58,12 @@ impl<V: 'static> Element<V> for Frame<V> {
     fn paint(&mut self, layout: Layout<()>, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         cx.scene.push_quad(gpui::scene::Quad {
             bounds: layout.from_engine.bounds,
-            background: self.style.fill.color().map(Into::into),
+            background: self
+                .style
+                .fill
+                .as_ref()
+                .and_then(Fill::color)
+                .map(Into::into),
             border: Default::default(),
             corner_radii: Default::default(),
         });

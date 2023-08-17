@@ -65,7 +65,9 @@ pub struct ElementStyle {
     pub flex_shrink: f32,
 
     /// The fill color of this element
-    pub fill: Fill,
+    pub fill: Option<Fill>,
+    /// The fill color of this element when hovered
+    pub hover_fill: Option<Fill>,
     /// The color of text within this element. Cascades to children unless overridden.
     pub text_color: Option<Hsla>,
 }
@@ -99,12 +101,8 @@ impl ElementStyle {
         flex_grow: 0.0,
         flex_shrink: 1.0,
         flex_basis: Length::Auto,
-        fill: Fill::Color(Hsla {
-            h: 0.,
-            s: 0.,
-            l: 0.,
-            a: 0.,
-        }),
+        fill: None,
+        hover_fill: None,
         text_color: None,
     };
 

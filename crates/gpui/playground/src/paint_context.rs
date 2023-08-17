@@ -1,9 +1,7 @@
 use std::{any::TypeId, rc::Rc};
 
 use derive_more::{Deref, DerefMut};
-use gpui::{
-    geometry::rect::RectF, scene::InteractiveRegion, EventContext, RenderContext, ViewContext,
-};
+use gpui::{geometry::rect::RectF, EventContext, RenderContext, ViewContext};
 pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
 pub use taffy::tree::NodeId;
 
@@ -42,24 +40,26 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         order: u32,
         bounds: RectF,
         outside_bounds: bool,
-        handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
+        event_handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
     ) {
-        // We'll sort these by their order in `take_interactive_regions`.
-        self.scene.interactive_regions.push(InteractiveRegion {
-            order,
-            bounds,
-            outside_bounds,
-            event_handler: Rc::new(move |view, event, window_cx, view_id| {
-                let mut cx = ViewContext::mutable(window_cx, view_id);
-                let mut cx = EventContext::new(&mut cx);
-                handler(
-                    view.downcast_mut().unwrap(),
-                    event.downcast_ref().unwrap(),
-                    &mut cx,
-                )
-            }),
-            event_type: TypeId::of::<E>(),
-            view_id: self.view_id(),
-        });
+        // We'll sort these later when `take_interactive_regions` is called.
+        self.scene
+            .interactive_regions
+            .push(gpui::scene::InteractiveRegion {
+                order,
+                bounds,
+                outside_bounds,
+                event_handler: Rc::new(move |view, event, window_cx, view_id| {
+                    let mut view_context = ViewContext::mutable(window_cx, view_id);
+                    let mut event_context = EventContext::new(&mut view_context);
+                    event_handler(
+                        view.downcast_mut().unwrap(),
+                        event.downcast_ref().unwrap(),
+                        &mut event_context,
+                    );
+                }),
+                event_type: TypeId::of::<E>(),
+                view_id: self.view_id(),
+            });
     }
 }

@@ -5,7 +5,7 @@ use element::Element;
 use frame::frame;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
-    platform::{MouseButton, WindowOptions},
+    platform::WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;

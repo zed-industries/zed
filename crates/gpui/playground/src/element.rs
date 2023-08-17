@@ -408,7 +408,15 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().fill = fill.into();
+        self.style_mut().fill = Some(fill.into());
+        self
+    }
+
+    fn hover_fill(mut self, fill: impl Into<Fill>) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().hover_fill = Some(fill.into());
         self
     }
 
