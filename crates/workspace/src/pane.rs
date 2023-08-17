@@ -287,8 +287,7 @@ impl Pane {
             menu.set_position_mode(OverlayPositionMode::Local)
         });
         let theme = theme::current(cx).workspace.tab_bar.clone();
-        let mut border_for_nav_buttons = theme.tab_style(false, false).container.border.clone();
-        border_for_nav_buttons.left = false;
+
         let nav_button_height = theme.height;
         let button_style = theme.nav_button;
 
@@ -323,56 +322,6 @@ impl Pane {
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 let tooltip_style = theme::current(cx).tooltip.clone();
                 Flex::row()
-                    .with_child(nav_button(
-                        "icons/arrow_left_16.svg",
-                        button_style.clone(),
-                        nav_button_height,
-                        tooltip_style.clone(),
-                        pane.can_navigate_backward(),
-                        {
-                            move |pane, cx| {
-                                if let Some(workspace) = pane.workspace.upgrade(cx) {
-                                    let pane = cx.weak_handle();
-                                    cx.window_context().defer(move |cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace.go_back(pane, cx).detach_and_log_err(cx)
-                                        })
-                                    })
-                                }
-                            }
-                        },
-                        super::GoBack,
-                        "Go Back",
-                        cx,
-                    ))
-                    .with_child(
-                        nav_button(
-                            "icons/arrow_right_16.svg",
-                            button_style.clone(),
-                            nav_button_height,
-                            tooltip_style,
-                            pane.can_navigate_forward(),
-                            {
-                                move |pane, cx| {
-                                    if let Some(workspace) = pane.workspace.upgrade(cx) {
-                                        let pane = cx.weak_handle();
-                                        cx.window_context().defer(move |cx| {
-                                            workspace.update(cx, |workspace, cx| {
-                                                workspace
-                                                    .go_forward(pane, cx)
-                                                    .detach_and_log_err(cx)
-                                            })
-                                        })
-                                    }
-                                }
-                            },
-                            super::GoForward,
-                            "Go Forward",
-                            cx,
-                        )
-                        .contained()
-                        .with_border(border_for_nav_buttons),
-                    )
                     // New menu
                     .with_child(Self::render_tab_bar_button(
                         0,
@@ -1677,8 +1626,70 @@ impl View for Pane {
                                 },
                             ),
                         );
+                        let tooltip_style = theme.tooltip.clone();
+                        let tab_bar_theme = theme.workspace.tab_bar.clone();
+
+                        let nav_button_height = tab_bar_theme.height;
+                        let button_style = tab_bar_theme.nav_button;
+                        let border_for_nav_buttons = tab_bar_theme
+                            .tab_style(false, false)
+                            .container
+                            .border
+                            .clone();
 
                         let mut tab_row = Flex::row()
+                            .with_child(nav_button(
+                                "icons/arrow_left_16.svg",
+                                button_style.clone(),
+                                nav_button_height,
+                                tooltip_style.clone(),
+                                self.can_navigate_backward(),
+                                {
+                                    move |pane, cx| {
+                                        if let Some(workspace) = pane.workspace.upgrade(cx) {
+                                            let pane = cx.weak_handle();
+                                            cx.window_context().defer(move |cx| {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .go_back(pane, cx)
+                                                        .detach_and_log_err(cx)
+                                                })
+                                            })
+                                        }
+                                    }
+                                },
+                                super::GoBack,
+                                "Go Back",
+                                cx,
+                            ))
+                            .with_child(
+                                nav_button(
+                                    "icons/arrow_right_16.svg",
+                                    button_style.clone(),
+                                    nav_button_height,
+                                    tooltip_style,
+                                    self.can_navigate_forward(),
+                                    {
+                                        move |pane, cx| {
+                                            if let Some(workspace) = pane.workspace.upgrade(cx) {
+                                                let pane = cx.weak_handle();
+                                                cx.window_context().defer(move |cx| {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        workspace
+                                                            .go_forward(pane, cx)
+                                                            .detach_and_log_err(cx)
+                                                    })
+                                                })
+                                            }
+                                        }
+                                    },
+                                    super::GoForward,
+                                    "Go Forward",
+                                    cx,
+                                )
+                                .contained()
+                                .with_border(border_for_nav_buttons),
+                            )
                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
                         if self.has_focus {
