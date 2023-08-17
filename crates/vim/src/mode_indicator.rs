@@ -80,15 +80,12 @@ impl View for ModeIndicator {
 
         let theme = &theme::current(cx).workspace.status_bar;
 
-        // we always choose text to be 12 monospace characters
-        // so that as the mode indicator changes, the rest of the
-        // UI stays still.
         let text = match mode {
             Mode::Normal => "-- NORMAL --",
             Mode::Insert => "-- INSERT --",
             Mode::Visual => "-- VISUAL --",
-            Mode::VisualLine => "VISUAL  LINE",
-            Mode::VisualBlock => "VISUAL BLOCK",
+            Mode::VisualLine => "-- VISUAL LINE --",
+            Mode::VisualBlock => "-- VISUAL BLOCK --",
         };
         Label::new(text, theme.vim_mode_indicator.text.clone())
             .contained()
