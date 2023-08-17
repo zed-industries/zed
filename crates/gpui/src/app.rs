@@ -577,6 +577,14 @@ impl AppContext {
         }
     }
 
+    pub fn optional_global<T: 'static>(&self) -> Option<&T> {
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            Some(global.downcast_ref().unwrap())
+        } else {
+            None
+        }
+    }
+
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }

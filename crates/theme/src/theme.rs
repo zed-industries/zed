@@ -43,11 +43,9 @@ pub struct Theme {
     pub meta: ThemeMeta,
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
-    pub contacts_popover: ContactsPopover,
-    pub contact_list: ContactList,
     pub toolbar_dropdown_menu: DropdownMenu,
     pub copilot: Copilot,
-    pub contact_finder: ContactFinder,
+    pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
@@ -117,6 +115,7 @@ pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
+    pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
     pub project_name_divider: ContainedText,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
@@ -141,6 +140,12 @@ pub struct Titlebar {
     pub leave_call_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
     pub user_menu: UserMenu,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct TitlebarMenu {
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -211,33 +216,69 @@ pub struct CopilotAuthAuthorized {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ContactsPopover {
+pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub height: f32,
-    pub width: f32,
-}
-
-#[derive(Deserialize, Default, JsonSchema)]
-pub struct ContactList {
+    pub list_empty_state: Toggleable<Interactive<ContainedText>>,
+    pub list_empty_icon: Icon,
+    pub list_empty_label_container: ContainerStyle,
+    pub log_in_button: Interactive<ContainedText>,
+    pub channel_editor: ContainerStyle,
+    pub channel_hash: Icon,
+    pub tabbed_modal: TabbedModal,
+    pub contact_finder: ContactFinder,
+    pub channel_modal: ChannelModal,
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
-    pub add_contact_button: IconButton,
-    pub header_row: Toggleable<Interactive<ContainedText>>,
+    pub leave_call_button: Toggleable<Interactive<IconButton>>,
+    pub add_contact_button: Toggleable<Interactive<IconButton>>,
+    pub add_channel_button: Toggleable<Interactive<IconButton>>,
+    pub header_row: ContainedText,
+    pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
+    pub channel_row: Toggleable<Interactive<ContainerStyle>>,
+    pub channel_name: ContainedText,
     pub row_height: f32,
     pub project_row: Toggleable<Interactive<ProjectRow>>,
     pub tree_branch: Toggleable<Interactive<TreeBranch>>,
     pub contact_avatar: ImageStyle,
+    pub channel_avatar: ImageStyle,
+    pub extra_participant_label: ContainedText,
     pub contact_status_free: ContainerStyle,
     pub contact_status_busy: ContainerStyle,
     pub contact_username: ContainedText,
     pub contact_button: Interactive<IconButton>,
     pub contact_button_spacing: f32,
+    pub channel_indent: f32,
     pub disabled_button: IconButton,
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
+    pub face_overlap: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct TabbedModal {
+    pub tab_button: Toggleable<Interactive<ContainedText>>,
+    pub modal: ContainerStyle,
+    pub header: ContainerStyle,
+    pub body: ContainerStyle,
+    pub title: ContainedText,
+    pub picker: Picker,
+    pub max_height: f32,
+    pub max_width: f32,
+    pub row_height: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ChannelModal {
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainerStyle,
+    pub remove_member_button: ContainedText,
+    pub cancel_invite_button: ContainedText,
+    pub member_icon: IconButton,
+    pub invitee_icon: IconButton,
+    pub member_tag: ContainedText,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -256,8 +297,6 @@ pub struct TreeBranch {
 
 #[derive(Deserialize, Default, JsonSchema)]
 pub struct ContactFinder {
-    pub picker: Picker,
-    pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainerStyle,
     pub contact_button: IconButton,
@@ -360,6 +399,7 @@ pub struct Toolbar {
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
+    pub toggleable_tool: Toggleable<Interactive<IconButton>>,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -867,6 +907,7 @@ impl<T> Toggleable<T> {
     pub fn active_state(&self) -> &T {
         self.in_state(true)
     }
+
     pub fn inactive_state(&self) -> &T {
         self.in_state(false)
     }
@@ -884,6 +925,16 @@ impl<T> Interactive<T> {
     }
     pub fn disabled_style(&self) -> &T {
         self.disabled.as_ref().unwrap_or(&self.default)
+    }
+}
+
+impl<T> Toggleable<Interactive<T>> {
+    pub fn style_for(&self, active: bool, state: &mut MouseState) -> &T {
+        self.in_state(active).style_for(state)
+    }
+
+    pub fn default_style(&self) -> &T {
+        &self.inactive.default
     }
 }
 
@@ -1050,6 +1101,12 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct Contained<T> {
+    container: ContainerStyle,
+    contained: T,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

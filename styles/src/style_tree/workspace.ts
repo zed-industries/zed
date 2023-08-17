@@ -12,6 +12,7 @@ import tabBar from "./tab_bar"
 import { interactive } from "../element"
 import { titlebar } from "./titlebar"
 import { useTheme } from "../theme"
+import { toggleable_icon_button } from "../component/icon_button"
 
 export default function workspace(): any {
     const theme = useTheme()
@@ -132,6 +133,11 @@ export default function workspace(): any {
             background: background(theme.highest),
             border: border(theme.highest, { bottom: true }),
             item_spacing: 8,
+            toggleable_tool: toggleable_icon_button(theme, {
+                margin: { left: 8 },
+                variant: "ghost",
+                active_color: "accent",
+            }),
             padding: { left: 8, right: 8, top: 4, bottom: 4 },
         },
         breadcrumb_height: 24,

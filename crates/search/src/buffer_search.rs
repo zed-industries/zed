@@ -39,7 +39,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(BufferSearchBar::deploy);
+    cx.add_action(BufferSearchBar::deploy_bar);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
     cx.add_action(BufferSearchBar::select_next_match);
@@ -403,6 +403,19 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
+        if self.show(cx) {
+            self.search_suggested(cx);
+            if deploy.focus {
+                self.select_query(cx);
+                cx.focus_self();
+            }
+            return true;
+        }
+
+        false
+    }
+
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.active_searchable_item.is_none() {
             return false;
@@ -532,21 +545,16 @@ impl BufferSearchBar {
         let _ = self.update_matches(cx);
         cx.notify();
     }
-    fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
+
+    fn deploy_bar(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         let mut propagate_action = true;
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
-                if search_bar.show(cx) {
-                    search_bar.search_suggested(cx);
-                    if action.focus {
-                        search_bar.select_query(cx);
-                        cx.focus_self();
-                    }
+                if search_bar.deploy(action, cx) {
                     propagate_action = false;
                 }
             });
         }
-
         if propagate_action {
             cx.propagate_action();
         }

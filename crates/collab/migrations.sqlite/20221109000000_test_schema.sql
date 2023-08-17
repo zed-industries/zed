@@ -36,7 +36,8 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "live_kit_room" VARCHAR NOT NULL
+    "live_kit_room" VARCHAR NOT NULL,
+    "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
 
 CREATE TABLE "projects" (
@@ -184,3 +185,26 @@ CREATE UNIQUE INDEX
     "index_followers_on_project_id_and_leader_connection_server_id_and_leader_connection_id_and_follower_connection_server_id_and_follower_connection_id"
 ON "followers" ("project_id", "leader_connection_server_id", "leader_connection_id", "follower_connection_server_id", "follower_connection_id");
 CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
+
+CREATE TABLE "channels" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "name" VARCHAR NOT NULL,
+    "created_at" TIMESTAMP NOT NULL DEFAULT now
+);
+
+CREATE TABLE "channel_paths" (
+    "id_path" TEXT NOT NULL PRIMARY KEY,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE
+);
+CREATE INDEX "index_channel_paths_on_channel_id" ON "channel_paths" ("channel_id");
+
+CREATE TABLE "channel_members" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "admin" BOOLEAN NOT NULL DEFAULT false,
+    "accepted" BOOLEAN NOT NULL DEFAULT false,
+    "updated_at" TIMESTAMP NOT NULL DEFAULT now
+);
+
+CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channel_members" ("channel_id", "user_id");

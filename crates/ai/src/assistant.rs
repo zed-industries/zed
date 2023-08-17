@@ -192,6 +192,7 @@ impl AssistantPanel {
                                 old_dock_position = new_dock_position;
                                 cx.emit(AssistantPanelEvent::DockPositionChanged);
                             }
+                            cx.notify();
                         })];
 
                     this
@@ -725,10 +726,10 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => self.width = Some(size),
-            DockPosition::Bottom => self.height = Some(size),
+            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Bottom => self.height = size,
         }
         cx.notify();
     }
@@ -780,8 +781,10 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/robot_14.svg"
+    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
+        settings::get::<AssistantSettings>(cx)
+            .button
+            .then(|| "icons/ai.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {

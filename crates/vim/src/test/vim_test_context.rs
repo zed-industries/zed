@@ -92,6 +92,7 @@ impl<'a> VimTestContext<'a> {
                 vim.switch_mode(mode, true, cx);
             })
         });
+        self.cx.foreground().run_until_parked();
         context_handle
     }
 

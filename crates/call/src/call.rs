@@ -5,8 +5,11 @@ pub mod room;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use audio::Audio;
 use call_settings::CallSettings;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto, ChannelId, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
@@ -73,6 +76,10 @@ impl ActiveCall {
             client,
             user_store,
         }
+    }
+
+    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
+        self.room()?.read(cx).channel_id()
     }
 
     async fn handle_incoming_call(
@@ -274,9 +281,36 @@ impl ActiveCall {
         Ok(())
     }
 
+    pub fn join_channel(
+        &mut self,
+        channel_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if let Some(room) = self.room().cloned() {
+            if room.read(cx).channel_id() == Some(channel_id) {
+                return Task::ready(Ok(()));
+            } else {
+                room.update(cx, |room, cx| room.clear_state(cx));
+            }
+        }
+
+        let join = Room::join_channel(channel_id, self.client.clone(), self.user_store.clone(), cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let room = join.await?;
+            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.report_call_event("join channel", cx)
+            });
+            Ok(())
+        })
+    }
+
     pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
         self.report_call_event("hang up", cx);
+        Audio::end_call(cx);
         if let Some((room, _)) = self.room.take() {
             room.update(cx, |room, cx| room.leave(cx))
         } else {

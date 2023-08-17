@@ -13,6 +13,7 @@
       "cmd-up": "menu::SelectFirst",
       "cmd-down": "menu::SelectLast",
       "enter": "menu::Confirm",
+      "ctrl-enter": "menu::ShowContextMenu",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
@@ -517,7 +518,8 @@
   {
     "bindings": {
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
-      "cmd-shift-c": "collab::ToggleContactsMenu",
+      // TODO: Move this to a dock open action
+      "cmd-shift-c": "collab_panel::ToggleFocus",
       "cmd-alt-i": "zed::DebugElements"
     }
   },
@@ -551,6 +553,25 @@
       "backspace": "project_panel::Delete",
       "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
+    }
+  },
+  {
+    "context": "CollabPanel",
+    "bindings": {
+      "ctrl-backspace": "collab_panel::Remove",
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "ChannelModal",
+    "bindings": {
+      "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ChannelModal > Picker > Editor",
+    "bindings": {
+      "tab": "channel_modal::ToggleMode"
     }
   },
   {

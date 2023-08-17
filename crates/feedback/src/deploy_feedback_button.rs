@@ -44,7 +44,7 @@ impl View for DeployFeedbackButton {
                         .in_state(active)
                         .style_for(state);
 
-                    Svg::new("icons/feedback_16.svg")
+                    Svg::new("icons/feedback.svg")
                         .with_color(style.icon_color)
                         .constrained()
                         .with_width(style.icon_size)
