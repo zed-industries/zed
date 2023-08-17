@@ -1,4 +1,4 @@
-use crate::{StatusItemView, Workspace};
+use crate::{StatusItemView, Workspace, WorkspaceBounds};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
@@ -13,7 +13,7 @@ pub trait Panel: View {
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> f32;
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>);
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
     fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>);
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -50,7 +50,7 @@ pub trait PanelHandle {
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> f32;
-    fn set_size(&self, size: f32, cx: &mut WindowContext);
+    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext);
     fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
     fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -82,7 +82,7 @@ where
         self.read(cx).size(cx)
     }
 
-    fn set_size(&self, size: f32, cx: &mut WindowContext) {
+    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
@@ -373,7 +373,7 @@ impl Dock {
         }
     }
 
-    pub fn resize_active_panel(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+    pub fn resize_active_panel(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
             entry.panel.set_size(size, cx);
             cx.notify();
@@ -386,7 +386,7 @@ impl Dock {
                 .into_any()
                 .contained()
                 .with_style(self.style(cx))
-                .resizable(
+                .resizable::<WorkspaceBounds>(
                     self.position.to_resize_handle_side(),
                     active_entry.panel.size(cx),
                     |_, _, _| {},
@@ -423,7 +423,7 @@ impl View for Dock {
             ChildView::new(active_entry.panel.as_any(), cx)
                 .contained()
                 .with_style(style)
-                .resizable(
+                .resizable::<WorkspaceBounds>(
                     self.position.to_resize_handle_side(),
                     active_entry.panel.size(cx),
                     |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
@@ -700,8 +700,8 @@ pub mod test {
             self.size
         }
 
-        fn set_size(&mut self, size: f32, _: &mut ViewContext<Self>) {
-            self.size = size;
+        fn set_size(&mut self, size: Option<f32>, _: &mut ViewContext<Self>) {
+            self.size = size.unwrap_or(300.);
         }
 
         fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {

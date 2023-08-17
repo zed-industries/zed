@@ -362,10 +362,10 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => self.width = Some(size),
-            DockPosition::Bottom => self.height = Some(size),
+            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Bottom => self.height = size,
         }
         self.serialize(cx);
         cx.notify();
