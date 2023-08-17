@@ -9,8 +9,16 @@ mod sharing_status_indicator;
 
 use call::{ActiveCall, Room};
 pub use collab_titlebar_item::CollabTitlebarItem;
-use gpui::{actions, AppContext, Task};
-use std::sync::Arc;
+use gpui::{
+    actions,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    platform::{Screen, WindowBounds, WindowKind, WindowOptions},
+    AppContext, Task,
+};
+use std::{rc::Rc, sync::Arc};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -86,5 +94,31 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
         room.update(cx, Room::toggle_deafen)
             .map(|task| task.detach_and_log_err(cx))
             .log_err();
+    }
+}
+
+fn notification_window_options(
+    screen: Rc<dyn Screen>,
+    window_size: Vector2F,
+) -> WindowOptions<'static> {
+    const NOTIFICATION_PADDING: f32 = 16.;
+
+    let screen_bounds = screen.content_bounds();
+    WindowOptions {
+        bounds: WindowBounds::Fixed(RectF::new(
+            screen_bounds.upper_right()
+                + vec2f(
+                    -NOTIFICATION_PADDING - window_size.x(),
+                    NOTIFICATION_PADDING,
+                ),
+            window_size,
+        )),
+        titlebar: None,
+        center: false,
+        focus: false,
+        show: true,
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        screen: Some(screen),
     }
 }

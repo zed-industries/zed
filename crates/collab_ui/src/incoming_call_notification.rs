@@ -1,14 +1,14 @@
-use std::sync::{Arc, Weak};
-
+use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use client::proto;
 use futures::StreamExt;
 use gpui::{
     elements::*,
-    geometry::{rect::RectF, vector::vec2f},
-    platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
+    geometry::vector::vec2f,
+    platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Entity, View, ViewContext, WindowHandle,
 };
+use std::sync::{Arc, Weak};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -23,31 +23,16 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             }
 
             if let Some(incoming_call) = incoming_call {
-                const PADDING: f32 = 16.;
                 let window_size = cx.read(|cx| {
                     let theme = &theme::current(cx).incoming_call_notification;
                     vec2f(theme.window_width, theme.window_height)
                 });
 
                 for screen in cx.platform().screens() {
-                    let screen_bounds = screen.bounds();
-                    let window = cx.add_window(
-                        WindowOptions {
-                            bounds: WindowBounds::Fixed(RectF::new(
-                                screen_bounds.upper_right()
-                                    - vec2f(PADDING + window_size.x(), PADDING),
-                                window_size,
-                            )),
-                            titlebar: None,
-                            center: false,
-                            focus: false,
-                            show: true,
-                            kind: WindowKind::PopUp,
-                            is_movable: false,
-                            screen: Some(screen),
-                        },
-                        |_| IncomingCallNotification::new(incoming_call.clone(), app_state.clone()),
-                    );
+                    let window = cx
+                        .add_window(notification_window_options(screen, window_size), |_| {
+                            IncomingCallNotification::new(incoming_call.clone(), app_state.clone())
+                        });
 
                     notification_windows.push(window);
                 }

@@ -1,20 +1,18 @@
-use std::{any::Any, ffi::c_void};
-
+use super::ns_string;
 use crate::platform;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSArray, NSDictionary},
+    foundation::{NSArray, NSDictionary, NSPoint, NSRect, NSSize},
 };
 use core_foundation::{
     number::{kCFNumberIntType, CFNumberGetValue, CFNumberRef},
     uuid::{CFUUIDGetUUIDBytes, CFUUIDRef},
 };
 use core_graphics::display::CGDirectDisplayID;
-use pathfinder_geometry::rect::RectF;
+use pathfinder_geometry::{rect::RectF, vector::vec2f};
+use std::{any::Any, ffi::c_void};
 use uuid::Uuid;
-
-use super::{geometry::NSRectExt, ns_string};
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -50,6 +48,40 @@ impl Screen {
             }
         }
         screens
+    }
+
+    /// Convert the given rectangle in screen coordinates from GPUI's
+    /// coordinate system to the AppKit coordinate system.
+    ///
+    /// In GPUI's coordinates, the origin is at the top left of the main screen, with
+    /// the Y axis pointing downward. In the AppKit coordindate system, the origin is at the
+    /// bottom left of the main screen, with the Y axis pointing upward.
+    pub(crate) fn screen_rect_to_native(rect: RectF) -> NSRect {
+        let main_screen_height = unsafe { NSScreen::mainScreen(nil).frame().size.height };
+        NSRect::new(
+            NSPoint::new(
+                rect.origin_x() as f64,
+                main_screen_height - rect.origin_y() as f64 - rect.height() as f64,
+            ),
+            NSSize::new(rect.width() as f64, rect.height() as f64),
+        )
+    }
+
+    /// Convert the given rectangle in screen coordinates from the AppKit
+    /// coordinate system to GPUI's coordinate system.
+    ///
+    /// In GPUI's coordinates, the origin is at the top left of the main screen, with
+    /// the Y axis pointing downward. In the AppKit coordindate system, the origin is at the
+    /// bottom left of the main screen, with the Y axis pointing upward.
+    pub(crate) fn screen_rect_from_native(rect: NSRect) -> RectF {
+        let main_screen_height = unsafe { NSScreen::mainScreen(nil).frame().size.height };
+        RectF::new(
+            vec2f(
+                rect.origin.x as f32,
+                (main_screen_height - rect.origin.y - rect.size.height) as f32,
+            ),
+            vec2f(rect.size.width as f32, rect.size.height as f32),
+        )
     }
 }
 
@@ -108,9 +140,10 @@ impl platform::Screen for Screen {
     }
 
     fn bounds(&self) -> RectF {
-        unsafe {
-            let frame = self.native_screen.frame();
-            frame.to_rectf()
-        }
+        unsafe { Self::screen_rect_from_native(self.native_screen.frame()) }
+    }
+
+    fn content_bounds(&self) -> RectF {
+        unsafe { Self::screen_rect_from_native(self.native_screen.visibleFrame()) }
     }
 }
