@@ -1,10 +1,15 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use collections::HashMap;
+use futures::{
+    future::{self, BoxFuture},
+    FutureExt, StreamExt,
+};
+use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use serde_json::json;
+use serde_json::{json, Value};
 use smol::fs;
 use std::{
     any::Any,
@@ -89,8 +94,32 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
-            "provideFormatter": true
+            "provideFormatter": true,
+            "userLanguages": {
+                "html": "html",
+                "css": "css",
+                "javascript": "javascript",
+            },
         }))
+    }
+
+    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
+        Some(
+            future::ready(json!({
+                "tailwindCSS": {
+                    "emmetCompletions": true,
+                }
+            }))
+            .boxed(),
+        )
+    }
+
+    async fn language_ids(&self) -> HashMap<String, String> {
+        HashMap::from([
+            ("HTML".to_string(), "html".to_string()),
+            ("CSS".to_string(), "css".to_string()),
+            ("JavaScript".to_string(), "javascript".to_string()),
+        ])
     }
 }
 
