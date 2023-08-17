@@ -1,6 +1,6 @@
 use crate::{
-    div,
     element::{Element, ElementMetadata},
+    frame,
     text::ArcCow,
     themes::rose_pine,
 };
@@ -82,9 +82,8 @@ pub fn button<V>() -> Button<V, ()> {
 impl<V: 'static, D: 'static> Button<V, D> {
     fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         // TODO: Drive theme from the context
-        let button = div()
+        let button = frame()
             .fill(rose_pine::dawn().error(0.5))
-            // .hover_fill(rose_pine::dawn().error(0.6))
             .h_4()
             .children(self.label.clone());
 

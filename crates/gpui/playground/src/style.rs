@@ -1,20 +1,11 @@
 use crate::color::Hsla;
 use gpui::geometry::{DefinedLength, Edges, Length, Point, Size};
-use playground_macros::Overrides;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
 
-pub trait Overrides {
-    type Base;
-
-    fn is_some(&self) -> bool;
-    fn apply(&self, base: &mut Self::Base);
-}
-
-#[derive(Clone, Overrides)]
-#[overrides_crate = "crate"]
+#[derive(Clone)]
 pub struct ElementStyle {
     /// What layout strategy should be used?
     pub display: Display,

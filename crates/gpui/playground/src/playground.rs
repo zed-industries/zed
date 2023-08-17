@@ -1,11 +1,11 @@
 #![allow(dead_code, unused_variables)]
 use color::black;
 use components::button;
-use div::div;
 use element::Element;
+use frame::frame;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
-    platform::WindowOptions,
+    platform::{MouseButton, WindowOptions},
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -16,8 +16,8 @@ use view::view;
 mod adapter;
 mod color;
 mod components;
-mod div;
 mod element;
+mod frame;
 mod paint_context;
 mod style;
 mod text;
@@ -44,7 +44,7 @@ fn main() {
 }
 
 fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-    div()
+    frame()
         .text_color(black())
         .h_full()
         .w_half()
