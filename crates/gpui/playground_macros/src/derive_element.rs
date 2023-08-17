@@ -79,12 +79,8 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
         {
             type Layout = #crate_name::element::AnyElement<V>;
 
-            fn style_mut(&mut self) -> &mut #crate_name::style::ElementStyle {
-                &mut self.metadata.style
-            }
-
-            fn handlers_mut(&mut self) -> &mut Vec<#crate_name::element::EventHandler<V>> {
-                &mut self.metadata.handlers
+            fn metadata(&mut self) -> &mut #crate_name::element::ElementMetadata<V> {
+                &mut self.metadata
             }
 
             fn layout(
