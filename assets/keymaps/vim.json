@@ -104,6 +104,7 @@
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
+      "ctrl-q": "vim::ToggleVisualBlock",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
