@@ -42,7 +42,7 @@ impl StyleableComponent for () {
 pub trait Component<V: View> {
     fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-    fn into_element(self) -> ComponentAdapter<V, Self>
+    fn element(self) -> ComponentAdapter<V, Self>
     where
         Self: Sized,
     {
