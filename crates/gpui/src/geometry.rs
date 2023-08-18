@@ -2,6 +2,7 @@ use super::scene::{Path, PathVertex};
 use crate::{color::Color, json::ToJson};
 pub use pathfinder_geometry::*;
 use rect::RectF;
+use refineable::Refineable;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use vector::{vec2f, Vector2F};
@@ -132,13 +133,22 @@ impl ToJson for RectF {
     }
 }
 
-#[derive(Clone)]
-pub struct Point<T> {
+#[derive(Refineable)]
+pub struct Point<T: Clone> {
     pub x: T,
     pub y: T,
 }
 
-impl<T> Into<taffy::geometry::Point<T>> for Point<T> {
+impl<T: Clone> Clone for Point<T> {
+    fn clone(&self) -> Self {
+        Self {
+            x: self.x.clone(),
+            y: self.y.clone(),
+        }
+    }
+}
+
+impl<T: Clone> Into<taffy::geometry::Point<T>> for Point<T> {
     fn into(self) -> taffy::geometry::Point<T> {
         taffy::geometry::Point {
             x: self.x,
@@ -147,13 +157,13 @@ impl<T> Into<taffy::geometry::Point<T>> for Point<T> {
     }
 }
 
-#[derive(Clone)]
-pub struct Size<T> {
+#[derive(Clone, Refineable)]
+pub struct Size<T: Clone> {
     pub width: T,
     pub height: T,
 }
 
-impl<S, T> From<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone> From<taffy::geometry::Size<S>> for Size<T>
 where
     S: Into<T>,
 {
@@ -165,7 +175,7 @@ where
     }
 }
 
-impl<S, T> Into<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone> Into<taffy::geometry::Size<S>> for Size<T>
 where
     T: Into<S>,
 {
@@ -212,8 +222,8 @@ impl Size<Length> {
     }
 }
 
-#[derive(Clone)]
-pub struct Edges<T> {
+#[derive(Clone, Default, Refineable)]
+pub struct Edges<T: Clone> {
     pub top: T,
     pub right: T,
     pub bottom: T,
@@ -292,6 +302,12 @@ impl DefinedLength {
     }
 }
 
+impl Default for DefinedLength {
+    fn default() -> Self {
+        Self::Pixels(0.)
+    }
+}
+
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
 #[derive(Clone, Copy)]
 pub enum Length {
@@ -327,5 +343,11 @@ impl Length {
 impl From<DefinedLength> for Length {
     fn from(value: DefinedLength) -> Self {
         Length::Defined(value)
+    }
+}
+
+impl Default for Length {
+    fn default() -> Self {
+        Self::Defined(DefinedLength::default())
     }
 }

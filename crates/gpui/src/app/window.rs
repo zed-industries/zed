@@ -252,6 +252,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.content_size()
     }
 
+    pub fn mouse_position(&self) -> Vector2F {
+        self.window.mouse_position
+    }
+
     pub fn text_layout_cache(&self) -> &TextLayoutCache {
         &self.window.text_layout_cache
     }
@@ -892,7 +896,7 @@ impl<'a> WindowContext<'a> {
                                 mouse_event,
                                 window_cx,
                                 region.view_id,
-                            )
+                            );
                         });
                     }
                 }
@@ -1347,6 +1351,7 @@ pub struct MeasureParams {
     pub available_space: Size<AvailableSpace>,
 }
 
+#[derive(Clone)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels
     Pixels(f32),

@@ -18,6 +18,7 @@ mod color;
 mod components;
 mod element;
 mod frame;
+mod hoverable;
 mod paint_context;
 mod style;
 mod text;

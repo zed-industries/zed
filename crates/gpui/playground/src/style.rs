@@ -1,17 +1,24 @@
 use crate::color::Hsla;
-use gpui::geometry::{DefinedLength, Edges, Length, Point, Size};
+use gpui::{
+    fonts::TextStyleRefinement,
+    geometry::{
+        DefinedLength, Edges, EdgesRefinement, Length, Point, PointRefinement, Size, SizeRefinement,
+    },
+};
+use refineable::Refineable;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
 
-#[derive(Clone)]
-pub struct ElementStyle {
+#[derive(Clone, Refineable)]
+pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
 
     // Overflow properties
     /// How children overflowing their container should affect layout
+    #[refineable]
     pub overflow: Point<Overflow>,
     /// How much space (in points) should be reserved for the scrollbars of `Overflow::Scroll` and `Overflow::Auto` nodes.
     pub scrollbar_width: f32,
@@ -20,24 +27,31 @@ pub struct ElementStyle {
     /// What should the `position` value of this struct use as a base offset?
     pub position: Position,
     /// How should the position of this element be tweaked relative to the layout defined?
+    #[refineable]
     pub inset: Edges<Length>,
 
     // Size properies
     /// Sets the initial size of the item
+    #[refineable]
     pub size: Size<Length>,
     /// Controls the minimum size of the item
+    #[refineable]
     pub min_size: Size<Length>,
     /// Controls the maximum size of the item
+    #[refineable]
     pub max_size: Size<Length>,
     /// Sets the preferred aspect ratio for the item. The ratio is calculated as width divided by height.
     pub aspect_ratio: Option<f32>,
 
     // Spacing Properties
     /// How large should the margin be on each side?
+    #[refineable]
     pub margin: Edges<Length>,
     /// How large should the padding be on each side?
+    #[refineable]
     pub padding: Edges<DefinedLength>,
     /// How large should the border be on each side?
+    #[refineable]
     pub border: Edges<DefinedLength>,
 
     // Alignment properties
@@ -50,6 +64,7 @@ pub struct ElementStyle {
     /// How should contained within this item be aligned in the main/inline axis
     pub justify_content: Option<JustifyContent>,
     /// How large should the gaps between items in a flex container be?
+    #[refineable]
     pub gap: Size<DefinedLength>,
 
     // Flexbox properies
@@ -66,14 +81,12 @@ pub struct ElementStyle {
 
     /// The fill color of this element
     pub fill: Option<Fill>,
-    /// The fill color of this element when hovered
-    pub hover_fill: Option<Fill>,
     /// The color of text within this element. Cascades to children unless overridden.
     pub text_color: Option<Hsla>,
 }
 
-impl ElementStyle {
-    pub const DEFAULT: ElementStyle = ElementStyle {
+impl Style {
+    pub const DEFAULT: Style = Style {
         display: Display::DEFAULT,
         overflow: Point {
             x: Overflow::Visible,
@@ -102,7 +115,6 @@ impl ElementStyle {
         flex_shrink: 1.0,
         flex_basis: Length::Auto,
         fill: None,
-        hover_fill: None,
         text_color: None,
     };
 
@@ -137,21 +149,20 @@ impl ElementStyle {
             ..Default::default() // Ignore grid properties for now
         }
     }
+}
 
-    pub fn text_style(&self) -> Option<OptionalTextStyle> {
-        if self.text_color.is_some() {
-            Some(OptionalTextStyle {
-                color: self.text_color,
-            })
-        } else {
-            None
-        }
+impl Default for Style {
+    fn default() -> Self {
+        Self::DEFAULT.clone()
     }
 }
 
-impl Default for ElementStyle {
-    fn default() -> Self {
-        Self::DEFAULT.clone()
+impl StyleRefinement {
+    pub fn text_style(&self) -> Option<TextStyleRefinement> {
+        self.text_color.map(|color| TextStyleRefinement {
+            color: Some(color.into()),
+            ..Default::default()
+        })
     }
 }
 

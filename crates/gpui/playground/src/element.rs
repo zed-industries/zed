@@ -1,12 +1,13 @@
 use crate::{
     adapter::Adapter,
     color::Hsla,
-    style::{Display, ElementStyle, Fill, Overflow, Position},
+    hoverable::Hoverable,
+    style::{Display, Fill, Overflow, Position, StyleRefinement},
 };
 use anyhow::Result;
 pub use gpui::LayoutContext;
 use gpui::{
-    geometry::{DefinedLength, Length},
+    geometry::{DefinedLength, Length, PointRefinement},
     platform::{MouseButton, MouseButtonEvent},
     EngineLayout, EventContext, RenderContext, ViewContext,
 };
@@ -26,7 +27,7 @@ pub struct Layout<'a, E: ?Sized> {
 }
 
 pub struct ElementMetadata<V> {
-    pub style: ElementStyle,
+    pub style: StyleRefinement,
     pub handlers: Vec<EventHandler<V>>,
 }
 
@@ -49,7 +50,7 @@ impl<V> Clone for EventHandler<V> {
 impl<V> Default for ElementMetadata<V> {
     fn default() -> Self {
         Self {
-            style: ElementStyle::default(),
+            style: StyleRefinement::default(),
             handlers: Vec::new(),
         }
     }
@@ -58,11 +59,17 @@ impl<V> Default for ElementMetadata<V> {
 pub trait Element<V: 'static>: 'static {
     type Layout: 'static;
 
-    fn style_mut(&mut self) -> &mut ElementStyle;
+    fn declared_style(&mut self) -> &mut StyleRefinement;
+
+    fn computed_style(&mut self) -> &StyleRefinement {
+        self.declared_style()
+    }
+
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>>;
 
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Self::Layout)>;
+
     fn paint<'a>(
         &mut self,
         layout: Layout<Self::Layout>,
@@ -208,7 +215,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().display = Display::Block;
+        self.declared_style().display = Some(Display::Block);
         self
     }
 
@@ -216,7 +223,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().display = Display::Flex;
+        self.declared_style().display = Some(Display::Flex);
         self
     }
 
@@ -224,7 +231,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().display = Display::Grid;
+        self.declared_style().display = Some(Display::Grid);
         self
     }
 
@@ -234,8 +241,10 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Visible;
-        self.style_mut().overflow.y = Overflow::Visible;
+        self.declared_style().overflow = PointRefinement {
+            x: Some(Overflow::Visible),
+            y: Some(Overflow::Visible),
+        };
         self
     }
 
@@ -243,8 +252,10 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Hidden;
-        self.style_mut().overflow.y = Overflow::Hidden;
+        self.declared_style().overflow = PointRefinement {
+            x: Some(Overflow::Hidden),
+            y: Some(Overflow::Hidden),
+        };
         self
     }
 
@@ -252,8 +263,10 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Scroll;
-        self.style_mut().overflow.y = Overflow::Scroll;
+        self.declared_style().overflow = PointRefinement {
+            x: Some(Overflow::Scroll),
+            y: Some(Overflow::Scroll),
+        };
         self
     }
 
@@ -261,7 +274,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Visible;
+        self.declared_style().overflow.x = Some(Overflow::Visible);
         self
     }
 
@@ -269,7 +282,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Hidden;
+        self.declared_style().overflow.x = Some(Overflow::Hidden);
         self
     }
 
@@ -277,7 +290,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.x = Overflow::Scroll;
+        self.declared_style().overflow.x = Some(Overflow::Scroll);
         self
     }
 
@@ -285,7 +298,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.y = Overflow::Visible;
+        self.declared_style().overflow.y = Some(Overflow::Visible);
         self
     }
 
@@ -293,7 +306,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.y = Overflow::Hidden;
+        self.declared_style().overflow.y = Some(Overflow::Hidden);
         self
     }
 
@@ -301,7 +314,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().overflow.y = Overflow::Scroll;
+        self.declared_style().overflow.y = Some(Overflow::Scroll);
         self
     }
 
@@ -311,7 +324,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().position = Position::Relative;
+        self.declared_style().position = Some(Position::Relative);
         self
     }
 
@@ -319,7 +332,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().position = Position::Absolute;
+        self.declared_style().position = Some(Position::Absolute);
 
         self
     }
@@ -329,10 +342,11 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().inset.top = length;
-        self.style_mut().inset.right = length;
-        self.style_mut().inset.bottom = length;
-        self.style_mut().inset.left = length;
+        let inset = &mut self.declared_style().inset;
+        inset.top = Some(length);
+        inset.right = Some(length);
+        inset.bottom = Some(length);
+        inset.left = Some(length);
         self
     }
 
@@ -340,7 +354,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.width = width.into();
+        self.declared_style().size.width = Some(width.into());
         self
     }
 
@@ -348,7 +362,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.width = Length::Auto;
+        self.declared_style().size.width = Some(Length::Auto);
         self
     }
 
@@ -357,7 +371,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.width = length;
+        self.declared_style().size.width = Some(length);
         self
     }
 
@@ -366,7 +380,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().min_size.width = length;
+        self.declared_style().min_size.width = Some(length);
         self
     }
 
@@ -374,7 +388,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.height = height.into();
+        self.declared_style().size.height = Some(height.into());
         self
     }
 
@@ -382,7 +396,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.height = Length::Auto;
+        self.declared_style().size.height = Some(Length::Auto);
         self
     }
 
@@ -391,7 +405,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().size.height = height;
+        self.declared_style().size.height = Some(height);
         self
     }
 
@@ -400,23 +414,22 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().min_size.height = length;
+        self.declared_style().min_size.height = Some(length);
         self
+    }
+
+    fn hoverable(self) -> Hoverable<V, Self>
+    where
+        Self: Sized,
+    {
+        Hoverable::new(self)
     }
 
     fn fill(mut self, fill: impl Into<Fill>) -> Self
     where
         Self: Sized,
     {
-        self.style_mut().fill = Some(fill.into());
-        self
-    }
-
-    fn hover_fill(mut self, fill: impl Into<Fill>) -> Self
-    where
-        Self: Sized,
-    {
-        self.style_mut().hover_fill = Some(fill.into());
+        self.declared_style().fill = Some(fill.into());
         self
     }
 
@@ -424,14 +437,14 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: Sized,
     {
-        self.style_mut().text_color = Some(color.into());
+        self.declared_style().text_color = Some(color.into());
         self
     }
 }
 
 // Object-safe counterpart of Element used by AnyElement to store elements as trait objects.
 trait ElementObject<V> {
-    fn style_mut(&mut self) -> &mut ElementStyle;
+    fn style(&mut self) -> &mut StyleRefinement;
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Box<dyn Any>)>;
@@ -444,8 +457,8 @@ trait ElementObject<V> {
 }
 
 impl<V: 'static, E: Element<V>> ElementObject<V> for E {
-    fn style_mut(&mut self) -> &mut ElementStyle {
-        Element::style_mut(self)
+    fn style(&mut self) -> &mut StyleRefinement {
+        Element::declared_style(self)
     }
 
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
@@ -498,11 +511,9 @@ impl<V: 'static> AnyElement<V> {
     }
 
     pub fn push_text_style(&mut self, cx: &mut impl RenderContext) -> bool {
-        let text_style = self.element.style_mut().text_style();
+        let text_style = self.element.style().text_style();
         if let Some(text_style) = text_style {
-            let mut current_text_style = cx.text_style();
-            text_style.apply(&mut current_text_style);
-            cx.push_text_style(current_text_style);
+            cx.push_text_style(cx.text_style().refine(text_style));
             true
         } else {
             false
@@ -524,20 +535,17 @@ impl<V: 'static> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
-        let fill_color = self
-            .element
-            .style_mut()
-            .fill
-            .as_ref()
-            .and_then(Fill::color)
-            .map(Into::into);
+        let style = self.element.style();
 
-        cx.scene.push_quad(gpui::scene::Quad {
-            bounds: layout.from_engine.bounds,
-            background: fill_color,
-            border: Default::default(),
-            corner_radii: Default::default(),
-        });
+        let fill_color = style.fill.as_ref().and_then(|fill| fill.color());
+        if let Some(fill_color) = fill_color {
+            cx.scene.push_quad(gpui::scene::Quad {
+                bounds: layout.from_engine.bounds,
+                background: Some(fill_color.into()),
+                border: Default::default(),
+                corner_radii: Default::default(),
+            });
+        }
 
         for event_handler in self.element.handlers_mut().iter().cloned() {
             let EngineLayout { order, bounds } = layout.from_engine;
@@ -574,8 +582,8 @@ impl<V: 'static> AnyElement<V> {
 impl<V: 'static> Element<V> for AnyElement<V> {
     type Layout = ();
 
-    fn style_mut(&mut self) -> &mut ElementStyle {
-        self.element.style_mut()
+    fn declared_style(&mut self) -> &mut StyleRefinement {
+        self.element.style()
     }
 
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {

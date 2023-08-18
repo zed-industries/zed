@@ -29,7 +29,6 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
             }
         })
         .unwrap_or_else(|| String::from("playground"));
-
     let crate_name = format_ident!("{}", crate_name);
 
     let placeholder_view_generics: Generics = parse_quote! { <V: 'static> };

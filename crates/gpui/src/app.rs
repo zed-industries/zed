@@ -1648,6 +1648,9 @@ impl AppContext {
                             subscription_id,
                             callback,
                         ),
+                        Effect::RepaintWindow { window } => {
+                            self.handle_repaint_window_effect(window)
+                        }
                     }
                     self.pending_notifications.clear();
                 } else {
@@ -1882,6 +1885,14 @@ impl AppContext {
             observations.emit(window, move |callback| {
                 callback(&keystroke, &result, handled_by.as_ref(), cx)
             });
+        });
+    }
+
+    fn handle_repaint_window_effect(&mut self, window: AnyWindowHandle) {
+        self.update_window(window, |cx| {
+            if let Some(scene) = cx.paint().log_err() {
+                cx.window.platform_window.present_scene(scene);
+            }
         });
     }
 
@@ -2244,6 +2255,9 @@ pub enum Effect {
         window: AnyWindowHandle,
         is_active: bool,
     },
+    RepaintWindow {
+        window: AnyWindowHandle,
+    },
     WindowActivationObservation {
         window: AnyWindowHandle,
         subscription_id: usize,
@@ -2436,6 +2450,10 @@ impl Debug for Effect {
             } => f
                 .debug_struct("Effect::ActiveLabeledTasksObservation")
                 .field("subscription_id", subscription_id)
+                .finish(),
+            Effect::RepaintWindow { window } => f
+                .debug_struct("Effect::RepaintWindow")
+                .field("window_id", &window.id())
                 .finish(),
         }
     }
@@ -3617,7 +3635,7 @@ pub struct EventContext<'a, 'b, 'c, V> {
     pub(crate) handled: bool,
 }
 
-impl<'a, 'b, 'c, V> EventContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V: 'static> EventContext<'a, 'b, 'c, V> {
     pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         EventContext {
             view_context,
@@ -3627,6 +3645,12 @@ impl<'a, 'b, 'c, V> EventContext<'a, 'b, 'c, V> {
 
     pub fn propagate_event(&mut self) {
         self.handled = false;
+    }
+
+    pub fn repaint(&mut self) {
+        let window = self.window();
+        self.pending_effects
+            .push_back(Effect::RepaintWindow { window });
     }
 }
 

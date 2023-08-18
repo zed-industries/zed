@@ -1,0 +1,14 @@
+[package]
+name = "refineable"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/refineable.rs"
+doctest = false
+
+[dependencies]
+syn = "1.0.72"
+quote = "1.0.9"
+proc-macro2 = "1.0.66"
+derive_refineable = { path = "./derive_refineable" }

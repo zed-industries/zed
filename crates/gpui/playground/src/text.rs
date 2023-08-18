@@ -1,6 +1,10 @@
-use crate::element::{Element, ElementMetadata, EventHandler, IntoElement};
+use crate::{
+    element::{Element, ElementMetadata, EventHandler, IntoElement},
+    style::Style,
+};
 use gpui::{geometry::Size, text_layout::LineLayout, RenderContext};
 use parking_lot::Mutex;
+use refineable::Refineable;
 use std::sync::Arc;
 
 impl<V: 'static, S: Into<ArcCow<'static, str>>> IntoElement<V> for S {
@@ -22,7 +26,7 @@ pub struct Text<V> {
 impl<V: 'static> Element<V> for Text<V> {
     type Layout = Arc<Mutex<Option<TextLayout>>>;
 
-    fn style_mut(&mut self) -> &mut crate::style::ElementStyle {
+    fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
         &mut self.metadata.style
     }
 
@@ -39,7 +43,8 @@ impl<V: 'static> Element<V> for Text<V> {
         let text = self.text.clone();
         let layout = Arc::new(Mutex::new(None));
 
-        let node_id = layout_engine.add_measured_node(self.metadata.style.to_taffy(rem_size), {
+        let style: Style = Style::default().refine(&self.metadata.style);
+        let node_id = layout_engine.add_measured_node(style.to_taffy(rem_size), {
             let layout = layout.clone();
             move |params| {
                 let line_layout = fonts.layout_line(

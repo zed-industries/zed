@@ -12,9 +12,9 @@ anyhow.workspace = true
 derive_more.workspace = true
 gpui = { path = ".." }
 log.workspace = true
-optional_struct = "0.3.1"
 playground_macros = { path = "../playground_macros" }
 parking_lot.workspace = true
+refineable.workspace = true
 serde.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true

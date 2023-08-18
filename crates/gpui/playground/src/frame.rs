@@ -2,23 +2,24 @@ use crate::{
     element::{
         AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId, PaintContext,
     },
-    style::ElementStyle,
+    style::{Style, StyleRefinement},
 };
 use anyhow::{anyhow, Result};
 use gpui::LayoutNodeId;
 use playground_macros::IntoElement;
+use refineable::Refineable;
 
 #[derive(IntoElement)]
 #[element_crate = "crate"]
 pub struct Frame<V: 'static> {
-    style: ElementStyle,
+    style: StyleRefinement,
     handlers: Vec<EventHandler<V>>,
     children: Vec<AnyElement<V>>,
 }
 
 pub fn frame<V>() -> Frame<V> {
     Frame {
-        style: ElementStyle::default(),
+        style: StyleRefinement::default(),
         handlers: Vec::new(),
         children: Vec::new(),
     }
@@ -27,7 +28,7 @@ pub fn frame<V>() -> Frame<V> {
 impl<V: 'static> Element<V> for Frame<V> {
     type Layout = ();
 
-    fn style_mut(&mut self) -> &mut ElementStyle {
+    fn declared_style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 
@@ -47,10 +48,11 @@ impl<V: 'static> Element<V> for Frame<V> {
             .collect::<Result<Vec<LayoutNodeId>>>()?;
 
         let rem_size = cx.rem_pixels();
+        let style = Style::default().refine(&self.style);
         let node_id = cx
             .layout_engine()
             .ok_or_else(|| anyhow!("no layout engine"))?
-            .add_node(self.style.to_taffy(rem_size), child_layout_node_ids)?;
+            .add_node(style.to_taffy(rem_size), child_layout_node_ids)?;
 
         Ok((node_id, ()))
     }

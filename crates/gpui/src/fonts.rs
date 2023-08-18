@@ -11,6 +11,7 @@ pub use font_kit::{
     properties::{Properties, Stretch, Style, Weight},
 };
 use ordered_float::OrderedFloat;
+use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
@@ -59,7 +60,7 @@ pub struct Features {
     pub zero: Option<bool>,
 }
 
-#[derive(Clone, Debug, JsonSchema)]
+#[derive(Clone, Debug, JsonSchema, Refineable)]
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
@@ -70,18 +71,6 @@ pub struct TextStyle {
     pub font_properties: Properties,
     pub underline: Underline,
     pub soft_wrap: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct TextStyleRefinement {
-    pub color: Option<Color>,
-    pub font_family_name: Option<Arc<str>>,
-    pub font_family_id: Option<FamilyId>,
-    pub font_id: Option<FontId>,
-    pub font_size: Option<f32>,
-    pub font_properties: Option<Properties>,
-    pub underline: Option<Underline>,
-    pub soft_wrap: Option<bool>,
 }
 
 impl TextStyle {

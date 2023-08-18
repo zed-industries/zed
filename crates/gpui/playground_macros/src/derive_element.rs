@@ -79,7 +79,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
         {
             type Layout = #crate_name::element::AnyElement<V>;
 
-            fn style_mut(&mut self) -> &mut #crate_name::style::ElementStyle {
+            fn declared_style(&mut self) -> &mut #crate_name::style::StyleRefinement {
                 &mut self.metadata.style
             }
 
