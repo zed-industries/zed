@@ -651,7 +651,10 @@ fn find_backward(
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let new_row = (point.row() + times as u32).min(map.max_buffer_row());
-    map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+    first_non_whitespace(
+        map,
+        map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left),
+    )
 }
 
 #[cfg(test)]
@@ -798,5 +801,13 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇone\n  two\nthree").await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("one\n  ˇtwo\nthree").await;
     }
 }
