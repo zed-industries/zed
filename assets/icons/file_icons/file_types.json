@@ -74,7 +74,7 @@
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
-        "py": "code",
+        "py": "python",
         "rb": "code",
         "rkt": "code",
         "rs": "rust",
@@ -147,6 +147,9 @@
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "python": {
+            "icon": "icons/file_icons/python.svg"
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"
