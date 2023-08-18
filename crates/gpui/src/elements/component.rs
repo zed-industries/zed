@@ -9,6 +9,12 @@ use super::Empty;
 
 pub trait GeneralComponent {
     fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+    fn element<V: View>(self) -> ComponentAdapter<V, Self>
+    where
+        Self: Sized,
+    {
+        ComponentAdapter::new(self)
+    }
 }
 
 pub trait StyleableComponent {
@@ -50,6 +56,53 @@ impl<V: View, C: GeneralComponent> Component<V> for C {
     }
 }
 
+// StylableComponent -> GeneralComponent
+pub struct StylableComponentAdapter<C: Component<V>, V: View> {
+    component: C,
+    phantom: std::marker::PhantomData<V>,
+}
+
+impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
+    fn new(component: C) -> Self {
+        Self {
+            component,
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: GeneralComponent, V: View> StyleableComponent for StylableComponentAdapter<C, V> {
+    type Style = ();
+
+    type Output = C;
+
+    fn with_style(self, _: Self::Style) -> Self::Output {
+        self.component
+    }
+}
+
+// Element -> Component
+pub struct ElementAdapter<V: View> {
+    element: AnyElement<V>,
+    _phantom: std::marker::PhantomData<V>,
+}
+
+impl<V: View> ElementAdapter<V> {
+    pub fn new(element: AnyElement<V>) -> Self {
+        Self {
+            element,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<V: View> Component<V> for ElementAdapter<V> {
+    fn render(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
+        self.element
+    }
+}
+
+// Component -> Element
 pub struct ComponentAdapter<V: View, E> {
     component: Option<E>,
     element: Option<AnyElement<V>>,
