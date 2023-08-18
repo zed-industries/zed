@@ -342,6 +342,22 @@ pub struct InlayHint {
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+    pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveState {
+    Resolved,
+    CanResolve(Option<lsp::LSPAny>),
+    Resolving,
+}
+
+impl Hash for ResolveState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Regular `lsp::LSPAny` is not hashable, so we can't hash it.
+        // LSP expects this data to not to change between requests, so we only hash the discriminant.
+        std::mem::discriminant(self).hash(state);
+    }
 }
 
 impl InlayHint {

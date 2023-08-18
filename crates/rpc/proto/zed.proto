@@ -754,6 +754,7 @@ message InlayHint {
     bool padding_left = 4;
     bool padding_right = 5;
     InlayHintTooltip tooltip = 6;
+    ResolveState resolve_state = 7;
 }
 
 message InlayHintLabel {
@@ -784,6 +785,21 @@ message InlayHintLabelPartTooltip {
     oneof content {
         string value = 1;
         MarkupContent markup_content = 2;
+    }
+}
+
+message ResolveState {
+    State state = 1;
+    LspResolveState lsp_resolve_state = 2;
+
+    enum State {
+        Resolved = 0;
+        CanResolve = 1;
+        Resolving = 2;
+    }
+
+    message LspResolveState {
+        string value = 1;
     }
 }
 

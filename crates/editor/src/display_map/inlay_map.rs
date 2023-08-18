@@ -1109,7 +1109,7 @@ mod tests {
     use super::*;
     use crate::{InlayId, MultiBuffer};
     use gpui::AppContext;
-    use project::{InlayHint, InlayHintLabel};
+    use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
@@ -1131,6 +1131,7 @@ mod tests {
                     padding_right: false,
                     tooltip: None,
                     kind: None,
+                    resolve_state: ResolveState::Resolved,
                 },
             )
             .text
@@ -1151,6 +1152,7 @@ mod tests {
                     padding_right: true,
                     tooltip: None,
                     kind: None,
+                    resolve_state: ResolveState::Resolved,
                 },
             )
             .text
@@ -1171,6 +1173,7 @@ mod tests {
                     padding_right: false,
                     tooltip: None,
                     kind: None,
+                    resolve_state: ResolveState::Resolved,
                 },
             )
             .text
@@ -1191,6 +1194,7 @@ mod tests {
                     padding_right: true,
                     tooltip: None,
                     kind: None,
+                    resolve_state: ResolveState::Resolved,
                 },
             )
             .text

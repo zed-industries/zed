@@ -1,7 +1,7 @@
 use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
     InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    MarkupContent, Project, ProjectTransaction,
+    MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -1817,7 +1817,8 @@ impl LspCommand for InlayHints {
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<InlayHint>> {
-        let (lsp_adapter, _) = language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
+        let (lsp_adapter, lsp_server) =
+            language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
         // `typescript-language-server` adds padding to the left for type hints, turning
         // `const foo: boolean` into `const foo : boolean` which looks odd.
         // `rust-analyzer` does not have the padding for this case, and we have to accomodate both.
@@ -1833,6 +1834,15 @@ impl LspCommand for InlayHints {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|lsp_hint| {
+                    let resolve_state = match lsp_server.capabilities().inlay_hint_provider {
+                        Some(lsp::OneOf::Right(lsp::InlayHintServerCapabilities::Options(
+                            lsp::InlayHintOptions {
+                                resolve_provider: Some(true),
+                                ..
+                            },
+                        ))) => ResolveState::CanResolve(lsp_hint.data),
+                        _ => ResolveState::Resolved,
+                    };
                     let kind = lsp_hint.kind.and_then(|kind| match kind {
                         lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
                         lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
@@ -1910,6 +1920,7 @@ impl LspCommand for InlayHints {
                                 })
                             }
                         }),
+                        resolve_state,
                     }
                 })
                 .collect())
@@ -1959,57 +1970,69 @@ impl LspCommand for InlayHints {
         proto::InlayHintsResponse {
             hints: response
                 .into_iter()
-                .map(|response_hint| proto::InlayHint {
-                    position: Some(language::proto::serialize_anchor(&response_hint.position)),
-                    padding_left: response_hint.padding_left,
-                    padding_right: response_hint.padding_right,
-                    label: Some(proto::InlayHintLabel {
-                        label: Some(match response_hint.label {
-                            InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
-                            InlayHintLabel::LabelParts(label_parts) => {
-                                proto::inlay_hint_label::Label::LabelParts(proto::InlayHintLabelParts {
-                                    parts: label_parts.into_iter().map(|label_part| proto::InlayHintLabelPart {
-                                        value: label_part.value,
-                                        tooltip: label_part.tooltip.map(|tooltip| {
-                                            let proto_tooltip = match tooltip {
-                                                InlayHintLabelPartTooltip::String(s) => proto::inlay_hint_label_part_tooltip::Content::Value(s),
-                                                InlayHintLabelPartTooltip::MarkupContent(markup_content) => proto::inlay_hint_label_part_tooltip::Content::MarkupContent(proto::MarkupContent {
-                                                    kind: markup_content.kind,
-                                                    value: markup_content.value,
-                                                }),
-                                            };
-                                            proto::InlayHintLabelPartTooltip {content: Some(proto_tooltip)}
-                                        }),
-                                        location: label_part.location.map(|location| proto::Location {
-                                            start: Some(serialize_anchor(&location.range.start)),
-                                            end: Some(serialize_anchor(&location.range.end)),
-                                            buffer_id: location.buffer.read(cx).remote_id(),
-                                        }),
-                                    }).collect()
-                                })
+                .map(|response_hint| {
+                    let (state, lsp_resolve_state) = match response_hint.resolve_state {
+                        ResolveState::CanResolve(resolve_data) => {
+                            (0, resolve_data.map(|json_data| serde_json::to_string(&json_data).expect("failed to serialize resolve json data")).map(|value| proto::resolve_state::LspResolveState{ value }))
+                        }
+                        ResolveState::Resolved => (1, None),
+                        ResolveState::Resolving => (2, None),
+                    };
+                    let resolve_state = Some(proto::ResolveState {
+                        state, lsp_resolve_state
+                    });
+                    proto::InlayHint {
+                        position: Some(language::proto::serialize_anchor(&response_hint.position)),
+                        padding_left: response_hint.padding_left,
+                        padding_right: response_hint.padding_right,
+                        label: Some(proto::InlayHintLabel {
+                            label: Some(match response_hint.label {
+                                InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
+                                InlayHintLabel::LabelParts(label_parts) => {
+                                    proto::inlay_hint_label::Label::LabelParts(proto::InlayHintLabelParts {
+                                        parts: label_parts.into_iter().map(|label_part| proto::InlayHintLabelPart {
+                                            value: label_part.value,
+                                            tooltip: label_part.tooltip.map(|tooltip| {
+                                                let proto_tooltip = match tooltip {
+                                                    InlayHintLabelPartTooltip::String(s) => proto::inlay_hint_label_part_tooltip::Content::Value(s),
+                                                    InlayHintLabelPartTooltip::MarkupContent(markup_content) => proto::inlay_hint_label_part_tooltip::Content::MarkupContent(proto::MarkupContent {
+                                                        kind: markup_content.kind,
+                                                        value: markup_content.value,
+                                                    }),
+                                                };
+                                                proto::InlayHintLabelPartTooltip {content: Some(proto_tooltip)}
+                                            }),
+                                            location: label_part.location.map(|location| proto::Location {
+                                                start: Some(serialize_anchor(&location.range.start)),
+                                                end: Some(serialize_anchor(&location.range.end)),
+                                                buffer_id: location.buffer.read(cx).remote_id(),
+                                            }),
+                                        }).collect()
+                                    })
+                                }
+                            }),
+                        }),
+                        kind: response_hint.kind.map(|kind| kind.name().to_string()),
+                        tooltip: response_hint.tooltip.map(|response_tooltip| {
+                            let proto_tooltip = match response_tooltip {
+                                InlayHintTooltip::String(s) => {
+                                    proto::inlay_hint_tooltip::Content::Value(s)
+                                }
+                                InlayHintTooltip::MarkupContent(markup_content) => {
+                                    proto::inlay_hint_tooltip::Content::MarkupContent(
+                                        proto::MarkupContent {
+                                            kind: markup_content.kind,
+                                            value: markup_content.value,
+                                        },
+                                    )
+                                }
+                            };
+                            proto::InlayHintTooltip {
+                                content: Some(proto_tooltip),
                             }
                         }),
-                    }),
-                    kind: response_hint.kind.map(|kind| kind.name().to_string()),
-                    tooltip: response_hint.tooltip.map(|response_tooltip| {
-                        let proto_tooltip = match response_tooltip {
-                            InlayHintTooltip::String(s) => {
-                                proto::inlay_hint_tooltip::Content::Value(s)
-                            }
-                            InlayHintTooltip::MarkupContent(markup_content) => {
-                                proto::inlay_hint_tooltip::Content::MarkupContent(
-                                    proto::MarkupContent {
-                                        kind: markup_content.kind,
-                                        value: markup_content.value,
-                                    },
-                                )
-                            }
-                        };
-                        proto::InlayHintTooltip {
-                            content: Some(proto_tooltip),
-                        }
-                    }),
-                })
+                        resolve_state,
+                    }})
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -2021,7 +2044,7 @@ impl LspCommand for InlayHints {
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<InlayHint>> {
+    ) -> anyhow::Result<Vec<InlayHint>> {
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
@@ -2035,6 +2058,27 @@ impl LspCommand for InlayHints {
                 .as_ref()
                 .and_then(|location| location.buffer_id)
                 .context("missing buffer id")?;
+            let resolve_state = message_hint.resolve_state.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "incorrect proto inlay hint message: no resolve state in hint {message_hint:?}",
+                )
+            });
+
+            let lsp_resolve_state = resolve_state
+                .lsp_resolve_state.as_ref()
+                .map(|lsp_resolve_state| {
+                    serde_json::from_str::<lsp::LSPAny>(&lsp_resolve_state.value)
+                        .with_context(|| format!("incorrect proto inlay hint message: non-json resolve state {lsp_resolve_state:?}"))
+                })
+                .transpose()?;
+            let resolve_state = match resolve_state.state {
+                0 => ResolveState::Resolved,
+                1 => ResolveState::CanResolve(lsp_resolve_state),
+                2 => ResolveState::Resolving,
+                invalid => {
+                    anyhow::bail!("Unexpected resolve state {invalid} for hint {message_hint:?}")
+                }
+            };
             let hint = InlayHint {
                 buffer_id,
                 position: message_hint
@@ -2103,6 +2147,7 @@ impl LspCommand for InlayHints {
                         }
                     })
                 }),
+                resolve_state,
             };
 
             hints.push(hint);
