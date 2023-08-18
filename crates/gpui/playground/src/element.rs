@@ -524,6 +524,21 @@ impl<V: 'static> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
+        let fill_color = self
+            .element
+            .style_mut()
+            .fill
+            .as_ref()
+            .and_then(Fill::color)
+            .map(Into::into);
+
+        cx.scene.push_quad(gpui::scene::Quad {
+            bounds: layout.from_engine.bounds,
+            background: fill_color,
+            border: Default::default(),
+            corner_radii: Default::default(),
+        });
+
         for event_handler in self.element.handlers_mut().iter().cloned() {
             let EngineLayout { order, bounds } = layout.from_engine;
 
