@@ -147,8 +147,6 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         }
     };
 
-    println!("{}", gen);
-
     gen.into()
 }
 

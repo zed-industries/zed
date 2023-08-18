@@ -2,7 +2,7 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc};
 
 use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
-    scene::MouseMove,
+    platform::MouseMovedEvent,
     EngineLayout, ViewContext,
 };
 use refineable::Refineable;
@@ -40,6 +40,8 @@ impl<V: 'static, E: Element<V>> Element<V> for Hoverable<V, E> {
     }
 
     fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
+        dbg!(self.computed_style.is_some());
+
         self.computed_style.get_or_insert_with(|| {
             let mut style = self.child.computed_style(cx).clone();
             if self.hovered.get() {
@@ -83,9 +85,10 @@ impl<V: 'static, E: Element<V>> Element<V> for Hoverable<V, E> {
             order,
             window_bounds,
             false,
-            move |view, event: &MouseMove, cx| {
+            move |view, event: &MouseMovedEvent, cx| {
                 let mouse_within_bounds = bounds.contains_point(cx.mouse_position());
                 if mouse_within_bounds != hovered.get() {
+                    dbg!("hovered", mouse_within_bounds);
                     hovered.set(mouse_within_bounds);
                     cx.repaint();
                 }

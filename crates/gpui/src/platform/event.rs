@@ -228,10 +228,9 @@ impl Event {
             Event::ModifiersChanged { .. } => None,
             Event::MouseDown(event) => Some(event),
             Event::MouseUp(event) => Some(event),
-            _ => None,
-            // Event::MouseMoved(event) => Some(event),
-            // Event::MouseExited(event) => Some(event),
-            // Event::ScrollWheel(event) => Some(event),
+            Event::MouseMoved(event) => Some(event),
+            Event::MouseExited(event) => Some(event),
+            Event::ScrollWheel(event) => Some(event),
         }
     }
 }
