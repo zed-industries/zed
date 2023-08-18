@@ -3,17 +3,15 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc};
 use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     scene::MouseMove,
-    EngineLayout,
+    EngineLayout, ViewContext,
 };
+use refineable::Refineable;
 
-use crate::{
-    element::Element,
-    style::{Style, StyleRefinement},
-};
+use crate::{element::Element, style::StyleRefinement};
 
 pub struct Hoverable<V, E> {
     hover_style: StyleRefinement,
-    computed_style: Option<Style>,
+    computed_style: Option<StyleRefinement>,
     view_type: PhantomData<V>,
     child: E,
 }
@@ -36,8 +34,13 @@ impl<V: 'static, E: Element<V>> Element<V> for Hoverable<V, E> {
         &mut self.hover_style
     }
 
-    fn computed_style(&mut self) -> &StyleRefinement {
-        todo!()
+    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
+        self.computed_style.get_or_insert_with(|| {
+            let mut style = self.child.computed_style(cx).clone();
+            // if hovered
+            style.refine(&self.hover_style);
+            style
+        })
     }
 
     fn handlers_mut(&mut self) -> &mut Vec<crate::element::EventHandler<V>> {

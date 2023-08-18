@@ -48,7 +48,7 @@ impl<V: 'static> Element<V> for Frame<V> {
             .collect::<Result<Vec<LayoutNodeId>>>()?;
 
         let rem_size = cx.rem_pixels();
-        let style = Style::default().refine(&self.style);
+        let style = Style::default().refined(&self.style);
         let node_id = cx
             .layout_engine()
             .ok_or_else(|| anyhow!("no layout engine"))?

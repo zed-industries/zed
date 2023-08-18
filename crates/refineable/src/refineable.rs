@@ -3,11 +3,12 @@ pub use derive_refineable::Refineable;
 pub trait Refineable {
     type Refinement;
 
-    fn refine(&self, refinement: &Self::Refinement) -> Self;
-    fn from_refinement(refinement: &Self::Refinement) -> Self
+    fn refine(&mut self, refinement: &Self::Refinement);
+    fn refined(mut self, refinement: &Self::Refinement) -> Self
     where
-        Self: Sized + Default,
+        Self: Sized,
     {
-        Self::default().refine(refinement)
+        self.refine(refinement);
+        self
     }
 }

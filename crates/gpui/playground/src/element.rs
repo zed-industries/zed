@@ -12,6 +12,7 @@ use gpui::{
     EngineLayout, EventContext, RenderContext, ViewContext,
 };
 use playground_macros::tailwind_lengths;
+use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
     cell::Cell,
@@ -61,7 +62,7 @@ pub trait Element<V: 'static>: 'static {
 
     fn declared_style(&mut self) -> &mut StyleRefinement;
 
-    fn computed_style(&mut self) -> &StyleRefinement {
+    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
         self.declared_style()
     }
 
@@ -444,7 +445,8 @@ pub trait Element<V: 'static>: 'static {
 
 // Object-safe counterpart of Element used by AnyElement to store elements as trait objects.
 trait ElementObject<V> {
-    fn style(&mut self) -> &mut StyleRefinement;
+    fn declared_style(&mut self) -> &mut StyleRefinement;
+    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement;
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>>;
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>)
         -> Result<(NodeId, Box<dyn Any>)>;
@@ -457,8 +459,12 @@ trait ElementObject<V> {
 }
 
 impl<V: 'static, E: Element<V>> ElementObject<V> for E {
-    fn style(&mut self) -> &mut StyleRefinement {
+    fn declared_style(&mut self) -> &mut StyleRefinement {
         Element::declared_style(self)
+    }
+
+    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
+        Element::computed_style(self, cx)
     }
 
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
@@ -510,10 +516,13 @@ impl<V: 'static> AnyElement<V> {
         Ok(node_id)
     }
 
-    pub fn push_text_style(&mut self, cx: &mut impl RenderContext) -> bool {
-        let text_style = self.element.style().text_style();
+    pub fn push_text_style<'a: 'b, 'b>(&mut self, cx: &mut impl RenderContext<'a, 'b, V>) -> bool {
+        let text_style = self
+            .element
+            .computed_style(cx.as_view_context())
+            .text_style();
         if let Some(text_style) = text_style {
-            cx.push_text_style(cx.text_style().refine(text_style));
+            cx.push_text_style(cx.text_style().refined(&text_style));
             true
         } else {
             false
@@ -535,7 +544,7 @@ impl<V: 'static> AnyElement<V> {
             from_element: element_layout.as_mut(),
         };
 
-        let style = self.element.style();
+        let style = self.element.computed_style(cx.as_view_context());
 
         let fill_color = style.fill.as_ref().and_then(|fill| fill.color());
         if let Some(fill_color) = fill_color {
@@ -583,7 +592,11 @@ impl<V: 'static> Element<V> for AnyElement<V> {
     type Layout = ();
 
     fn declared_style(&mut self) -> &mut StyleRefinement {
-        self.element.style()
+        self.element.declared_style()
+    }
+
+    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
+        self.element.computed_style(cx)
     }
 
     fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {

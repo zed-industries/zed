@@ -13,7 +13,7 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
-impl<V> RenderContext for PaintContext<'_, '_, '_, '_, V> {
+impl<'a, 'b, V> RenderContext<'a, 'b, V> for PaintContext<'a, 'b, '_, '_, V> {
     fn text_style(&self) -> gpui::fonts::TextStyle {
         self.legacy_cx.text_style()
     }
@@ -24,6 +24,10 @@ impl<V> RenderContext for PaintContext<'_, '_, '_, '_, V> {
 
     fn pop_text_style(&mut self) {
         self.legacy_cx.pop_text_style()
+    }
+
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        &mut self.view_context
     }
 }
 

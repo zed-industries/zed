@@ -43,7 +43,7 @@ impl<V: 'static> Element<V> for Text<V> {
         let text = self.text.clone();
         let layout = Arc::new(Mutex::new(None));
 
-        let style: Style = Style::default().refine(&self.metadata.style);
+        let style: Style = Style::default().refined(&self.metadata.style);
         let node_id = layout_engine.add_measured_node(style.to_taffy(rem_size), {
             let layout = layout.clone();
             move |params| {

@@ -44,14 +44,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                         paren_token: None,
                         modifier: syn::TraitBoundModifier::None,
                         lifetimes: None,
-                        path: parse_quote!(std::clone::Clone),
+                        path: parse_quote!(Clone),
                     }));
                     punctuated.push_punct(syn::token::Add::default());
                     punctuated.push_value(TypeParamBound::Trait(TraitBound {
                         paren_token: None,
                         modifier: syn::TraitBoundModifier::None,
                         lifetimes: None,
-                        path: parse_quote!(std::default::Default),
+                        path: parse_quote!(Default),
                     }));
                     punctuated
                 },
@@ -73,7 +73,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         },
     };
 
-    let field_initializations: Vec<TokenStream2> = fields
+    let field_assignments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -82,18 +82,38 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    clone.#name = self.#name.refine(&refinement.#name);
+                    self.#name.refine(&refinement.#name);
                 }
             } else if is_optional {
                 quote! {
                     if let Some(ref value) = &refinement.#name {
-                        clone.#name = Some(value.clone());
+                        self.#name = Some(value.clone());
                     }
                 }
             } else {
                 quote! {
                     if let Some(ref value) = &refinement.#name {
-                        clone.#name = value.clone();
+                        self.#name = value.clone();
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let refinement_field_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+
+            if is_refineable {
+                quote! {
+                    self.#name.refine(&refinement.#name);
+                }
+            } else {
+                quote! {
+                    if let Some(ref value) = &refinement.#name {
+                        self.#name = Some(value.clone());
                     }
                 }
             }
@@ -111,10 +131,18 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         {
             type Refinement = #refinement_ident #ty_generics;
 
-            fn refine(&self, refinement: &Self::Refinement) -> Self {
-                let mut clone = self.clone();
-                #( #field_initializations )*
-                clone
+            fn refine(&mut self, refinement: &Self::Refinement) {
+                #( #field_assignments )*
+            }
+        }
+
+        impl #impl_generics Refineable for #refinement_ident #ty_generics
+            #where_clause
+        {
+            type Refinement = #refinement_ident #ty_generics;
+
+            fn refine(&mut self, refinement: &Self::Refinement) {
+                #( #refinement_field_assignments )*
             }
         }
     };

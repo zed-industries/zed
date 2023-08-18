@@ -3383,10 +3383,11 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
 ///
 /// It's that PaintContext should be implemented in terms of layout context and
 /// deref to it, in which case we wouldn't need this.
-pub trait RenderContext {
+pub trait RenderContext<'a, 'b, V> {
     fn text_style(&self) -> TextStyle;
     fn push_text_style(&mut self, style: TextStyle);
     fn pop_text_style(&mut self);
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V>;
 }
 
 pub struct LayoutContext<'a, 'b, 'c, V> {
@@ -3472,7 +3473,7 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<'a, 'b, 'c, V> RenderContext for LayoutContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, 'c, V> {
     fn text_style(&self) -> TextStyle {
         self.text_style_stack
             .last()
@@ -3486,6 +3487,10 @@ impl<'a, 'b, 'c, V> RenderContext for LayoutContext<'a, 'b, 'c, V> {
 
     fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
+    }
+
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        &mut self.view_context
     }
 }
 
@@ -3544,7 +3549,7 @@ impl<V> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
 }
 
 pub struct PaintContext<'a, 'b, 'c, V> {
-    view_context: &'c mut ViewContext<'a, 'b, V>,
+    pub view_context: &'c mut ViewContext<'a, 'b, V>,
     text_style_stack: Vec<TextStyle>,
 }
 
@@ -3557,7 +3562,7 @@ impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<'a, 'b, 'c, V> RenderContext for PaintContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for PaintContext<'a, 'b, 'c, V> {
     fn text_style(&self) -> TextStyle {
         self.text_style_stack
             .last()
@@ -3571,6 +3576,10 @@ impl<'a, 'b, 'c, V> RenderContext for PaintContext<'a, 'b, 'c, V> {
 
     fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
+    }
+
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        &mut self.view_context
     }
 }
 
