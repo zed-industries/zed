@@ -49,9 +49,8 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<SemanticIndexSettings>(cx).enabled
-    {
+    // This needs to be removed at some point before stable.
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
 
@@ -501,26 +500,12 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
-        let worktree_scans_complete = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| {
-                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
-                async move {
-                    scan_complete.await;
-                }
-            })
-            .collect::<Vec<_>>();
-
         let worktrees_indexed_previously = project
             .read(cx)
             .worktrees(cx)
             .map(|worktree| self.worktree_previously_indexed(worktree.read(cx).abs_path()))
             .collect::<Vec<_>>();
-
         cx.spawn(|_, _cx| async move {
-            futures::future::join_all(worktree_scans_complete).await;
-
             let worktree_indexed_previously =
                 futures::future::join_all(worktrees_indexed_previously).await;
 

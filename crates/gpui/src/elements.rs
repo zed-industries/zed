@@ -34,8 +34,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
-    WeakViewHandle, WindowContext,
+    json, Action, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, TypeTag, View,
+    ViewContext, WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -172,6 +172,20 @@ pub trait Element<V: View>: 'static {
         FlexItem::new(self.into_any()).float()
     }
 
+    fn with_dynamic_tooltip(
+        self,
+        tag: TypeTag,
+        id: usize,
+        text: impl Into<Cow<'static, str>>,
+        action: Option<Box<dyn Action>>,
+        style: TooltipStyle,
+        cx: &mut ViewContext<V>,
+    ) -> Tooltip<V>
+    where
+        Self: 'static + Sized,
+    {
+        Tooltip::new_dynamic(tag, id, text, action, style, self.into_any(), cx)
+    }
     fn with_tooltip<Tag: 'static>(
         self,
         id: usize,

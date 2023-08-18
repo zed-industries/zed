@@ -1,5 +1,5 @@
 use gpui::{actions, impl_actions, AppContext, ViewContext};
-use search::{buffer_search, BufferSearchBar, SearchOptions};
+use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Pane, Workspace};
 
@@ -65,10 +65,8 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                     cx.focus_self();
 
                     if query.is_empty() {
-                        search_bar.set_search_options(
-                            SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX,
-                            cx,
-                        );
+                        search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx);
+                        search_bar.activate_search_mode(SearchMode::Regex, cx);
                     }
                     vim.state.search = SearchState {
                         direction,

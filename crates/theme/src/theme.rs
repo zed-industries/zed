@@ -1,7 +1,9 @@
+pub mod components;
 mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
+use components::ToggleIconButtonStyle;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -13,7 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle};
+use ui::{CheckboxStyle, CopilotCTAButton, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
 pub use theme_settings::*;
@@ -182,7 +184,7 @@ pub struct CopilotAuth {
     pub prompting: CopilotAuthPrompting,
     pub not_authorized: CopilotAuthNotAuthorized,
     pub authorized: CopilotAuthAuthorized,
-    pub cta_button: ButtonStyle,
+    pub cta_button: CopilotCTAButton,
     pub header: IconStyle,
 }
 
@@ -196,7 +198,7 @@ pub struct CopilotAuthPrompting {
 #[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct DeviceCode {
     pub text: TextStyle,
-    pub cta: ButtonStyle,
+    pub cta: CopilotCTAButton,
     pub left: f32,
     pub left_container: ContainerStyle,
     pub right: f32,
@@ -334,6 +336,7 @@ pub struct TabBar {
     pub inactive_pane: TabStyles,
     pub dragged_tab: Tab,
     pub height: f32,
+    pub nav_button: Interactive<IconButton>,
 }
 
 impl TabBar {
@@ -398,7 +401,6 @@ pub struct Toolbar {
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
-    pub nav_button: Interactive<IconButton>,
     pub toggleable_tool: Toggleable<Interactive<IconButton>>,
 }
 
@@ -419,12 +421,20 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Toggleable<Interactive<ContainedText>>,
-    pub action_button: Interactive<ContainedText>,
+    pub option_button: Toggleable<Interactive<IconButton>>,
+    pub option_button_component: ToggleIconButtonStyle,
+    pub action_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
-    pub results_status: TextStyle,
+    pub major_results_status: TextStyle,
+    pub minor_results_status: TextStyle,
     pub dismiss_button: Interactive<IconButton>,
+    pub editor_icon: IconStyle,
+    pub mode_button: Toggleable<Interactive<ContainedText>>,
+    pub nav_button: Toggleable<Interactive<ContainedLabel>>,
+    pub search_bar_row_height: f32,
+    pub option_button_height: f32,
+    pub modes_container: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -880,10 +890,30 @@ pub struct Interactive<T> {
     pub disabled: Option<T>,
 }
 
+impl Interactive<()> {
+    pub fn new_blank() -> Self {
+        Self {
+            default: (),
+            hovered: None,
+            clicked: None,
+            disabled: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct Toggleable<T> {
     active: T,
     inactive: T,
+}
+
+impl Toggleable<()> {
+    pub fn new_blank() -> Self {
+        Self {
+            active: (),
+            inactive: (),
+        }
+    }
 }
 
 impl<T> Toggleable<T> {

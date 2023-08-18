@@ -7,7 +7,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
     Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    Task, View, ViewContext,
+    Task, TypeTag, View, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -61,11 +61,23 @@ impl<V: View> Tooltip<V> {
         child: AnyElement<V>,
         cx: &mut ViewContext<V>,
     ) -> Self {
-        struct ElementState<Tag>(Tag);
-        struct MouseEventHandlerState<Tag>(Tag);
+        Self::new_dynamic(TypeTag::new::<Tag>(), id, text, action, style, child, cx)
+    }
+
+    pub fn new_dynamic(
+        mut tag: TypeTag,
+        id: usize,
+        text: impl Into<Cow<'static, str>>,
+        action: Option<Box<dyn Action>>,
+        style: TooltipStyle,
+        child: AnyElement<V>,
+        cx: &mut ViewContext<V>,
+    ) -> Self {
+        tag = tag.compose(TypeTag::new::<Self>());
+
         let focused_view_id = cx.focused_view_id();
 
-        let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
+        let state_handle = cx.default_element_state_dynamic::<Rc<TooltipState>>(tag, id);
         let state = state_handle.read(cx).clone();
         let text = text.into();
 
@@ -95,7 +107,7 @@ impl<V: View> Tooltip<V> {
         } else {
             None
         };
-        let child = MouseEventHandler::new::<MouseEventHandlerState<Tag>, _>(id, cx, |_, _| child)
+        let child = MouseEventHandler::new_dynamic(tag, id, cx, |_, _| child)
             .on_hover(move |e, _, cx| {
                 let position = e.position;
                 if e.started {
