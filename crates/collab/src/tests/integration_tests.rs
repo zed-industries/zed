@@ -4,7 +4,7 @@ use crate::{
 };
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToggleCodeActions, Undo,
@@ -4820,15 +4820,16 @@ async fn test_project_search(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Perform a search as the guest.
-    let results = project_b
-        .update(cx_b, |project, cx| {
-            project.search(
-                SearchQuery::text("world", false, false, Vec::new(), Vec::new()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
+    let mut results = HashMap::default();
+    let mut search_rx = project_b.update(cx_b, |project, cx| {
+        project.search(
+            SearchQuery::text("world", false, false, Vec::new(), Vec::new()),
+            cx,
+        )
+    });
+    while let Some((buffer, ranges)) = search_rx.next().await {
+        results.entry(buffer).or_insert(ranges);
+    }
 
     let mut ranges_by_path = results
         .into_iter()

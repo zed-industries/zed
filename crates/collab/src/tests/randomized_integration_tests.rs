@@ -718,23 +718,13 @@ async fn apply_client_operation(
                 if detach { "detaching" } else { "awaiting" }
             );
 
-            let search = project.update(cx, |project, cx| {
+            let _ = project.update(cx, |project, cx| {
                 project.search(
                     SearchQuery::text(query, false, false, Vec::new(), Vec::new()),
                     cx,
                 )
             });
             drop(project);
-            let search = cx.background().spawn(async move {
-                search
-                    .await
-                    .map_err(|err| anyhow!("search request failed: {:?}", err))
-            });
-            if detach {
-                cx.update(|cx| search.detach_and_log_err(cx));
-            } else {
-                search.await?;
-            }
         }
 
         ClientOperation::WriteFsEntry {
