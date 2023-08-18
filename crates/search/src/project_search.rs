@@ -178,7 +178,7 @@ impl ProjectSearch {
                 });
 
                 while let Some(range) = ranges.next().await {
-                    this.update(&mut cx, |this, cx| this.match_ranges.push(range));
+                    this.update(&mut cx, |this, _| this.match_ranges.push(range));
                 }
                 this.update(&mut cx, |_, cx| cx.notify());
             }
@@ -194,56 +194,57 @@ impl ProjectSearch {
     }
 
     fn semantic_search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
-        unimplemented!()
-        //     let search = SemanticIndex::global(cx).map(|index| {
-        //         index.update(cx, |semantic_index, cx| {
-        //             semantic_index.search_project(
-        //                 self.project.clone(),
-        //                 query.as_str().to_owned(),
-        //                 10,
-        //                 query.files_to_include().to_vec(),
-        //                 query.files_to_exclude().to_vec(),
-        //                 cx,
-        //             )
-        //         })
-        //     });
-        //     self.search_id += 1;
-        //     self.match_ranges.clear();
-        //     self.search_history.add(query.as_str().to_string());
-        //     self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-        //         let results = search?.await.log_err()?;
+        let search = SemanticIndex::global(cx).map(|index| {
+            index.update(cx, |semantic_index, cx| {
+                semantic_index.search_project(
+                    self.project.clone(),
+                    query.as_str().to_owned(),
+                    10,
+                    query.files_to_include().to_vec(),
+                    query.files_to_exclude().to_vec(),
+                    cx,
+                )
+            })
+        });
+        self.search_id += 1;
+        self.match_ranges.clear();
+        self.search_history.add(query.as_str().to_string());
+        self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+            let results = search?.await.log_err()?;
+            let matches = results
+                .into_iter()
+                .map(|result| (result.buffer, vec![result.range.start..result.range.start]));
 
-        //         let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
-        //             this.excerpts.update(cx, |excerpts, cx| {
-        //                 excerpts.clear(cx);
+            this.update(&mut cx, |this, cx| {
+                this.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.clear(cx);
+                })
+            });
+            for (buffer, ranges) in matches {
+                let mut match_ranges = this.update(&mut cx, |this, cx| {
+                    this.excerpts.update(cx, |excerpts, cx| {
+                        excerpts.stream_excerpts_with_context_lines(buffer, ranges, 3, cx)
+                    })
+                });
+                while let Some(match_range) = match_ranges.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.match_ranges.push(match_range);
+                        while let Ok(Some(match_range)) = match_ranges.try_next() {
+                            this.match_ranges.push(match_range);
+                        }
+                        cx.notify();
+                    });
+                }
+            }
 
-        //                 let matches = results
-        //                     .into_iter()
-        //                     .map(|result| (result.buffer, vec![result.range.start..result.range.start]))
-        //                     .collect();
+            this.update(&mut cx, |this, cx| {
+                this.pending_search.take();
+                cx.notify();
+            });
 
-        //                 excerpts.stream_excerpts_with_context_lines(matches.0, matches.1, 3, cx)
-        //             })
-        //         });
-
-        //         while let Some(match_range) = match_ranges.next().await {
-        //             this.update(&mut cx, |this, cx| {
-        //                 this.match_ranges.push(match_range);
-        //                 while let Ok(Some(match_range)) = match_ranges.try_next() {
-        //                     this.match_ranges.push(match_range);
-        //                 }
-        //                 cx.notify();
-        //             });
-        //         }
-
-        //         this.update(&mut cx, |this, cx| {
-        //             this.pending_search.take();
-        //             cx.notify();
-        //         });
-
-        //         None
-        //     }));
-        //     cx.notify();
+            None
+        }));
+        cx.notify();
     }
 }
 
