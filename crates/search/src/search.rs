@@ -98,7 +98,7 @@ impl SearchOptions {
         .with_contents(Svg::new(self.icon()))
         .toggleable(active)
         .with_style(button_style)
-        .into_element()
+        .element()
         .into_any()
     }
 }
