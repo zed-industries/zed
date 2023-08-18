@@ -5018,7 +5018,6 @@ impl Project {
         if self.is_local() {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
-            unimplemented!();
             let (tx, rx) = smol::channel::unbounded();
             let request = self.client.request(query.to_proto(project_id));
             cx.spawn(|this, mut cx| async move {
