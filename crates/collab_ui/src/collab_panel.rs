@@ -86,7 +86,7 @@ impl_actions!(
     ]
 );
 
-const CHANNELS_PANEL_KEY: &'static str = "ChannelsPanel";
+const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
 pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     settings::register::<panel_settings::CollaborationPanelSettings>(cx);
@@ -464,7 +464,7 @@ impl CollabPanel {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background()
-                .spawn(async move { KEY_VALUE_STORE.read_kvp(CHANNELS_PANEL_KEY) })
+                .spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
@@ -493,7 +493,7 @@ impl CollabPanel {
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        CHANNELS_PANEL_KEY.into(),
+                        COLLABORATION_PANEL_KEY.into(),
                         serde_json::to_string(&SerializedChannelsPanel { width })?,
                     )
                     .await?;
