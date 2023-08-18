@@ -1,6 +1,7 @@
 use crate::{
     element::{
-        AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId, PaintContext,
+        AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId,
+        PaintContext, ParentElement,
     },
     style::{Style, StyleRefinement},
 };
@@ -65,13 +66,13 @@ impl<V: 'static> Element<V> for Frame<V> {
     }
 }
 
-impl<V: 'static> Frame<V> {
-    pub fn child(mut self, child: impl IntoElement<V>) -> Self {
+impl<V: 'static> ParentElement<V> for Frame<V> {
+    fn child(mut self, child: impl IntoElement<V>) -> Self {
         self.children.push(child.into_any_element());
         self
     }
 
-    pub fn children<I, E>(mut self, children: I) -> Self
+    fn children<I, E>(mut self, children: I) -> Self
     where
         I: IntoIterator<Item = E>,
         E: IntoElement<V>,

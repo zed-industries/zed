@@ -419,7 +419,7 @@ pub trait Element<V: 'static>: 'static {
         self
     }
 
-    fn hoverable(self) -> Hoverable<V, Self>
+    fn hover(self) -> Hoverable<V, Self>
     where
         Self: Sized,
     {
@@ -441,6 +441,18 @@ pub trait Element<V: 'static>: 'static {
         self.declared_style().text_color = Some(color.into());
         self
     }
+}
+
+pub trait ParentElement<V: 'static>: Element<V> {
+    fn child(self, child: impl IntoElement<V>) -> Self
+    where
+        Self: Sized;
+
+    fn children<I, E>(self, children: I) -> Self
+    where
+        Self: Sized,
+        I: IntoIterator<Item = E>,
+        E: IntoElement<V>;
 }
 
 // Object-safe counterpart of Element used by AnyElement to store elements as trait objects.
@@ -516,19 +528,6 @@ impl<V: 'static> AnyElement<V> {
         Ok(node_id)
     }
 
-    pub fn push_text_style<'a: 'b, 'b>(&mut self, cx: &mut impl RenderContext<'a, 'b, V>) -> bool {
-        let text_style = self
-            .element
-            .computed_style(cx.as_view_context())
-            .text_style();
-        if let Some(text_style) = text_style {
-            cx.push_text_style(cx.text_style().refined(&text_style));
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
         let pushed_text_style = self.push_text_style(cx);
 
@@ -585,6 +584,19 @@ impl<V: 'static> AnyElement<V> {
         }
 
         Ok(())
+    }
+
+    fn push_text_style<'a: 'b, 'b>(&mut self, cx: &mut impl RenderContext<'a, 'b, V>) -> bool {
+        let text_style = self
+            .element
+            .computed_style(cx.as_view_context())
+            .text_style();
+        if let Some(text_style) = text_style {
+            cx.push_text_style(cx.text_style().refined(&text_style));
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -1890,6 +1890,7 @@ impl AppContext {
 
     fn handle_repaint_window_effect(&mut self, window: AnyWindowHandle) {
         self.update_window(window, |cx| {
+            cx.layout(false).log_err();
             if let Some(scene) = cx.paint().log_err() {
                 cx.window.platform_window.present_scene(scene);
             }
@@ -3654,12 +3655,6 @@ impl<'a, 'b, 'c, V: 'static> EventContext<'a, 'b, 'c, V> {
 
     pub fn propagate_event(&mut self) {
         self.handled = false;
-    }
-
-    pub fn repaint(&mut self) {
-        let window = self.window();
-        self.pending_effects
-            .push_back(Effect::RepaintWindow { window });
     }
 }
 

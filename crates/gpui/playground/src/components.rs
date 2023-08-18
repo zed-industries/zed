@@ -1,5 +1,5 @@
 use crate::{
-    element::{Element, ElementMetadata},
+    element::{Element, ElementMetadata, ParentElement},
     frame,
     text::ArcCow,
     themes::rose_pine,

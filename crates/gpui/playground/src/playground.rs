@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_variables)]
 use color::black;
 use components::button;
-use element::Element;
+use element::{Element, ParentElement};
 use frame::frame;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
@@ -50,6 +50,8 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_half()
         .fill(theme.success(0.5))
+        .hover()
+        .fill(theme.error(0.5))
         .child(button().label("Hello").click(|_, _, _| println!("click!")))
 }
 

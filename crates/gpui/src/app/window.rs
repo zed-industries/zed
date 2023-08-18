@@ -220,6 +220,12 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    pub fn repaint(&mut self) {
+        let window = self.window();
+        self.pending_effects
+            .push_back(Effect::RepaintWindow { window });
+    }
+
     pub fn layout_engine(&mut self) -> Option<&mut LayoutEngine> {
         self.window.layout_engines.last_mut()
     }
