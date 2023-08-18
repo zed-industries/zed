@@ -1,56 +1,47 @@
-mod access_token;
-mod channel;
-mod channel_member;
-mod channel_path;
-mod contact;
-mod follower;
-mod language_server;
-mod project;
-mod project_collaborator;
-mod room;
-mod room_participant;
-mod server;
-mod signup;
 #[cfg(test)]
-mod tests;
-mod user;
-mod worktree;
-mod worktree_diagnostic_summary;
-mod worktree_entry;
-mod worktree_repository;
-mod worktree_repository_statuses;
-mod worktree_settings_file;
+mod db_tests;
+mod ids;
+mod tables;
+#[cfg(test)]
+pub mod test_db;
 
 use crate::executor::Executor;
 use crate::{Error, Result};
 use anyhow::anyhow;
 use collections::{BTreeMap, HashMap, HashSet};
-pub use contact::Contact;
 use dashmap::DashMap;
 use futures::StreamExt;
 use hyper::StatusCode;
 use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rpc::{proto, ConnectionId};
-use sea_orm::Condition;
-pub use sea_orm::ConnectOptions;
 use sea_orm::{
-    entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect,
-    Statement, TransactionTrait,
+    entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,
+    QueryOrder, QuerySelect, Statement, TransactionTrait,
 };
 use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
-pub use signup::{Invite, NewSignup, WaitlistSummary};
-use sqlx::migrate::{Migrate, Migration, MigrationSource};
-use sqlx::Connection;
-use std::fmt::Write as _;
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::time::Duration;
-use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc};
+use sqlx::{
+    migrate::{Migrate, Migration, MigrationSource},
+    Connection,
+};
+use std::{
+    fmt::Write as _,
+    future::Future,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
+use tables::*;
 use tokio::sync::{Mutex, OwnedMutexGuard};
-pub use user::Model as User;
+
+pub use ids::*;
+pub use sea_orm::ConnectOptions;
+pub use tables::user::Model as User;
 
 pub struct Database {
     options: ConnectOptions,
@@ -4083,6 +4074,60 @@ impl<T> RoomGuard<T> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Contact {
+    Accepted {
+        user_id: UserId,
+        should_notify: bool,
+        busy: bool,
+    },
+    Outgoing {
+        user_id: UserId,
+    },
+    Incoming {
+        user_id: UserId,
+        should_notify: bool,
+    },
+}
+
+impl Contact {
+    pub fn user_id(&self) -> UserId {
+        match self {
+            Contact::Accepted { user_id, .. } => *user_id,
+            Contact::Outgoing { user_id } => *user_id,
+            Contact::Incoming { user_id, .. } => *user_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
+pub struct Invite {
+    pub email_address: String,
+    pub email_confirmation_code: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NewSignup {
+    pub email_address: String,
+    pub platform_mac: bool,
+    pub platform_windows: bool,
+    pub platform_linux: bool,
+    pub editor_features: Vec<String>,
+    pub programming_languages: Vec<String>,
+    pub device_id: Option<String>,
+    pub added_to_mailing_list: bool,
+    pub created_at: Option<DateTime>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromQueryResult)]
+pub struct WaitlistSummary {
+    pub count: i64,
+    pub linux_count: i64,
+    pub mac_count: i64,
+    pub windows_count: i64,
+    pub unknown_count: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUserParams {
     pub github_login: String,
@@ -4119,139 +4164,6 @@ fn random_invite_code() -> String {
 fn random_email_confirmation_code() -> String {
     nanoid::nanoid!(64)
 }
-
-macro_rules! id_type {
-    ($name:ident) => {
-        #[derive(
-            Clone,
-            Copy,
-            Debug,
-            Default,
-            PartialEq,
-            Eq,
-            PartialOrd,
-            Ord,
-            Hash,
-            Serialize,
-            Deserialize,
-        )]
-        #[serde(transparent)]
-        pub struct $name(pub i32);
-
-        impl $name {
-            #[allow(unused)]
-            pub const MAX: Self = Self(i32::MAX);
-
-            #[allow(unused)]
-            pub fn from_proto(value: u64) -> Self {
-                Self(value as i32)
-            }
-
-            #[allow(unused)]
-            pub fn to_proto(self) -> u64 {
-                self.0 as u64
-            }
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl From<$name> for sea_query::Value {
-            fn from(value: $name) -> Self {
-                sea_query::Value::Int(Some(value.0))
-            }
-        }
-
-        impl sea_orm::TryGetable for $name {
-            fn try_get(
-                res: &sea_orm::QueryResult,
-                pre: &str,
-                col: &str,
-            ) -> Result<Self, sea_orm::TryGetError> {
-                Ok(Self(i32::try_get(res, pre, col)?))
-            }
-        }
-
-        impl sea_query::ValueType for $name {
-            fn try_from(v: Value) -> Result<Self, sea_query::ValueTypeErr> {
-                match v {
-                    Value::TinyInt(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::SmallInt(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::Int(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::BigInt(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::TinyUnsigned(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::SmallUnsigned(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::Unsigned(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    Value::BigUnsigned(Some(int)) => {
-                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
-                    }
-                    _ => Err(sea_query::ValueTypeErr),
-                }
-            }
-
-            fn type_name() -> String {
-                stringify!($name).into()
-            }
-
-            fn array_type() -> sea_query::ArrayType {
-                sea_query::ArrayType::Int
-            }
-
-            fn column_type() -> sea_query::ColumnType {
-                sea_query::ColumnType::Integer(None)
-            }
-        }
-
-        impl sea_orm::TryFromU64 for $name {
-            fn try_from_u64(n: u64) -> Result<Self, DbErr> {
-                Ok(Self(n.try_into().map_err(|_| {
-                    DbErr::ConvertFromU64(concat!(
-                        "error converting ",
-                        stringify!($name),
-                        " to u64"
-                    ))
-                })?))
-            }
-        }
-
-        impl sea_query::Nullable for $name {
-            fn null() -> Value {
-                Value::Int(None)
-            }
-        }
-    };
-}
-
-id_type!(AccessTokenId);
-id_type!(ChannelId);
-id_type!(ChannelMemberId);
-id_type!(ContactId);
-id_type!(FollowerId);
-id_type!(RoomId);
-id_type!(RoomParticipantId);
-id_type!(ProjectId);
-id_type!(ProjectCollaboratorId);
-id_type!(ReplicaId);
-id_type!(ServerId);
-id_type!(SignupId);
-id_type!(UserId);
 
 #[derive(Clone)]
 pub struct JoinRoom {
@@ -4369,131 +4281,4 @@ pub struct WorktreeSettingsFile {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 enum QueryUserIds {
     UserId,
-}
-
-#[cfg(test)]
-pub use test::*;
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use gpui::executor::Background;
-    use parking_lot::Mutex;
-    use sea_orm::ConnectionTrait;
-    use sqlx::migrate::MigrateDatabase;
-    use std::sync::Arc;
-
-    pub struct TestDb {
-        pub db: Option<Arc<Database>>,
-        pub connection: Option<sqlx::AnyConnection>,
-    }
-
-    impl TestDb {
-        pub fn sqlite(background: Arc<Background>) -> Self {
-            let url = format!("sqlite::memory:");
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-
-            let mut db = runtime.block_on(async {
-                let mut options = ConnectOptions::new(url);
-                options.max_connections(5);
-                let db = Database::new(options, Executor::Deterministic(background))
-                    .await
-                    .unwrap();
-                let sql = include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/migrations.sqlite/20221109000000_test_schema.sql"
-                ));
-                db.pool
-                    .execute(sea_orm::Statement::from_string(
-                        db.pool.get_database_backend(),
-                        sql.into(),
-                    ))
-                    .await
-                    .unwrap();
-                db
-            });
-
-            db.runtime = Some(runtime);
-
-            Self {
-                db: Some(Arc::new(db)),
-                connection: None,
-            }
-        }
-
-        pub fn postgres(background: Arc<Background>) -> Self {
-            static LOCK: Mutex<()> = Mutex::new(());
-
-            let _guard = LOCK.lock();
-            let mut rng = StdRng::from_entropy();
-            let url = format!(
-                "postgres://postgres@localhost/zed-test-{}",
-                rng.gen::<u128>()
-            );
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-
-            let mut db = runtime.block_on(async {
-                sqlx::Postgres::create_database(&url)
-                    .await
-                    .expect("failed to create test db");
-                let mut options = ConnectOptions::new(url);
-                options
-                    .max_connections(5)
-                    .idle_timeout(Duration::from_secs(0));
-                let db = Database::new(options, Executor::Deterministic(background))
-                    .await
-                    .unwrap();
-                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
-                db.migrate(Path::new(migrations_path), false).await.unwrap();
-                db
-            });
-
-            db.runtime = Some(runtime);
-
-            Self {
-                db: Some(Arc::new(db)),
-                connection: None,
-            }
-        }
-
-        pub fn db(&self) -> &Arc<Database> {
-            self.db.as_ref().unwrap()
-        }
-    }
-
-    impl Drop for TestDb {
-        fn drop(&mut self) {
-            let db = self.db.take().unwrap();
-            if let sea_orm::DatabaseBackend::Postgres = db.pool.get_database_backend() {
-                db.runtime.as_ref().unwrap().block_on(async {
-                    use util::ResultExt;
-                    let query = "
-                        SELECT pg_terminate_backend(pg_stat_activity.pid)
-                        FROM pg_stat_activity
-                        WHERE
-                            pg_stat_activity.datname = current_database() AND
-                            pid <> pg_backend_pid();
-                    ";
-                    db.pool
-                        .execute(sea_orm::Statement::from_string(
-                            db.pool.get_database_backend(),
-                            query.into(),
-                        ))
-                        .await
-                        .log_err();
-                    sqlx::Postgres::drop_database(db.options.get_url())
-                        .await
-                        .log_err();
-                })
-            }
-        }
-    }
 }

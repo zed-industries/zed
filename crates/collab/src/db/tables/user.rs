@@ -1,4 +1,4 @@
-use super::UserId;
+use crate::db::UserId;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 

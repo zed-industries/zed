@@ -1,9 +1,8 @@
-use super::{FollowerId, ProjectId, RoomId, ServerId};
+use crate::db::{FollowerId, ProjectId, RoomId, ServerId};
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
-use serde::Serialize;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "followers")]
 pub struct Model {
     #[sea_orm(primary_key)]
