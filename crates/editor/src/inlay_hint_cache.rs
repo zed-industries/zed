@@ -13,7 +13,7 @@ use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
 use parking_lot::RwLock;
-use project::InlayHint;
+use project::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
@@ -60,7 +60,7 @@ struct ExcerptHintsUpdate {
     excerpt_id: ExcerptId,
     remove_from_visible: Vec<InlayId>,
     remove_from_cache: HashSet<InlayId>,
-    add_to_cache: HashSet<InlayHint>,
+    add_to_cache: Vec<InlayHint>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -409,6 +409,79 @@ impl InlayHintCache {
     pub fn version(&self) -> usize {
         self.version
     }
+
+    pub fn spawn_hint_resolve(
+        &self,
+        buffer_id: u64,
+        excerpt_id: ExcerptId,
+        id: InlayId,
+        cx: &mut ViewContext<'_, '_, Editor>,
+    ) {
+        if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
+            let mut guard = excerpt_hints.write();
+            if let Some(cached_hint) = guard
+                .hints
+                .iter_mut()
+                .find(|(hint_id, _)| hint_id == &id)
+                .map(|(_, hint)| hint)
+            {
+                if let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state {
+                    let hint_to_resolve = cached_hint.clone();
+                    let server_id = *server_id;
+                    cached_hint.resolve_state = ResolveState::Resolving;
+                    drop(guard);
+                    cx.spawn(|editor, mut cx| async move {
+                        let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
+                            editor
+                                .buffer()
+                                .read(cx)
+                                .buffer(buffer_id)
+                                .and_then(|buffer| {
+                                    let project = editor.project.as_ref()?;
+                                    Some(project.update(cx, |project, cx| {
+                                        project.resolve_inlay_hint(
+                                            hint_to_resolve,
+                                            buffer,
+                                            server_id,
+                                            cx,
+                                        )
+                                    }))
+                                })
+                        })?;
+                        if let Some(resolved_hint_task) = resolved_hint_task {
+                            if let Some(mut resolved_hint) =
+                                resolved_hint_task.await.context("hint resolve task")?
+                            {
+                                editor.update(&mut cx, |editor, _| {
+                                    if let Some(excerpt_hints) =
+                                        editor.inlay_hint_cache.hints.get(&excerpt_id)
+                                    {
+                                        let mut guard = excerpt_hints.write();
+                                        if let Some(cached_hint) = guard
+                                            .hints
+                                            .iter_mut()
+                                            .find(|(hint_id, _)| hint_id == &id)
+                                            .map(|(_, hint)| hint)
+                                        {
+                                            if cached_hint.resolve_state == ResolveState::Resolving
+                                            {
+                                                resolved_hint.resolve_state =
+                                                    ResolveState::Resolved;
+                                                *cached_hint = resolved_hint;
+                                            }
+                                        }
+                                    }
+                                })?;
+                            }
+                        }
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+        }
+    }
 }
 
 fn spawn_new_update_tasks(
@@ -632,7 +705,7 @@ fn calculate_hint_updates(
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     visible_hints: &[Inlay],
 ) -> Option<ExcerptHintsUpdate> {
-    let mut add_to_cache: HashSet<InlayHint> = HashSet::default();
+    let mut add_to_cache = Vec::<InlayHint>::new();
     let mut excerpt_hints_to_persist = HashMap::default();
     for new_hint in new_excerpt_hints {
         if !contains_position(&fetch_range, new_hint.position, buffer_snapshot) {
@@ -659,7 +732,7 @@ fn calculate_hint_updates(
             None => true,
         };
         if missing_from_cache {
-            add_to_cache.insert(new_hint);
+            add_to_cache.push(new_hint);
         }
     }
 

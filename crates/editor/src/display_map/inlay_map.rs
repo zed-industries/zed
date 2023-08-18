@@ -1125,7 +1125,6 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    buffer_id: 0,
                     position: text::Anchor::default(),
                     padding_left: false,
                     padding_right: false,
@@ -1146,7 +1145,6 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    buffer_id: 0,
                     position: text::Anchor::default(),
                     padding_left: true,
                     padding_right: true,
@@ -1167,7 +1165,6 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    buffer_id: 0,
                     position: text::Anchor::default(),
                     padding_left: false,
                     padding_right: false,
@@ -1188,7 +1185,6 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    buffer_id: 0,
                     position: text::Anchor::default(),
                     padding_left: true,
                     padding_right: true,
