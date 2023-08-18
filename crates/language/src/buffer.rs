@@ -2987,7 +2987,7 @@ pub fn contiguous_ranges(
 pub fn char_kind(c: char) -> CharKind {
     if c.is_whitespace() {
         CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
+    } else if c.is_alphanumeric() || c == '_' || c == '$' {
         CharKind::Word
     } else {
         CharKind::Punctuation
