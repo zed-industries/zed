@@ -15,7 +15,10 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
+use lsp::{
+    CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    ServerCapabilities,
+};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
@@ -1341,10 +1344,16 @@ impl LspCommand for GetCompletions {
         server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
+        let mut response_list = None;
         let completions = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
-                lsp::CompletionResponse::List(list) => list.items,
+
+                lsp::CompletionResponse::List(mut list) => {
+                    let items = std::mem::take(&mut list.items);
+                    response_list = Some(list);
+                    items
+                }
             }
         } else {
             Default::default()
@@ -1354,6 +1363,7 @@ impl LspCommand for GetCompletions {
             let language = buffer.language().cloned();
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
+
             let mut range_for_token = None;
             completions
                 .into_iter()
@@ -1374,6 +1384,7 @@ impl LspCommand for GetCompletions {
                                 edit.new_text.clone(),
                             )
                         }
+
                         // If the language server does not provide a range, then infer
                         // the range based on the syntax tree.
                         None => {
@@ -1381,27 +1392,51 @@ impl LspCommand for GetCompletions {
                                 log::info!("completion out of expected range");
                                 return None;
                             }
-                            let Range { start, end } = range_for_token
-                                .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(offset);
-                                    if kind == Some(CharKind::Word) {
-                                        range
-                                    } else {
-                                        offset..offset
-                                    }
-                                })
-                                .clone();
+
+                            let default_edit_range = response_list
+                                .as_ref()
+                                .and_then(|list| list.item_defaults.as_ref())
+                                .and_then(|defaults| defaults.edit_range.as_ref())
+                                .and_then(|range| match range {
+                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
+                                    _ => None,
+                                });
+
+                            let range = if let Some(range) = default_edit_range {
+                                let range = range_from_lsp(range.clone());
+                                let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                                if start != range.start.0 || end != range.end.0 {
+                                    log::info!("completion out of expected range");
+                                    return None;
+                                }
+
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
+                            } else {
+                                range_for_token
+                                    .get_or_insert_with(|| {
+                                        let offset = self.position.to_offset(&snapshot);
+                                        let (range, kind) = snapshot.surrounding_word(offset);
+                                        let range = if kind == Some(CharKind::Word) {
+                                            range
+                                        } else {
+                                            offset..offset
+                                        };
+
+                                        snapshot.anchor_before(range.start)
+                                            ..snapshot.anchor_after(range.end)
+                                    })
+                                    .clone()
+                            };
+
                             let text = lsp_completion
                                 .insert_text
                                 .as_ref()
                                 .unwrap_or(&lsp_completion.label)
                                 .clone();
-                            (
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                text,
-                            )
+                            (range, text)
                         }
+
                         Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                             log::info!("unsupported insert/replace completion");
                             return None;

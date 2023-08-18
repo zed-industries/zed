@@ -423,6 +423,14 @@ impl LanguageServer {
                             }),
                             ..Default::default()
                         }),
+                        completion_list: Some(CompletionListCapability {
+                            item_defaults: Some(vec![
+                                "commitCharacters".to_owned(),
+                                "editRange".to_owned(),
+                                "insertTextMode".to_owned(),
+                                "data".to_owned(),
+                            ]),
+                        }),
                         ..Default::default()
                     }),
                     rename: Some(RenameClientCapabilities {
