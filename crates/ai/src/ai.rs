@@ -1,5 +1,6 @@
 pub mod assistant;
 mod assistant_settings;
+mod refactor;
 
 use anyhow::Result;
 pub use assistant::AssistantPanel;
