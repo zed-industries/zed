@@ -21,9 +21,12 @@
         "dll": "storage",
         "doc": "document",
         "docx": "document",
+        "eex": "elixir",
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
+        "ex": "elixir",
+        "exs": "elixir",
         "fish": "terminal",
         "flac": "audio",
         "fmp": "storage",
@@ -38,6 +41,7 @@
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
+        "heex": "elixir",
         "htm": "template",
         "html": "template",
         "ib": "storage",
@@ -127,6 +131,9 @@
         "document": {
             "icon": "icons/file_icons/book.svg"
         },
+        "elixir": {
+            "icon": "icons/file_icons/elixir.svg"
+        },
         "eslint": {
             "icon": "icons/file_icons/eslint.svg"
         },
@@ -144,6 +151,9 @@
         },
         "log": {
             "icon": "icons/file_icons/info.svg"
+        },
+        "phoenix": {
+            "icon": "icons/file_icons/phoenix.svg"
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
