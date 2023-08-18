@@ -22,9 +22,11 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
     editor.window().update(cx, |cx| {
         Vim::update(cx, |vim, cx| {
             vim.set_active_editor(editor.clone(), cx);
-            cx.emit_global(VimEvent::ModeChanged {
-                mode: vim.state().mode,
-            });
+            if vim.enabled {
+                cx.emit_global(VimEvent::ModeChanged {
+                    mode: vim.state().mode,
+                });
+            }
         });
     });
 }
