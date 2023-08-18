@@ -2404,7 +2404,10 @@ impl Panel for CollabPanel {
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
-        ("Collaboration Panel".to_string(), Some(Box::new(ToggleFocus)))
+        (
+            "Collaboration Panel".to_string(),
+            Some(Box::new(ToggleFocus)),
+        )
     }
 
     fn should_change_position_on_event(event: &Self::Event) -> bool {
