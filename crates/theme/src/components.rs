@@ -175,13 +175,8 @@ pub mod action_button {
             .on_click(MouseButton::Left, {
                 let action = self.action.boxed_clone();
                 move |_, _, cx| {
-                    let window = cx.window();
-                    let view = cx.view_id();
-                    let action = action.boxed_clone();
-                    cx.spawn(|_, mut cx| async move {
-                        window.dispatch_action(view, action.as_ref(), &mut cx);
-                    })
-                    .detach();
+                    cx.window()
+                        .dispatch_action(cx.view_id(), action.as_ref(), cx);
                 }
             })
             .with_cursor_style(CursorStyle::PointingHand)
