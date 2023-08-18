@@ -8,7 +8,9 @@ use gpui::{
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use theme::components::{action_button::ActionButton, ComponentExt, ToggleIconButtonStyle};
+use theme::components::{
+    action_button::ActionButton, svg::Svg, ComponentExt, ToggleIconButtonStyle,
+};
 
 pub mod buffer_search;
 mod history;
@@ -33,7 +35,6 @@ actions!(
         NextHistoryQuery,
         PreviousHistoryQuery,
         ActivateTextMode,
-        ActivateSemanticMode,
         ActivateRegexMode
     ]
 );
@@ -94,7 +95,7 @@ impl SearchOptions {
             format!("Toggle {}", self.label()),
             tooltip_style,
         )
-        .with_contents(theme::components::svg::Svg::new(self.icon()))
+        .with_contents(Svg::new(self.icon()))
         .toggleable(active)
         .with_style(button_style)
         .into_element()

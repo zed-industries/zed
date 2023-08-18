@@ -286,10 +286,6 @@ impl Pane {
         context_menu.update(cx, |menu, _| {
             menu.set_position_mode(OverlayPositionMode::Local)
         });
-        let theme = theme::current(cx).workspace.tab_bar.clone();
-
-        let nav_button_height = theme.height;
-        let button_style = theme.nav_button;
 
         Self {
             items: Vec::new(),

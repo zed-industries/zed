@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
 use crate::{
@@ -52,22 +50,26 @@ impl<V: View, C: GeneralComponent> Component<V> for C {
     }
 }
 
-pub struct ComponentAdapter<V, E> {
+pub struct ComponentAdapter<V: View, E> {
     component: Option<E>,
-    phantom: PhantomData<V>,
+    element: Option<AnyElement<V>>,
+    #[cfg(debug_assertions)]
+    _component_name: &'static str,
 }
 
-impl<E, V> ComponentAdapter<V, E> {
+impl<E, V: View> ComponentAdapter<V, E> {
     pub fn new(e: E) -> Self {
         Self {
             component: Some(e),
-            phantom: PhantomData,
+            element: None,
+            #[cfg(debug_assertions)]
+            _component_name: std::any::type_name::<E>(),
         }
     }
 }
 
 impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
-    type LayoutState = AnyElement<V>;
+    type LayoutState = ();
 
     type PaintState = ();
 
@@ -77,10 +79,12 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let component = self.component.take().unwrap();
-        let mut element = component.render(view, cx.view_context());
-        let constraint = element.layout(constraint, view, cx);
-        (constraint, element)
+        if self.element.is_none() {
+            let component = self.component.take().unwrap();
+            self.element = Some(component.render(view, cx.view_context()));
+        }
+        let constraint = self.element.as_mut().unwrap().layout(constraint, view, cx);
+        (constraint, ())
     }
 
     fn paint(
@@ -88,11 +92,14 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
+        _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        layout.paint(scene, bounds.origin(), visible_bounds, view, cx)
+        self.element
+            .as_mut()
+            .unwrap()
+            .paint(scene, bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(
@@ -100,25 +107,35 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         range_utf16: std::ops::Range<usize>,
         _: RectF,
         _: RectF,
-        element: &Self::LayoutState,
+        _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        element.rect_for_text_range(range_utf16, view, cx)
+        self.element
+            .as_ref()
+            .unwrap()
+            .rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
         &self,
         _: RectF,
-        element: &Self::LayoutState,
+        _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
         cx: &ViewContext<V>,
     ) -> serde_json::Value {
+        #[cfg(debug_assertions)]
+        let component_name = self._component_name;
+
+        #[cfg(not(debug_assertions))]
+        let component_name = "Unknown";
+
         serde_json::json!({
             "type": "ComponentAdapter",
-            "child": element.debug(view, cx),
+            "child": self.element.as_ref().unwrap().debug(view, cx),
+            "component_name": component_name
         })
     }
 }
