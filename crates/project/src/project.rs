@@ -5046,7 +5046,8 @@ impl Project {
                     tx.send((buffer, ranges));
                 }
                 Result::<(), anyhow::Error>::Ok(())
-            });
+            })
+            .detach_and_log_err(cx);
             rx
         } else {
             unimplemented!();
