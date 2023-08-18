@@ -241,7 +241,7 @@ impl View for ProjectSearchView {
             let major_text = if model.pending_search.is_some() {
                 Cow::Borrowed("Searching...")
             } else if model.no_results.is_some_and(|v| v) {
-                Cow::Borrowed("No Results...")
+                Cow::Borrowed("No Results")
             } else {
                 match current_mode {
                     SearchMode::Text => Cow::Borrowed("Text search all files and folders"),
@@ -552,23 +552,20 @@ impl ProjectSearchView {
     }
 
     fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
-        self.clear_search(cx);
-
         let previous_mode = self.current_mode;
         if previous_mode == mode {
             return;
         }
 
+        self.clear_search(cx);
         self.current_mode = mode;
+        self.active_match_index = None;
 
-        match mode {
-            SearchMode::Regex | SearchMode::Text => {
-                self.active_match_index = None;
-            }
-        }
+        self.search(cx);
 
         cx.notify();
     }
+
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
         let project;
         let excerpts;
@@ -951,6 +948,7 @@ impl ProjectSearchBar {
             search_view.update(cx, |this, cx| {
                 let new_mode = crate::mode::next_mode(&this.current_mode);
                 this.activate_search_mode(new_mode, cx);
+                cx.focus(&this.query_editor);
             })
         }
     }
@@ -1062,8 +1060,9 @@ impl ProjectSearchBar {
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, _cx| {
+            search_view.update(cx, |search_view, cx| {
                 search_view.toggle_search_option(option);
+                search_view.search(cx);
             });
             cx.notify();
             true
