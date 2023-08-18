@@ -4,7 +4,7 @@ use super::{
     MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, InlayPoint, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, InlayOffset, TransformBlock},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
@@ -287,13 +287,13 @@ impl EditorElement {
             return false;
         }
 
-        let (position, target_position) = position_map.point_for_position(text_bounds, position);
-
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        let position = point_for_position.previous_valid;
         if shift && alt {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    goal_column: target_position.column(),
+                    goal_column: point_for_position.exact_unclipped.column(),
                 },
                 cx,
             );
@@ -329,9 +329,13 @@ impl EditorElement {
         if !text_bounds.contains_point(position) {
             return false;
         }
-
-        let (point, _) = position_map.point_for_position(text_bounds, position);
-        mouse_context_menu::deploy_context_menu(editor, position, point, cx);
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        mouse_context_menu::deploy_context_menu(
+            editor,
+            position,
+            point_for_position.previous_valid,
+            cx,
+        );
         true
     }
 
@@ -353,9 +357,10 @@ impl EditorElement {
         }
 
         if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-
-            if point == target_point {
+            if let Some(point) = position_map
+                .point_for_position(text_bounds, position)
+                .as_valid()
+            {
                 if shift {
                     go_to_fetched_type_definition(editor, point, alt, cx);
                 } else {
@@ -383,12 +388,9 @@ impl EditorElement {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = if text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-            if point == target_point {
-                Some(point)
-            } else {
-                None
-            }
+            position_map
+                .point_for_position(text_bounds, position)
+                .as_valid()
         } else {
             None
         };
@@ -422,13 +424,12 @@ impl EditorElement {
                 ))
             }
 
-            let (position, target_position) =
-                position_map.point_for_position(text_bounds, position);
+            let point_for_position = position_map.point_for_position(text_bounds, position);
 
             editor.select(
                 SelectPhase::Update {
-                    position,
-                    goal_column: target_position.column(),
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
                     scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
                         .clamp(Vector2F::zero(), position_map.scroll_max),
                 },
@@ -456,59 +457,74 @@ impl EditorElement {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_bounds.contains_point(position) {
-            let (nearest_valid_position, unclipped_position) =
-                position_map.point_for_position(text_bounds, position);
-            if nearest_valid_position == unclipped_position {
-                update_go_to_definition_link(editor, Some(nearest_valid_position), cmd, shift, cx);
-                hover_at(editor, Some(nearest_valid_position), cx);
+            let point_for_position = position_map.point_for_position(text_bounds, position);
+            if let Some(point) = point_for_position.as_valid() {
+                update_go_to_definition_link(editor, Some(point), cmd, shift, cx);
+                hover_at(editor, Some(point), cx);
                 return true;
             } else {
-                let buffer = editor.buffer().read(cx);
-                let snapshot = buffer.snapshot(cx);
-                let previous_valid_position = position_map
+                let hint_start_offset = position_map
                     .snapshot
-                    .clip_point(unclipped_position, Bias::Left)
-                    .to_point(&position_map.snapshot.display_snapshot);
-                let previous_valid_anchor = snapshot.anchor_at(previous_valid_position, Bias::Left);
-                let next_valid_position = position_map
+                    .display_point_to_inlay_offset(point_for_position.previous_valid, Bias::Left);
+                let hint_end_offset = position_map
                     .snapshot
-                    .clip_point(unclipped_position, Bias::Right)
-                    .to_point(&position_map.snapshot.display_snapshot);
-                let next_valid_anchor = snapshot.anchor_at(next_valid_position, Bias::Right);
-                if let Some(hovered_hint) = editor
-                    .visible_inlay_hints(cx)
-                    .into_iter()
-                    .skip_while(|hint| hint.position.cmp(&previous_valid_anchor, &snapshot).is_lt())
-                    .take_while(|hint| hint.position.cmp(&next_valid_anchor, &snapshot).is_le())
-                    .max_by_key(|hint| hint.id)
-                {
-                    if let Some(cached_hint) = editor
-                        .inlay_hint_cache()
-                        .hint_by_id(previous_valid_anchor.excerpt_id, hovered_hint.id)
+                    .display_point_to_inlay_offset(point_for_position.next_valid, Bias::Right);
+                let offset_overshoot = point_for_position.column_overshoot_after_line_end as usize;
+                let hovered_offset = if offset_overshoot == 0 {
+                    Some(position_map.snapshot.display_point_to_inlay_offset(
+                        point_for_position.exact_unclipped,
+                        Bias::Left,
+                    ))
+                } else if (hint_end_offset - hint_start_offset).0 >= offset_overshoot {
+                    Some(InlayOffset(hint_start_offset.0 + offset_overshoot))
+                } else {
+                    None
+                };
+                if let Some(hovered_offset) = hovered_offset {
+                    let buffer = editor.buffer().read(cx);
+                    let snapshot = buffer.snapshot(cx);
+                    let previous_valid_anchor = snapshot.anchor_at(
+                        point_for_position
+                            .previous_valid
+                            .to_point(&position_map.snapshot.display_snapshot),
+                        Bias::Left,
+                    );
+                    let next_valid_anchor = snapshot.anchor_at(
+                        point_for_position
+                            .next_valid
+                            .to_point(&position_map.snapshot.display_snapshot),
+                        Bias::Right,
+                    );
+                    if let Some(hovered_hint) = editor
+                        .visible_inlay_hints(cx)
+                        .into_iter()
+                        .skip_while(|hint| {
+                            hint.position.cmp(&previous_valid_anchor, &snapshot).is_lt()
+                        })
+                        .take_while(|hint| hint.position.cmp(&next_valid_anchor, &snapshot).is_le())
+                        .max_by_key(|hint| hint.id)
                     {
-                        match &cached_hint.label {
-                            project::InlayHintLabel::String(regular_label) => {
-                                // TODO kb remove + check for tooltip for hover and resolve, if needed
-                                eprintln!("regular string: {regular_label}");
-                            }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
-                                // TODO kb how to properly convert it?
-                                let unclipped_inlay_position = InlayPoint::new(
-                                    unclipped_position.row(),
-                                    unclipped_position.column(),
-                                );
-                                if let Some(hovered_hint_part) = find_hovered_hint_part(
-                                    &position_map.snapshot,
-                                    &label_parts,
-                                    previous_valid_position,
-                                    next_valid_position,
-                                    unclipped_inlay_position,
-                                ) {
-                                    // TODO kb remove + check for tooltip and location and resolve, if needed
-                                    eprintln!("hint_part: {hovered_hint_part:?}");
+                        if let Some(cached_hint) = editor
+                            .inlay_hint_cache()
+                            .hint_by_id(previous_valid_anchor.excerpt_id, hovered_hint.id)
+                        {
+                            match &cached_hint.label {
+                                project::InlayHintLabel::String(regular_label) => {
+                                    // TODO kb remove + check for tooltip for hover and resolve, if needed
+                                    eprintln!("regular string: {regular_label}");
                                 }
-                            }
-                        };
+                                project::InlayHintLabel::LabelParts(label_parts) => {
+                                    if let Some(hovered_hint_part) = find_hovered_hint_part(
+                                        &label_parts,
+                                        hint_start_offset..hint_end_offset,
+                                        hovered_offset,
+                                    ) {
+                                        // TODO kb remove + check for tooltip and location and resolve, if needed
+                                        eprintln!("hint_part: {hovered_hint_part:?}");
+                                    }
+                                }
+                            };
+                        }
                     }
                 }
             }
@@ -1861,27 +1877,12 @@ impl EditorElement {
 }
 
 fn find_hovered_hint_part<'a>(
-    snapshot: &EditorSnapshot,
     label_parts: &'a [InlayHintLabelPart],
-    hint_start: Point,
-    hint_end: Point,
-    hovered_position: InlayPoint,
+    hint_range: Range<InlayOffset>,
+    hovered_offset: InlayOffset,
 ) -> Option<&'a InlayHintLabelPart> {
-    let hint_start_offset =
-        snapshot.display_point_to_inlay_offset(hint_start.to_display_point(&snapshot), Bias::Left);
-    let hint_end_offset =
-        snapshot.display_point_to_inlay_offset(hint_end.to_display_point(&snapshot), Bias::Right);
-    dbg!((
-        "~~~~~~~~~",
-        hint_start,
-        hint_start_offset,
-        hint_end,
-        hint_end_offset,
-        hovered_position
-    ));
-    let hovered_offset = snapshot.inlay_point_to_inlay_offset(hovered_position);
-    if hovered_offset >= hint_start_offset && hovered_offset <= hint_end_offset {
-        let mut hovered_character = (hovered_offset - hint_start_offset).0;
+    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
+        let mut hovered_character = (hovered_offset - hint_range.start).0;
         for part in label_parts {
             let part_len = part.value.chars().count();
             if hovered_character >= part_len {
@@ -2722,22 +2723,32 @@ struct PositionMap {
     snapshot: EditorSnapshot,
 }
 
+#[derive(Debug)]
+struct PointForPosition {
+    previous_valid: DisplayPoint,
+    next_valid: DisplayPoint,
+    exact_unclipped: DisplayPoint,
+    column_overshoot_after_line_end: u32,
+}
+
+impl PointForPosition {
+    fn as_valid(&self) -> Option<DisplayPoint> {
+        if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
+            Some(self.previous_valid)
+        } else {
+            None
+        }
+    }
+}
+
 impl PositionMap {
-    /// Returns two display points:
-    /// 1. The nearest *valid* position in the editor
-    /// 2. An unclipped, potentially *invalid* position that maps directly to
-    ///    the given pixel position.
-    fn point_for_position(
-        &self,
-        text_bounds: RectF,
-        position: Vector2F,
-    ) -> (DisplayPoint, DisplayPoint) {
+    fn point_for_position(&self, text_bounds: RectF, position: Vector2F) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin();
         let y = position.y().max(0.0).min(self.size.y());
         let x = position.x() + (scroll_position.x() * self.em_width);
         let row = (y / self.line_height + scroll_position.y()) as u32;
-        let (column, x_overshoot) = if let Some(line) = self
+        let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y() as usize)
             .map(|line_with_spaces| &line_with_spaces.line)
@@ -2751,12 +2762,18 @@ impl PositionMap {
             (0, x)
         };
 
-        let mut target_point = DisplayPoint::new(row, column);
-        let point = self.snapshot.clip_point(target_point, Bias::Left);
-        // TODO kb looks wrong, need to construct inlay point instead? operate offsets?
-        *target_point.column_mut() += (x_overshoot / self.em_advance) as u32;
+        let mut exact_unclipped = DisplayPoint::new(row, column);
+        let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
+        let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
-        (point, target_point)
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
+        *exact_unclipped.column_mut() += column_overshoot_after_line_end;
+        PointForPosition {
+            previous_valid,
+            next_valid,
+            exact_unclipped,
+            column_overshoot_after_line_end,
+        }
     }
 }
 
