@@ -63,7 +63,7 @@ pub struct StylableComponentAdapter<C: Component<V>, V: View> {
 }
 
 impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
-    fn new(component: C) -> Self {
+    pub fn new(component: C) -> Self {
         Self {
             component,
             phantom: std::marker::PhantomData,
