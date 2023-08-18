@@ -5043,7 +5043,7 @@ impl Project {
                         .push(start..end)
                 }
                 for (buffer, ranges) in result {
-                    tx.send((buffer, ranges));
+                    tx.send((buffer, ranges)).await;
                 }
                 Result::<(), anyhow::Error>::Ok(())
             })
