@@ -68,10 +68,10 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                         search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx);
                         search_bar.activate_search_mode(SearchMode::Regex, cx);
                     }
-                    vim.state.search = SearchState {
+                    vim.workspace_state.search = SearchState {
                         direction,
                         count,
-                        initial_query: query,
+                        initial_query: query.clone(),
                     };
                 });
             }
@@ -81,7 +81,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 
 // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
 fn search_deploy(_: &mut Pane, _: &buffer_search::Deploy, cx: &mut ViewContext<Pane>) {
-    Vim::update(cx, |vim, _| vim.state.search = Default::default());
+    Vim::update(cx, |vim, _| vim.workspace_state.search = Default::default());
     cx.propagate_action();
 }
 
@@ -91,8 +91,9 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    let state = &mut vim.state.search;
+                    let state = &mut vim.workspace_state.search;
                     let mut count = state.count;
+                    let direction = state.direction;
 
                     // in the case that the query has changed, the search bar
                     // will have selected the next match already.
@@ -101,8 +102,8 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                     {
                         count = count.saturating_sub(1)
                     }
-                    search_bar.select_match(state.direction, count, cx);
                     state.count = 1;
+                    search_bar.select_match(direction, count, cx);
                     search_bar.focus_editor(&Default::default(), cx);
                 });
             }

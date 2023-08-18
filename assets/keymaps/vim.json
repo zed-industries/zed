@@ -103,9 +103,18 @@
       ],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
+      "ctrl-v": "vim::ToggleVisualBlock",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "ctrl-f": "vim::PageDown",
+      "pagedown": "vim::PageDown",
+      "ctrl-b": "vim::PageUp",
+      "pageup": "vim::PageUp",
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp",
       // "g" commands
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
@@ -293,14 +302,6 @@
           "backwards": true
         }
       ],
-      "ctrl-f": "vim::PageDown",
-      "pagedown": "vim::PageDown",
-      "ctrl-b": "vim::PageUp",
-      "pageup": "vim::PageUp",
-      "ctrl-d": "vim::ScrollDown",
-      "ctrl-u": "vim::ScrollUp",
-      "ctrl-e": "vim::LineDown",
-      "ctrl-y": "vim::LineUp",
       "r": [
         "vim::PushOperator",
         "Replace"
@@ -365,7 +366,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting",
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
       "u": "editor::Undo",
       "o": "vim::OtherEnd",
@@ -377,6 +378,11 @@
       "s": "vim::Substitute",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "shift-i": [
+        "vim::SwitchMode",
+        "Insert"
+      ],
+      "shift-a": "vim::InsertAfter",
       "r": [
         "vim::PushOperator",
         "Replace"
@@ -394,7 +400,23 @@
         "Normal"
       ],
       ">": "editor::Indent",
-      "<": "editor::Outdent"
+      "<": "editor::Outdent",
+      "i": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": false
+          }
+        }
+      ],
+      "a": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": true
+          }
+        }
+      ],
     }
   },
   {

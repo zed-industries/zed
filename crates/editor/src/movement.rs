@@ -61,10 +61,10 @@ pub fn up_by_rows(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_column = if let SelectionGoal::Column(column) = goal {
-        column
-    } else {
-        map.column_to_chars(start.row(), start.column())
+    let mut goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => map.column_to_chars(start.row(), start.column()),
     };
 
     let prev_row = start.row().saturating_sub(row_count);
@@ -95,10 +95,10 @@ pub fn down_by_rows(
     goal: SelectionGoal,
     preserve_column_at_end: bool,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_column = if let SelectionGoal::Column(column) = goal {
-        column
-    } else {
-        map.column_to_chars(start.row(), start.column())
+    let mut goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => map.column_to_chars(start.row(), start.column()),
     };
 
     let new_row = start.row() + row_count;
