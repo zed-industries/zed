@@ -1954,7 +1954,7 @@ impl LspCommand for InlayHints {
         _: &mut Project,
         _: PeerId,
         buffer_version: &clock::Global,
-        _: &mut AppContext,
+        cx: &mut AppContext,
     ) -> proto::InlayHintsResponse {
         proto::InlayHintsResponse {
             hints: response
@@ -1963,17 +1963,51 @@ impl LspCommand for InlayHints {
                     position: Some(language::proto::serialize_anchor(&response_hint.position)),
                     padding_left: response_hint.padding_left,
                     padding_right: response_hint.padding_right,
-                    kind: response_hint.kind.map(|kind| kind.name().to_string()),
-                    // Do not pass extra data such as tooltips to clients: host can put tooltip data from the cache during resolution.
-                    tooltip: None,
-                    // Similarly, do not pass label parts to clients: host can return a detailed list during resolution.
                     label: Some(proto::InlayHintLabel {
-                        label: Some(proto::inlay_hint_label::Label::Value(
-                            match response_hint.label {
-                                InlayHintLabel::String(s) => s,
-                                InlayHintLabel::LabelParts(_) => response_hint.text(),
-                            },
-                        )),
+                        label: Some(match response_hint.label {
+                            InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
+                            InlayHintLabel::LabelParts(label_parts) => {
+                                proto::inlay_hint_label::Label::LabelParts(proto::InlayHintLabelParts {
+                                    parts: label_parts.into_iter().map(|label_part| proto::InlayHintLabelPart {
+                                        value: label_part.value,
+                                        tooltip: label_part.tooltip.map(|tooltip| {
+                                            let proto_tooltip = match tooltip {
+                                                InlayHintLabelPartTooltip::String(s) => proto::inlay_hint_label_part_tooltip::Content::Value(s),
+                                                InlayHintLabelPartTooltip::MarkupContent(markup_content) => proto::inlay_hint_label_part_tooltip::Content::MarkupContent(proto::MarkupContent {
+                                                    kind: markup_content.kind,
+                                                    value: markup_content.value,
+                                                }),
+                                            };
+                                            proto::InlayHintLabelPartTooltip {content: Some(proto_tooltip)}
+                                        }),
+                                        location: label_part.location.map(|location| proto::Location {
+                                            start: Some(serialize_anchor(&location.range.start)),
+                                            end: Some(serialize_anchor(&location.range.end)),
+                                            buffer_id: location.buffer.read(cx).remote_id(),
+                                        }),
+                                    }).collect()
+                                })
+                            }
+                        }),
+                    }),
+                    kind: response_hint.kind.map(|kind| kind.name().to_string()),
+                    tooltip: response_hint.tooltip.map(|response_tooltip| {
+                        let proto_tooltip = match response_tooltip {
+                            InlayHintTooltip::String(s) => {
+                                proto::inlay_hint_tooltip::Content::Value(s)
+                            }
+                            InlayHintTooltip::MarkupContent(markup_content) => {
+                                proto::inlay_hint_tooltip::Content::MarkupContent(
+                                    proto::MarkupContent {
+                                        kind: markup_content.kind,
+                                        value: markup_content.value,
+                                    },
+                                )
+                            }
+                        };
+                        proto::InlayHintTooltip {
+                            content: Some(proto_tooltip),
+                        }
                     }),
                 })
                 .collect(),
