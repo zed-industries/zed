@@ -50,6 +50,13 @@ pub trait Component<V: View> {
     {
         ComponentAdapter::new(self)
     }
+
+    fn styleable(self) -> StylableComponentAdapter<Self, V>
+    where
+        Self: Sized,
+    {
+        StylableComponentAdapter::new(self)
+    }
 }
 
 impl<V: View, C: GeneralComponent> Component<V> for C {

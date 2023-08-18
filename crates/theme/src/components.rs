@@ -81,8 +81,7 @@ pub mod action_button {
 
     pub struct ActionButton<C, S> {
         action: Box<dyn Action>,
-        tooltip: Cow<'static, str>,
-        tooltip_style: TooltipStyle,
+        tooltip: Option<(Cow<'static, str>, TooltipStyle)>,
         tag: TypeTag,
         contents: C,
         style: Interactive<S>,
@@ -99,27 +98,27 @@ pub mod action_button {
     }
 
     impl ActionButton<(), ()> {
-        pub fn new_dynamic(
-            action: Box<dyn Action>,
-            tooltip: impl Into<Cow<'static, str>>,
-            tooltip_style: TooltipStyle,
-        ) -> Self {
+        pub fn new_dynamic(action: Box<dyn Action>) -> Self {
             Self {
                 contents: (),
                 tag: action.type_tag(),
                 style: Interactive::new_blank(),
-                tooltip: tooltip.into(),
-                tooltip_style,
+                tooltip: None,
                 action,
             }
         }
 
-        pub fn new<A: Action + Clone>(
-            action: A,
+        pub fn new<A: Action + Clone>(action: A) -> Self {
+            Self::new_dynamic(Box::new(action))
+        }
+
+        pub fn with_tooltip(
+            mut self,
             tooltip: impl Into<Cow<'static, str>>,
             tooltip_style: TooltipStyle,
         ) -> Self {
-            Self::new_dynamic(Box::new(action), tooltip, tooltip_style)
+            self.tooltip = Some((tooltip.into(), tooltip_style));
+            self
         }
 
         pub fn with_contents<C: StyleableComponent>(self, contents: C) -> ActionButton<C, ()> {
@@ -128,7 +127,6 @@ pub mod action_button {
                 tag: self.tag,
                 style: self.style,
                 tooltip: self.tooltip,
-                tooltip_style: self.tooltip_style,
                 contents,
             }
         }
@@ -144,7 +142,7 @@ pub mod action_button {
                 tag: self.tag,
                 contents: self.contents,
                 tooltip: self.tooltip,
-                tooltip_style: self.tooltip_style,
+
                 style,
             }
         }
@@ -152,7 +150,7 @@ pub mod action_button {
 
     impl<C: StyleableComponent> GeneralComponent for ActionButton<C, ButtonStyle<C::Style>> {
         fn render<V: View>(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
-            MouseEventHandler::new_dynamic(self.tag, 0, cx, |state, cx| {
+            let mut button = MouseEventHandler::new_dynamic(self.tag, 0, cx, |state, cx| {
                 let style = self.style.style_for(state);
                 let mut contents = self
                     .contents
@@ -180,15 +178,15 @@ pub mod action_button {
                 }
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .with_dynamic_tooltip(
-                self.tag,
-                0,
-                self.tooltip,
-                Some(self.action),
-                self.tooltip_style,
-                cx,
-            )
-            .into_any()
+            .into_any();
+
+            if let Some((tooltip, style)) = self.tooltip {
+                button = button
+                    .with_dynamic_tooltip(self.tag, 0, tooltip, Some(self.action), style, cx)
+                    .into_any()
+            }
+
+            button
         }
     }
 }

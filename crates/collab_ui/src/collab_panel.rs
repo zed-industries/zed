@@ -8,6 +8,7 @@ use client::{
     proto::PeerId, Channel, ChannelEvent, ChannelId, ChannelStore, Client, Contact, User, UserStore,
 };
 
+use components::DisclosureExt;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
@@ -16,7 +17,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{
-        Canvas, ChildView, Empty, Flex, Image, Label, List, ListOffset, ListState,
+        Canvas, ChildView, Component, Empty, Flex, Image, Label, List, ListOffset, ListState,
         MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack, Svg,
     },
     geometry::{
@@ -1615,6 +1616,10 @@ impl CollabPanel {
             this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
+        .component()
+        .styleable()
+        .disclosable()
+        .into_element()
         .into_any()
     }
 
@@ -2521,4 +2526,88 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
+}
+
+mod components {
+
+    use gpui::{
+        elements::{Empty, Flex, GeneralComponent, ParentElement, StyleableComponent},
+        Action, Element,
+    };
+    use theme::components::{
+        action_button::ActionButton, svg::Svg, ComponentExt, ToggleIconButtonStyle,
+    };
+
+    #[derive(Clone)]
+    struct DisclosureStyle<S> {
+        disclosure: ToggleIconButtonStyle,
+        spacing: f32,
+        content: S,
+    }
+
+    struct Disclosable<C, S> {
+        disclosed: bool,
+        action: Box<dyn Action>,
+        content: C,
+        style: S,
+    }
+
+    impl Disclosable<(), ()> {
+        fn new<C>(disclosed: bool, content: C, action: Box<dyn Action>) -> Disclosable<C, ()> {
+            Disclosable {
+                disclosed,
+                content,
+                action,
+                style: (),
+            }
+        }
+    }
+
+    impl<C: StyleableComponent> StyleableComponent for Disclosable<C, ()> {
+        type Style = DisclosureStyle<C::Style>;
+
+        type Output = Disclosable<C, Self::Style>;
+
+        fn with_style(self, style: Self::Style) -> Self::Output {
+            Disclosable {
+                disclosed: self.disclosed,
+                action: self.action,
+                content: self.content,
+                style,
+            }
+        }
+    }
+
+    impl<C: StyleableComponent> GeneralComponent for Disclosable<C, DisclosureStyle<C::Style>> {
+        fn render<V: gpui::View>(
+            self,
+            v: &mut V,
+            cx: &mut gpui::ViewContext<V>,
+        ) -> gpui::AnyElement<V> {
+            Flex::row()
+                .with_child(
+                    ActionButton::new_dynamic(self.action)
+                        .with_contents(Svg::new("path"))
+                        .toggleable(self.disclosed)
+                        .with_style(self.style.disclosure)
+                        .element(),
+                )
+                .with_child(Empty::new().constrained().with_width(self.style.spacing))
+                .with_child(self.content.with_style(self.style.content).render(v, cx))
+                .align_children_center()
+                .into_any()
+        }
+    }
+
+    pub trait DisclosureExt {
+        fn disclosable(self, disclosed: bool, action: Box<dyn Action>) -> Disclosable<Self, ()>
+        where
+            Self: Sized;
+    }
+
+    impl<C: StyleableComponent> DisclosureExt for C {
+        fn disclosable(self, disclosed: bool, action: Box<dyn Action>) -> Disclosable<Self, ()> {
+            Disclosable::new(disclosed, self, action)
+        }
+    }
 }

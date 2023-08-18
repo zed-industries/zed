@@ -229,6 +229,13 @@ pub trait Element<V: View>: 'static {
     {
         MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
+
+    fn component(self) -> ElementAdapter<V>
+    where
+        Self: Sized,
+    {
+        ElementAdapter::new(self.into_any())
+    }
 }
 
 pub trait RenderElement {

@@ -8,7 +8,9 @@ use gpui::{
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use theme::components::{action_button::ActionButton, ComponentExt, ToggleIconButtonStyle};
+use theme::components::{
+    action_button::ActionButton, svg::Svg, ComponentExt, ToggleIconButtonStyle,
+};
 
 pub mod buffer_search;
 mod history;
@@ -89,15 +91,12 @@ impl SearchOptions {
         tooltip_style: TooltipStyle,
         button_style: ToggleIconButtonStyle,
     ) -> AnyElement<V> {
-        ActionButton::new_dynamic(
-            self.to_toggle_action(),
-            format!("Toggle {}", self.label()),
-            tooltip_style,
-        )
-        .with_contents(theme::components::svg::Svg::new(self.icon()))
-        .toggleable(active)
-        .with_style(button_style)
-        .element()
-        .into_any()
+        ActionButton::new_dynamic(self.to_toggle_action())
+            .with_tooltip(format!("Toggle {}", self.label()), tooltip_style)
+            .with_contents(Svg::new(self.icon()))
+            .toggleable(active)
+            .with_style(button_style)
+            .element()
+            .into_any()
     }
 }
