@@ -16,6 +16,7 @@ use view::view;
 mod adapter;
 mod color;
 mod components;
+mod div;
 mod element;
 mod frame;
 mod hoverable;

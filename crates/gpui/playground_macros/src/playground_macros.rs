@@ -2,7 +2,13 @@ use proc_macro::TokenStream;
 
 mod derive_element;
 mod derive_into_element;
+mod styleable_trait;
 mod tailwind_lengths;
+
+#[proc_macro]
+pub fn styleable_trait(args: TokenStream) -> TokenStream {
+    styleable_trait::styleable_trait(args)
+}
 
 #[proc_macro_derive(Element, attributes(element_crate))]
 pub fn derive_element(input: TokenStream) -> TokenStream {

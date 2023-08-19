@@ -1,3 +1,25 @@
+Much of element styling is now handled by an external engine.
+
+
+How do I make an element hover.
+
+There's a hover style.
+
+Hoverable needs to wrap another element. That element can be styled.
+
+```rs
+struct Hoverable<E: Element> {
+
+}
+
+impl<V> Element<V> for Hoverable {
+
+}
+
+```
+
+
+
 ```rs
 #[derive(Styled, Interactive)]
 pub struct Div {
@@ -28,6 +50,23 @@ pub trait Interactive<V> {
 struct Interactions<V> {
     click: SmallVec<[<Rc<dyn Fn(&mut V, &dyn Any, )>; 1]>,
 }
+
+
+```
+
+
+```rs
+
+
+trait Stylable {
+    type Style;
+
+    fn with_style(self, style: Self::Style) -> Self;
+}
+
+
+
+
 
 
 ```
