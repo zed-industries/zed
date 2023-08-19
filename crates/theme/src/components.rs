@@ -1,4 +1,4 @@
-use gpui::elements::StyleableComponent;
+use gpui::elements::GeneralStyleableComponent;
 
 use crate::{Interactive, Toggleable};
 
@@ -6,18 +6,18 @@ use self::{action_button::ButtonStyle, svg::SvgStyle, toggle::Toggle};
 
 pub type ToggleIconButtonStyle = Toggleable<Interactive<ButtonStyle<SvgStyle>>>;
 
-pub trait ComponentExt<C: StyleableComponent> {
+pub trait ComponentExt<C: GeneralStyleableComponent> {
     fn toggleable(self, active: bool) -> Toggle<C, ()>;
 }
 
-impl<C: StyleableComponent> ComponentExt<C> for C {
+impl<C: GeneralStyleableComponent> ComponentExt<C> for C {
     fn toggleable(self, active: bool) -> Toggle<C, ()> {
         Toggle::new(self, active)
     }
 }
 
 pub mod toggle {
-    use gpui::elements::{GeneralComponent, StyleableComponent};
+    use gpui::elements::{GeneralComponent, GeneralStyleableComponent};
 
     use crate::Toggleable;
 
@@ -27,7 +27,7 @@ pub mod toggle {
         component: C,
     }
 
-    impl<C: StyleableComponent> Toggle<C, ()> {
+    impl<C: GeneralStyleableComponent> Toggle<C, ()> {
         pub fn new(component: C, active: bool) -> Self {
             Toggle {
                 active,
@@ -37,7 +37,7 @@ pub mod toggle {
         }
     }
 
-    impl<C: StyleableComponent> StyleableComponent for Toggle<C, ()> {
+    impl<C: GeneralStyleableComponent> GeneralStyleableComponent for Toggle<C, ()> {
         type Style = Toggleable<C::Style>;
 
         type Output = Toggle<C, Self::Style>;
@@ -51,7 +51,7 @@ pub mod toggle {
         }
     }
 
-    impl<C: StyleableComponent> GeneralComponent for Toggle<C, Toggleable<C::Style>> {
+    impl<C: GeneralStyleableComponent> GeneralComponent for Toggle<C, Toggleable<C::Style>> {
         fn render<V: gpui::View>(
             self,
             v: &mut V,
@@ -69,7 +69,8 @@ pub mod action_button {
 
     use gpui::{
         elements::{
-            ContainerStyle, GeneralComponent, MouseEventHandler, StyleableComponent, TooltipStyle,
+            ContainerStyle, GeneralComponent, GeneralStyleableComponent, MouseEventHandler,
+            TooltipStyle,
         },
         platform::{CursorStyle, MouseButton},
         Action, Element, TypeTag, View,
@@ -121,7 +122,10 @@ pub mod action_button {
             self
         }
 
-        pub fn with_contents<C: StyleableComponent>(self, contents: C) -> ActionButton<C, ()> {
+        pub fn with_contents<C: GeneralStyleableComponent>(
+            self,
+            contents: C,
+        ) -> ActionButton<C, ()> {
             ActionButton {
                 action: self.action,
                 tag: self.tag,
@@ -132,7 +136,7 @@ pub mod action_button {
         }
     }
 
-    impl<C: StyleableComponent> StyleableComponent for ActionButton<C, ()> {
+    impl<C: GeneralStyleableComponent> GeneralStyleableComponent for ActionButton<C, ()> {
         type Style = Interactive<ButtonStyle<C::Style>>;
         type Output = ActionButton<C, ButtonStyle<C::Style>>;
 
@@ -148,7 +152,7 @@ pub mod action_button {
         }
     }
 
-    impl<C: StyleableComponent> GeneralComponent for ActionButton<C, ButtonStyle<C::Style>> {
+    impl<C: GeneralStyleableComponent> GeneralComponent for ActionButton<C, ButtonStyle<C::Style>> {
         fn render<V: View>(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             let mut button = MouseEventHandler::new_dynamic(self.tag, 0, cx, |state, cx| {
                 let style = self.style.style_for(state);
@@ -195,7 +199,7 @@ pub mod svg {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{GeneralComponent, StyleableComponent},
+        elements::{GeneralComponent, GeneralStyleableComponent},
         Element,
     };
     use schemars::JsonSchema;
@@ -261,7 +265,7 @@ pub mod svg {
         }
     }
 
-    impl StyleableComponent for Svg<()> {
+    impl GeneralStyleableComponent for Svg<()> {
         type Style = SvgStyle;
 
         type Output = Svg<SvgStyle>;
@@ -294,7 +298,7 @@ pub mod label {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{GeneralComponent, LabelStyle, StyleableComponent},
+        elements::{GeneralComponent, GeneralStyleableComponent, LabelStyle},
         Element,
     };
 
@@ -312,7 +316,7 @@ pub mod label {
         }
     }
 
-    impl StyleableComponent for Label<()> {
+    impl GeneralStyleableComponent for Label<()> {
         type Style = LabelStyle;
 
         type Output = Label<LabelStyle>;

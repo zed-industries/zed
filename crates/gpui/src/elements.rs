@@ -236,6 +236,13 @@ pub trait Element<V: View>: 'static {
     {
         ElementAdapter::new(self.into_any())
     }
+
+    fn dynamic_component(self) -> DynamicElementAdapter
+    where
+        Self: Sized,
+    {
+        DynamicElementAdapter::new(self.into_any())
+    }
 }
 
 pub trait RenderElement {

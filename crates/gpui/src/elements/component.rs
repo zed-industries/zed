@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
 
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
@@ -11,15 +11,43 @@ use super::Empty;
 
 pub trait GeneralComponent {
     fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+
     fn element<V: View>(self) -> ComponentAdapter<V, Self>
     where
         Self: Sized,
     {
         ComponentAdapter::new(self)
     }
+
+    fn stylable(self) -> GeneralStylableComponentAdapter<Self>
+    where
+        Self: Sized,
+    {
+        GeneralStylableComponentAdapter::new(self)
+    }
 }
 
-pub trait StyleableComponent {
+pub struct GeneralStylableComponentAdapter<C: GeneralComponent> {
+    component: C,
+}
+
+impl<C: GeneralComponent> GeneralStylableComponentAdapter<C> {
+    pub fn new(component: C) -> Self {
+        Self { component }
+    }
+}
+
+impl<C: GeneralComponent> GeneralStyleableComponent for GeneralStylableComponentAdapter<C> {
+    type Style = ();
+
+    type Output = C;
+
+    fn with_style(self, _: Self::Style) -> Self::Output {
+        self.component
+    }
+}
+
+pub trait GeneralStyleableComponent {
     type Style: Clone;
     type Output: GeneralComponent;
 
@@ -32,7 +60,7 @@ impl GeneralComponent for () {
     }
 }
 
-impl StyleableComponent for () {
+impl GeneralStyleableComponent for () {
     type Style = ();
     type Output = ();
 
@@ -41,17 +69,34 @@ impl StyleableComponent for () {
     }
 }
 
+pub trait StyleableComponent<V: View> {
+    type Style: Clone;
+    type Output: Component<V>;
+
+    fn c_with_style(self, style: Self::Style) -> Self::Output;
+}
+
+impl<V: View, C: GeneralStyleableComponent> StyleableComponent<V> for C {
+    type Style = C::Style;
+
+    type Output = C::Output;
+
+    fn c_with_style(self, style: Self::Style) -> Self::Output {
+        self.with_style(style)
+    }
+}
+
 pub trait Component<V: View> {
     fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-    fn element(self) -> ComponentAdapter<V, Self>
+    fn c_element(self) -> ComponentAdapter<V, Self>
     where
         Self: Sized,
     {
         ComponentAdapter::new(self)
     }
 
-    fn styleable(self) -> StylableComponentAdapter<Self, V>
+    fn c_styleable(self) -> StylableComponentAdapter<Self, V>
     where
         Self: Sized,
     {
@@ -65,7 +110,7 @@ impl<V: View, C: GeneralComponent> Component<V> for C {
     }
 }
 
-// StylableComponent -> GeneralComponent
+// StylableComponent -> Component
 pub struct StylableComponentAdapter<C: Component<V>, V: View> {
     component: C,
     phantom: std::marker::PhantomData<V>,
@@ -80,13 +125,37 @@ impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
     }
 }
 
-impl<C: GeneralComponent, V: View> StyleableComponent for StylableComponentAdapter<C, V> {
+impl<C: Component<V>, V: View> StyleableComponent<V> for StylableComponentAdapter<C, V> {
     type Style = ();
 
     type Output = C;
 
-    fn with_style(self, _: Self::Style) -> Self::Output {
+    fn c_with_style(self, _: Self::Style) -> Self::Output {
         self.component
+    }
+}
+
+// Element -> GeneralComponent
+
+pub struct DynamicElementAdapter {
+    element: Box<dyn Any>,
+}
+
+impl DynamicElementAdapter {
+    pub fn new<V: View>(element: AnyElement<V>) -> Self {
+        DynamicElementAdapter {
+            element: Box::new(element) as Box<dyn Any>,
+        }
+    }
+}
+
+impl GeneralComponent for DynamicElementAdapter {
+    fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
+        let element = self
+            .element
+            .downcast::<AnyElement<V>>()
+            .expect("Don't move elements out of their view :(");
+        *element
     }
 }
 

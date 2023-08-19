@@ -8,7 +8,6 @@ use client::{
     proto::PeerId, Channel, ChannelEvent, ChannelId, ChannelStore, Client, Contact, User, UserStore,
 };
 
-use components::DisclosureExt;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
@@ -17,8 +16,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{
-        Canvas, ChildView, Component, Empty, Flex, Image, Label, List, ListOffset, ListState,
-        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack, Svg,
+        Canvas, ChildView, Empty, Flex, GeneralComponent, GeneralStyleableComponent, Image, Label,
+        List, ListOffset, ListState, MouseEventHandler, Orientation, OverlayPositionMode, Padding,
+        ParentElement, Stack, Svg,
     },
     geometry::{
         rect::RectF,
@@ -44,7 +44,10 @@ use workspace::{
     Workspace,
 };
 
-use crate::face_pile::FacePile;
+use crate::{
+    collab_panel::components::{DisclosureExt, DisclosureStyle},
+    face_pile::FacePile,
+};
 use channel_modal::ChannelModal;
 
 use self::contact_finder::ContactFinder;
@@ -1616,10 +1619,17 @@ impl CollabPanel {
             this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .component()
-        .styleable()
-        .disclosable()
-        .into_element()
+        .dynamic_component()
+        .stylable()
+        .disclosable(true, Box::new(RemoveChannel { channel_id: 0 }))
+        .with_style({
+            fn style() -> DisclosureStyle<()> {
+                todo!()
+            }
+
+            style()
+        })
+        .element()
         .into_any()
     }
 
@@ -2531,7 +2541,7 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
 mod components {
 
     use gpui::{
-        elements::{Empty, Flex, GeneralComponent, ParentElement, StyleableComponent},
+        elements::{Empty, Flex, GeneralComponent, GeneralStyleableComponent, ParentElement},
         Action, Element,
     };
     use theme::components::{
@@ -2539,13 +2549,13 @@ mod components {
     };
 
     #[derive(Clone)]
-    struct DisclosureStyle<S> {
+    pub struct DisclosureStyle<S> {
         disclosure: ToggleIconButtonStyle,
         spacing: f32,
         content: S,
     }
 
-    struct Disclosable<C, S> {
+    pub struct Disclosable<C, S> {
         disclosed: bool,
         action: Box<dyn Action>,
         content: C,
@@ -2563,7 +2573,7 @@ mod components {
         }
     }
 
-    impl<C: StyleableComponent> StyleableComponent for Disclosable<C, ()> {
+    impl<C: GeneralStyleableComponent> GeneralStyleableComponent for Disclosable<C, ()> {
         type Style = DisclosureStyle<C::Style>;
 
         type Output = Disclosable<C, Self::Style>;
@@ -2578,7 +2588,7 @@ mod components {
         }
     }
 
-    impl<C: StyleableComponent> GeneralComponent for Disclosable<C, DisclosureStyle<C::Style>> {
+    impl<C: GeneralStyleableComponent> GeneralComponent for Disclosable<C, DisclosureStyle<C::Style>> {
         fn render<V: gpui::View>(
             self,
             v: &mut V,
@@ -2605,7 +2615,7 @@ mod components {
             Self: Sized;
     }
 
-    impl<C: StyleableComponent> DisclosureExt for C {
+    impl<C: GeneralStyleableComponent> DisclosureExt for C {
         fn disclosable(self, disclosed: bool, action: Box<dyn Action>) -> Disclosable<Self, ()> {
             Disclosable::new(disclosed, self, action)
         }

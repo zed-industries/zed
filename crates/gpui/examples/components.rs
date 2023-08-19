@@ -72,7 +72,7 @@ impl View for TestView {
                         TextStyle::for_color(Color::blue()),
                     )
                     .with_style(ButtonStyle::fill(Color::yellow()))
-                    .element(),
+                    .c_element(),
                 )
                 .with_child(
                     ToggleableButton::new(self.is_doubling, move |_, v: &mut Self, cx| {
@@ -84,7 +84,7 @@ impl View for TestView {
                         inactive: ButtonStyle::fill(Color::red()),
                         active: ButtonStyle::fill(Color::green()),
                     })
-                    .element(),
+                    .c_element(),
                 )
                 .expanded()
                 .contained()
