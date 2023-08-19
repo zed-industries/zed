@@ -16,9 +16,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{
-        Canvas, ChildView, Empty, Flex, GeneralComponent, GeneralStyleableComponent, Image, Label,
-        List, ListOffset, ListState, MouseEventHandler, Orientation, OverlayPositionMode, Padding,
-        ParentElement, Stack, Svg,
+        Canvas, ChildView, Component, Empty, Flex, Image, Label, List, ListOffset, ListState,
+        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack,
+        StyleableComponent, Svg,
     },
     geometry::{
         rect::RectF,
@@ -36,7 +36,7 @@ use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
 use staff_mode::StaffMode;
 use std::{borrow::Cow, mem, sync::Arc};
-use theme::IconButton;
+use theme::{components::ComponentExt, IconButton};
 use util::{iife, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -44,16 +44,18 @@ use workspace::{
     Workspace,
 };
 
-use crate::{
-    collab_panel::components::{DisclosureExt, DisclosureStyle},
-    face_pile::FacePile,
-};
+use crate::face_pile::FacePile;
 use channel_modal::ChannelModal;
 
 use self::contact_finder::ContactFinder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
+    channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ToggleCollapsed {
     channel_id: u64,
 }
 
@@ -86,7 +88,8 @@ impl_actions!(
         NewChannel,
         InviteMembers,
         ManageMembers,
-        RenameChannel
+        RenameChannel,
+        ToggleCollapsed
     ]
 );
 
@@ -109,6 +112,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::manage_members);
     cx.add_action(CollabPanel::rename_selected_channel);
     cx.add_action(CollabPanel::rename_channel);
+    cx.add_action(CollabPanel::toggle_channel_collapsed);
 }
 
 #[derive(Debug)]
@@ -151,6 +155,7 @@ pub struct CollabPanel {
     list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
+    collapsed_channels: Vec<ChannelId>,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
 }
@@ -402,6 +407,7 @@ impl CollabPanel {
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
+                collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
@@ -661,9 +667,23 @@ impl CollabPanel {
                         self.entries.push(ListEntry::ChannelEditor { depth: 0 });
                     }
                 }
+                let mut collapse_depth = None;
                 for mat in matches {
                     let (depth, channel) =
                         channel_store.channel_at_index(mat.candidate_id).unwrap();
+
+                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else if let Some(collapsed_depth) = collapse_depth {
+                        if depth > collapsed_depth {
+                            continue;
+                        }
+                        if self.is_channel_collapsed(channel.id) {
+                            collapse_depth = Some(depth);
+                        } else {
+                            collapse_depth = None;
+                        }
+                    }
 
                     match &self.channel_editing_state {
                         Some(ChannelEditingState::Create { parent_id, .. })
@@ -1484,6 +1504,11 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         Flex::row()
             .with_child(
+                Empty::new()
+                    .constrained()
+                    .with_width(theme.collab_panel.disclosure.button_space()),
+            )
+            .with_child(
                 Svg::new("icons/hash.svg")
                     .with_color(theme.collab_panel.channel_hash.color)
                     .constrained()
@@ -1541,6 +1566,10 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
+        let has_children = self.channel_store.read(cx).has_children(channel_id);
+        let disclosed =
+            has_children.then(|| !self.collapsed_channels.binary_search(&channel_id).is_ok());
+
         let is_active = iife!({
             let call_channel = ActiveCall::global(cx)
                 .read(cx)
@@ -1554,7 +1583,7 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
 
         MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
-            Flex::row()
+            Flex::<Self>::row()
                 .with_child(
                     Svg::new("icons/hash.svg")
                         .with_color(theme.channel_hash.color)
@@ -1603,6 +1632,14 @@ impl CollabPanel {
                     }
                 })
                 .align_children_center()
+                .styleable_component()
+                .disclosable(
+                    disclosed,
+                    Box::new(ToggleCollapsed { channel_id }),
+                    channel_id as usize,
+                )
+                .with_style(theme.disclosure.clone())
+                .element()
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
@@ -1619,17 +1656,6 @@ impl CollabPanel {
             this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .dynamic_component()
-        .stylable()
-        .disclosable(true, Box::new(RemoveChannel { channel_id: 0 }))
-        .with_style({
-            fn style() -> DisclosureStyle<()> {
-                todo!()
-            }
-
-            style()
-        })
-        .element()
         .into_any()
     }
 
@@ -2022,6 +2048,24 @@ impl CollabPanel {
             self.collapsed_sections.push(section);
         }
         self.update_entries(false, cx);
+    }
+
+    fn toggle_channel_collapsed(&mut self, action: &ToggleCollapsed, cx: &mut ViewContext<Self>) {
+        let channel_id = action.channel_id;
+        match self.collapsed_channels.binary_search(&channel_id) {
+            Ok(ix) => {
+                self.collapsed_channels.remove(ix);
+            }
+            Err(ix) => {
+                self.collapsed_channels.insert(ix, channel_id);
+            }
+        };
+        self.update_entries(false, cx);
+        cx.notify();
+    }
+
+    fn is_channel_collapsed(&self, channel: ChannelId) -> bool {
+        self.collapsed_channels.binary_search(&channel).is_ok()
     }
 
     fn leave_call(cx: &mut ViewContext<Self>) {
@@ -2536,88 +2580,4 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
-}
-
-mod components {
-
-    use gpui::{
-        elements::{Empty, Flex, GeneralComponent, GeneralStyleableComponent, ParentElement},
-        Action, Element,
-    };
-    use theme::components::{
-        action_button::ActionButton, svg::Svg, ComponentExt, ToggleIconButtonStyle,
-    };
-
-    #[derive(Clone)]
-    pub struct DisclosureStyle<S> {
-        disclosure: ToggleIconButtonStyle,
-        spacing: f32,
-        content: S,
-    }
-
-    pub struct Disclosable<C, S> {
-        disclosed: bool,
-        action: Box<dyn Action>,
-        content: C,
-        style: S,
-    }
-
-    impl Disclosable<(), ()> {
-        fn new<C>(disclosed: bool, content: C, action: Box<dyn Action>) -> Disclosable<C, ()> {
-            Disclosable {
-                disclosed,
-                content,
-                action,
-                style: (),
-            }
-        }
-    }
-
-    impl<C: GeneralStyleableComponent> GeneralStyleableComponent for Disclosable<C, ()> {
-        type Style = DisclosureStyle<C::Style>;
-
-        type Output = Disclosable<C, Self::Style>;
-
-        fn with_style(self, style: Self::Style) -> Self::Output {
-            Disclosable {
-                disclosed: self.disclosed,
-                action: self.action,
-                content: self.content,
-                style,
-            }
-        }
-    }
-
-    impl<C: GeneralStyleableComponent> GeneralComponent for Disclosable<C, DisclosureStyle<C::Style>> {
-        fn render<V: gpui::View>(
-            self,
-            v: &mut V,
-            cx: &mut gpui::ViewContext<V>,
-        ) -> gpui::AnyElement<V> {
-            Flex::row()
-                .with_child(
-                    ActionButton::new_dynamic(self.action)
-                        .with_contents(Svg::new("path"))
-                        .toggleable(self.disclosed)
-                        .with_style(self.style.disclosure)
-                        .element(),
-                )
-                .with_child(Empty::new().constrained().with_width(self.style.spacing))
-                .with_child(self.content.with_style(self.style.content).render(v, cx))
-                .align_children_center()
-                .into_any()
-        }
-    }
-
-    pub trait DisclosureExt {
-        fn disclosable(self, disclosed: bool, action: Box<dyn Action>) -> Disclosable<Self, ()>
-        where
-            Self: Sized;
-    }
-
-    impl<C: GeneralStyleableComponent> DisclosureExt for C {
-        fn disclosable(self, disclosed: bool, action: Box<dyn Action>) -> Disclosable<Self, ()> {
-            Disclosable::new(disclosed, self, action)
-        }
-    }
 }

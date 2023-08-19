@@ -9,35 +9,35 @@ use crate::{
 
 use super::Empty;
 
-pub trait GeneralComponent {
+pub trait Component {
     fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-    fn element<V: View>(self) -> ComponentAdapter<V, Self>
+    fn element<V: View>(self) -> StatefulAdapter<V, Self>
     where
         Self: Sized,
     {
-        ComponentAdapter::new(self)
+        StatefulAdapter::new(self)
     }
 
-    fn stylable(self) -> GeneralStylableComponentAdapter<Self>
+    fn stylable(self) -> StylableAdapter<Self>
     where
         Self: Sized,
     {
-        GeneralStylableComponentAdapter::new(self)
+        StylableAdapter::new(self)
     }
 }
 
-pub struct GeneralStylableComponentAdapter<C: GeneralComponent> {
+pub struct StylableAdapter<C: Component> {
     component: C,
 }
 
-impl<C: GeneralComponent> GeneralStylableComponentAdapter<C> {
+impl<C: Component> StylableAdapter<C> {
     pub fn new(component: C) -> Self {
         Self { component }
     }
 }
 
-impl<C: GeneralComponent> GeneralStyleableComponent for GeneralStylableComponentAdapter<C> {
+impl<C: Component> StyleableComponent for StylableAdapter<C> {
     type Style = ();
 
     type Output = C;
@@ -47,20 +47,20 @@ impl<C: GeneralComponent> GeneralStyleableComponent for GeneralStylableComponent
     }
 }
 
-pub trait GeneralStyleableComponent {
+pub trait StyleableComponent {
     type Style: Clone;
-    type Output: GeneralComponent;
+    type Output: Component;
 
     fn with_style(self, style: Self::Style) -> Self::Output;
 }
 
-impl GeneralComponent for () {
+impl Component for () {
     fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
         Empty::new().into_any()
     }
 }
 
-impl GeneralStyleableComponent for () {
+impl StyleableComponent for () {
     type Style = ();
     type Output = ();
 
@@ -69,54 +69,54 @@ impl GeneralStyleableComponent for () {
     }
 }
 
-pub trait StyleableComponent<V: View> {
+pub trait StatefulStyleableComponent<V: View> {
     type Style: Clone;
-    type Output: Component<V>;
+    type Output: StatefulComponent<V>;
 
-    fn c_with_style(self, style: Self::Style) -> Self::Output;
+    fn stateful_with_style(self, style: Self::Style) -> Self::Output;
 }
 
-impl<V: View, C: GeneralStyleableComponent> StyleableComponent<V> for C {
+impl<V: View, C: StyleableComponent> StatefulStyleableComponent<V> for C {
     type Style = C::Style;
 
     type Output = C::Output;
 
-    fn c_with_style(self, style: Self::Style) -> Self::Output {
+    fn stateful_with_style(self, style: Self::Style) -> Self::Output {
         self.with_style(style)
     }
 }
 
-pub trait Component<V: View> {
+pub trait StatefulComponent<V: View> {
     fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-    fn c_element(self) -> ComponentAdapter<V, Self>
+    fn stateful_element(self) -> StatefulAdapter<V, Self>
     where
         Self: Sized,
     {
-        ComponentAdapter::new(self)
+        StatefulAdapter::new(self)
     }
 
-    fn c_styleable(self) -> StylableComponentAdapter<Self, V>
+    fn stateful_styleable(self) -> StatefulStylableAdapter<Self, V>
     where
         Self: Sized,
     {
-        StylableComponentAdapter::new(self)
+        StatefulStylableAdapter::new(self)
     }
 }
 
-impl<V: View, C: GeneralComponent> Component<V> for C {
+impl<V: View, C: Component> StatefulComponent<V> for C {
     fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
         self.render(v, cx)
     }
 }
 
 // StylableComponent -> Component
-pub struct StylableComponentAdapter<C: Component<V>, V: View> {
+pub struct StatefulStylableAdapter<C: StatefulComponent<V>, V: View> {
     component: C,
     phantom: std::marker::PhantomData<V>,
 }
 
-impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
+impl<C: StatefulComponent<V>, V: View> StatefulStylableAdapter<C, V> {
     pub fn new(component: C) -> Self {
         Self {
             component,
@@ -125,12 +125,14 @@ impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
     }
 }
 
-impl<C: Component<V>, V: View> StyleableComponent<V> for StylableComponentAdapter<C, V> {
+impl<C: StatefulComponent<V>, V: View> StatefulStyleableComponent<V>
+    for StatefulStylableAdapter<C, V>
+{
     type Style = ();
 
     type Output = C;
 
-    fn c_with_style(self, _: Self::Style) -> Self::Output {
+    fn stateful_with_style(self, _: Self::Style) -> Self::Output {
         self.component
     }
 }
@@ -149,7 +151,7 @@ impl DynamicElementAdapter {
     }
 }
 
-impl GeneralComponent for DynamicElementAdapter {
+impl Component for DynamicElementAdapter {
     fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
         let element = self
             .element
@@ -174,20 +176,20 @@ impl<V: View> ElementAdapter<V> {
     }
 }
 
-impl<V: View> Component<V> for ElementAdapter<V> {
+impl<V: View> StatefulComponent<V> for ElementAdapter<V> {
     fn render(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
         self.element
     }
 }
 
 // Component -> Element
-pub struct ComponentAdapter<V: View, E> {
+pub struct StatefulAdapter<V: View, E> {
     component: Option<E>,
     element: Option<AnyElement<V>>,
     phantom: PhantomData<V>,
 }
 
-impl<E, V: View> ComponentAdapter<V, E> {
+impl<E, V: View> StatefulAdapter<V, E> {
     pub fn new(e: E) -> Self {
         Self {
             component: Some(e),
@@ -197,7 +199,7 @@ impl<E, V: View> ComponentAdapter<V, E> {
     }
 }
 
-impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
+impl<V: View, C: StatefulComponent<V> + 'static> Element<V> for StatefulAdapter<V, C> {
     type LayoutState = ();
 
     type PaintState = ();

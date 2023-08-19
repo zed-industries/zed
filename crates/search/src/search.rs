@@ -2,7 +2,7 @@ use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use gpui::{
     actions,
-    elements::{Component, GeneralStyleableComponent, TooltipStyle},
+    elements::{Component, StyleableComponent, TooltipStyle},
     Action, AnyElement, AppContext, Element, View,
 };
 pub use mode::SearchMode;
@@ -96,7 +96,7 @@ impl SearchOptions {
             .with_contents(Svg::new(self.icon()))
             .toggleable(active)
             .with_style(button_style)
-            .c_element()
+            .element()
             .into_any()
     }
 }

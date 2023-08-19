@@ -114,6 +114,16 @@ impl ChannelStore {
         }
     }
 
+    pub fn has_children(&self, channel_id: ChannelId) -> bool {
+        self.channel_paths.iter().any(|path| {
+            if let Some(ix) = path.iter().position(|id| *id == channel_id) {
+                path.len() > ix + 1
+            } else {
+                false
+            }
+        })
+    }
+
     pub fn channel_count(&self) -> usize {
         self.channel_paths.len()
     }

@@ -152,6 +152,10 @@ export default function contacts_panel(): any {
 
     return {
         ...collab_modals(),
+        disclosure: {
+            button: toggleable_icon_button(theme, {}),
+            spacing: 4,
+        },
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),

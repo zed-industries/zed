@@ -230,18 +230,25 @@ pub trait Element<V: View>: 'static {
         MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
 
-    fn component(self) -> ElementAdapter<V>
+    fn stateful_component(self) -> ElementAdapter<V>
     where
         Self: Sized,
     {
         ElementAdapter::new(self.into_any())
     }
 
-    fn dynamic_component(self) -> DynamicElementAdapter
+    fn component(self) -> DynamicElementAdapter
     where
         Self: Sized,
     {
         DynamicElementAdapter::new(self.into_any())
+    }
+
+    fn styleable_component(self) -> StylableAdapter<DynamicElementAdapter>
+    where
+        Self: Sized,
+    {
+        DynamicElementAdapter::new(self.into_any()).stylable()
     }
 }
 
