@@ -1,4 +1,4 @@
-use super::ChannelId;
+use crate::db::ChannelId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]

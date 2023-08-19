@@ -1,5 +1,5 @@
 use crate::{
-    db::{NewUserParams, TestDb, UserId},
+    db::{test_db::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT},
     AppState,

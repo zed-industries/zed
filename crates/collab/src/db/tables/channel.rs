@@ -1,4 +1,4 @@
-use super::ChannelId;
+use crate::db::ChannelId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -30,9 +30,3 @@ impl Related<super::room::Entity> for Entity {
         Relation::Room.def()
     }
 }
-
-// impl Related<super::follower::Entity> for Entity {
-//     fn to() -> RelationDef {
-//         Relation::Follower.def()
-//     }
-// }
