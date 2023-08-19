@@ -17,8 +17,8 @@ use gpui::{
     actions,
     elements::{
         Canvas, ChildView, Component, Empty, Flex, Image, Label, List, ListOffset, ListState,
-        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack,
-        StyleableComponent, Svg,
+        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, SafeStylable,
+        Stack, Svg,
     },
     geometry::{
         rect::RectF,
@@ -1633,11 +1633,8 @@ impl CollabPanel {
                 })
                 .align_children_center()
                 .styleable_component()
-                .disclosable(
-                    disclosed,
-                    Box::new(ToggleCollapsed { channel_id }),
-                    channel_id as usize,
-                )
+                .disclosable(disclosed, Box::new(ToggleCollapsed { channel_id }))
+                .with_id(channel_id as usize)
                 .with_style(theme.disclosure.clone())
                 .element()
                 .constrained()

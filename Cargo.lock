@@ -1563,6 +1563,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "component_test"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

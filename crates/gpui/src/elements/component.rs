@@ -9,14 +9,15 @@ use crate::{
 
 use super::Empty;
 
+/// The core stateless component trait, simply rendering an element tree
 pub trait Component {
-    fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+    fn render<V: View>(self, cx: &mut ViewContext<V>) -> AnyElement<V>;
 
-    fn element<V: View>(self) -> StatefulAdapter<V, Self>
+    fn element<V: View>(self) -> ComponentAdapter<V, Self>
     where
         Self: Sized,
     {
-        StatefulAdapter::new(self)
+        ComponentAdapter::new(self)
     }
 
     fn stylable(self) -> StylableAdapter<Self>
@@ -25,8 +26,46 @@ pub trait Component {
     {
         StylableAdapter::new(self)
     }
+
+    fn stateful<V: View>(self) -> StatefulAdapter<Self, V>
+    where
+        Self: Sized,
+    {
+        StatefulAdapter::new(self)
+    }
 }
 
+/// Allows a a component's styles to be rebound in a simple way.
+pub trait Stylable: Component {
+    type Style: Clone;
+
+    fn with_style(self, style: Self::Style) -> Self;
+}
+
+/// This trait models the typestate pattern for a component's style,
+/// enforcing at compile time that a component is only usable after
+/// it has been styled while still allowing for late binding of the
+/// styling information
+pub trait SafeStylable {
+    type Style: Clone;
+    type Output: Component;
+
+    fn with_style(self, style: Self::Style) -> Self::Output;
+}
+
+/// All stylable components can trivially implement SafeStylable
+impl<C: Stylable> SafeStylable for C {
+    type Style = C::Style;
+
+    type Output = C;
+
+    fn with_style(self, style: Self::Style) -> Self::Output {
+        self.with_style(style)
+    }
+}
+
+/// Allows converting an unstylable component into a stylable one
+/// by using `()` as the style type
 pub struct StylableAdapter<C: Component> {
     component: C,
 }
@@ -37,7 +76,7 @@ impl<C: Component> StylableAdapter<C> {
     }
 }
 
-impl<C: Component> StyleableComponent for StylableAdapter<C> {
+impl<C: Component> SafeStylable for StylableAdapter<C> {
     type Style = ();
 
     type Output = C;
@@ -47,36 +86,61 @@ impl<C: Component> StyleableComponent for StylableAdapter<C> {
     }
 }
 
-pub trait StyleableComponent {
+/// This is a secondary trait for components that can be styled
+/// which rely on their view's state. This is useful for components that, for example,
+/// want to take click handler callbacks Unfortunately, the generic bound on the
+/// Component trait makes it incompatible with the stateless components above.
+// So let's just replicate them for now
+pub trait StatefulComponent<V: View> {
+    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+
+    fn element(self) -> ComponentAdapter<V, Self>
+    where
+        Self: Sized,
+    {
+        ComponentAdapter::new(self)
+    }
+
+    fn styleable(self) -> StatefulStylableAdapter<Self, V>
+    where
+        Self: Sized,
+    {
+        StatefulStylableAdapter::new(self)
+    }
+
+    fn stateless(self) -> StatelessElementAdapter
+    where
+        Self: Sized + 'static,
+    {
+        StatelessElementAdapter::new(self.element().into_any())
+    }
+}
+
+/// It is trivial to convert stateless components to stateful components, so lets
+/// do so en masse. Note that the reverse is impossible without a helper.
+impl<V: View, C: Component> StatefulComponent<V> for C {
+    fn render(self, _: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        self.render(cx)
+    }
+}
+
+/// Same as stylable, but generic over a view type
+pub trait StatefulStylable<V: View>: StatefulComponent<V> {
     type Style: Clone;
-    type Output: Component;
 
-    fn with_style(self, style: Self::Style) -> Self::Output;
+    fn stateful_with_style(self, style: Self::Style) -> Self;
 }
 
-impl Component for () {
-    fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
-        Empty::new().into_any()
-    }
-}
-
-impl StyleableComponent for () {
-    type Style = ();
-    type Output = ();
-
-    fn with_style(self, _: Self::Style) -> Self::Output {
-        ()
-    }
-}
-
-pub trait StatefulStyleableComponent<V: View> {
+/// Same as SafeStylable, but generic over a view type
+pub trait StatefulSafeStylable<V: View> {
     type Style: Clone;
     type Output: StatefulComponent<V>;
 
     fn stateful_with_style(self, style: Self::Style) -> Self::Output;
 }
 
-impl<V: View, C: StyleableComponent> StatefulStyleableComponent<V> for C {
+/// Converting from stateless to stateful
+impl<V: View, C: SafeStylable> StatefulSafeStylable<V> for C {
     type Style = C::Style;
 
     type Output = C::Output;
@@ -86,31 +150,29 @@ impl<V: View, C: StyleableComponent> StatefulStyleableComponent<V> for C {
     }
 }
 
-pub trait StatefulComponent<V: View> {
-    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+// A helper for converting stateless components into stateful ones
+pub struct StatefulAdapter<C, V> {
+    component: C,
+    phantom: std::marker::PhantomData<V>,
+}
 
-    fn stateful_element(self) -> StatefulAdapter<V, Self>
-    where
-        Self: Sized,
-    {
-        StatefulAdapter::new(self)
-    }
-
-    fn stateful_styleable(self) -> StatefulStylableAdapter<Self, V>
-    where
-        Self: Sized,
-    {
-        StatefulStylableAdapter::new(self)
+impl<C: Component, V: View> StatefulAdapter<C, V> {
+    pub fn new(component: C) -> Self {
+        Self {
+            component,
+            phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<V: View, C: Component> StatefulComponent<V> for C {
-    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
-        self.render(v, cx)
+impl<C: Component, V: View> StatefulComponent<V> for StatefulAdapter<C, V> {
+    fn render(self, _: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        self.component.render(cx)
     }
 }
 
-// StylableComponent -> Component
+// A helper for converting stateful but style-less components into stylable ones
+// by using `()` as the style type
 pub struct StatefulStylableAdapter<C: StatefulComponent<V>, V: View> {
     component: C,
     phantom: std::marker::PhantomData<V>,
@@ -125,9 +187,7 @@ impl<C: StatefulComponent<V>, V: View> StatefulStylableAdapter<C, V> {
     }
 }
 
-impl<C: StatefulComponent<V>, V: View> StatefulStyleableComponent<V>
-    for StatefulStylableAdapter<C, V>
-{
+impl<C: StatefulComponent<V>, V: View> StatefulSafeStylable<V> for StatefulStylableAdapter<C, V> {
     type Style = ();
 
     type Output = C;
@@ -137,37 +197,37 @@ impl<C: StatefulComponent<V>, V: View> StatefulStyleableComponent<V>
     }
 }
 
-// Element -> GeneralComponent
-
-pub struct DynamicElementAdapter {
+/// A way of erasing the view generic from an element, useful
+/// for wrapping up an explicit element tree into stateless
+/// components
+pub struct StatelessElementAdapter {
     element: Box<dyn Any>,
 }
 
-impl DynamicElementAdapter {
+impl StatelessElementAdapter {
     pub fn new<V: View>(element: AnyElement<V>) -> Self {
-        DynamicElementAdapter {
+        StatelessElementAdapter {
             element: Box::new(element) as Box<dyn Any>,
         }
     }
 }
 
-impl Component for DynamicElementAdapter {
-    fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
-        let element = self
+impl Component for StatelessElementAdapter {
+    fn render<V: View>(self, _: &mut ViewContext<V>) -> AnyElement<V> {
+        *self
             .element
             .downcast::<AnyElement<V>>()
-            .expect("Don't move elements out of their view :(");
-        *element
+            .expect("Don't move elements out of their view :(")
     }
 }
 
-// Element -> Component
-pub struct ElementAdapter<V: View> {
+// For converting elements into stateful components
+pub struct StatefulElementAdapter<V: View> {
     element: AnyElement<V>,
     _phantom: std::marker::PhantomData<V>,
 }
 
-impl<V: View> ElementAdapter<V> {
+impl<V: View> StatefulElementAdapter<V> {
     pub fn new(element: AnyElement<V>) -> Self {
         Self {
             element,
@@ -176,20 +236,35 @@ impl<V: View> ElementAdapter<V> {
     }
 }
 
-impl<V: View> StatefulComponent<V> for ElementAdapter<V> {
+impl<V: View> StatefulComponent<V> for StatefulElementAdapter<V> {
     fn render(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
         self.element
     }
 }
 
-// Component -> Element
-pub struct StatefulAdapter<V: View, E> {
+/// A convenient shorthand for creating an empty component.
+impl Component for () {
+    fn render<V: View>(self, _: &mut ViewContext<V>) -> AnyElement<V> {
+        Empty::new().into_any()
+    }
+}
+
+impl Stylable for () {
+    type Style = ();
+
+    fn with_style(self, _: Self::Style) -> Self {
+        ()
+    }
+}
+
+// For converting components back into Elements
+pub struct ComponentAdapter<V: View, E> {
     component: Option<E>,
     element: Option<AnyElement<V>>,
     phantom: PhantomData<V>,
 }
 
-impl<E, V: View> StatefulAdapter<V, E> {
+impl<E, V: View> ComponentAdapter<V, E> {
     pub fn new(e: E) -> Self {
         Self {
             component: Some(e),
@@ -199,7 +274,7 @@ impl<E, V: View> StatefulAdapter<V, E> {
     }
 }
 
-impl<V: View, C: StatefulComponent<V> + 'static> Element<V> for StatefulAdapter<V, C> {
+impl<V: View, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdapter<V, C> {
     type LayoutState = ();
 
     type PaintState = ();
@@ -262,6 +337,7 @@ impl<V: View, C: StatefulComponent<V> + 'static> Element<V> for StatefulAdapter<
     ) -> serde_json::Value {
         serde_json::json!({
             "type": "ComponentAdapter",
+            "component": std::any::type_name::<C>(),
             "child": self.element.as_ref().map(|el| el.debug(view, cx)),
         })
     }

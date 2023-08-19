@@ -2,15 +2,13 @@ use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use gpui::{
     actions,
-    elements::{Component, StyleableComponent, TooltipStyle},
+    elements::{Component, SafeStylable, TooltipStyle},
     Action, AnyElement, AppContext, Element, View,
 };
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use theme::components::{
-    action_button::ActionButton, svg::Svg, ComponentExt, ToggleIconButtonStyle,
-};
+use theme::components::{action_button::Button, svg::Svg, ComponentExt, ToggleIconButtonStyle};
 
 pub mod buffer_search;
 mod history;
@@ -91,7 +89,7 @@ impl SearchOptions {
         tooltip_style: TooltipStyle,
         button_style: ToggleIconButtonStyle,
     ) -> AnyElement<V> {
-        ActionButton::new_dynamic(self.to_toggle_action())
+        Button::dynamic_action(self.to_toggle_action())
             .with_tooltip(format!("Toggle {}", self.label()), tooltip_style)
             .with_contents(Svg::new(self.icon()))
             .toggleable(active)
