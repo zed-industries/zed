@@ -3,7 +3,7 @@ mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
-use components::{disclosure::DisclosureStyle, ToggleIconButtonStyle};
+use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -66,6 +66,7 @@ pub struct Theme {
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub titlebar: Titlebar,
+    pub component_test: ComponentTest,
 }
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
@@ -258,6 +259,13 @@ pub struct CollabPanel {
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
     pub face_overlap: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ComponentTest {
+    pub button: Interactive<ButtonStyle<TextStyle>>,
+    pub toggle: Toggleable<Interactive<ButtonStyle<TextStyle>>>,
+    pub disclosure: DisclosureStyle<TextStyle>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

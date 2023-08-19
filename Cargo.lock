@@ -1566,7 +1566,9 @@ dependencies = [
 name = "component_test"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui",
+ "project",
  "settings",
  "theme",
  "util",
@@ -9668,6 +9670,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
+ "component_test",
  "context_menu",
  "copilot",
  "copilot_button",

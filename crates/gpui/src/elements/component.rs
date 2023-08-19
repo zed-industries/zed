@@ -128,7 +128,7 @@ impl<V: View, C: Component> StatefulComponent<V> for C {
 pub trait StatefulStylable<V: View>: StatefulComponent<V> {
     type Style: Clone;
 
-    fn stateful_with_style(self, style: Self::Style) -> Self;
+    fn with_style(self, style: Self::Style) -> Self;
 }
 
 /// Same as SafeStylable, but generic over a view type
@@ -136,7 +136,7 @@ pub trait StatefulSafeStylable<V: View> {
     type Style: Clone;
     type Output: StatefulComponent<V>;
 
-    fn stateful_with_style(self, style: Self::Style) -> Self::Output;
+    fn with_style(self, style: Self::Style) -> Self::Output;
 }
 
 /// Converting from stateless to stateful
@@ -145,7 +145,7 @@ impl<V: View, C: SafeStylable> StatefulSafeStylable<V> for C {
 
     type Output = C::Output;
 
-    fn stateful_with_style(self, style: Self::Style) -> Self::Output {
+    fn with_style(self, style: Self::Style) -> Self::Output {
         self.with_style(style)
     }
 }
@@ -192,7 +192,7 @@ impl<C: StatefulComponent<V>, V: View> StatefulSafeStylable<V> for StatefulStyla
 
     type Output = C;
 
-    fn stateful_with_style(self, _: Self::Style) -> Self::Output {
+    fn with_style(self, _: Self::Style) -> Self::Output {
         self.component
     }
 }

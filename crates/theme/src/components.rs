@@ -74,8 +74,9 @@ pub mod disclosure {
     }
 
     impl<C> Disclosable<C, ()> {
-        pub fn with_id(self, id: usize) -> Disclosable<C, ()> {
-            Disclosable { id, ..self }
+        pub fn with_id(mut self, id: usize) -> Disclosable<C, ()> {
+            self.id = id;
+            self
         }
     }
 
@@ -181,7 +182,7 @@ pub mod action_button {
     use gpui::{
         elements::{Component, ContainerStyle, MouseEventHandler, SafeStylable, TooltipStyle},
         platform::{CursorStyle, MouseButton},
-        Action, Element, TypeTag, View,
+        Action, Element, EventContext, TypeTag, View,
     };
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
@@ -211,14 +212,14 @@ pub mod action_button {
     }
 
     impl Button<(), ()> {
-        pub fn dynamic_action(action: Box<dyn Action>) -> Self {
+        pub fn dynamic_action(action: Box<dyn Action>) -> Button<(), ()> {
             Self {
                 contents: (),
                 tag: action.type_tag(),
+                action,
                 style: Interactive::new_blank(),
                 tooltip: None,
                 id: 0,
-                action,
             }
         }
 
@@ -292,7 +293,7 @@ pub mod action_button {
             })
             .on_click(MouseButton::Left, {
                 let action = self.action.boxed_clone();
-                move |_, _, cx| {
+                move |_, _, cx: &mut EventContext<V>| {
                     let window = cx.window();
                     let view = cx.view_id();
                     let action = action.boxed_clone();
@@ -437,6 +438,7 @@ pub mod label {
 
     use gpui::{
         elements::{Component, LabelStyle, SafeStylable},
+        fonts::TextStyle,
         Element,
     };
 
@@ -455,14 +457,14 @@ pub mod label {
     }
 
     impl SafeStylable for Label<()> {
-        type Style = LabelStyle;
+        type Style = TextStyle;
 
         type Output = Label<LabelStyle>;
 
         fn with_style(self, style: Self::Style) -> Self::Output {
             Label {
                 text: self.text,
-                style,
+                style: style.into(),
             }
         }
     }
