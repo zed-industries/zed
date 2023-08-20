@@ -54,7 +54,7 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         view: &V,
         cx: &gpui::ViewContext<V>,
     ) -> Option<RectF> {
-        todo!()
+        todo!("implement before merging to main")
     }
 
     fn debug(
@@ -65,6 +65,6 @@ impl<V: 'static> gpui::Element<V> for Adapter<V> {
         view: &V,
         cx: &gpui::ViewContext<V>,
     ) -> gpui::serde_json::Value {
-        todo!()
+        todo!("implement before merging to main")
     }
 }

@@ -7,7 +7,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::EngineLayout;
 use gpui::{geometry::rect::RectF, platform::MouseMovedEvent, EventContext};
-use playground_macros::styleable_trait;
+use playground_macros::styleable_helpers;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -63,8 +63,25 @@ pub trait Element<V> {
     }
 }
 
-use crate as playground;
-styleable_trait!();
+use crate as playground; // Macro invocation below references this crate as playground.
+pub trait Styleable {
+    type Style: refineable::Refineable;
+
+    fn declared_style(&mut self) -> &mut playground::style::StyleRefinement;
+
+    fn style(&mut self) -> playground::style::Style {
+        let mut style = playground::style::Style::default();
+        style.refine(self.declared_style());
+        style
+    }
+
+    // Tailwind-style helpers methods that take and return mut self
+    //
+    // Example:
+    // // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
+    // fn p_2(mut self) -> Self where Self: Sized;
+    styleable_helpers!();
+}
 
 pub struct Div<V> {
     style: StyleRefinement,
@@ -106,7 +123,7 @@ impl<V: 'static> Element<V> for Div<V> {
     where
         Self: Sized,
     {
-        todo!()
+        let style = self.style();
     }
 }
 
