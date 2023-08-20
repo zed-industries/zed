@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    geometry::rect::RectF, EngineLayout, EventContext, LayoutId, RenderContext, ViewContext,
+    geometry::rect::RectF, scene::EventHandler, EngineLayout, EventContext, LayoutId,
+    RenderContext, ViewContext,
 };
 pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
 use std::{any::TypeId, rc::Rc};
@@ -39,6 +40,25 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         scene: &'d mut gpui::SceneBuilder,
     ) -> Self {
         Self { legacy_cx, scene }
+    }
+
+    pub fn on_event<E: 'static>(
+        &mut self,
+        order: u32,
+        handler: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) {
+        self.scene.event_handlers.push(EventHandler {
+            order,
+            handler: Rc::new(move |view, event, window_cx, view_id| {
+                let mut view_context = ViewContext::mutable(window_cx, view_id);
+                handler(
+                    view.downcast_mut().unwrap(),
+                    event.downcast_ref().unwrap(),
+                    &mut view_context,
+                );
+            }),
+            event_type: TypeId::of::<E>(),
+        })
     }
 
     pub fn draw_interactive_region<E: 'static>(

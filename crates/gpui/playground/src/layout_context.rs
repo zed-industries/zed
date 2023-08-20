@@ -4,10 +4,7 @@ pub use gpui::LayoutContext as LegacyLayoutContext;
 use gpui::{RenderContext, ViewContext};
 pub use taffy::tree::NodeId;
 
-use crate::{
-    div::{Element, Layout},
-    style::Style,
-};
+use crate::{div::Layout, style::Style};
 
 #[derive(Deref, DerefMut)]
 pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
@@ -43,12 +40,12 @@ impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
         Self { legacy_cx, scene }
     }
 
-    pub fn add_layout_node<E: Element<V>>(
+    pub fn add_layout_node<D>(
         &mut self,
         style: Style,
-        element_data: E::Layout,
+        element_data: D,
         children: impl IntoIterator<Item = NodeId>,
-    ) -> Result<Layout<V, E>> {
+    ) -> Result<Layout<V, D>> {
         let rem_size = self.rem_pixels();
         let id = self
             .legacy_cx
