@@ -134,12 +134,12 @@ impl ToJson for RectF {
 }
 
 #[derive(Refineable)]
-pub struct Point<T: Clone> {
+pub struct Point<T: Clone + Default> {
     pub x: T,
     pub y: T,
 }
 
-impl<T: Clone> Clone for Point<T> {
+impl<T: Clone + Default> Clone for Point<T> {
     fn clone(&self) -> Self {
         Self {
             x: self.x.clone(),
@@ -148,7 +148,7 @@ impl<T: Clone> Clone for Point<T> {
     }
 }
 
-impl<T: Clone> Into<taffy::geometry::Point<T>> for Point<T> {
+impl<T: Clone + Default> Into<taffy::geometry::Point<T>> for Point<T> {
     fn into(self) -> taffy::geometry::Point<T> {
         taffy::geometry::Point {
             x: self.x,
@@ -158,12 +158,12 @@ impl<T: Clone> Into<taffy::geometry::Point<T>> for Point<T> {
 }
 
 #[derive(Clone, Refineable)]
-pub struct Size<T: Clone> {
+pub struct Size<T: Clone + Default> {
     pub width: T,
     pub height: T,
 }
 
-impl<S, T: Clone> From<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone + Default> From<taffy::geometry::Size<S>> for Size<T>
 where
     S: Into<T>,
 {
@@ -175,7 +175,7 @@ where
     }
 }
 
-impl<S, T: Clone> Into<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone + Default> Into<taffy::geometry::Size<S>> for Size<T>
 where
     T: Into<S>,
 {
@@ -223,7 +223,7 @@ impl Size<Length> {
 }
 
 #[derive(Clone, Default, Refineable)]
-pub struct Edges<T: Clone> {
+pub struct Edges<T: Clone + Default> {
     pub top: T,
     pub right: T,
     pub bottom: T,

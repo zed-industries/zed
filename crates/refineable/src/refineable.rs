@@ -1,7 +1,7 @@
 pub use derive_refineable::Refineable;
 
 pub trait Refineable {
-    type Refinement;
+    type Refinement: Default;
 
     fn refine(&mut self, refinement: &Self::Refinement);
     fn refined(mut self, refinement: &Self::Refinement) -> Self

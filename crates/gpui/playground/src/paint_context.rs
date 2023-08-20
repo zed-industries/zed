@@ -1,8 +1,10 @@
-use std::{any::TypeId, rc::Rc};
-
+use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{geometry::rect::RectF, EventContext, RenderContext, ViewContext};
+use gpui::{
+    geometry::rect::RectF, EngineLayout, EventContext, LayoutId, RenderContext, ViewContext,
+};
 pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
+use std::{any::TypeId, rc::Rc};
 pub use taffy::tree::NodeId;
 
 #[derive(Deref, DerefMut)]
@@ -65,5 +67,11 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
                 event_type: TypeId::of::<E>(),
                 view_id: self.view_id(),
             });
+    }
+
+    pub(crate) fn computed_layout(&mut self, layout_id: LayoutId) -> Result<EngineLayout> {
+        self.layout_engine()
+            .ok_or_else(|| anyhow!("no layout engine present"))?
+            .computed_layout(layout_id)
     }
 }

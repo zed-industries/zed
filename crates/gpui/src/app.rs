@@ -3392,7 +3392,8 @@ pub trait RenderContext<'a, 'b, V> {
 }
 
 pub struct LayoutContext<'a, 'b, 'c, V> {
-    view_context: &'c mut ViewContext<'a, 'b, V>,
+    // Nathan: Making this is public while I work on playground.
+    pub view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
     text_style_stack: Vec<TextStyle>,
@@ -3643,6 +3644,9 @@ impl<V> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
 pub struct EventContext<'a, 'b, 'c, V> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     pub(crate) handled: bool,
+    // I would like to replace handled with this.
+    // Being additive for now.
+    pub bubble: bool,
 }
 
 impl<'a, 'b, 'c, V: 'static> EventContext<'a, 'b, 'c, V> {
@@ -3650,11 +3654,20 @@ impl<'a, 'b, 'c, V: 'static> EventContext<'a, 'b, 'c, V> {
         EventContext {
             view_context,
             handled: true,
+            bubble: false,
         }
     }
 
     pub fn propagate_event(&mut self) {
         self.handled = false;
+    }
+
+    pub fn bubble_event(&mut self) {
+        self.bubble = true;
+    }
+
+    pub fn event_bubbled(&self) -> bool {
+        self.bubble
     }
 }
 

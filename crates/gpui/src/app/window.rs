@@ -1293,16 +1293,16 @@ impl LayoutEngine {
         Default::default()
     }
 
-    pub fn add_node<C>(&mut self, style: LayoutStyle, children: C) -> Result<LayoutNodeId>
+    pub fn add_node<C>(&mut self, style: LayoutStyle, children: C) -> Result<LayoutId>
     where
-        C: IntoIterator<Item = LayoutNodeId>,
+        C: IntoIterator<Item = LayoutId>,
     {
         Ok(self
             .0
             .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
     }
 
-    pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutNodeId>
+    pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutId>
     where
         F: Fn(MeasureParams) -> Size<f32> + Sync + Send + 'static,
     {
@@ -1311,7 +1311,7 @@ impl LayoutEngine {
             .new_leaf_with_measure(style, MeasureFunc::Boxed(Box::new(MeasureFn(measure))))?)
     }
 
-    pub fn compute_layout(&mut self, root: LayoutNodeId, available_space: Vector2F) -> Result<()> {
+    pub fn compute_layout(&mut self, root: LayoutId, available_space: Vector2F) -> Result<()> {
         self.0.compute_layout(
             root,
             taffy::geometry::Size {
@@ -1322,7 +1322,7 @@ impl LayoutEngine {
         Ok(())
     }
 
-    pub fn computed_layout(&mut self, node: LayoutNodeId) -> Result<EngineLayout> {
+    pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
         Ok(self.0.layout(node)?.into())
     }
 }
@@ -1346,7 +1346,7 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EngineLayout {
     pub bounds: RectF,
     pub order: u32,
@@ -1365,6 +1365,12 @@ pub enum AvailableSpace {
     MinContent,
     /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
     MaxContent,
+}
+
+impl Default for AvailableSpace {
+    fn default() -> Self {
+        Self::Pixels(0.)
+    }
 }
 
 impl From<taffy::prelude::AvailableSpace> for AvailableSpace {
@@ -1389,7 +1395,7 @@ impl From<&taffy::tree::Layout> for EngineLayout {
     }
 }
 
-pub type LayoutNodeId = taffy::prelude::NodeId;
+pub type LayoutId = taffy::prelude::NodeId;
 
 pub struct RenderParams {
     pub view_id: usize,

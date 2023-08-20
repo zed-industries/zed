@@ -6,7 +6,7 @@ use crate::{
     style::{Style, StyleRefinement},
 };
 use anyhow::{anyhow, Result};
-use gpui::LayoutNodeId;
+use gpui::LayoutId;
 use playground_macros::IntoElement;
 use refineable::Refineable;
 
@@ -46,7 +46,7 @@ impl<V: 'static> Element<V> for Frame<V> {
             .children
             .iter_mut()
             .map(|child| child.layout(view, cx))
-            .collect::<Result<Vec<LayoutNodeId>>>()?;
+            .collect::<Result<Vec<LayoutId>>>()?;
 
         let rem_size = cx.rem_pixels();
         let style = Style::default().refined(&self.style);

@@ -109,6 +109,8 @@ pub fn styleable_trait(_item: TokenStream) -> TokenStream {
 
     let output = quote! {
         pub trait Styleable {
+            type Style: refineable::Refineable;
+
             fn declared_style(&mut self) -> &mut playground::style::StyleRefinement;
 
             fn style(&mut self) -> playground::style::Style {
