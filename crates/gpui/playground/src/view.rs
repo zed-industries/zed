@@ -1,5 +1,5 @@
 use crate::element::{AnyElement, Element};
-use gpui::{Element as _, ViewContext};
+use gpui::ViewContext;
 
 pub fn view<F, E>(mut render: F) -> ViewFn
 where

@@ -4,7 +4,7 @@ pub use gpui::LayoutContext as LegacyLayoutContext;
 use gpui::{RenderContext, ViewContext};
 pub use taffy::tree::NodeId;
 
-use crate::{div::Layout, style::Style};
+use crate::{element::Layout, style::Style};
 
 #[derive(Deref, DerefMut)]
 pub struct LayoutContext<'a, 'b, 'c, 'd, V> {

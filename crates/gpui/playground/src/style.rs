@@ -1,7 +1,7 @@
 use crate::{
     color::Hsla,
-    div::{Element, Layout},
-    element::PaintContext,
+    element::{Element, Layout},
+    paint_context::PaintContext,
 };
 use gpui::{
     fonts::TextStyleRefinement,
@@ -10,6 +10,7 @@ use gpui::{
         Size, SizeRefinement,
     },
 };
+use playground_macros::styleable_helpers;
 use refineable::Refineable;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
@@ -242,4 +243,26 @@ impl CornerRadii {
             bottom_right: self.bottom_right.to_pixels(rem_size),
         }
     }
+}
+
+pub trait Styleable {
+    type Style: refineable::Refineable;
+
+    fn declared_style(&mut self) -> &mut playground::style::StyleRefinement;
+
+    fn style(&mut self) -> playground::style::Style {
+        let mut style = playground::style::Style::default();
+        style.refine(self.declared_style());
+        style
+    }
+}
+
+// Tailwind-style helpers methods that take and return mut self
+//
+// Example:
+// // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
+// fn p_2(mut self) -> Self where Self: Sized;
+use crate as playground; // Macro invocation references this crate as playground.
+pub trait StyleHelpers: Styleable<Style = Style> {
+    styleable_helpers!();
 }

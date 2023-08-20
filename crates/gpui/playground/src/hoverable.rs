@@ -1,119 +1,70 @@
-use std::{cell::Cell, marker::PhantomData, rc::Rc};
-
-use gpui::{
-    geometry::{rect::RectF, vector::Vector2F},
-    platform::MouseMovedEvent,
-    EngineLayout, ViewContext,
-};
-use refineable::Refineable;
-
 use crate::{
-    element::{Element, ParentElement},
-    style::StyleRefinement,
+    element::{Element, Layout},
+    layout_context::LayoutContext,
+    paint_context::PaintContext,
+    style::{StyleRefinement, Styleable},
 };
+use anyhow::Result;
+use gpui::platform::MouseMovedEvent;
+use refineable::Refineable;
+use std::{cell::Cell, marker::PhantomData};
 
-pub struct Hoverable<V, E> {
-    hover_style: StyleRefinement,
-    computed_style: Option<StyleRefinement>,
-    hovered: Rc<Cell<bool>>,
-    view_type: PhantomData<V>,
+pub struct Hoverable<V, E: Element<V> + Styleable> {
+    hovered: Cell<bool>,
+    child_style: StyleRefinement,
+    hovered_style: StyleRefinement,
     child: E,
+    view_type: PhantomData<V>,
 }
 
-impl<V, E> Hoverable<V, E> {
-    pub fn new(child: E) -> Self {
-        Self {
-            hover_style: StyleRefinement::default(),
-            computed_style: None,
-            hovered: Default::default(),
-            view_type: PhantomData,
-            child,
-        }
+pub fn hoverable<V, E: Element<V> + Styleable>(mut child: E) -> Hoverable<V, E> {
+    Hoverable {
+        hovered: Cell::new(false),
+        child_style: child.declared_style().clone(),
+        hovered_style: Default::default(),
+        child,
+        view_type: PhantomData,
     }
 }
 
-impl<V: 'static, E: Element<V>> Element<V> for Hoverable<V, E> {
+impl<V, E: Element<V> + Styleable> Styleable for Hoverable<V, E> {
+    type Style = E::Style;
+
+    fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
+        self.child.declared_style()
+    }
+}
+
+impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
     type Layout = E::Layout;
 
-    fn declared_style(&mut self) -> &mut StyleRefinement {
-        &mut self.hover_style
-    }
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<Layout<V, Self::Layout>>
+    where
+        Self: Sized,
+    {
+        if self.hovered.get() {
+            // If hovered, refine the child's style with this element's style.
+            self.child.declared_style().refine(&self.hovered_style);
+        } else {
+            // Otherwise, set the child's style back to its original style.
+            *self.child.declared_style() = self.child_style.clone();
+        }
 
-    fn computed_style(&mut self, cx: &mut ViewContext<V>) -> &StyleRefinement {
-        dbg!(self.computed_style.is_some());
-
-        self.computed_style.get_or_insert_with(|| {
-            let mut style = self.child.computed_style(cx).clone();
-            if self.hovered.get() {
-                style.refine(&self.hover_style);
-            }
-            style
-        })
-    }
-
-    fn handlers_mut(&mut self) -> &mut Vec<crate::element::EventHandler<V>> {
-        self.child.handlers_mut()
-    }
-
-    fn layout(
-        &mut self,
-        view: &mut V,
-        cx: &mut gpui::LayoutContext<V>,
-    ) -> anyhow::Result<(taffy::tree::NodeId, Self::Layout)> {
         self.child.layout(view, cx)
     }
 
-    fn paint<'a>(
+    fn paint(
         &mut self,
-        layout: crate::element::Layout<Self::Layout>,
         view: &mut V,
-        cx: &mut crate::element::PaintContext<V>,
-    ) -> anyhow::Result<()> {
-        let EngineLayout { bounds, order } = layout.from_engine;
-        let window_bounds = RectF::new(Vector2F::zero(), cx.window_size());
+        layout: &mut Layout<V, Self::Layout>,
+        cx: &mut PaintContext<V>,
+    ) where
+        Self: Sized,
+    {
+        let bounds = layout.bounds(cx);
+        let order = layout.order(cx);
+        self.hovered.set(bounds.contains_point(cx.mouse_position()));
         let hovered = self.hovered.clone();
-
-        self.child.paint(layout, view, cx)?;
-
-        let mouse_within_bounds = bounds.contains_point(cx.mouse_position());
-        if mouse_within_bounds != hovered.get() {
-            hovered.set(mouse_within_bounds);
-            cx.repaint();
-        }
-
-        cx.draw_interactive_region(
-            order,
-            window_bounds,
-            false,
-            move |view, event: &MouseMovedEvent, cx| {
-                let mouse_within_bounds = bounds.contains_point(cx.mouse_position());
-                if mouse_within_bounds != hovered.get() {
-                    dbg!("hovered", mouse_within_bounds);
-                    hovered.set(mouse_within_bounds);
-                    cx.repaint();
-                }
-            },
-        );
-        Ok(())
-    }
-}
-
-impl<V: 'static, P: ParentElement<V>> ParentElement<V> for Hoverable<V, P> {
-    fn child(mut self, child: impl crate::element::IntoElement<V>) -> Self
-    where
-        Self: Sized,
-    {
-        self.child = self.child.child(child);
-        self
-    }
-
-    fn children<I, E>(mut self, children: I) -> Self
-    where
-        Self: Sized,
-        I: IntoIterator<Item = E>,
-        E: crate::element::IntoElement<V>,
-    {
-        self.child = self.child.children(children);
-        self
+        cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {});
     }
 }

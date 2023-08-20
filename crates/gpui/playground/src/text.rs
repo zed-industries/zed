@@ -1,40 +1,35 @@
 use crate::{
-    element::{Element, ElementMetadata, EventHandler, IntoElement},
+    element::{Element, IntoElement, Layout},
+    layout_context::LayoutContext,
+    paint_context::PaintContext,
     style::Style,
 };
+use anyhow::Result;
 use gpui::{geometry::Size, text_layout::LineLayout, RenderContext};
 use parking_lot::Mutex;
 use refineable::Refineable;
 use std::sync::Arc;
 
 impl<V: 'static, S: Into<ArcCow<'static, str>>> IntoElement<V> for S {
-    type Element = Text<V>;
+    type Element = Text;
 
     fn into_element(self) -> Self::Element {
-        Text {
-            text: self.into(),
-            metadata: Default::default(),
-        }
+        Text { text: self.into() }
     }
 }
 
-pub struct Text<V> {
+pub struct Text {
     text: ArcCow<'static, str>,
-    metadata: ElementMetadata<V>,
 }
 
-impl<V: 'static> Element<V> for Text<V> {
+impl<V: 'static> Element<V> for Text {
     type Layout = Arc<Mutex<Option<TextLayout>>>;
-
-    fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
-        &mut self.metadata.style
-    }
 
     fn layout(
         &mut self,
         view: &mut V,
-        cx: &mut gpui::LayoutContext<V>,
-    ) -> anyhow::Result<(taffy::tree::NodeId, Self::Layout)> {
+        cx: &mut LayoutContext<V>,
+    ) -> Result<Layout<V, Self::Layout>> {
         let rem_size = cx.rem_pixels();
         let fonts = cx.platform().fonts();
         let text_style = cx.text_style();
@@ -72,10 +67,10 @@ impl<V: 'static> Element<V> for Text<V> {
 
     fn paint<'a>(
         &mut self,
-        layout: crate::element::Layout<Arc<Mutex<Option<TextLayout>>>>,
         view: &mut V,
-        cx: &mut crate::element::PaintContext<V>,
-    ) -> anyhow::Result<()> {
+        layout: &mut Layout<V, Self::Layout>,
+        cx: &mut PaintContext<V>,
+    ) {
         let element_layout_lock = layout.from_element.lock();
         let element_layout = element_layout_lock
             .as_ref()
@@ -94,11 +89,6 @@ impl<V: 'static> Element<V> for Text<V> {
             line_height,
             cx.legacy_cx,
         );
-        Ok(())
-    }
-
-    fn handlers_mut(&mut self) -> &mut Vec<EventHandler<V>> {
-        &mut self.metadata.handlers
     }
 }
 
