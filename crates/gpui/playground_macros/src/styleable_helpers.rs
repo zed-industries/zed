@@ -38,7 +38,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                 .iter()
                 .map(|field_tokens| {
                     quote! {
-                        style.#field_tokens = Some(gpui::geometry::#length_tokens.into());
+                        style.#field_tokens = Some(gpui::geometry::#length_tokens);
                     }
                 })
                 .collect::<Vec<_>>();
@@ -60,30 +60,30 @@ fn generate_methods() -> Vec<TokenStream2> {
 
 fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
     vec![
-        ("0", quote! { DefinedLength::Pixels(0.) }),
-        ("1", quote! { DefinedLength::Rems(0.25) }),
-        ("2", quote! { DefinedLength::Rems(0.5) }),
-        ("3", quote! { DefinedLength::Rems(0.75) }),
-        ("4", quote! { DefinedLength::Rems(1.0) }),
-        ("5", quote! { DefinedLength::Rems(1.25) }),
-        ("6", quote! { DefinedLength::Rems(1.5) }),
-        ("8", quote! { DefinedLength::Rems(2.0) }),
-        ("10", quote! { DefinedLength::Rems(2.5) }),
-        ("12", quote! { DefinedLength::Rems(3.0) }),
-        ("16", quote! { DefinedLength::Rems(4.0) }),
-        ("20", quote! { DefinedLength::Rems(5.0) }),
-        ("24", quote! { DefinedLength::Rems(6.0) }),
-        ("32", quote! { DefinedLength::Rems(8.0) }),
-        ("40", quote! { DefinedLength::Rems(10.0) }),
-        ("48", quote! { DefinedLength::Rems(12.0) }),
-        ("56", quote! { DefinedLength::Rems(14.0) }),
-        ("64", quote! { DefinedLength::Rems(16.0) }),
-        ("auto", quote! { Length::Auto }),
-        ("px", quote! { DefinedLength::Pixels(1.0) }),
-        ("full", quote! { DefinedLength::Percent(100.0) }),
-        // ("screen_50", quote! { DefinedLength::Vh(50.0) }),
-        // ("screen_75", quote! { DefinedLength::Vh(75.0) }),
-        // ("screen", quote! { DefinedLength::Vh(100.0) }),
+        ("0", quote! { pixels(0.) }),
+        ("1", quote! { rems(0.25) }),
+        ("2", quote! { rems(0.5) }),
+        ("3", quote! { rems(0.75) }),
+        ("4", quote! { rems(1.) }),
+        ("5", quote! { rems(1.25) }),
+        ("6", quote! { rems(1.5) }),
+        ("8", quote! { rems(2.0) }),
+        ("10", quote! { rems(2.5) }),
+        ("12", quote! { rems(3.) }),
+        ("16", quote! { rems(4.) }),
+        ("20", quote! { rems(5.) }),
+        ("24", quote! { rems(6.) }),
+        ("32", quote! { rems(8.) }),
+        ("40", quote! { rems(10.) }),
+        ("48", quote! { rems(12.) }),
+        ("56", quote! { rems(14.) }),
+        ("64", quote! { rems(16.) }),
+        ("auto", quote! { auto() }),
+        ("px", quote! { pixels(1.) }),
+        ("full", quote! { relative(1.) }),
+        // ("screen_50", quote! { DefiniteLength::Vh(50.0) }),
+        // ("screen_75", quote! { DefiniteLength::Vh(75.0) }),
+        // ("screen", quote! { DefiniteLength::Vh(100.0) }),
     ]
 }
 

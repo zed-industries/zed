@@ -187,11 +187,11 @@ where
     }
 }
 
-impl Size<DefinedLength> {
-    pub const fn zero() -> Self {
+impl Size<DefiniteLength> {
+    pub fn zero() -> Self {
         Self {
-            width: DefinedLength::Pixels(0.),
-            height: DefinedLength::Pixels(0.),
+            width: pixels(0.),
+            height: pixels(0.),
         }
     }
 
@@ -204,7 +204,7 @@ impl Size<DefinedLength> {
 }
 
 impl Size<Length> {
-    pub const fn auto() -> Self {
+    pub fn auto() -> Self {
         Self {
             width: Length::Auto,
             height: Length::Auto,
@@ -230,13 +230,13 @@ pub struct Edges<T: Clone + Default> {
     pub left: T,
 }
 
-impl Edges<DefinedLength> {
-    pub const fn zero() -> Self {
+impl Edges<DefiniteLength> {
+    pub fn zero() -> Self {
         Self {
-            top: DefinedLength::Pixels(0.0),
-            right: DefinedLength::Pixels(0.0),
-            bottom: DefinedLength::Pixels(0.0),
-            left: DefinedLength::Pixels(0.0),
+            top: pixels(0.),
+            right: pixels(0.),
+            bottom: pixels(0.),
+            left: pixels(0.),
         }
     }
 
@@ -251,7 +251,7 @@ impl Edges<DefinedLength> {
 }
 
 impl Edges<Length> {
-    pub const fn auto() -> Self {
+    pub fn auto() -> Self {
         Self {
             top: Length::Auto,
             right: Length::Auto,
@@ -260,12 +260,12 @@ impl Edges<Length> {
         }
     }
 
-    pub const fn zero() -> Self {
+    pub fn zero() -> Self {
         Self {
-            top: Length::Defined(DefinedLength::Pixels(0.0)),
-            right: Length::Defined(DefinedLength::Pixels(0.0)),
-            bottom: Length::Defined(DefinedLength::Pixels(0.0)),
-            left: Length::Defined(DefinedLength::Pixels(0.0)),
+            top: pixels(0.),
+            right: pixels(0.),
+            bottom: pixels(0.),
+            left: pixels(0.),
         }
     }
 
@@ -282,72 +282,108 @@ impl Edges<Length> {
     }
 }
 
-/// A non-auto length that can be defined in pixels, rems, or percent of parent.
 #[derive(Clone, Copy)]
-pub enum DefinedLength {
+pub enum AbsoluteLength {
     Pixels(f32),
     Rems(f32),
-    Percent(f32), // 0. - 100.
 }
 
-impl DefinedLength {
+impl AbsoluteLength {
+    pub fn to_pixels(&self, rem_size: f32) -> f32 {
+        match self {
+            AbsoluteLength::Pixels(pixels) => *pixels,
+            AbsoluteLength::Rems(rems) => rems * rem_size,
+        }
+    }
+}
+
+impl Default for AbsoluteLength {
+    fn default() -> Self {
+        Self::Pixels(0.0)
+    }
+}
+
+/// A non-auto length that can be defined in pixels, rems, or percent of parent.
+#[derive(Clone, Copy)]
+pub enum DefiniteLength {
+    Absolute(AbsoluteLength),
+    Relative(f32), // Percent, from 0 to 100.
+}
+
+impl DefiniteLength {
     fn to_taffy(&self, rem_size: f32) -> taffy::style::LengthPercentage {
         match self {
-            DefinedLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
-            DefinedLength::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
-            DefinedLength::Percent(percent) => {
-                taffy::style::LengthPercentage::Percent(*percent / 100.)
+            DefiniteLength::Absolute(length) => match length {
+                AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
+                AbsoluteLength::Rems(rems) => {
+                    taffy::style::LengthPercentage::Length(rems * rem_size)
+                }
+            },
+            DefiniteLength::Relative(fraction) => {
+                taffy::style::LengthPercentage::Percent(*fraction)
             }
         }
     }
 }
 
-impl Default for DefinedLength {
+impl From<AbsoluteLength> for DefiniteLength {
+    fn from(length: AbsoluteLength) -> Self {
+        Self::Absolute(length)
+    }
+}
+
+impl Default for DefiniteLength {
     fn default() -> Self {
-        Self::Pixels(0.)
+        Self::Absolute(AbsoluteLength::default())
     }
 }
 
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
 #[derive(Clone, Copy)]
 pub enum Length {
-    Defined(DefinedLength),
+    Definite(DefiniteLength),
     Auto,
+}
+
+pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
+    DefiniteLength::Relative(fraction).into()
+}
+
+pub fn rems<T: From<AbsoluteLength>>(rems: f32) -> T {
+    AbsoluteLength::Rems(rems).into()
+}
+
+pub fn pixels<T: From<AbsoluteLength>>(pixels: f32) -> T {
+    AbsoluteLength::Pixels(pixels).into()
 }
 
 pub fn auto() -> Length {
     Length::Auto
 }
 
-pub fn percent(percent: f32) -> DefinedLength {
-    DefinedLength::Percent(percent)
-}
-
-pub fn rems(rems: f32) -> DefinedLength {
-    DefinedLength::Rems(rems)
-}
-
-pub fn pixels(pixels: f32) -> DefinedLength {
-    DefinedLength::Pixels(pixels)
-}
-
 impl Length {
     pub fn to_taffy(&self, rem_size: f32) -> taffy::prelude::LengthPercentageAuto {
         match self {
-            Length::Defined(length) => length.to_taffy(rem_size).into(),
+            Length::Definite(length) => length.to_taffy(rem_size).into(),
             Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
         }
     }
 }
 
-impl From<DefinedLength> for Length {
-    fn from(value: DefinedLength) -> Self {
-        Length::Defined(value)
+impl From<DefiniteLength> for Length {
+    fn from(length: DefiniteLength) -> Self {
+        Self::Definite(length)
+    }
+}
+
+impl From<AbsoluteLength> for Length {
+    fn from(length: AbsoluteLength) -> Self {
+        Self::Definite(length.into())
     }
 }
 
 impl Default for Length {
     fn default() -> Self {
-        Self::Defined(DefinedLength::default())
+        Self::Definite(DefiniteLength::default())
     }
 }

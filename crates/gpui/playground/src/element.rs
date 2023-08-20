@@ -1,17 +1,15 @@
 use crate::{
     adapter::Adapter,
     color::Hsla,
-    hoverable::Hoverable,
     style::{Display, Fill, Overflow, Position, StyleRefinement},
 };
 use anyhow::Result;
 pub use gpui::LayoutContext;
 use gpui::{
-    geometry::{DefinedLength, Length, PointRefinement},
+    geometry::PointRefinement,
     platform::{MouseButton, MouseButtonEvent},
     EngineLayout, EventContext, RenderContext, ViewContext,
 };
-use playground_macros::tailwind_lengths;
 use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
@@ -336,94 +334,6 @@ pub trait Element<V: 'static>: 'static {
         self.declared_style().position = Some(Position::Absolute);
 
         self
-    }
-
-    #[tailwind_lengths]
-    fn inset_(mut self, length: DefinedLength) -> Self
-    where
-        Self: Sized,
-    {
-        let inset = &mut self.declared_style().inset;
-        inset.top = Some(length);
-        inset.right = Some(length);
-        inset.bottom = Some(length);
-        inset.left = Some(length);
-        self
-    }
-
-    fn w(mut self, width: impl Into<Length>) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.width = Some(width.into());
-        self
-    }
-
-    fn w_auto(mut self) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.width = Some(Length::Auto);
-        self
-    }
-
-    #[tailwind_lengths]
-    fn w_(mut self, length: DefinedLength) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.width = Some(length);
-        self
-    }
-
-    #[tailwind_lengths]
-    fn min_w_(mut self, length: DefinedLength) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().min_size.width = Some(length);
-        self
-    }
-
-    fn h(mut self, height: impl Into<Length>) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.height = Some(height.into());
-        self
-    }
-
-    fn h_auto(mut self) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.height = Some(Length::Auto);
-        self
-    }
-
-    #[tailwind_lengths]
-    fn h_(mut self, height: DefinedLength) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.height = Some(height);
-        self
-    }
-
-    #[tailwind_lengths]
-    fn min_h_(mut self, length: DefinedLength) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().min_size.height = Some(length);
-        self
-    }
-
-    fn hover(self) -> Hoverable<V, Self>
-    where
-        Self: Sized,
-    {
-        Hoverable::new(self)
     }
 
     fn fill(mut self, fill: impl Into<Fill>) -> Self

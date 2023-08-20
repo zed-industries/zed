@@ -1,8 +1,13 @@
-use crate::color::Hsla;
+use crate::{
+    color::Hsla,
+    div::{Element, Layout},
+    element::PaintContext,
+};
 use gpui::{
     fonts::TextStyleRefinement,
     geometry::{
-        DefinedLength, Edges, EdgesRefinement, Length, Point, PointRefinement, Size, SizeRefinement,
+        AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length, Point, PointRefinement,
+        Size, SizeRefinement,
     },
 };
 use refineable::Refineable;
@@ -49,10 +54,10 @@ pub struct Style {
     pub margin: Edges<Length>,
     /// How large should the padding be on each side?
     #[refineable]
-    pub padding: Edges<DefinedLength>,
+    pub padding: Edges<DefiniteLength>,
     /// How large should the border be on each side?
     #[refineable]
-    pub border: Edges<DefinedLength>,
+    pub border: Edges<DefiniteLength>,
 
     // Alignment properties
     /// How this node's children aligned in the cross/block axis?
@@ -65,7 +70,7 @@ pub struct Style {
     pub justify_content: Option<JustifyContent>,
     /// How large should the gaps between items in a flex container be?
     #[refineable]
-    pub gap: Size<DefinedLength>,
+    pub gap: Size<DefiniteLength>,
 
     // Flexbox properies
     /// Which direction does the main axis flow in?
@@ -81,47 +86,14 @@ pub struct Style {
 
     /// The fill color of this element
     pub fill: Option<Fill>,
+    /// The radius of the corners of this element
+    #[refineable]
+    pub corner_radii: CornerRadii,
     /// The color of text within this element. Cascades to children unless overridden.
     pub text_color: Option<Hsla>,
 }
 
 impl Style {
-    pub const DEFAULT: Style = Style {
-        display: Display::DEFAULT,
-        overflow: Point {
-            x: Overflow::Visible,
-            y: Overflow::Visible,
-        },
-        scrollbar_width: 0.0,
-        position: Position::Relative,
-        inset: Edges::auto(),
-        margin: Edges::<Length>::zero(),
-        padding: Edges::<DefinedLength>::zero(),
-        border: Edges::<DefinedLength>::zero(),
-        size: Size::auto(),
-        min_size: Size::auto(),
-        max_size: Size::auto(),
-        aspect_ratio: None,
-        gap: Size::zero(),
-        // Aligment
-        align_items: None,
-        align_self: None,
-        align_content: None,
-        justify_content: None,
-        // Flexbox
-        flex_direction: FlexDirection::Row,
-        flex_wrap: FlexWrap::NoWrap,
-        flex_grow: 0.0,
-        flex_shrink: 1.0,
-        flex_basis: Length::Auto,
-        fill: None,
-        text_color: None,
-    };
-
-    pub fn new() -> Self {
-        Self::DEFAULT.clone()
-    }
-
     pub fn to_taffy(&self, rem_size: f32) -> taffy::style::Style {
         taffy::style::Style {
             display: self.display,
@@ -149,11 +121,61 @@ impl Style {
             ..Default::default() // Ignore grid properties for now
         }
     }
+
+    /// Paints the background of an element styled with this style.
+    /// Return the bounds in which to paint the content.
+    pub fn paint_background<V: 'static, E: Element<V>>(
+        &self,
+        layout: &mut Layout<V, E::Layout>,
+        cx: &mut PaintContext<V>,
+    ) {
+        let bounds = layout.bounds(cx);
+        let rem_size = cx.rem_pixels();
+        if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
+            cx.scene.push_quad(gpui::Quad {
+                bounds,
+                background: Some(color.into()),
+                corner_radii: self.corner_radii.to_gpui(rem_size),
+                border: Default::default(),
+            });
+        }
+    }
 }
 
 impl Default for Style {
     fn default() -> Self {
-        Self::DEFAULT.clone()
+        Style {
+            display: Display::DEFAULT,
+            overflow: Point {
+                x: Overflow::Visible,
+                y: Overflow::Visible,
+            },
+            scrollbar_width: 0.0,
+            position: Position::Relative,
+            inset: Edges::auto(),
+            margin: Edges::<Length>::zero(),
+            padding: Edges::<DefiniteLength>::zero(),
+            border: Edges::<DefiniteLength>::zero(),
+            size: Size::auto(),
+            min_size: Size::auto(),
+            max_size: Size::auto(),
+            aspect_ratio: None,
+            gap: Size::zero(),
+            // Aligment
+            align_items: None,
+            align_self: None,
+            align_content: None,
+            justify_content: None,
+            // Flexbox
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::NoWrap,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: Length::Auto,
+            fill: None,
+            text_color: None,
+            corner_radii: CornerRadii::default(),
+        }
     }
 }
 
@@ -200,5 +222,24 @@ impl Default for Fill {
 impl From<Hsla> for Fill {
     fn from(color: Hsla) -> Self {
         Self::Color(color)
+    }
+}
+
+#[derive(Clone, Refineable, Default)]
+pub struct CornerRadii {
+    top_left: AbsoluteLength,
+    top_right: AbsoluteLength,
+    bottom_left: AbsoluteLength,
+    bottom_right: AbsoluteLength,
+}
+
+impl CornerRadii {
+    pub fn to_gpui(&self, rem_size: f32) -> gpui::scene::CornerRadii {
+        gpui::scene::CornerRadii {
+            top_left: self.top_left.to_pixels(rem_size),
+            top_right: self.top_right.to_pixels(rem_size),
+            bottom_left: self.bottom_left.to_pixels(rem_size),
+            bottom_right: self.bottom_right.to_pixels(rem_size),
+        }
     }
 }

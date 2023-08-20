@@ -78,7 +78,6 @@ pub trait Element<V> {
     }
 }
 
-use crate as playground; // Macro invocation below references this crate as playground.
 pub trait Styleable {
     type Style: refineable::Refineable;
 
@@ -89,12 +88,15 @@ pub trait Styleable {
         style.refine(self.declared_style());
         style
     }
+}
 
-    // Tailwind-style helpers methods that take and return mut self
-    //
-    // Example:
-    // // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
-    // fn p_2(mut self) -> Self where Self: Sized;
+// Tailwind-style helpers methods that take and return mut self
+//
+// Example:
+// // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
+// fn p_2(mut self) -> Self where Self: Sized;
+use crate as playground; // Macro invocation references this crate as playground.
+pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
 }
 
@@ -139,6 +141,8 @@ impl<V: 'static> Element<V> for Div<V> {
         Self: Sized,
     {
         let style = self.style();
+
+        style.paint_background::<V, Self>(layout, cx);
     }
 }
 
