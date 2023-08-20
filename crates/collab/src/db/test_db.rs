@@ -91,6 +91,23 @@ impl TestDb {
     }
 }
 
+#[macro_export]
+macro_rules! test_both_dbs {
+    ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
+        #[gpui::test]
+        async fn $postgres_test_name() {
+            let test_db = TestDb::postgres(Deterministic::new(0).build_background());
+            $test_name(test_db.db()).await;
+        }
+
+        #[gpui::test]
+        async fn $sqlite_test_name() {
+            let test_db = TestDb::sqlite(Deterministic::new(0).build_background());
+            $test_name(test_db.db()).await;
+        }
+    };
+}
+
 impl Drop for TestDb {
     fn drop(&mut self) {
         let db = self.db.take().unwrap();
