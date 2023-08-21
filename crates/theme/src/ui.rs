@@ -145,12 +145,12 @@ pub fn keystroke_label<V: View>(
         .with_style(label_style.container)
 }
 
-pub type ButtonStyle = Interactive<ContainedText>;
+pub type CopilotCTAButton = Interactive<ContainedText>;
 
 pub fn cta_button<Tag, L, V, F>(
     label: L,
     max_width: f32,
-    style: &ButtonStyle,
+    style: &CopilotCTAButton,
     cx: &mut ViewContext<V>,
     f: F,
 ) -> MouseEventHandler<V>

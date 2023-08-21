@@ -4455,10 +4455,20 @@ impl Project {
             };
 
             cx.spawn(|this, mut cx| async move {
-                let additional_text_edits = lang_server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?
-                    .additional_text_edits;
+                let can_resolve = lang_server
+                    .capabilities()
+                    .completion_provider
+                    .as_ref()
+                    .and_then(|options| options.resolve_provider)
+                    .unwrap_or(false);
+                let additional_text_edits = if can_resolve {
+                    lang_server
+                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                        .await?
+                        .additional_text_edits
+                } else {
+                    completion.lsp_completion.additional_text_edits
+                };
                 if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {

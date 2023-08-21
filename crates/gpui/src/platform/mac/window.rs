@@ -368,32 +368,20 @@ impl WindowState {
                 return WindowBounds::Fullscreen;
             }
 
-            let window_frame = self.frame();
-            let screen_frame = self.native_window.screen().visibleFrame().to_rectf();
-            if window_frame.size() == screen_frame.size() {
+            let frame = self.frame();
+            let screen_size = self.native_window.screen().visibleFrame().size_vec();
+            if frame.size() == screen_size {
                 WindowBounds::Maximized
             } else {
-                WindowBounds::Fixed(window_frame)
+                WindowBounds::Fixed(frame)
             }
         }
     }
 
-    // Returns the window bounds in window coordinates
     fn frame(&self) -> RectF {
         unsafe {
-            let screen_frame = self.native_window.screen().visibleFrame();
-            let window_frame = NSWindow::frame(self.native_window);
-            RectF::new(
-                vec2f(
-                    window_frame.origin.x as f32,
-                    (screen_frame.size.height - window_frame.origin.y - window_frame.size.height)
-                        as f32,
-                ),
-                vec2f(
-                    window_frame.size.width as f32,
-                    window_frame.size.height as f32,
-                ),
-            )
+            let frame = NSWindow::frame(self.native_window);
+            Screen::screen_rect_from_native(frame)
         }
     }
 
@@ -480,21 +468,12 @@ impl MacWindow {
                     native_window.setFrame_display_(screen.visibleFrame(), YES);
                 }
                 WindowBounds::Fixed(rect) => {
-                    let screen_frame = screen.visibleFrame();
-                    let ns_rect = NSRect::new(
-                        NSPoint::new(
-                            rect.origin_x() as f64,
-                            screen_frame.size.height
-                                - rect.origin_y() as f64
-                                - rect.height() as f64,
-                        ),
-                        NSSize::new(rect.width() as f64, rect.height() as f64),
-                    );
-
-                    if ns_rect.intersects(screen_frame) {
-                        native_window.setFrame_display_(ns_rect, YES);
+                    let bounds = Screen::screen_rect_to_native(rect);
+                    let screen_bounds = screen.visibleFrame();
+                    if bounds.intersects(screen_bounds) {
+                        native_window.setFrame_display_(bounds, YES);
                     } else {
-                        native_window.setFrame_display_(screen_frame, YES);
+                        native_window.setFrame_display_(screen_bounds, YES);
                     }
                 }
             }

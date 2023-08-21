@@ -126,7 +126,7 @@ dependencies = [
 [[package]]
 name = "alacritty_config"
 version = "0.1.2-dev"
-source = "git+https://github.com/zed-industries/alacritty?rev=f6d001ba8080ebfab6822106a436c64b677a44d5#f6d001ba8080ebfab6822106a436c64b677a44d5"
+source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
 dependencies = [
  "log",
  "serde",
@@ -136,7 +136,7 @@ dependencies = [
 [[package]]
 name = "alacritty_config_derive"
 version = "0.2.2-dev"
-source = "git+https://github.com/zed-industries/alacritty?rev=f6d001ba8080ebfab6822106a436c64b677a44d5#f6d001ba8080ebfab6822106a436c64b677a44d5"
+source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -146,7 +146,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.20.0-dev"
-source = "git+https://github.com/zed-industries/alacritty?rev=f6d001ba8080ebfab6822106a436c64b677a44d5#f6d001ba8080ebfab6822106a436c64b677a44d5"
+source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
 dependencies = [
  "alacritty_config",
  "alacritty_config_derive",
@@ -8126,7 +8126,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=1c65ca24bc9a734ab70115188f465e12eecf224e#1c65ca24bc9a734ab70115188f465e12eecf224e"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=35a6052fbcafc5e5fc0f9415b8652be7dcaf7222#35a6052fbcafc5e5fc0f9415b8652be7dcaf7222"
 dependencies = [
  "cc",
  "regex",

@@ -4163,6 +4163,7 @@ async fn test_collaborating_with_completion(
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()

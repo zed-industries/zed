@@ -7,10 +7,11 @@ use crate::{
     ViewContext,
 };
 
-pub trait Component<V: View> {
-    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+use super::Empty;
 
-    fn into_element(self) -> ComponentAdapter<V, Self>
+pub trait GeneralComponent {
+    fn render<V: View>(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+    fn element<V: View>(self) -> ComponentAdapter<V, Self>
     where
         Self: Sized,
     {
@@ -18,22 +19,110 @@ pub trait Component<V: View> {
     }
 }
 
-pub struct ComponentAdapter<V, E> {
+pub trait StyleableComponent {
+    type Style: Clone;
+    type Output: GeneralComponent;
+
+    fn with_style(self, style: Self::Style) -> Self::Output;
+}
+
+impl GeneralComponent for () {
+    fn render<V: View>(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
+        Empty::new().into_any()
+    }
+}
+
+impl StyleableComponent for () {
+    type Style = ();
+    type Output = ();
+
+    fn with_style(self, _: Self::Style) -> Self::Output {
+        ()
+    }
+}
+
+pub trait Component<V: View> {
+    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+
+    fn element(self) -> ComponentAdapter<V, Self>
+    where
+        Self: Sized,
+    {
+        ComponentAdapter::new(self)
+    }
+}
+
+impl<V: View, C: GeneralComponent> Component<V> for C {
+    fn render(self, v: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
+        self.render(v, cx)
+    }
+}
+
+// StylableComponent -> GeneralComponent
+pub struct StylableComponentAdapter<C: Component<V>, V: View> {
+    component: C,
+    phantom: std::marker::PhantomData<V>,
+}
+
+impl<C: Component<V>, V: View> StylableComponentAdapter<C, V> {
+    pub fn new(component: C) -> Self {
+        Self {
+            component,
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: GeneralComponent, V: View> StyleableComponent for StylableComponentAdapter<C, V> {
+    type Style = ();
+
+    type Output = C;
+
+    fn with_style(self, _: Self::Style) -> Self::Output {
+        self.component
+    }
+}
+
+// Element -> Component
+pub struct ElementAdapter<V: View> {
+    element: AnyElement<V>,
+    _phantom: std::marker::PhantomData<V>,
+}
+
+impl<V: View> ElementAdapter<V> {
+    pub fn new(element: AnyElement<V>) -> Self {
+        Self {
+            element,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<V: View> Component<V> for ElementAdapter<V> {
+    fn render(self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
+        self.element
+    }
+}
+
+// Component -> Element
+pub struct ComponentAdapter<V: View, E> {
     component: Option<E>,
+    element: Option<AnyElement<V>>,
     phantom: PhantomData<V>,
 }
 
-impl<E, V> ComponentAdapter<V, E> {
+impl<E, V: View> ComponentAdapter<V, E> {
     pub fn new(e: E) -> Self {
         Self {
             component: Some(e),
+            element: None,
             phantom: PhantomData,
         }
     }
 }
 
 impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
-    type LayoutState = AnyElement<V>;
+    type LayoutState = ();
 
     type PaintState = ();
 
@@ -43,10 +132,16 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let component = self.component.take().unwrap();
-        let mut element = component.render(view, cx.view_context());
-        let constraint = element.layout(constraint, view, cx);
-        (constraint, element)
+        if self.element.is_none() {
+            let element = self
+                .component
+                .take()
+                .expect("Component can only be rendered once")
+                .render(view, cx.view_context());
+            self.element = Some(element);
+        }
+        let constraint = self.element.as_mut().unwrap().layout(constraint, view, cx);
+        (constraint, ())
     }
 
     fn paint(
@@ -54,11 +149,14 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
+        _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        layout.paint(scene, bounds.origin(), visible_bounds, view, cx)
+        self.element
+            .as_mut()
+            .expect("Layout should always be called before paint")
+            .paint(scene, bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(
@@ -66,25 +164,27 @@ impl<V: View, C: Component<V> + 'static> Element<V> for ComponentAdapter<V, C> {
         range_utf16: std::ops::Range<usize>,
         _: RectF,
         _: RectF,
-        element: &Self::LayoutState,
+        _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        element.rect_for_text_range(range_utf16, view, cx)
+        self.element
+            .as_ref()
+            .and_then(|el| el.rect_for_text_range(range_utf16, view, cx))
     }
 
     fn debug(
         &self,
         _: RectF,
-        element: &Self::LayoutState,
+        _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
         cx: &ViewContext<V>,
     ) -> serde_json::Value {
         serde_json::json!({
             "type": "ComponentAdapter",
-            "child": element.debug(view, cx),
+            "child": self.element.as_ref().map(|el| el.debug(view, cx)),
         })
     }
 }

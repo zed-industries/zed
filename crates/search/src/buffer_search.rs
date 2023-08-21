@@ -1,6 +1,9 @@
 use crate::{
-    NextHistoryQuery, PreviousHistoryQuery, SearchHistory, SearchOptions, SelectAllMatches,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
+    history::SearchHistory,
+    mode::{next_mode, SearchMode},
+    search_bar::{render_nav_button, render_search_mode_button},
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -16,6 +19,7 @@ use gpui::{
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
+
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -48,9 +52,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::handle_editor_cancel);
     cx.add_action(BufferSearchBar::next_history_query);
     cx.add_action(BufferSearchBar::previous_history_query);
+    cx.add_action(BufferSearchBar::cycle_mode);
+    cx.add_action(BufferSearchBar::cycle_mode_on_pane);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
-    add_toggle_option_action::<ToggleRegex>(SearchOptions::REGEX, cx);
 }
 
 fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
@@ -79,6 +84,7 @@ pub struct BufferSearchBar {
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
+    current_mode: SearchMode,
 }
 
 impl Entity for BufferSearchBar {
@@ -98,7 +104,7 @@ impl View for BufferSearchBar {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx).clone();
-        let editor_container = if self.query_contains_error {
+        let query_container_style = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
             theme.search.editor.input.container
@@ -150,81 +156,137 @@ impl View for BufferSearchBar {
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
+        let search_button_for_mode = |mode, cx: &mut ViewContext<BufferSearchBar>| {
+            let is_active = self.current_mode == mode;
 
-        Flex::row()
+            render_search_mode_button(
+                mode,
+                is_active,
+                move |_, this, cx| {
+                    this.activate_search_mode(mode, cx);
+                },
+                cx,
+            )
+        };
+        let search_option_button = |option| {
+            let is_active = self.search_options.contains(option);
+            option.as_button(
+                is_active,
+                theme.tooltip.clone(),
+                theme.search.option_button_component.clone(),
+            )
+        };
+        let match_count = self
+            .active_searchable_item
+            .as_ref()
+            .and_then(|searchable_item| {
+                if self.query(cx).is_empty() {
+                    return None;
+                }
+                let matches = self
+                    .searchable_items_with_matches
+                    .get(&searchable_item.downgrade())?;
+                let message = if let Some(match_ix) = self.active_match_index {
+                    format!("{}/{}", match_ix + 1, matches.len())
+                } else {
+                    "No matches".to_string()
+                };
+
+                Some(
+                    Label::new(message, theme.search.match_index.text.clone())
+                        .contained()
+                        .with_style(theme.search.match_index.container)
+                        .aligned(),
+                )
+            });
+        let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
+            render_nav_button(
+                label,
+                direction,
+                self.active_match_index.is_some(),
+                move |_, this, cx| match direction {
+                    Direction::Prev => this.select_prev_match(&Default::default(), cx),
+                    Direction::Next => this.select_next_match(&Default::default(), cx),
+                },
+                cx,
+            )
+        };
+
+        let icon_style = theme.search.editor_icon.clone();
+        let nav_column = Flex::row()
+            .with_child(self.render_action_button("Select All", cx))
+            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+            .with_child(nav_button_for_direction(">", Direction::Next, cx))
+            .with_child(Flex::row().with_children(match_count))
+            .constrained()
+            .with_height(theme.search.search_bar_row_height);
+
+        let query = Flex::row()
+            .with_child(
+                Svg::for_style(icon_style.icon)
+                    .contained()
+                    .with_style(icon_style.container),
+            )
+            .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
             .with_child(
                 Flex::row()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                ChildView::new(&self.query_editor, cx)
-                                    .aligned()
-                                    .left()
-                                    .flex(1., true),
-                            )
-                            .with_children(self.active_searchable_item.as_ref().and_then(
-                                |searchable_item| {
-                                    let matches = self
-                                        .searchable_items_with_matches
-                                        .get(&searchable_item.downgrade())?;
-                                    let message = if let Some(match_ix) = self.active_match_index {
-                                        format!("{}/{}", match_ix + 1, matches.len())
-                                    } else {
-                                        "No matches".to_string()
-                                    };
-
-                                    Some(
-                                        Label::new(message, theme.search.match_index.text.clone())
-                                            .contained()
-                                            .with_style(theme.search.match_index.container)
-                                            .aligned(),
-                                    )
-                                },
-                            ))
-                            .contained()
-                            .with_style(editor_container)
-                            .aligned()
-                            .constrained()
-                            .with_min_width(theme.search.editor.min_width)
-                            .with_max_width(theme.search.editor.max_width)
-                            .flex(1., false),
+                    .with_children(
+                        supported_options
+                            .case
+                            .then(|| search_option_button(SearchOptions::CASE_SENSITIVE)),
                     )
-                    .with_child(
-                        Flex::row()
-                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                            .with_child(self.render_nav_button(">", Direction::Next, cx))
-                            .with_child(self.render_action_button("Select All", cx))
-                            .aligned(),
+                    .with_children(
+                        supported_options
+                            .word
+                            .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
                     )
-                    .with_child(
-                        Flex::row()
-                            .with_children(self.render_search_option(
-                                supported_options.case,
-                                "Case",
-                                SearchOptions::CASE_SENSITIVE,
-                                cx,
-                            ))
-                            .with_children(self.render_search_option(
-                                supported_options.word,
-                                "Word",
-                                SearchOptions::WHOLE_WORD,
-                                cx,
-                            ))
-                            .with_children(self.render_search_option(
-                                supported_options.regex,
-                                "Regex",
-                                SearchOptions::REGEX,
-                                cx,
-                            ))
-                            .contained()
-                            .with_style(theme.search.option_button_group)
-                            .aligned(),
-                    )
-                    .flex(1., true),
+                    .flex_float()
+                    .contained(),
             )
-            .with_child(self.render_close_button(&theme.search, cx))
+            .align_children_center()
+            .flex(1., true);
+        let editor_column = Flex::row()
+            .with_child(
+                query
+                    .contained()
+                    .with_style(query_container_style)
+                    .constrained()
+                    .with_min_width(theme.search.editor.min_width)
+                    .with_max_width(theme.search.editor.max_width)
+                    .with_height(theme.search.search_bar_row_height)
+                    .flex(1., false),
+            )
+            .contained()
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
+            .flex(1., false);
+        let mode_column = Flex::row()
+            .with_child(
+                Flex::row()
+                    .with_child(search_button_for_mode(SearchMode::Text, cx))
+                    .with_child(search_button_for_mode(SearchMode::Regex, cx))
+                    .contained()
+                    .with_style(theme.search.modes_container),
+            )
+            .with_child(super::search_bar::render_close_button(
+                "Dismiss Buffer Search",
+                &theme.search,
+                cx,
+                |_, this, cx| this.dismiss(&Default::default(), cx),
+                Some(Box::new(Dismiss)),
+            ))
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
+            .aligned()
+            .right()
+            .flex_float();
+        Flex::row()
+            .with_child(editor_column)
+            .with_child(nav_column)
+            .with_child(mode_column)
             .contained()
             .with_style(theme.search.container)
+            .aligned()
             .into_any_named("search bar")
     }
 }
@@ -278,6 +340,9 @@ impl ToolbarItemView for BufferSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
+    fn row_count(&self, _: &ViewContext<Self>) -> usize {
+        2
+    }
 }
 
 impl BufferSearchBar {
@@ -304,6 +369,7 @@ impl BufferSearchBar {
             query_contains_error: false,
             dismissed: true,
             search_history: SearchHistory::default(),
+            current_mode: SearchMode::default(),
         }
     }
 
@@ -415,91 +481,6 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_search_option(
-        &self,
-        option_supported: bool,
-        icon: &'static str,
-        option: SearchOptions,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement<Self>> {
-        if !option_supported {
-            return None;
-        }
-
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let is_active = self.search_options.contains(option);
-        Some(
-            MouseEventHandler::new::<Self, _>(option.bits as usize, cx, |state, cx| {
-                let theme = theme::current(cx);
-                let style = theme
-                    .search
-                    .option_button
-                    .in_state(is_active)
-                    .style_for(state);
-                Label::new(icon, style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-            })
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                this.toggle_search_option(option, cx);
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .with_tooltip::<Self>(
-                option.bits as usize,
-                format!("Toggle {}", option.label()),
-                Some(option.to_toggle_action()),
-                tooltip_style,
-                cx,
-            )
-            .into_any(),
-        )
-    }
-
-    fn render_nav_button(
-        &self,
-        icon: &'static str,
-        direction: Direction,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let action: Box<dyn Action>;
-        let tooltip;
-        match direction {
-            Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
-                tooltip = "Select Previous Match";
-            }
-            Direction::Next => {
-                action = Box::new(SelectNextMatch);
-                tooltip = "Select Next Match";
-            }
-        };
-        let tooltip_style = theme::current(cx).tooltip.clone();
-
-        enum NavButton {}
-        MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let style = theme.search.option_button.inactive_state().style_for(state);
-            Label::new(icon, style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, {
-            move |_, this, cx| match direction {
-                Direction::Prev => this.select_prev_match(&Default::default(), cx),
-                Direction::Next => this.select_next_match(&Default::default(), cx),
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton>(
-            direction as usize,
-            tooltip.to_string(),
-            Some(action),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    }
-
     fn render_action_button(
         &self,
         icon: &'static str,
@@ -508,19 +489,29 @@ impl BufferSearchBar {
         let tooltip = "Select All Matches";
         let tooltip_style = theme::current(cx).tooltip.clone();
         let action_type_id = 0_usize;
-
+        let has_matches = self.active_match_index.is_some();
+        let cursor_style = if has_matches {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::default()
+        };
         enum ActionButton {}
         MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.action_button.style_for(state);
+            let style = theme
+                .search
+                .action_button
+                .in_state(has_matches)
+                .style_for(state);
             Label::new(icon, style.text.clone())
+                .aligned()
                 .contained()
                 .with_style(style.container)
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.select_all_matches(&SelectAllMatches, cx)
         })
-        .with_cursor_style(CursorStyle::PointingHand)
+        .with_cursor_style(cursor_style)
         .with_tooltip::<ActionButton>(
             action_type_id,
             tooltip.to_string(),
@@ -531,39 +522,18 @@ impl BufferSearchBar {
         .into_any()
     }
 
-    fn render_close_button(
-        &self,
-        theme: &theme::Search,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        let tooltip = "Dismiss Buffer Search";
-        let tooltip_style = theme::current(cx).tooltip.clone();
-
-        enum CloseButton {}
-        MouseEventHandler::new::<CloseButton, _>(0, cx, |state, _| {
-            let style = theme.dismiss_button.style_for(state);
-            Svg::new("icons/x_mark_8.svg")
-                .with_color(style.color)
-                .constrained()
-                .with_width(style.icon_width)
-                .aligned()
-                .constrained()
-                .with_width(style.button_width)
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.dismiss(&Default::default(), cx)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<CloseButton>(
-            0,
-            tooltip.to_string(),
-            Some(Box::new(Dismiss)),
-            tooltip_style,
-            cx,
-        )
-        .into_any()
+    pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        assert_ne!(
+            mode,
+            SearchMode::Semantic,
+            "Semantic search is not supported in buffer search"
+        );
+        if mode == self.current_mode {
+            return;
+        }
+        self.current_mode = mode;
+        let _ = self.update_matches(cx);
+        cx.notify();
     }
 
     fn deploy_bar(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
@@ -734,8 +704,9 @@ impl BufferSearchBar {
                 self.active_match_index.take();
                 active_searchable_item.clear_matches(cx);
                 let _ = done_tx.send(());
+                cx.notify();
             } else {
-                let query = if self.search_options.contains(SearchOptions::REGEX) {
+                let query = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -828,6 +799,26 @@ impl BufferSearchBar {
 
         if let Some(new_query) = self.search_history.previous().map(str::to_string) {
             let _ = self.search(&new_query, Some(self.search_options), cx);
+        }
+    }
+    fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
+        self.activate_search_mode(next_mode(&self.current_mode, false), cx);
+    }
+    fn cycle_mode_on_pane(pane: &mut Pane, action: &CycleMode, cx: &mut ViewContext<Pane>) {
+        let mut should_propagate = true;
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| {
+                if bar.show(cx) {
+                    should_propagate = false;
+                    bar.cycle_mode(action, cx);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
 }

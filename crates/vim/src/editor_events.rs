@@ -1,4 +1,4 @@
-use crate::Vim;
+use crate::{Vim, VimEvent};
 use editor::{EditorBlurred, EditorFocused, EditorReleased};
 use gpui::AppContext;
 
@@ -22,6 +22,11 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
     editor.window().update(cx, |cx| {
         Vim::update(cx, |vim, cx| {
             vim.set_active_editor(editor.clone(), cx);
+            if vim.enabled {
+                cx.emit_global(VimEvent::ModeChanged {
+                    mode: vim.state().mode,
+                });
+            }
         });
     });
 }
@@ -48,6 +53,7 @@ fn released(EditorReleased(editor): &EditorReleased, cx: &mut AppContext) {
                     vim.active_editor = None;
                 }
             }
+            vim.editor_states.remove(&editor.id())
         });
     });
 }
