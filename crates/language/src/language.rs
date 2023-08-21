@@ -345,7 +345,7 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
     #[serde(default)]
-    pub word_boundaries: HashSet<char>,
+    pub word_characters: HashSet<char>,
 }
 
 #[derive(Debug, Default)]
@@ -413,7 +413,7 @@ impl Default for LanguageConfig {
             block_comment: Default::default(),
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
-            word_boundaries: Default::default(),
+            word_characters: Default::default(),
         }
     }
 }

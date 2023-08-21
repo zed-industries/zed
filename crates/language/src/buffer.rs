@@ -3013,7 +3013,7 @@ pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
         return CharKind::Word;
     }
     if let Some(language) = language {
-        if language.config.word_boundaries.contains(&c) {
+        if language.config.word_characters.contains(&c) {
             return CharKind::Word;
         }
     }
