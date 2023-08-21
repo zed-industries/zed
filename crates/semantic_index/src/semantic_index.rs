@@ -98,6 +98,8 @@ struct ProjectState {
 
 #[derive(Clone)]
 struct JobHandle {
+    /// The outer Arc is here to count the clones of a JobHandle instance;
+    /// when the last handle to a given job is dropped, we decrement a counter (just once).
     tx: Arc<Weak<Mutex<watch::Sender<usize>>>>,
 }
 
@@ -382,6 +384,20 @@ impl SemanticIndex {
                     .send(DbOperation::InsertFile {
                         worktree_id,
                         documents,
+                        path,
+                        mtime,
+                        job_handle,
+                    })
+                    .await
+                    .unwrap();
+            }
+        } else {
+            // Insert the file in spite of failure so that future attempts to index it do not take place (unless the file is changed).
+            for (worktree_id, documents, path, mtime, job_handle) in embeddings_queue.into_iter() {
+                db_update_tx
+                    .send(DbOperation::InsertFile {
+                        worktree_id,
+                        documents: vec![],
                         path,
                         mtime,
                         job_handle,
@@ -848,6 +864,7 @@ impl Entity for SemanticIndex {
 impl Drop for JobHandle {
     fn drop(&mut self) {
         if let Some(inner) = Arc::get_mut(&mut self.tx) {
+            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
             if let Some(tx) = inner.upgrade() {
                 let mut tx = tx.lock();
                 *tx.borrow_mut() -= 1;
