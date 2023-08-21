@@ -80,13 +80,17 @@ impl RefactoringAssistant {
                     let mut last_old_word_end_ix = 0;
 
                     'outer: loop {
+                        const MIN_DIFF_LEN: usize = 50;
+
                         let start = new_word_search_start_ix;
                         let mut words = words(&new_text[start..]);
                         while let Some((range, new_word)) = words.next() {
                             // We found a word in the new text that was unique in the old text. We can use
                             // it as a diff boundary, and start applying edits.
-                            if let Some(old_word_end_ix) = unique_old_words.remove(new_word) {
-                                if old_word_end_ix > last_old_word_end_ix {
+                            if let Some(old_word_end_ix) = unique_old_words.get(new_word).copied() {
+                                if old_word_end_ix.saturating_sub(last_old_word_end_ix)
+                                    > MIN_DIFF_LEN
+                                {
                                     drop(words);
 
                                     let remainder = new_text.split_off(start + range.end);
