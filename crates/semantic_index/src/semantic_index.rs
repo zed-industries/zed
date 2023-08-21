@@ -96,6 +96,7 @@ struct ProjectState {
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
 
+#[derive(Clone)]
 struct JobHandle {
     tx: Weak<Mutex<watch::Sender<usize>>>,
 }
@@ -389,6 +390,7 @@ impl SemanticIndex {
         embeddings_queue: &mut Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>,
         embed_batch_tx: &channel::Sender<Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>>,
     ) {
+        // Handle edge case where individual file has more documents than max batch size
         let should_flush = match job {
             EmbeddingJob::Enqueue {
                 documents,
@@ -397,9 +399,43 @@ impl SemanticIndex {
                 mtime,
                 job_handle,
             } => {
-                *queue_len += &documents.len();
-                embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
-                *queue_len >= EMBEDDINGS_BATCH_SIZE
+                // If documents is greater than embeddings batch size, recursively batch existing rows.
+                if &documents.len() > &EMBEDDINGS_BATCH_SIZE {
+                    let first_job = EmbeddingJob::Enqueue {
+                        documents: documents[..EMBEDDINGS_BATCH_SIZE].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        first_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+
+                    let second_job = EmbeddingJob::Enqueue {
+                        documents: documents[EMBEDDINGS_BATCH_SIZE..].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        second_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+                    return;
+                } else {
+                    *queue_len += &documents.len();
+                    embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
+                    *queue_len >= EMBEDDINGS_BATCH_SIZE
+                }
             }
             EmbeddingJob::Flush => true,
         };
@@ -796,7 +832,10 @@ impl Drop for JobHandle {
     fn drop(&mut self) {
         if let Some(tx) = self.tx.upgrade() {
             let mut tx = tx.lock();
-            *tx.borrow_mut() -= 1;
+            // Manage for overflow, cause we are cloning the Job Handle
+            if *tx.borrow() > 0 {
+                *tx.borrow_mut() -= 1;
+            };
         }
     }
 }
