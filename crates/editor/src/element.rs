@@ -13,6 +13,7 @@ use crate::{
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
+        GoToDefinitionTrigger,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -42,7 +43,7 @@ use language::{
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
-    InlayHintLabelPart, ProjectPath, ResolveState,
+    InlayHintLabelPart, Location, LocationLink, ProjectPath, ResolveState,
 };
 use smallvec::SmallVec;
 use std::{
@@ -395,7 +396,15 @@ impl EditorElement {
             None
         };
 
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
+        update_go_to_definition_link(
+            editor,
+            point
+                .map(GoToDefinitionTrigger::Text)
+                .unwrap_or(GoToDefinitionTrigger::None),
+            cmd,
+            shift,
+            cx,
+        );
 
         if editor.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
@@ -460,7 +469,13 @@ impl EditorElement {
             let point_for_position = position_map.point_for_position(text_bounds, position);
             match point_for_position.as_valid() {
                 Some(point) => {
-                    update_go_to_definition_link(editor, Some(point), cmd, shift, cx);
+                    update_go_to_definition_link(
+                        editor,
+                        GoToDefinitionTrigger::Text(point),
+                        cmd,
+                        shift,
+                        cx,
+                    );
                     hover_at(editor, Some(point), cx);
                 }
                 None => {
@@ -468,12 +483,13 @@ impl EditorElement {
                         position_map,
                         point_for_position,
                         editor,
+                        (cmd, shift),
                         cx,
                     );
                 }
             }
         } else {
-            update_go_to_definition_link(editor, None, cmd, shift, cx);
+            update_go_to_definition_link(editor, GoToDefinitionTrigger::None, cmd, shift, cx);
             hover_at(editor, None, cx);
         }
 
@@ -1821,11 +1837,11 @@ impl EditorElement {
     }
 }
 
-// TODO kb implement
 fn update_inlay_link_and_hover_points(
     position_map: &PositionMap,
     point_for_position: PointForPosition,
     editor: &mut Editor,
+    (cmd_held, shift_held): (bool, bool),
     cx: &mut ViewContext<'_, '_, Editor>,
 ) {
     let hint_start_offset = position_map
@@ -1861,6 +1877,9 @@ fn update_inlay_link_and_hover_points(
                 .to_point(&position_map.snapshot.display_snapshot),
             Bias::Right,
         );
+
+        let mut go_to_definition_updated = false;
+        let mut hover_updated = false;
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
             .into_iter()
@@ -1872,7 +1891,7 @@ fn update_inlay_link_and_hover_points(
             if let Some(cached_hint) =
                 inlay_hint_cache.hint_by_id(previous_valid_anchor.excerpt_id, hovered_hint.id)
             {
-                match &cached_hint.resolve_state {
+                match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = previous_valid_anchor.buffer_id {
                             inlay_hint_cache.spawn_hint_resolve(
@@ -1884,7 +1903,7 @@ fn update_inlay_link_and_hover_points(
                         }
                     }
                     ResolveState::Resolved => {
-                        match &cached_hint.label {
+                        match cached_hint.label {
                             project::InlayHintLabel::String(_) => {
                                 if cached_hint.tooltip.is_some() {
                                     dbg!(&cached_hint.tooltip); // TODO kb
@@ -1893,7 +1912,7 @@ fn update_inlay_link_and_hover_points(
                             }
                             project::InlayHintLabel::LabelParts(label_parts) => {
                                 if let Some(hovered_hint_part) = find_hovered_hint_part(
-                                    &label_parts,
+                                    label_parts,
                                     hint_start_offset..hint_end_offset,
                                     hovered_offset,
                                 ) {
@@ -1901,9 +1920,31 @@ fn update_inlay_link_and_hover_points(
                                         dbg!(&hovered_hint_part.tooltip); // TODO kb
                                                                           // hover_at_point = Some(hovered_offset);
                                     }
-                                    if let Some(location) = &hovered_hint_part.location {
-                                        dbg!(location); // TODO kb
-                                                        // go_to_definition_point = Some(location);
+                                    if let Some(location) = hovered_hint_part.location {
+                                        if let Some(buffer) = cached_hint
+                                            .position
+                                            .buffer_id
+                                            .and_then(|buffer_id| buffer.buffer(buffer_id))
+                                        {
+                                            go_to_definition_updated = true;
+                                            update_go_to_definition_link(
+                                                editor,
+                                                GoToDefinitionTrigger::InlayHint(
+                                                    hovered_hint.position,
+                                                    LocationLink {
+                                                        origin: Some(Location {
+                                                            buffer,
+                                                            range: cached_hint.position
+                                                                ..cached_hint.position,
+                                                        }),
+                                                        target: location,
+                                                    },
+                                                ),
+                                                cmd_held,
+                                                shift_held,
+                                                cx,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -1913,14 +1954,27 @@ fn update_inlay_link_and_hover_points(
                 }
             }
         }
+
+        if !go_to_definition_updated {
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::None,
+                cmd_held,
+                shift_held,
+                cx,
+            );
+        }
+        if !hover_updated {
+            hover_at(editor, None, cx);
+        }
     }
 }
 
-fn find_hovered_hint_part<'a>(
-    label_parts: &'a [InlayHintLabelPart],
+fn find_hovered_hint_part(
+    label_parts: Vec<InlayHintLabelPart>,
     hint_range: Range<InlayOffset>,
     hovered_offset: InlayOffset,
-) -> Option<&'a InlayHintLabelPart> {
+) -> Option<InlayHintLabelPart> {
     if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
         let mut hovered_character = (hovered_offset - hint_range.start).0;
         for part in label_parts {

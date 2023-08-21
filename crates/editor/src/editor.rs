@@ -64,9 +64,7 @@ use language::{
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::{
-    hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
-};
+use link_go_to_definition::{hide_link_definition, show_link_definition, LinkGoToDefinitionState};
 use log::error;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -8307,14 +8305,11 @@ impl View for Editor {
     ) -> bool {
         let pending_selection = self.has_pending_selection();
 
-        if let Some(point) = self.link_go_to_definition_state.last_mouse_location.clone() {
+        if let Some(point) = &self.link_go_to_definition_state.last_trigger_point {
             if event.cmd && !pending_selection {
+                let point = point.clone();
                 let snapshot = self.snapshot(cx);
-                let kind = if event.shift {
-                    LinkDefinitionKind::Type
-                } else {
-                    LinkDefinitionKind::Symbol
-                };
+                let kind = point.definition_kind(event.shift);
 
                 show_link_definition(kind, self, point, snapshot, cx);
                 return false;

@@ -615,7 +615,7 @@ impl Item for Editor {
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
         hide_link_definition(self, cx);
-        self.link_go_to_definition_state.last_mouse_location = None;
+        self.link_go_to_definition_state.last_trigger_point = None;
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
