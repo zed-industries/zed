@@ -39,6 +39,7 @@ pub enum SearchQuery {
         case_sensitive: bool,
         inner: SearchInputs,
     },
+
     Regex {
         regex: Regex,
 
@@ -220,6 +221,8 @@ impl SearchQuery {
         if self.as_str().is_empty() {
             return Default::default();
         }
+        let language = rope.language(cx);
+        let kind = |c| char_kind(language, c);
 
         let mut matches = Vec::new();
         match self {
@@ -236,10 +239,10 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(char_kind);
-                        let start_kind = char_kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = char_kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(char_kind);
+                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
+                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -247,6 +250,7 @@ impl SearchQuery {
                     matches.push(mat.start()..mat.end())
                 }
             }
+
             Self::Regex {
                 regex, multiline, ..
             } => {
@@ -284,6 +288,7 @@ impl SearchQuery {
                 }
             }
         }
+
         matches
     }
 

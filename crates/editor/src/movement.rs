@@ -176,14 +176,18 @@ pub fn line_end(
 }
 
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let language = map.buffer_snapshot.language_at(point);
     find_preceding_boundary(map, point, |left, right| {
-        (char_kind(left) != char_kind(right) && !right.is_whitespace()) || left == '\n'
+        (char_kind(language, left) != char_kind(language, right) && !right.is_whitespace())
+            || left == '\n'
     })
 }
 
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let language = map.buffer_snapshot.language_at(point);
     find_preceding_boundary(map, point, |left, right| {
-        let is_word_start = char_kind(left) != char_kind(right) && !right.is_whitespace();
+        let is_word_start =
+            char_kind(language, left) != char_kind(language, right) && !right.is_whitespace();
         let is_subword_start =
             left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
         is_word_start || is_subword_start || left == '\n'

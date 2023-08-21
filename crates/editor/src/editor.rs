@@ -2657,7 +2657,8 @@ impl Editor {
             false
         });
     }
-
+    // $language = true;
+    // language
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
