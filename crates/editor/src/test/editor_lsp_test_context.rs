@@ -162,6 +162,15 @@ impl<'a> EditorLspTestContext<'a> {
             LanguageConfig {
                 name: "Typescript".into(),
                 path_suffixes: vec!["ts".to_string()],
+                brackets: language::BracketPairConfig {
+                    pairs: vec![language::BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    }],
+                    disabled_scopes_by_bracket_ix: Default::default(),
+                },
                 word_characters,
                 ..Default::default()
             },
@@ -174,6 +183,23 @@ impl<'a> EditorLspTestContext<'a> {
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
                 ("\"" @open "\"" @close)"#})),
+            indents: Some(Cow::from(indoc! {r#"
+                [
+                    (call_expression)
+                    (assignment_expression)
+                    (member_expression)
+                    (lexical_declaration)
+                    (variable_declaration)
+                    (assignment_expression)
+                    (if_statement)
+                    (for_statement)
+                ] @indent
+
+                (_ "[" "]" @end) @indent
+                (_ "<" ">" @end) @indent
+                (_ "{" "}" @end) @indent
+                (_ "(" ")" @end) @indent
+                "#})),
             ..Default::default()
         })
         .expect("Could not parse queries");

@@ -287,6 +287,12 @@
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
       "p": "vim::Paste",
+      "shift-p": [
+        "vim::Paste",
+        {
+          "before": true
+        }
+      ],
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
       "/": "vim::Search",
@@ -375,7 +381,13 @@
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
-      "p": "vim::VisualPaste",
+      "p": "vim::Paste",
+      "shift-p": [
+        "vim::Paste",
+        {
+          "preserveClipboard": true
+        }
+      ],
       "s": "vim::Substitute",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",

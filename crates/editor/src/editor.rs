@@ -1736,6 +1736,31 @@ impl Editor {
         });
     }
 
+    pub fn edit_with_block_indent<I, S, T>(
+        &mut self,
+        edits: I,
+        original_indent_columns: Vec<u32>,
+        cx: &mut ViewContext<Self>,
+    ) where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only {
+            return;
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            )
+        });
+    }
+
     fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
         self.hide_context_menu(cx);
 

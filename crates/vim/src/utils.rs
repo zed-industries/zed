@@ -7,10 +7,16 @@ pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut App
     let mut text = String::new();
     let mut clipboard_selections = Vec::with_capacity(selections.len());
     {
+        let mut is_first = true;
         for selection in selections.iter() {
-            let initial_len = text.len();
             let start = selection.start;
             let end = selection.end;
+            if is_first {
+                is_first = false;
+            } else {
+                text.push_str("\n");
+            }
+            let initial_len = text.len();
             for chunk in buffer.text_for_range(start..end) {
                 text.push_str(chunk);
             }
