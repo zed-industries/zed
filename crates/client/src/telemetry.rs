@@ -74,6 +74,7 @@ pub enum ClickhouseEvent {
     Call {
         operation: &'static str,
         room_id: u64,
+        channel_id: Option<u64>,
     },
 }
 

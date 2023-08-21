@@ -274,7 +274,7 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        Self::report_call_event_for_room("decline incoming", call.room_id, &self.client, cx);
+        Self::report_call_event_for_room("decline incoming", call.room_id, None, &self.client, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -406,19 +406,31 @@ impl ActiveCall {
 
     fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
         if let Some(room) = self.room() {
-            Self::report_call_event_for_room(operation, room.read(cx).id(), &self.client, cx)
+            let room = room.read(cx);
+            Self::report_call_event_for_room(
+                operation,
+                room.id(),
+                room.channel_id(),
+                &self.client,
+                cx,
+            )
         }
     }
 
     pub fn report_call_event_for_room(
         operation: &'static str,
         room_id: u64,
+        channel_id: Option<u64>,
         client: &Arc<Client>,
         cx: &AppContext,
     ) {
         let telemetry = client.telemetry();
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let event = ClickhouseEvent::Call { operation, room_id };
+        let event = ClickhouseEvent::Call {
+            operation,
+            room_id,
+            channel_id,
+        };
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 }
