@@ -103,6 +103,7 @@ struct JobHandle {
 
 impl JobHandle {
     fn new(tx: &Arc<Mutex<watch::Sender<usize>>>) -> Self {
+        *tx.lock().borrow_mut() += 1;
         Self {
             tx: Arc::new(Arc::downgrade(&tx)),
         }
@@ -656,10 +657,8 @@ impl SemanticIndex {
 
                                 if !already_stored {
                                     count += 1;
-                                    *job_count_tx.lock().borrow_mut() += 1;
-                                    let job_handle = JobHandle {
-                                        tx: Arc::new(Arc::downgrade(&job_count_tx)),
-                                    };
+
+                                    let job_handle = JobHandle::new(&job_count_tx);
                                     parsing_files_tx
                                         .try_send(PendingFile {
                                             worktree_db_id: db_ids_by_worktree_id[&worktree.id()],
@@ -865,8 +864,14 @@ mod tests {
     fn test_job_handle() {
         let (job_count_tx, job_count_rx) = watch::channel_with(0);
         let tx = Arc::new(Mutex::new(job_count_tx));
-        let job_handle = JobHandle::new(tx);
+        let job_handle = JobHandle::new(&tx);
 
-        assert_eq!(1, *job_count_rx.borrow_mut());
+        assert_eq!(1, *job_count_rx.borrow());
+        let new_job_handle = job_handle.clone();
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(job_handle);
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(new_job_handle);
+        assert_eq!(0, *job_count_rx.borrow());
     }
 }
