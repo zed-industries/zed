@@ -316,6 +316,7 @@
   {
     "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
     "bindings": {
+      ".": "vim::Repeat",
       "c": [
         "vim::PushOperator",
         "Change"
@@ -331,10 +332,7 @@
         "vim::PushOperator",
         "Yank"
       ],
-      "i": [
-        "vim::SwitchMode",
-        "Insert"
-      ],
+      "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
       "shift-a": "vim::InsertEndOfLine",

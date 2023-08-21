@@ -1110,7 +1110,7 @@ impl<'a> WindowContext<'a> {
         self.window.is_fullscreen
     }
 
-    pub(crate) fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
+    pub fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
         if let Some(view_id) = view_id {
             self.halt_action_dispatch = false;
             self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {

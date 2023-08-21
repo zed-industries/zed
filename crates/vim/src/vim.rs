@@ -25,9 +25,11 @@ use normal::normal_replace;
 use serde::Deserialize;
 use settings::{Setting, SettingsStore};
 use state::{EditorState, Mode, Operator, WorkspaceState};
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
+
+use crate::state::ReplayableAction;
 
 struct VimModeSetting(bool);
 
@@ -102,6 +104,19 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
             return true;
         }
         if let Some(handled_by) = handled_by {
+            Vim::update(cx, |vim, _| {
+                if vim.workspace_state.recording {
+                    vim.workspace_state
+                        .repeat_actions
+                        .push(ReplayableAction::Action(handled_by.boxed_clone()));
+
+                    if vim.workspace_state.stop_recording_after_next_action {
+                        vim.workspace_state.recording = false;
+                        vim.workspace_state.stop_recording_after_next_action = false;
+                    }
+                }
+            });
+
             // Keystroke is handled by the vim system, so continue forward
             if handled_by.namespace() == "vim" {
                 return true;
@@ -156,7 +171,12 @@ impl Vim {
             }
             Event::InputIgnored { text } => {
                 Vim::active_editor_input_ignored(text.clone(), cx);
+                Vim::record_insertion(text, None, cx)
             }
+            Event::InputHandled {
+                text,
+                utf16_range_to_replace: range_to_replace,
+            } => Vim::record_insertion(text, range_to_replace.clone(), cx),
             _ => {}
         }));
 
@@ -176,6 +196,27 @@ impl Vim {
         self.sync_vim_settings(cx);
     }
 
+    fn record_insertion(
+        text: &Arc<str>,
+        range_to_replace: Option<Range<isize>>,
+        cx: &mut WindowContext,
+    ) {
+        Vim::update(cx, |vim, _| {
+            if vim.workspace_state.recording {
+                vim.workspace_state
+                    .repeat_actions
+                    .push(ReplayableAction::Insertion {
+                        text: text.clone(),
+                        utf16_range_to_replace: range_to_replace,
+                    });
+                if vim.workspace_state.stop_recording_after_next_action {
+                    vim.workspace_state.recording = false;
+                    vim.workspace_state.stop_recording_after_next_action = false;
+                }
+            }
+        });
+    }
+
     fn update_active_editor<S>(
         &self,
         cx: &mut WindowContext,
@@ -183,6 +224,36 @@ impl Vim {
     ) -> Option<S> {
         let editor = self.active_editor.clone()?.upgrade(cx)?;
         Some(editor.update(cx, update))
+    }
+    // ~, shift-j, x, shift-x, p
+    // shift-c, shift-d, shift-i, i, a, o, shift-o, s
+    // c, d
+    // r
+
+    // TODO: shift-j?
+    //
+    pub fn start_recording(&mut self) {
+        if !self.workspace_state.replaying {
+            self.workspace_state.recording = true;
+            self.workspace_state.repeat_actions = Default::default();
+            self.workspace_state.recorded_count =
+                if let Some(Operator::Number(number)) = self.active_operator() {
+                    Some(number)
+                } else {
+                    None
+                }
+        }
+    }
+
+    pub fn stop_recording(&mut self) {
+        if self.workspace_state.recording {
+            self.workspace_state.stop_recording_after_next_action = true;
+        }
+    }
+
+    pub fn record_current_action(&mut self) {
+        self.start_recording();
+        self.stop_recording();
     }
 
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
@@ -247,6 +318,12 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
+        if matches!(
+            operator,
+            Operator::Change | Operator::Delete | Operator::Replace
+        ) {
+            self.start_recording()
+        };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
     }
@@ -272,6 +349,12 @@ impl Vim {
     }
 
     fn pop_number_operator(&mut self, cx: &mut WindowContext) -> Option<usize> {
+        if self.workspace_state.replaying {
+            if let Some(number) = self.workspace_state.recorded_count {
+                return Some(number);
+            }
+        }
+
         if let Some(Operator::Number(number)) = self.active_operator() {
             self.pop_operator(cx);
             return Some(number);
