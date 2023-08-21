@@ -1010,6 +1010,7 @@ impl InlaySnapshot {
                             }) {
                                 Ok(i) | Err(i) => i,
                             };
+                            // TODO kb add a way to highlight inlay hints through here.
                             for range in &ranges[start_ix..] {
                                 if range.start.cmp(&transform_end, &self.buffer).is_ge() {
                                     break;

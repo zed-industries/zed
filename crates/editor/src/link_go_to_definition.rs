@@ -1,4 +1,4 @@
-use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase};
+use crate::{element::PointForPosition, Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase};
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
 use project::LocationLink;
@@ -7,7 +7,7 @@ use util::TryFutureExt;
 
 #[derive(Debug, Default)]
 pub struct LinkGoToDefinitionState {
-    pub last_trigger_point: Option<TriggerPoint>,
+    pub last_trigger_point: Option<TriggerAnchor>,
     pub symbol_range: Option<Range<Anchor>>,
     pub kind: Option<LinkDefinitionKind>,
     pub definitions: Vec<LocationLink>,
@@ -21,29 +21,29 @@ pub enum GoToDefinitionTrigger {
 }
 
 #[derive(Debug, Clone)]
-pub enum TriggerPoint {
+pub enum TriggerAnchor {
     Text(Anchor),
     InlayHint(Anchor, LocationLink),
 }
 
-impl TriggerPoint {
+impl TriggerAnchor {
     fn anchor(&self) -> &Anchor {
         match self {
-            TriggerPoint::Text(anchor) => anchor,
-            TriggerPoint::InlayHint(anchor, _) => anchor,
+            TriggerAnchor::Text(anchor) => anchor,
+            TriggerAnchor::InlayHint(anchor, _) => anchor,
         }
     }
 
     pub fn definition_kind(&self, shift: bool) -> LinkDefinitionKind {
         match self {
-            TriggerPoint::Text(_) => {
+            TriggerAnchor::Text(_) => {
                 if shift {
                     LinkDefinitionKind::Type
                 } else {
                     LinkDefinitionKind::Symbol
                 }
             }
-            TriggerPoint::InlayHint(_, link) => LinkDefinitionKind::Type,
+            TriggerAnchor::InlayHint(_, _) => LinkDefinitionKind::Type,
         }
     }
 }
@@ -61,11 +61,11 @@ pub fn update_go_to_definition_link(
     let snapshot = editor.snapshot(cx);
     let trigger_point = match origin {
         GoToDefinitionTrigger::Text(p) => {
-            Some(TriggerPoint::Text(snapshot.buffer_snapshot.anchor_before(
+            Some(TriggerAnchor::Text(snapshot.buffer_snapshot.anchor_before(
                 p.to_offset(&snapshot.display_snapshot, Bias::Left),
             )))
         }
-        GoToDefinitionTrigger::InlayHint(p, target) => Some(TriggerPoint::InlayHint(p, target)),
+        GoToDefinitionTrigger::InlayHint(p, target) => Some(TriggerAnchor::InlayHint(p, target)),
         GoToDefinitionTrigger::None => None,
     };
 
@@ -109,7 +109,7 @@ pub enum LinkDefinitionKind {
 pub fn show_link_definition(
     definition_kind: LinkDefinitionKind,
     editor: &mut Editor,
-    trigger_point: TriggerPoint,
+    trigger_point: TriggerAnchor,
     snapshot: EditorSnapshot,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -170,7 +170,7 @@ pub fn show_link_definition(
     let task = cx.spawn(|this, mut cx| {
         async move {
             let result = match trigger_point {
-                TriggerPoint::Text(_) => {
+                TriggerAnchor::Text(_) => {
                     // query the LSP for definition info
                     cx.update(|cx| {
                         project.update(cx, |project, cx| match definition_kind {
@@ -203,8 +203,9 @@ pub fn show_link_definition(
                         )
                     })
                 }
-                TriggerPoint::InlayHint(trigger_source, trigger_target) => {
-                    // TODO kb range is wrong, should be in inlay coordinates
+                TriggerAnchor::InlayHint(trigger_source, trigger_target) => {
+                    // TODO kb range is wrong, should be in inlay coordinates have a proper inlay range.
+                    // Or highlight inlays differently, in their layer?
                     Some((Some(trigger_source..trigger_source), vec![trigger_target]))
                 }
             };
@@ -293,7 +294,7 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
 pub fn go_to_fetched_definition(
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -302,7 +303,7 @@ pub fn go_to_fetched_definition(
 
 pub fn go_to_fetched_type_definition(
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -312,7 +313,7 @@ pub fn go_to_fetched_type_definition(
 fn go_to_fetched_definition_of_kind(
     kind: LinkDefinitionKind,
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -330,7 +331,7 @@ fn go_to_fetched_definition_of_kind(
     } else {
         editor.select(
             SelectPhase::Begin {
-                position: point,
+                position: point.next_valid,
                 add: false,
                 click_count: 1,
             },
@@ -460,7 +461,7 @@ mod tests {
             });
 
         cx.update_editor(|editor, cx| {
-            go_to_fetched_type_definition(editor, hover_point, false, cx);
+            go_to_fetched_type_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -707,7 +708,7 @@ mod tests {
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, false, cx);
+            go_to_fetched_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         // Assert selection moved to to definition
         cx.lsp
@@ -748,7 +749,7 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, false, cx);
+            go_to_fetched_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();

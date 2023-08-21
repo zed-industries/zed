@@ -5054,22 +5054,23 @@ impl Project {
             }
 
             let buffer_snapshot = buffer.snapshot();
-            cx.spawn(|project, cx| async move {
+            cx.spawn(|project, mut cx| async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &project, &buffer_snapshot, &cx),
                 );
                 let resolved_hint = resolve_task
                     .await
                     .context("inlay hint resolve LSP request")?;
-                let resolved_hint = cx.read(|cx| {
-                    InlayHints::lsp_to_project_hint(
-                        resolved_hint,
-                        &buffer_handle,
-                        ResolveState::Resolved,
-                        false,
-                        cx,
-                    )
-                });
+                let resolved_hint = InlayHints::lsp_to_project_hint(
+                    resolved_hint,
+                    &project,
+                    &buffer_handle,
+                    server_id,
+                    ResolveState::Resolved,
+                    false,
+                    &mut cx,
+                )
+                .await?;
                 Ok(Some(resolved_hint))
             })
         } else if let Some(project_id) = self.remote_id() {

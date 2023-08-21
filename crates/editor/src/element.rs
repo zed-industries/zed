@@ -358,18 +358,15 @@ impl EditorElement {
         }
 
         if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            if let Some(point) = position_map
-                .point_for_position(text_bounds, position)
-                .as_valid()
-            {
-                if shift {
-                    go_to_fetched_type_definition(editor, point, alt, cx);
-                } else {
-                    go_to_fetched_definition(editor, point, alt, cx);
-                }
-
-                return true;
+            let point = position_map.point_for_position(text_bounds, position);
+            let could_be_inlay = point.as_valid().is_none();
+            if shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, alt, cx);
+            } else {
+                go_to_fetched_definition(editor, point, alt, cx);
             }
+
+            return true;
         }
 
         end_selection
@@ -2818,14 +2815,24 @@ struct PositionMap {
 }
 
 #[derive(Debug)]
-struct PointForPosition {
+pub struct PointForPosition {
     previous_valid: DisplayPoint,
-    next_valid: DisplayPoint,
+    pub next_valid: DisplayPoint,
     exact_unclipped: DisplayPoint,
     column_overshoot_after_line_end: u32,
 }
 
 impl PointForPosition {
+    #[cfg(test)]
+    pub fn valid(valid: DisplayPoint) -> Self {
+        Self {
+            previous_valid: valid,
+            next_valid: valid,
+            exact_unclipped: valid,
+            column_overshoot_after_line_end: 0,
+        }
+    }
+
     fn as_valid(&self) -> Option<DisplayPoint> {
         if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
             Some(self.previous_valid)
