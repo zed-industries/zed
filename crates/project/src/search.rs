@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use client::proto;
 use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
-use language::{char_kind, Rope};
+use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -215,13 +215,23 @@ impl SearchQuery {
         }
     }
 
-    pub async fn search(&self, rope: &Rope) -> Vec<Range<usize>> {
+    pub async fn search(
+        &self,
+        buffer: &BufferSnapshot,
+        subrange: Option<Range<usize>>,
+    ) -> Vec<Range<usize>> {
         const YIELD_INTERVAL: usize = 20000;
 
         if self.as_str().is_empty() {
             return Default::default();
         }
-        let language = rope.language(cx);
+        let language = buffer.language_at(0);
+        let rope = if let Some(range) = subrange {
+            buffer.as_rope().slice(range)
+        } else {
+            buffer.as_rope().clone()
+        };
+
         let kind = |c| char_kind(language, c);
 
         let mut matches = Vec::new();

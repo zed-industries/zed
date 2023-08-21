@@ -176,7 +176,9 @@ pub fn line_end(
 }
 
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let language = map.buffer_snapshot.language_at(point);
+    let raw_point = point.to_point(map);
+    let language = map.buffer_snapshot.language_at(raw_point);
+
     find_preceding_boundary(map, point, |left, right| {
         (char_kind(language, left) != char_kind(language, right) && !right.is_whitespace())
             || left == '\n'
@@ -184,7 +186,8 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 }
 
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let language = map.buffer_snapshot.language_at(point);
+    let raw_point = point.to_point(map);
+    let language = map.buffer_snapshot.language_at(raw_point);
     find_preceding_boundary(map, point, |left, right| {
         let is_word_start =
             char_kind(language, left) != char_kind(language, right) && !right.is_whitespace();
@@ -195,14 +198,20 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 }
 
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let language = map.buffer_snapshot.language_at(raw_point);
     find_boundary(map, point, |left, right| {
-        (char_kind(left) != char_kind(right) && !left.is_whitespace()) || right == '\n'
+        (char_kind(language, left) != char_kind(language, right) && !left.is_whitespace())
+            || right == '\n'
     })
 }
 
 pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let language = map.buffer_snapshot.language_at(raw_point);
     find_boundary(map, point, |left, right| {
-        let is_word_end = (char_kind(left) != char_kind(right)) && !left.is_whitespace();
+        let is_word_end =
+            (char_kind(language, left) != char_kind(language, right)) && !left.is_whitespace();
         let is_subword_end =
             left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
         is_word_end || is_subword_end || right == '\n'
@@ -389,10 +398,15 @@ pub fn find_boundary_in_line(
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
+    let raw_point = point.to_point(map);
+    let language = map.buffer_snapshot.language_at(raw_point);
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let text = &map.buffer_snapshot;
-    let next_char_kind = text.chars_at(ix).next().map(char_kind);
-    let prev_char_kind = text.reversed_chars_at(ix).next().map(char_kind);
+    let next_char_kind = text.chars_at(ix).next().map(|c| char_kind(language, c));
+    let prev_char_kind = text
+        .reversed_chars_at(ix)
+        .next()
+        .map(|c| char_kind(language, c));
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 

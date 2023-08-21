@@ -2989,12 +2989,16 @@ pub fn contiguous_ranges(
 
 pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
     if c.is_whitespace() {
-        CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' || c == '$' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
+        return CharKind::Whitespace;
+    } else if c.is_alphanumeric() || c == '_' {
+        return CharKind::Word;
     }
+    if let Some(language) = language {
+        if language.config.word_boundaries.contains(&c) {
+            return CharKind::Word;
+        }
+    }
+    CharKind::Punctuation
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines

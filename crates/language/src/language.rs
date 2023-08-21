@@ -11,7 +11,7 @@ mod buffer_tests;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     channel::oneshot,
     future::{BoxFuture, Shared},
@@ -344,6 +344,8 @@ pub struct LanguageConfig {
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
+    #[serde(default)]
+    pub word_boundaries: HashSet<char>,
 }
 
 #[derive(Debug, Default)]
@@ -411,6 +413,7 @@ impl Default for LanguageConfig {
             block_comment: Default::default(),
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
+            word_boundaries: Default::default(),
         }
     }
 }
