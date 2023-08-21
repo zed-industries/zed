@@ -1,4 +1,4 @@
-use super::{ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
+use crate::db::{ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]

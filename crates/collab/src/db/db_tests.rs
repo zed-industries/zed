@@ -1,9 +1,8 @@
 use super::*;
 use gpui::executor::{Background, Deterministic};
-use std::sync::Arc;
-
-#[cfg(test)]
 use pretty_assertions::{assert_eq, assert_ne};
+use std::sync::Arc;
+use test_db::TestDb;
 
 macro_rules! test_both_dbs {
     ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {

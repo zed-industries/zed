@@ -179,7 +179,7 @@ pub mod action_button {
                     let view = cx.view_id();
                     let action = action.boxed_clone();
                     cx.spawn(|_, mut cx| async move {
-                        window.dispatch_action(view, action.as_ref(), &mut cx);
+                        window.dispatch_action(view, action.as_ref(), &mut cx)
                     })
                     .detach();
                 }

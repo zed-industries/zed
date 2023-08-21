@@ -241,7 +241,7 @@ async fn test_status_indicator(
     deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Visual { line: false })
+        Some(Mode::Visual)
     );
 
     // hides if vim mode is disabled
