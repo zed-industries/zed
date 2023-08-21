@@ -27,7 +27,7 @@ pub mod platform;
 pub use gpui_macros::{test, Element};
 pub use window::{Axis, RectFExt, SizeConstraint, Vector2FExt, WindowContext};
 
-#[cfg(any(test, feature="test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub use anyhow;
 pub use serde_json;

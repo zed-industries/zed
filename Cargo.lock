@@ -2270,7 +2270,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "gpui_mac",
+ "gpui_platform",
  "indoc",
  "itertools",
  "language",
@@ -3119,6 +3119,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "gpui_platform"
+version = "0.1.0"
+dependencies = [
+ "gpui_mac",
 ]
 
 [[package]]

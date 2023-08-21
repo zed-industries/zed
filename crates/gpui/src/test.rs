@@ -17,7 +17,6 @@ use crate::{
     elements::Empty,
     executor::{self, ExecutorEvent},
     platform,
-    platform::Platform,
     util::CwdBacktrace,
     AnyElement, AppContext, Element, Entity, FontCache, Handle, Subscription, TestAppContext, View,
     ViewContext,

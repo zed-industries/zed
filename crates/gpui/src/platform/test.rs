@@ -297,10 +297,6 @@ impl Window {
             active_window,
         }
     }
-
-    pub fn title(&self) -> Option<String> {
-        self.title.clone()
-    }
 }
 
 impl super::Window for Window {

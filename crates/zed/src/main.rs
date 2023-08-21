@@ -54,7 +54,7 @@ use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
-use gpui_mac::{foreground_platform, platform};
+use gpui_platform::{foreground_platform, platform};
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
