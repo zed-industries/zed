@@ -1631,7 +1631,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_language_scope_at(cx: &mut AppContext) {
+fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
     cx.add_model(|cx| {
@@ -1712,6 +1712,73 @@ fn test_language_scope_at(cx: &mut AppContext) {
         assert_eq!(
             element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_scope_at_with_rust(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.add_model(|cx| {
+        let language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            newline: false,
+                        },
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(), //
+                        vec!["string".into()],
+                    ],
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )
+        .with_override_query(
+            r#"
+                (string_literal) @string
+            "#,
+        )
+        .unwrap();
+
+        let text = r#"
+            const S: &'static str = "hello";
+        "#
+        .unindent();
+
+        let buffer = Buffer::new(0, text.clone(), cx).with_language(Arc::new(language), cx);
+        let snapshot = buffer.snapshot();
+
+        // By default, all brackets are enabled
+        let config = snapshot.language_scope_at(0).unwrap();
+        assert_eq!(
+            config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
+
+        // Within a string, the quotation brackets are disabled.
+        let string_config = snapshot
+            .language_scope_at(text.find("ello").unwrap())
+            .unwrap();
+        assert_eq!(
+            string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
         );
 
         buffer

@@ -1,7 +1,7 @@
 {"Put":{"state":"The quick ˇbrown"}}
 {"Key":"v"}
 {"Key":"w"}
-{"Get":{"state":"The quick «brownˇ»","mode":{"Visual":{"line":false}}}}
+{"Get":{"state":"The quick «brownˇ»","mode":"Visual"}}
 {"Put":{"state":"The quick ˇbrown"}}
 {"Key":"v"}
 {"Key":"w"}

@@ -523,6 +523,11 @@ impl BufferSearchBar {
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
+        assert_ne!(
+            mode,
+            SearchMode::Semantic,
+            "Semantic search is not supported in buffer search"
+        );
         if mode == self.current_mode {
             return;
         }
@@ -797,7 +802,7 @@ impl BufferSearchBar {
         }
     }
     fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
-        self.activate_search_mode(next_mode(&self.current_mode), cx);
+        self.activate_search_mode(next_mode(&self.current_mode, false), cx);
     }
     fn cycle_mode_on_pane(pane: &mut Pane, action: &CycleMode, cx: &mut ViewContext<Pane>) {
         let mut should_propagate = true;

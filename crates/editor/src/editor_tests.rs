@@ -5237,6 +5237,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                resolve_provider: Some(true),
                 ..Default::default()
             }),
             ..Default::default()
@@ -7528,6 +7529,7 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
                 ..Default::default()
             }),
             ..Default::default()

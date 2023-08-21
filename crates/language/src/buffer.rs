@@ -2145,27 +2145,46 @@ impl BufferSnapshot {
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
-        let mut range = 0..self.len();
-        let mut scope = self.language.clone().map(|language| LanguageScope {
-            language,
-            override_id: None,
-        });
+        let mut scope = None;
+        let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
             let mut cursor = layer.node().walk();
-            while cursor.goto_first_child_for_byte(offset).is_some() {}
-            let node_range = cursor.node().byte_range();
-            if node_range.to_inclusive().contains(&offset) && node_range.len() < range.len() {
-                range = node_range;
-                scope = Some(LanguageScope {
-                    language: layer.language.clone(),
-                    override_id: layer.override_id(offset, &self.text),
-                });
+
+            let mut range = None;
+            loop {
+                let child_range = cursor.node().byte_range();
+                if !child_range.to_inclusive().contains(&offset) {
+                    break;
+                }
+
+                range = Some(child_range);
+                if cursor.goto_first_child_for_byte(offset).is_none() {
+                    break;
+                }
+            }
+
+            if let Some(range) = range {
+                if smallest_range
+                    .as_ref()
+                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
+                {
+                    smallest_range = Some(range);
+                    scope = Some(LanguageScope {
+                        language: layer.language.clone(),
+                        override_id: layer.override_id(offset, &self.text),
+                    });
+                }
             }
         }
 
-        scope
+        scope.or_else(|| {
+            self.language.clone().map(|language| LanguageScope {
+                language,
+                override_id: None,
+            })
+        })
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {

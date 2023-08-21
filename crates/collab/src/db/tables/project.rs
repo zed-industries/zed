@@ -1,4 +1,4 @@
-use super::{ProjectId, Result, RoomId, ServerId, UserId};
+use crate::db::{ProjectId, Result, RoomId, ServerId, UserId};
 use anyhow::anyhow;
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;

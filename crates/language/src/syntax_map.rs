@@ -72,7 +72,7 @@ pub struct SyntaxMapMatch<'a> {
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
-    captures: QueryCaptures<'a, 'a, TextProvider<'a>>,
+    captures: QueryCaptures<'a, 'a, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -83,7 +83,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
-    matches: QueryMatches<'a, 'a, TextProvider<'a>>,
+    matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
@@ -1279,7 +1279,9 @@ fn get_injections(
     }
 
     for (language, mut included_ranges) in combined_injection_ranges.drain() {
-        included_ranges.sort_unstable();
+        included_ranges.sort_unstable_by(|a, b| {
+            Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
+        });
         queue.push(ParseStep {
             depth,
             language: ParseStepLanguage::Loaded { language },
@@ -1697,7 +1699,7 @@ impl std::fmt::Debug for SyntaxLayer {
     }
 }
 
-impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
+impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
     type I = ByteChunks<'a>;
 
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {

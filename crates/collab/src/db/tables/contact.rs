@@ -1,4 +1,4 @@
-use super::{ContactId, UserId};
+use crate::db::{ContactId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -30,29 +30,3 @@ pub enum Relation {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Contact {
-    Accepted {
-        user_id: UserId,
-        should_notify: bool,
-        busy: bool,
-    },
-    Outgoing {
-        user_id: UserId,
-    },
-    Incoming {
-        user_id: UserId,
-        should_notify: bool,
-    },
-}
-
-impl Contact {
-    pub fn user_id(&self) -> UserId {
-        match self {
-            Contact::Accepted { user_id, .. } => *user_id,
-            Contact::Outgoing { user_id } => *user_id,
-            Contact::Incoming { user_id, .. } => *user_id,
-        }
-    }
-}

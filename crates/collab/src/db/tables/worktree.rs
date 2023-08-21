@@ -1,27 +1,20 @@
-use super::{ProjectCollaboratorId, ProjectId, ReplicaId, ServerId, UserId};
-use rpc::ConnectionId;
+use crate::db::ProjectId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "project_collaborators")]
+#[sea_orm(table_name = "worktrees")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: ProjectCollaboratorId,
+    pub id: i64,
+    #[sea_orm(primary_key)]
     pub project_id: ProjectId,
-    pub connection_id: i32,
-    pub connection_server_id: ServerId,
-    pub user_id: UserId,
-    pub replica_id: ReplicaId,
-    pub is_host: bool,
-}
-
-impl Model {
-    pub fn connection(&self) -> ConnectionId {
-        ConnectionId {
-            owner_id: self.connection_server_id.0 as u32,
-            id: self.connection_id as u32,
-        }
-    }
+    pub abs_path: String,
+    pub root_name: String,
+    pub visible: bool,
+    /// The last scan for which we've observed entries. It may be in progress.
+    pub scan_id: i64,
+    /// The last scan that fully completed.
+    pub completed_scan_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
