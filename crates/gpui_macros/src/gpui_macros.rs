@@ -157,8 +157,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             #[test]
             fn #outer_fn_name() {
                 #inner_fn
-
                 #namespace::test::run_test(
+                    gpui_mac::font_system,
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
@@ -234,8 +234,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             #[test]
             fn #outer_fn_name() {
                 #inner_fn
-
                 #namespace::test::run_test(
+                    gpui_mac::font_system,
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,

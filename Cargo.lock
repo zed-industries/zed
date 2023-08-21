@@ -2270,6 +2270,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "gpui_mac",
  "indoc",
  "itertools",
  "language",

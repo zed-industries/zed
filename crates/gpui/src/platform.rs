@@ -1,4 +1,6 @@
 mod event;
+#[cfg(any(test, feature = "test-support"))]
+pub(super) mod test;
 
 use crate::{
     executor,

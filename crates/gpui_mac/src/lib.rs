@@ -10,8 +10,7 @@ mod renderer;
 mod screen;
 mod sprite_cache;
 mod status_item;
-#[cfg(test)]
-mod test;
+
 mod window;
 
 use cocoa::{
@@ -103,4 +102,10 @@ unsafe impl objc::Encode for NSRange {
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn font_system() -> Arc<dyn gpui::platform::FontSystem> {
+    Arc::new(FontSystem::new())
 }

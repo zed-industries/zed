@@ -18,7 +18,8 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "tree-sitter-rust",
-    "tree-sitter-typescript"
+    "tree-sitter-typescript",
+    "gpui_mac"
 ]
 
 [dependencies]
@@ -44,6 +45,7 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
 workspace = { path = "../workspace" }
+gpui_mac = { path = "../gpui_mac", optional = true}
 
 aho-corasick = "0.7"
 anyhow.workspace = true
@@ -78,6 +80,7 @@ util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+
 
 ctor.workspace = true
 env_logger.workspace = true

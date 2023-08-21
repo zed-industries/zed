@@ -1,7 +1,7 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
-use gpui::{
+use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -64,7 +64,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
     fn on_quit(&self, _: Box<dyn FnMut()>) {}
     fn on_reopen(&self, _: Box<dyn FnMut()>) {}
-    fn on_event(&self, _: Box<dyn FnMut(gpui::platform::Event) -> bool>) {}
+    fn on_event(&self, _: Box<dyn FnMut(super::Event) -> bool>) {}
     fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -93,10 +93,6 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn reveal_path(&self, _: &Path) {}
 }
 
-pub fn platform() -> Platform {
-    Platform::new()
-}
-
 pub struct Platform {
     dispatcher: Arc<dyn super::Dispatcher>,
     fonts: Arc<dyn super::FontSystem>,
@@ -106,10 +102,10 @@ pub struct Platform {
 }
 
 impl Platform {
-    fn new() -> Self {
+    pub fn new(fonts: Arc<dyn super::FontSystem>) -> Self {
         Self {
             dispatcher: Arc::new(Dispatcher),
-            fonts: Arc::new(super::current::FontSystem::new()),
+            fonts,
             current_clipboard_item: Default::default(),
             cursor: Mutex::new(CursorStyle::Arrow),
             active_window: Default::default(),
@@ -136,11 +132,11 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn gpui::platform::Screen>> {
+    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn super::Screen>> {
         None
     }
 
-    fn screens(&self) -> Vec<Rc<dyn gpui::platform::Screen>> {
+    fn screens(&self) -> Vec<Rc<dyn super::Screen>> {
         Default::default()
     }
 
@@ -165,7 +161,7 @@ impl super::Platform for Platform {
         self.active_window.lock().clone()
     }
 
-    fn add_status_item(&self, handle: AnyWindowHandle) -> Box<dyn gpui::platform::Window> {
+    fn add_status_item(&self, handle: AnyWindowHandle) -> Box<dyn super::Window> {
         Box::new(Window::new(
             handle,
             vec2f(24., 24.),
@@ -263,7 +259,7 @@ pub struct Window {
     handle: AnyWindowHandle,
     pub(crate) size: Vector2F,
     scale_factor: f32,
-    current_scene: Option<gpui::Scene>,
+    current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
     pub(crate) moved_handlers: Vec<Box<dyn FnMut()>>,
@@ -324,11 +320,11 @@ impl super::Window for Window {
         24.
     }
 
-    fn appearance(&self) -> gpui::platform::Appearance {
-        gpui::platform::Appearance::Light
+    fn appearance(&self) -> super::Appearance {
+        super::Appearance::Light
     }
 
-    fn screen(&self) -> Rc<dyn gpui::platform::Screen> {
+    fn screen(&self) -> Rc<dyn super::Screen> {
         Rc::new(Screen)
     }
 
@@ -336,11 +332,11 @@ impl super::Window for Window {
         self
     }
 
-    fn set_input_handler(&mut self, _: Box<dyn gpui::platform::InputHandler>) {}
+    fn set_input_handler(&mut self, _: Box<dyn super::InputHandler>) {}
 
     fn prompt(
         &self,
-        _: gpui::platform::PromptLevel,
+        _: super::PromptLevel,
         _: &str,
         _: &[&str],
     ) -> oneshot::Receiver<usize> {
@@ -367,13 +363,13 @@ impl super::Window for Window {
 
     fn zoom(&self) {}
 
-    fn present_scene(&mut self, scene: gpui::Scene) {
+    fn present_scene(&mut self, scene: crate::Scene) {
         self.current_scene = Some(scene);
     }
 
     fn toggle_full_screen(&self) {}
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(gpui::platform::Event) -> bool>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(super::Event) -> bool>) {
         self.event_handlers.push(callback);
     }
 

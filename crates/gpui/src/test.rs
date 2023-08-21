@@ -35,6 +35,7 @@ fn init_logger() {
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
 pub fn run_test(
+    fonts: fn() -> std::sync::Arc<dyn crate::platform::FontSystem>,
     mut num_iterations: u64,
     mut starting_seed: u64,
     max_retries: usize,
@@ -66,10 +67,10 @@ pub fn run_test(
 
     loop {
         let result = panic::catch_unwind(|| {
+            let fonts = fonts();
             let foreground_platform = Rc::new(platform::test::foreground_platform());
-            let platform = Arc::new(platform::test::platform());
-            let font_system = platform.fonts();
-            let font_cache = Arc::new(FontCache::new(font_system));
+            let platform = Arc::new(platform::test::Platform::new(fonts.clone()));
+            let font_cache = Arc::new(FontCache::new(fonts.clone()));
             let mut prev_runnable_history: Option<Vec<ExecutorEvent>> = None;
 
             for _ in 0..num_iterations {

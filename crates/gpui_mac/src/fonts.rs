@@ -668,4 +668,39 @@ mod tests {
                                                      // There's no glyph for \u{feff}
         assert_eq!(layout.runs[0].glyphs[1].id, 69); // b
     }
+    #[test]
+    fn test_select_font() {
+        let platform = test::platform(FontSystem::new());
+        let fonts = FontCache::new(platform.fonts());
+        let arial = fonts
+            .load_family(
+                &["Arial"],
+                &Features {
+                    calt: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let arial_regular = fonts.select_font(arial, &Properties::new()).unwrap();
+        let arial_italic = fonts
+            .select_font(arial, Properties::new().style(Style::Italic))
+            .unwrap();
+        let arial_bold = fonts
+            .select_font(arial, Properties::new().weight(Weight::BOLD))
+            .unwrap();
+        assert_ne!(arial_regular, arial_italic);
+        assert_ne!(arial_regular, arial_bold);
+        assert_ne!(arial_italic, arial_bold);
+
+        let arial_with_calt = fonts
+            .load_family(
+                &["Arial"],
+                &Features {
+                    calt: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_ne!(arial_with_calt, arial);
+    }
 }
