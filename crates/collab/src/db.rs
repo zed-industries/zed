@@ -52,6 +52,8 @@ pub struct Database {
     runtime: Option<tokio::runtime::Runtime>,
 }
 
+// The `Database` type has so many methods that its impl blocks are split into
+// separate files in the `queries` folder.
 impl Database {
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
         Ok(Self {

@@ -16,6 +16,7 @@ required-features = ["seed-support"]
 [dependencies]
 collections = { path = "../collections" }
 live_kit_server = { path = "../live_kit_server" }
+text = { path = "../text" }
 rpc = { path = "../rpc" }
 util = { path = "../util" }
 
@@ -35,6 +36,7 @@ log.workspace = true
 nanoid = "0.4"
 parking_lot.workspace = true
 prometheus = "0.13"
+prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"

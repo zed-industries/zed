@@ -189,7 +189,8 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now
+    "created_at" TIMESTAMP NOT NULL DEFAULT now,
+    "main_buffer_id" INTEGER REFERENCES buffers (id)
 );
 
 CREATE TABLE "channel_paths" (
@@ -208,3 +209,27 @@ CREATE TABLE "channel_members" (
 );
 
 CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channel_members" ("channel_id", "user_id");
+
+CREATE TABLE "buffers" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "epoch" INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE "buffer_operations" (
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL,
+    "replica_id" INTEGER NOT NULL,
+    "lamport_timestamp" INTEGER NOT NULL,
+    "local_timestamp" INTEGER NOT NULL,
+    "version" BLOB NOT NULL,
+    "is_undo" BOOLEAN NOT NULL,
+    "value" BLOB NOT NULL,
+    PRIMARY KEY(buffer_id, epoch, lamport_timestamp, replica_id)
+);
+
+CREATE TABLE "buffer_snapshots" (
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL,
+    "text" TEXT NOT NULL,
+    PRIMARY KEY(buffer_id, epoch)
+);

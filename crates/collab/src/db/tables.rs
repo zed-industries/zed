@@ -1,4 +1,7 @@
 pub mod access_token;
+pub mod buffer;
+pub mod buffer_operation;
+pub mod buffer_snapshot;
 pub mod channel;
 pub mod channel_member;
 pub mod channel_path;

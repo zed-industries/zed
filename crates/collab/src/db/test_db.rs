@@ -96,13 +96,17 @@ macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
         async fn $postgres_test_name() {
-            let test_db = TestDb::postgres(Deterministic::new(0).build_background());
+            let test_db = crate::db::test_db::TestDb::postgres(
+                gpui::executor::Deterministic::new(0).build_background(),
+            );
             $test_name(test_db.db()).await;
         }
 
         #[gpui::test]
         async fn $sqlite_test_name() {
-            let test_db = TestDb::sqlite(Deterministic::new(0).build_background());
+            let test_db = crate::db::test_db::TestDb::sqlite(
+                gpui::executor::Deterministic::new(0).build_background(),
+            );
             $test_name(test_db.db()).await;
         }
     };
