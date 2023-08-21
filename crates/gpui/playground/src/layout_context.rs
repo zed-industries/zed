@@ -11,7 +11,6 @@ pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
-    pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
 impl<'a, 'b, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, '_, '_, V> {
@@ -33,11 +32,8 @@ impl<'a, 'b, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, '_, '_, V> {
 }
 
 impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
-    pub fn new(
-        legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
-        scene: &'d mut gpui::SceneBuilder,
-    ) -> Self {
-        Self { legacy_cx, scene }
+    pub fn new(legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>) -> Self {
+        Self { legacy_cx }
     }
 
     pub fn add_layout_node<D>(

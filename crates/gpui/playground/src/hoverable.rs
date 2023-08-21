@@ -9,7 +9,7 @@ use gpui::platform::MouseMovedEvent;
 use refineable::Refineable;
 use std::{cell::Cell, marker::PhantomData};
 
-pub struct Hoverable<V, E: Element<V> + Styleable> {
+pub struct Hoverable<V: 'static, E: Element<V> + Styleable> {
     hovered: Cell<bool>,
     child_style: StyleRefinement,
     hovered_style: StyleRefinement,

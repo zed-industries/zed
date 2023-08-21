@@ -1,4 +1,7 @@
-use crate::element::{AnyElement, Element};
+use crate::{
+    adapter::AdapterElement,
+    element::{AnyElement, Element},
+};
 use gpui::ViewContext;
 
 pub fn view<F, E>(mut render: F) -> ViewFn
@@ -17,6 +20,7 @@ impl gpui::Entity for ViewFn {
 
 impl gpui::View for ViewFn {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
-        (self.0)(cx).adapt().into_any()
+        use gpui::Element as _;
+        AdapterElement((self.0)(cx)).into_any()
     }
 }
