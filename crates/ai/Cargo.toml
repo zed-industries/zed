@@ -29,6 +29,7 @@ regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+similar = "1.3"
 smol.workspace = true
 tiktoken-rs = "0.4"
 
