@@ -1908,11 +1908,13 @@ fn update_inlay_link_and_hover_points(
                                 }
                             }
                             project::InlayHintLabel::LabelParts(label_parts) => {
-                                if let Some(hovered_hint_part) = find_hovered_hint_part(
-                                    label_parts,
-                                    hint_start_offset..hint_end_offset,
-                                    hovered_offset,
-                                ) {
+                                if let Some((hovered_hint_part, part_range)) =
+                                    find_hovered_hint_part(
+                                        label_parts,
+                                        hint_start_offset..hint_end_offset,
+                                        hovered_offset,
+                                    )
+                                {
                                     if hovered_hint_part.tooltip.is_some() {
                                         dbg!(&hovered_hint_part.tooltip); // TODO kb
                                                                           // hover_at_point = Some(hovered_offset);
@@ -1928,10 +1930,9 @@ fn update_inlay_link_and_hover_points(
                                                 editor,
                                                 GoToDefinitionTrigger::InlayHint(
                                                     InlayCoordinates {
-                                                        inlay_id: hovered_hint.id,
                                                         inlay_position: hovered_hint.position,
-                                                        inlay_start: hint_start_offset,
-                                                        highlight_end: hovered_offset,
+                                                        highlight_start: part_range.start,
+                                                        highlight_end: part_range.end,
                                                     },
                                                     LocationLink {
                                                         origin: Some(Location {
@@ -1976,15 +1977,17 @@ fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
     hint_range: Range<InlayOffset>,
     hovered_offset: InlayOffset,
-) -> Option<InlayHintLabelPart> {
+) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
     if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
         let mut hovered_character = (hovered_offset - hint_range.start).0;
+        let mut part_start = hint_range.start;
         for part in label_parts {
             let part_len = part.value.chars().count();
             if hovered_character >= part_len {
                 hovered_character -= part_len;
+                part_start.0 += part_len;
             } else {
-                return Some(part);
+                return Some((part, part_start..InlayOffset(part_start.0 + part_len)));
             }
         }
     }

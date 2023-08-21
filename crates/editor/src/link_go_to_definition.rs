@@ -1,6 +1,6 @@
 use crate::{
     display_map::InlayOffset, element::PointForPosition, Anchor, DisplayPoint, Editor,
-    EditorSnapshot, InlayId, SelectPhase,
+    EditorSnapshot, SelectPhase,
 };
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -25,9 +25,8 @@ pub enum GoToDefinitionTrigger {
 
 #[derive(Debug, Clone, Copy)]
 pub struct InlayCoordinates {
-    pub inlay_id: InlayId,
     pub inlay_position: Anchor,
-    pub inlay_start: InlayOffset,
+    pub highlight_start: InlayOffset,
     pub highlight_end: InlayOffset,
 }
 
@@ -51,7 +50,7 @@ impl SymbolRange {
                 point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
             }
             (SymbolRange::Inlay(range), TriggerPoint::InlayHint(point, _)) => {
-                range.inlay_start.cmp(&point.highlight_end).is_le()
+                range.highlight_start.cmp(&point.highlight_end).is_le()
                     && range.highlight_end.cmp(&point.highlight_end).is_ge()
             }
             (SymbolRange::Inlay(_), TriggerPoint::Text(_))
@@ -282,8 +281,8 @@ pub fn show_link_definition(
                                         ..snapshot.anchor_after(offset_range.end),
                                 )
                             }
-                            TriggerPoint::InlayHint(inlay_trigger, _) => {
-                                SymbolRange::Inlay(inlay_trigger)
+                            TriggerPoint::InlayHint(inlay_coordinates, _) => {
+                                SymbolRange::Inlay(inlay_coordinates)
                             }
                         });
 

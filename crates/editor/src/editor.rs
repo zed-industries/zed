@@ -7750,17 +7750,16 @@ impl Editor {
         highlights
     }
 
-    pub fn clear_highlights<T: 'static>(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        let highlights = self
+    pub fn clear_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        let text_highlights = self
             .display_map
             .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
-        if highlights.is_some() {
+        let inlay_highlights = self
+            .display_map
+            .update(cx, |map, _| map.clear_inlay_highlights(TypeId::of::<T>()));
+        if text_highlights.is_some() || inlay_highlights.is_some() {
             cx.notify();
         }
-        highlights
     }
 
     pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
