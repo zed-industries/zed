@@ -26,6 +26,9 @@ pub struct FileRecord {
 #[derive(Debug)]
 struct Embedding(pub Vec<f32>);
 
+#[derive(Debug)]
+struct Sha1(pub Vec<u8>);
+
 impl FromSql for Embedding {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
         let bytes = value.as_blob()?;
@@ -34,6 +37,17 @@ impl FromSql for Embedding {
             return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
         }
         return Ok(Embedding(embedding.unwrap()));
+    }
+}
+
+impl FromSql for Sha1 {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        let bytes = value.as_blob()?;
+        let sha1: Result<Vec<u8>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
+        if sha1.is_err() {
+            return Err(rusqlite::types::FromSqlError::Other(sha1.unwrap_err()));
+        }
+        return Ok(Sha1(sha1.unwrap()));
     }
 }
 
@@ -132,6 +146,7 @@ impl VectorDatabase {
                 end_byte INTEGER NOT NULL,
                 name VARCHAR NOT NULL,
                 embedding BLOB NOT NULL,
+                sha1 BLOB NOT NULL,
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             )",
             [],
@@ -182,15 +197,17 @@ impl VectorDatabase {
         // I imagine we can speed this up with a bulk insert of some kind.
         for document in documents {
             let embedding_blob = bincode::serialize(&document.embedding)?;
+            let sha_blob = bincode::serialize(&document.sha1)?;
 
             self.db.execute(
-                "INSERT INTO documents (file_id, start_byte, end_byte, name, embedding) VALUES (?1, ?2, ?3, ?4, $5)",
+                "INSERT INTO documents (file_id, start_byte, end_byte, name, embedding, sha1) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     file_id,
                     document.range.start.to_string(),
                     document.range.end.to_string(),
                     document.name,
-                    embedding_blob
+                    embedding_blob,
+                    sha_blob
                 ],
             )?;
         }

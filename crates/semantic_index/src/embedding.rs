@@ -39,7 +39,7 @@ struct OpenAIEmbeddingResponse {
 
 #[derive(Debug, Deserialize)]
 struct OpenAIEmbedding {
-    embedding: Vec<f32>,
+    embedding: Vec<f16>,
     index: usize,
     object: String,
 }

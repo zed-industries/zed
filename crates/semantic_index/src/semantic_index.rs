@@ -34,7 +34,7 @@ use util::{
     ResultExt,
 };
 
-const SEMANTIC_INDEX_VERSION: usize = 6;
+const SEMANTIC_INDEX_VERSION: usize = 7;
 const EMBEDDINGS_BATCH_SIZE: usize = 80;
 
 pub fn init(
@@ -92,6 +92,7 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
+    file_mtimes: HashMap<PathBuf, SystemTime>,
     outstanding_job_count_rx: watch::Receiver<usize>,
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
