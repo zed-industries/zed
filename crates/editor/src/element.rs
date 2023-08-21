@@ -13,7 +13,7 @@ use crate::{
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        GoToDefinitionTrigger,
+        GoToDefinitionTrigger, InlayCoordinates,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -1927,7 +1927,12 @@ fn update_inlay_link_and_hover_points(
                                             update_go_to_definition_link(
                                                 editor,
                                                 GoToDefinitionTrigger::InlayHint(
-                                                    hovered_hint.position,
+                                                    InlayCoordinates {
+                                                        inlay_id: hovered_hint.id,
+                                                        inlay_position: hovered_hint.position,
+                                                        inlay_start: hint_start_offset,
+                                                        highlight_end: hovered_offset,
+                                                    },
                                                     LocationLink {
                                                         origin: Some(Location {
                                                             buffer,

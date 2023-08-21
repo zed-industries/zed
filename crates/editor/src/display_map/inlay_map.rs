@@ -15,7 +15,7 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::TextHighlights;
+use super::{InlayHighlights, TextHighlights};
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
@@ -973,8 +973,9 @@ impl InlaySnapshot {
         range: Range<InlayOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        hint_highlights: Option<HighlightStyle>,
-        suggestion_highlights: Option<HighlightStyle>,
+        inlay_highlights: Option<&'a InlayHighlights>,
+        inlay_highlight_style: Option<HighlightStyle>,
+        suggestion_highlight_style: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
@@ -983,53 +984,50 @@ impl InlaySnapshot {
         if let Some(text_highlights) = text_highlights {
             if !text_highlights.is_empty() {
                 while cursor.start().0 < range.end {
-                    if true {
-                        let transform_start = self.buffer.anchor_after(
-                            self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
-                        );
+                    let transform_start = self.buffer.anchor_after(
+                        self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
+                    );
 
-                        let transform_end = {
-                            let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
-                            self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
-                                cursor.end(&()).0,
-                                cursor.start().0 + overshoot,
-                            )))
-                        };
+                    let transform_end = {
+                        let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
+                        self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
+                            cursor.end(&()).0,
+                            cursor.start().0 + overshoot,
+                        )))
+                    };
 
-                        for (tag, highlights) in text_highlights.iter() {
-                            let style = highlights.0;
-                            let ranges = &highlights.1;
+                    for (tag, highlights) in text_highlights.iter() {
+                        let style = highlights.0;
+                        let ranges = &highlights.1;
 
-                            let start_ix = match ranges.binary_search_by(|probe| {
-                                let cmp = probe.end.cmp(&transform_start, &self.buffer);
-                                if cmp.is_gt() {
-                                    cmp::Ordering::Greater
-                                } else {
-                                    cmp::Ordering::Less
-                                }
-                            }) {
-                                Ok(i) | Err(i) => i,
-                            };
-                            // TODO kb add a way to highlight inlay hints through here.
-                            for range in &ranges[start_ix..] {
-                                if range.start.cmp(&transform_end, &self.buffer).is_ge() {
-                                    break;
-                                }
-
-                                highlight_endpoints.push(HighlightEndpoint {
-                                    offset: self
-                                        .to_inlay_offset(range.start.to_offset(&self.buffer)),
-                                    is_start: true,
-                                    tag: *tag,
-                                    style,
-                                });
-                                highlight_endpoints.push(HighlightEndpoint {
-                                    offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
-                                    is_start: false,
-                                    tag: *tag,
-                                    style,
-                                });
+                        let start_ix = match ranges.binary_search_by(|probe| {
+                            let cmp = probe.end.cmp(&transform_start, &self.buffer);
+                            if cmp.is_gt() {
+                                cmp::Ordering::Greater
+                            } else {
+                                cmp::Ordering::Less
                             }
+                        }) {
+                            Ok(i) | Err(i) => i,
+                        };
+                        // TODO kb add a way to highlight inlay hints through here.
+                        for range in &ranges[start_ix..] {
+                            if range.start.cmp(&transform_end, &self.buffer).is_ge() {
+                                break;
+                            }
+
+                            highlight_endpoints.push(HighlightEndpoint {
+                                offset: self.to_inlay_offset(range.start.to_offset(&self.buffer)),
+                                is_start: true,
+                                tag: *tag,
+                                style,
+                            });
+                            highlight_endpoints.push(HighlightEndpoint {
+                                offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
+                                is_start: false,
+                                tag: *tag,
+                                style,
+                            });
                         }
                     }
 
@@ -1050,8 +1048,8 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            hint_highlight_style: hint_highlights,
-            suggestion_highlight_style: suggestion_highlights,
+            hint_highlight_style: inlay_highlight_style,
+            suggestion_highlight_style,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             snapshot: self,
@@ -1060,9 +1058,16 @@ impl InlaySnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None, None, None)
-            .map(|chunk| chunk.text)
-            .collect()
+        self.chunks(
+            Default::default()..self.len(),
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map(|chunk| chunk.text)
+        .collect()
     }
 
     fn check_invariants(&self) {
@@ -1636,6 +1641,8 @@ mod tests {
                         InlayOffset(start)..InlayOffset(end),
                         false,
                         Some(&highlights),
+                        // TODO kb add tests
+                        None,
                         None,
                         None,
                     )

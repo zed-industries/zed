@@ -64,7 +64,9 @@ use language::{
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::{hide_link_definition, show_link_definition, LinkGoToDefinitionState};
+use link_go_to_definition::{
+    hide_link_definition, show_link_definition, InlayCoordinates, LinkGoToDefinitionState,
+};
 use log::error;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -7716,6 +7718,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn highlight_inlays<T: 'static>(
+        &mut self,
+        ranges: Vec<InlayCoordinates>,
+        style: HighlightStyle,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |map, _| {
+            map.highlight_inlays(TypeId::of::<T>(), ranges, style)
+        });
+        cx.notify();
+    }
+
     pub fn text_highlights<'a, T: 'static>(
         &'a self,
         cx: &'a AppContext,
@@ -7724,6 +7738,19 @@ impl Editor {
     }
 
     pub fn clear_text_highlights<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        let highlights = self
+            .display_map
+            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
+        if highlights.is_some() {
+            cx.notify();
+        }
+        highlights
+    }
+
+    pub fn clear_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
@@ -8327,7 +8354,7 @@ impl View for Editor {
 
             self.link_go_to_definition_state.task = None;
 
-            self.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+            self.clear_highlights::<LinkGoToDefinitionState>(cx);
         }
 
         false

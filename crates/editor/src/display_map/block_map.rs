@@ -1,6 +1,6 @@
 use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
-    TextHighlights,
+    InlayHighlights, TextHighlights,
 };
 use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
@@ -579,6 +579,7 @@ impl BlockSnapshot {
             None,
             None,
             None,
+            None,
         )
         .map(|chunk| chunk.text)
         .collect()
@@ -589,8 +590,9 @@ impl BlockSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        hint_highlights: Option<HighlightStyle>,
-        suggestion_highlights: Option<HighlightStyle>,
+        inlay_highlights: Option<&'a InlayHighlights>,
+        inlay_highlight_style: Option<HighlightStyle>,
+        suggestion_highlight_style: Option<HighlightStyle>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
@@ -623,8 +625,9 @@ impl BlockSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                hint_highlights,
-                suggestion_highlights,
+                inlay_highlights,
+                inlay_highlight_style,
+                suggestion_highlight_style,
             ),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -1501,6 +1504,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
+                        None,
                         None,
                         None,
                         None,
