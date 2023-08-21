@@ -9,12 +9,13 @@ path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "gpui_platform", "rpc/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
 db = { path = "../db" }
 gpui = { path = "../gpui" }
+gpui_platform = {path = "../gpui_platform", optional = true}
 util = { path = "../util" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }

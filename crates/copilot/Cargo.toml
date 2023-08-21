@@ -12,6 +12,7 @@ doctest = false
 test-support = [
     "collections/test-support",
     "gpui/test-support",
+    "gpui_platform",
     "language/test-support",
     "lsp/test-support",
     "settings/test-support",
@@ -22,6 +23,7 @@ test-support = [
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 gpui = { path = "../gpui" }
+gpui_platform = {path = "../gpui_platform", optional = true}
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

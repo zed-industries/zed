@@ -14,12 +14,13 @@ test-support = [
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
+        "gpui_platform",
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
-    "gpui_platform"
+
 ]
 
 [dependencies]
@@ -33,6 +34,7 @@ context_menu = { path = "../context_menu" }
 fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
+gpui_platform = { path = "../gpui_platform", optional = true}
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
@@ -45,7 +47,6 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
 workspace = { path = "../workspace" }
-gpui_platform = { path = "../gpui_platform", optional = true}
 
 aho-corasick = "0.7"
 anyhow.workspace = true
@@ -80,7 +81,6 @@ util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-
 
 ctor.workspace = true
 env_logger.workspace = true

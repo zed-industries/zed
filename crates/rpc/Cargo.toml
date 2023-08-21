@@ -10,12 +10,13 @@ path = "src/rpc.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "gpui_platform"]
 
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui", optional = true }
+gpui_platform = {path = "../gpui_platform", optional = true}
 util = { path = "../util" }
 anyhow.workspace = true
 async-lock = "2.4"

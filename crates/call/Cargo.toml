@@ -13,6 +13,7 @@ test-support = [
     "client/test-support",
     "collections/test-support",
     "gpui/test-support",
+    "gpui_platform",
     "live_kit_client/test-support",
     "project/test-support",
     "util/test-support"
@@ -23,6 +24,7 @@ audio = { path = "../audio" }
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+gpui_platform = {path = "../gpui_platform", optional = true}
 log.workspace = true
 live_kit_client = { path = "../live_kit_client" }
 fs = { path = "../fs" }

@@ -9,11 +9,12 @@ path = "src/settings.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support", "fs/test-support"]
+test-support = ["gpui/test-support", "fs/test-support", "gpui_platform"]
 
 [dependencies]
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+gpui_platform = { path = "../gpui_platform", optional = true}
 sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
 staff_mode = { path = "../staff_mode" }

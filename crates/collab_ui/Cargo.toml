@@ -15,6 +15,7 @@ test-support = [
     "collections/test-support",
     "editor/test-support",
     "gpui/test-support",
+    "gpui_platform",
     "project/test-support",
     "settings/test-support",
     "util/test-support",
@@ -33,6 +34,7 @@ editor = { path = "../editor" }
 feedback = { path = "../feedback" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+gpui_platform = {path = "../gpui_platform", optional = true}
 menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }

@@ -7,6 +7,7 @@ publish = false
 [features]
 test-support = [
     "gpui/test-support",
+    "gpui_platform",
     "fs/test-support",
     "settings/test-support"
 ]
@@ -17,6 +18,7 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+gpui_platform = {path = "../gpui_platform", optional = true}
 fs = { path = "../fs" }
 settings = { path = "../settings" }
 util = { path = "../util" }

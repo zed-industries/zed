@@ -17,6 +17,7 @@ test-support = [
     "async-trait",
     "collections/test-support",
     "gpui/test-support",
+    "gpui_platform",
     "live_kit_server",
     "nanoid",
 ]
@@ -24,6 +25,7 @@ test-support = [
 [dependencies]
 collections = { path = "../collections", optional = true }
 gpui = { path = "../gpui", optional = true }
+gpui_platform = {path = "../gpui_platform", optional = true}
 live_kit_server = { path = "../live_kit_server", optional = true }
 media = { path = "../media" }
 

@@ -27,6 +27,7 @@ context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
+gpui_platform = { path = "../gpui_platform", optional = true }
 install_cli = { path = "../install_cli" }
 language = { path = "../language" }
 menu = { path = "../menu" }
