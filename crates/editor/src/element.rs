@@ -456,21 +456,27 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let mut go_to_definition_point = None;
-        let mut hover_at_point = None;
         if text_bounds.contains_point(position) {
             let point_for_position = position_map.point_for_position(text_bounds, position);
-            if let Some(point) = point_for_position.as_valid() {
-                go_to_definition_point = Some(point);
-                hover_at_point = Some(point);
-            } else {
-                (go_to_definition_point, hover_at_point) =
-                    inlay_link_and_hover_points(position_map, point_for_position, editor, cx);
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(editor, Some(point), cmd, shift, cx);
+                    hover_at(editor, Some(point), cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        position_map,
+                        point_for_position,
+                        editor,
+                        cx,
+                    );
+                }
             }
-        };
+        } else {
+            update_go_to_definition_link(editor, None, cmd, shift, cx);
+            hover_at(editor, None, cx);
+        }
 
-        update_go_to_definition_link(editor, go_to_definition_point, cmd, shift, cx);
-        hover_at(editor, hover_at_point, cx);
         true
     }
 
@@ -1815,12 +1821,13 @@ impl EditorElement {
     }
 }
 
-fn inlay_link_and_hover_points(
+// TODO kb implement
+fn update_inlay_link_and_hover_points(
     position_map: &PositionMap,
     point_for_position: PointForPosition,
     editor: &mut Editor,
     cx: &mut ViewContext<'_, '_, Editor>,
-) -> (Option<DisplayPoint>, Option<DisplayPoint>) {
+) {
     let hint_start_offset = position_map
         .snapshot
         .display_point_to_inlay_offset(point_for_position.previous_valid, Bias::Left);
@@ -1839,8 +1846,6 @@ fn inlay_link_and_hover_points(
     } else {
         None
     };
-    let mut go_to_definition_point = None;
-    let mut hover_at_point = None;
     if let Some(hovered_offset) = hovered_offset {
         let buffer = editor.buffer().read(cx);
         let snapshot = buffer.snapshot(cx);
@@ -1909,8 +1914,6 @@ fn inlay_link_and_hover_points(
             }
         }
     }
-
-    (go_to_definition_point, hover_at_point)
 }
 
 fn find_hovered_hint_part<'a>(
