@@ -393,7 +393,7 @@ impl SemanticIndex {
             }
         } else {
             // Insert the file in spite of failure so that future attempts to index it do not take place (unless the file is changed).
-            for (worktree_id, documents, path, mtime, job_handle) in embeddings_queue.into_iter() {
+            for (worktree_id, _, path, mtime, job_handle) in embeddings_queue.into_iter() {
                 db_update_tx
                     .send(DbOperation::InsertFile {
                         worktree_id,
