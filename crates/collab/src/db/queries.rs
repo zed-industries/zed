@@ -9,6 +9,3 @@ pub mod rooms;
 pub mod servers;
 pub mod signups;
 pub mod users;
-
-#[cfg(test)]
-pub mod buffer_tests;

@@ -142,6 +142,9 @@ message Envelope {
         GetChannelMembersResponse get_channel_members_response = 128;
         SetChannelMemberAdmin set_channel_member_admin = 129;
         RenameChannel rename_channel = 130;
+
+        GetChannelBuffer get_channel_buffer = 131;
+        GetChannelBufferResponse get_channel_buffer_response = 132;
     }
 }
 
@@ -946,6 +949,15 @@ message SetChannelMemberAdmin {
 message RenameChannel {
     uint64 channel_id = 1;
     string name = 2;
+}
+
+message GetChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message GetChannelBufferResponse {
+    string base_text = 1;
+    repeated Operation operations = 2;
 }
 
 message RespondToChannelInvite {

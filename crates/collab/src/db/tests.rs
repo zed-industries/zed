@@ -1,3 +1,6 @@
+mod buffer_tests;
+mod db_tests;
+
 use super::*;
 use gpui::executor::Background;
 use parking_lot::Mutex;
@@ -96,7 +99,7 @@ macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
         async fn $postgres_test_name() {
-            let test_db = crate::db::test_db::TestDb::postgres(
+            let test_db = crate::db::TestDb::postgres(
                 gpui::executor::Deterministic::new(0).build_background(),
             );
             $test_name(test_db.db()).await;
@@ -104,9 +107,8 @@ macro_rules! test_both_dbs {
 
         #[gpui::test]
         async fn $sqlite_test_name() {
-            let test_db = crate::db::test_db::TestDb::sqlite(
-                gpui::executor::Deterministic::new(0).build_background(),
-            );
+            let test_db =
+                crate::db::TestDb::sqlite(gpui::executor::Deterministic::new(0).build_background());
             $test_name(test_db.db()).await;
         }
     };

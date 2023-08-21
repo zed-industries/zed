@@ -1,7 +1,8 @@
 #[cfg(test)]
-mod db_tests;
+pub mod tests;
+
 #[cfg(test)]
-pub mod test_db;
+pub use tests::TestDb;
 
 mod ids;
 mod queries;

@@ -3,7 +3,8 @@ use crate::{
     tests::{room_participants, RoomParticipants, TestServer},
 };
 use call::ActiveCall;
-use client::{ChannelId, ChannelMembership, ChannelStore, User};
+use channel::{ChannelId, ChannelMembership, ChannelStore};
+use client::User;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
 use std::sync::Arc;

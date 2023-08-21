@@ -12,9 +12,10 @@ mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
+use channel::ChannelStore;
 use client::{
     proto::{self, PeerId},
-    ChannelStore, Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;

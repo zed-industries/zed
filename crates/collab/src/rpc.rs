@@ -35,8 +35,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
-        RequestMessage,
+        self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, GetChannelBufferResponse,
+        LiveKitConnectionInfo, RequestMessage,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -248,6 +248,7 @@ impl Server {
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_admin)
             .add_request_handler(rename_channel)
+            .add_request_handler(get_channel_buffer)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -2474,6 +2475,26 @@ async fn join_channel(
     );
 
     update_user_contacts(session.user_id, &session).await?;
+
+    Ok(())
+}
+
+async fn get_channel_buffer(
+    request: proto::GetChannelBuffer,
+    response: Response<proto::GetChannelBuffer>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+
+    let buffer_id = db.get_or_create_buffer_for_channel(channel_id).await?;
+
+    let buffer = db.get_buffer(buffer_id).await?;
+
+    response.send(GetChannelBufferResponse {
+        base_text: buffer.base_text,
+        operations: buffer.operations,
+    })?;
 
     Ok(())
 }

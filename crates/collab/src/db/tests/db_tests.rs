@@ -3,7 +3,7 @@ use crate::test_both_dbs;
 use gpui::executor::{Background, Deterministic};
 use pretty_assertions::{assert_eq, assert_ne};
 use std::sync::Arc;
-use test_db::TestDb;
+use tests::TestDb;
 
 test_both_dbs!(
     test_get_users,
@@ -1327,6 +1327,35 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
     let bad_name_rename = db.rename_channel(zed_id, user_1, "#").await;
     assert!(bad_name_rename.is_err())
+}
+
+test_both_dbs!(
+    test_get_or_create_channel_buffer,
+    test_get_or_create_channel_buffer_postgres,
+    test_get_or_create_channel_buffer_sqlite
+);
+
+async fn test_get_or_create_channel_buffer(db: &Arc<Database>) {
+    let a_id = db
+        .create_user(
+            "user1@example.com",
+            false,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 5,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+
+    let first_buffer_id = db.get_or_create_buffer_for_channel(zed_id).await.unwrap();
+    let second_buffer_id = db.get_or_create_buffer_for_channel(zed_id).await.unwrap();
+
+    assert_eq!(first_buffer_id, second_buffer_id);
 }
 
 #[gpui::test]

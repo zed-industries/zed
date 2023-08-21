@@ -689,6 +689,34 @@ impl Database {
         })
         .await
     }
+
+    pub async fn get_or_create_buffer_for_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> Result<BufferId> {
+        self.transaction(|tx| async move {
+            let tx = tx;
+            let channel = channel::Entity::find_by_id(channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("invalid channel"))?;
+
+            if let Some(id) = channel.main_buffer_id {
+                return Ok(id);
+            } else {
+                let buffer = buffer::ActiveModel::new().insert(&*tx).await?;
+                channel::ActiveModel {
+                    id: ActiveValue::Unchanged(channel_id),
+                    main_buffer_id: ActiveValue::Set(Some(buffer.id)),
+                    ..Default::default()
+                }
+                .update(&*tx)
+                .await?;
+                Ok(buffer.id)
+            }
+        })
+        .await
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]

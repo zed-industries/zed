@@ -1,7 +1,8 @@
-use crate::Status;
-use crate::{Client, Subscription, User, UserStore};
 use anyhow::anyhow;
 use anyhow::Result;
+use client::Status;
+use client::UserId;
+use client::{Client, Subscription, User, UserStore};
 use collections::HashMap;
 use collections::HashSet;
 use futures::channel::mpsc;
@@ -13,7 +14,6 @@ use std::sync::Arc;
 use util::ResultExt;
 
 pub type ChannelId = u64;
-pub type UserId = u64;
 
 pub struct ChannelStore {
     channels_by_id: HashMap<ChannelId, Arc<Channel>>,

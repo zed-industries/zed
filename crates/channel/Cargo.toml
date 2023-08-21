@@ -1,30 +1,30 @@
 [package]
-name = "client"
+name = "channel"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/client.rs"
+path = "src/channel.rs"
 doctest = false
 
 [features]
 test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
+client = { path = "../client" }
 collections = { path = "../collections" }
 db = { path = "../db" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
+language = { path = "../language" }
 settings = { path = "../settings" }
 staff_mode = { path = "../staff_mode" }
 sum_tree = { path = "../sum_tree" }
 
 anyhow.workspace = true
-async-recursion = "0.3"
-async-tungstenite = { version = "0.16", features = ["async-tls"] }
 futures.workspace = true
 image = "0.23"
 lazy_static.workspace = true

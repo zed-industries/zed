@@ -1,4 +1,4 @@
-use crate::db::ChannelId;
+use crate::db::{BufferId, ChannelId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -7,6 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ChannelId,
     pub name: String,
+    pub main_buffer_id: Option<BufferId>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -4,10 +4,8 @@ mod panel_settings;
 
 use anyhow::Result;
 use call::ActiveCall;
-use client::{
-    proto::PeerId, Channel, ChannelEvent, ChannelId, ChannelStore, Client, Contact, User, UserStore,
-};
-
+use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use client::{proto::PeerId, Client, Contact, User, UserStore};
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
