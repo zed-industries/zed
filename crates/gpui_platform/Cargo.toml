@@ -5,5 +5,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+gpui = {path = "../gpui", optional = true}
+
 [target.'cfg(target_os = "macos")'.dependencies]
 current_platform = {path = "../gpui_mac", package = "gpui_mac"}
