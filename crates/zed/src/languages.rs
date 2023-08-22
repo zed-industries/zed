@@ -118,8 +118,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         "html",
         tree_sitter_html::language(),
         vec![
-            // Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
-            // Arc::new(emmet::EmmetLspAdapter::new(node_runtime.clone())),
+            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
