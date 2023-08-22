@@ -210,6 +210,7 @@ pub struct InlayChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::Chunks<'a>>,
+    inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     hint_highlight_style: Option<HighlightStyle>,
@@ -298,13 +299,31 @@ impl<'a> Iterator for InlayChunks<'a> {
                         - self.transforms.start().0;
                     inlay.text.chunks_in_range(start.0..end.0)
                 });
+                let inlay_chunk = self
+                    .inlay_chunk
+                    .get_or_insert_with(|| inlay_chunks.next().unwrap());
+                let (chunk, remainder) = inlay_chunk.split_at(
+                    inlay_chunk
+                        .len()
+                        .min(next_highlight_endpoint.0 - self.output_offset.0),
+                );
+                *inlay_chunk = remainder;
+                if inlay_chunk.is_empty() {
+                    self.inlay_chunk = None;
+                }
 
-                let chunk = inlay_chunks.next().unwrap();
                 self.output_offset.0 += chunk.len();
-                let highlight_style = match inlay.id {
+                let mut highlight_style = match inlay.id {
                     InlayId::Suggestion(_) => self.suggestion_highlight_style,
                     InlayId::Hint(_) => self.hint_highlight_style,
                 };
+                if !self.active_highlights.is_empty() {
+                    for active_highlight in self.active_highlights.values() {
+                        highlight_style
+                            .get_or_insert(Default::default())
+                            .highlight(*active_highlight);
+                    }
+                }
                 Chunk {
                     text: chunk,
                     highlight_style,
@@ -1073,6 +1092,7 @@ impl InlaySnapshot {
             transforms: cursor,
             buffer_chunks,
             inlay_chunks: None,
+            inlay_chunk: None,
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
