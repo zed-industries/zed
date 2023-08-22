@@ -261,3 +261,29 @@ async fn test_status_indicator(
         assert!(mode_indicator.read(cx).mode.is_some());
     });
 }
+
+#[gpui::test]
+async fn test_word_characters(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+    cx.set_state(
+        indoc! { "
+        class A {
+            #ˇgoop = 99;
+            $ˇgoop () { return this.#gˇoop };
+        };
+        console.log(new A().$gooˇp())
+    "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes(["v", "i", "w"]);
+    cx.assert_state(
+        indoc! {"
+        class A {
+            «#goopˇ» = 99;
+            «$goopˇ» () { return this.«#goopˇ» };
+        };
+        console.log(new A().«$goopˇ»())
+    "},
+        Mode::Visual,
+    )
+}

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use gpui::AppContext;
 use lazy_static::lazy_static;
@@ -162,6 +162,7 @@ impl SettingsStore {
 
             if let Some(setting) = setting_value
                 .load_setting(&default_settings, &user_values_stack, cx)
+                .context("A default setting must be added to the `default.json` file")
                 .log_err()
             {
                 setting_value.set_global_value(setting);

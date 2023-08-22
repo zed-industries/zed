@@ -16,8 +16,18 @@ pub struct VimTestContext<'a> {
 
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
-        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        Self::new_with_lsp(lsp, enabled)
+    }
 
+    pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
+        Self::new_with_lsp(
+            EditorLspTestContext::new_typescript(Default::default(), cx).await,
+            true,
+        )
+    }
+
+    pub fn new_with_lsp(mut cx: EditorLspTestContext<'a>, enabled: bool) -> VimTestContext<'a> {
         cx.update(|cx| {
             search::init(cx);
             crate::init(cx);

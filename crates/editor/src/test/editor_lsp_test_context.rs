@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Result;
 
+use collections::HashSet;
 use futures::Future;
 use gpui::{json, ViewContext, ViewHandle};
 use indoc::indoc;
@@ -154,10 +155,14 @@ impl<'a> EditorLspTestContext<'a> {
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
     ) -> EditorLspTestContext<'a> {
+        let mut word_characters: HashSet<char> = Default::default();
+        word_characters.insert('$');
+        word_characters.insert('#');
         let language = Language::new(
             LanguageConfig {
                 name: "Typescript".into(),
                 path_suffixes: vec!["ts".to_string()],
+                word_characters,
                 ..Default::default()
             },
             Some(tree_sitter_typescript::language_typescript()),
