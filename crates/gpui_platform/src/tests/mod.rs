@@ -1,8 +1,9 @@
+mod app;
 
 use gpui::fonts::{Properties, Weight};
 use gpui::text_layout::*;
 
-#[gpui::test]
+#[crate::test]
 fn test_wrap_line(cx: &mut gpui::AppContext) {
     let font_cache = cx.font_cache().clone();
     let font_system = cx.platform().fonts();
@@ -63,7 +64,7 @@ fn test_wrap_line(cx: &mut gpui::AppContext) {
     );
 }
 
-#[gpui::test(retries = 5)]
+#[crate::test(retries = 5)]
 fn test_wrap_shaped_line(cx: &mut gpui::AppContext) {
     // This is failing intermittently on CI and we don't have time to figure it out
     let font_cache = cx.font_cache().clone();

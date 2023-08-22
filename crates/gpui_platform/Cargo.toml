@@ -13,3 +13,7 @@ gpui = {path = "../gpui", optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 current_platform = {path = "../gpui_mac", package = "gpui_mac"}
+
+[dev-dependencies]
+gpui = {path = "../gpui", features = ["test-support"]}
+postage.workspace = true
