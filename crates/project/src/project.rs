@@ -5108,7 +5108,9 @@ impl Project {
                 while let Some(entry) = buffers_rx.next().await {
                     buffers.push(entry);
                 }
-                buffers.sort_by_key(|(_, snapshot)| snapshot.file().map(move |file| file.path()).cloned());
+                buffers.sort_by_key(|(_, snapshot)| {
+                    snapshot.file().map(move |file| file.path()).cloned()
+                });
                 let buffers_len = buffers.len();
                 let query = &query;
                 let paths_per_worker = (buffers.len() + workers - 1) / workers;
@@ -5121,7 +5123,7 @@ impl Project {
                         #[derive(Clone)]
                         struct FinishedStatus {
                             entry: Option<(ModelHandle<Buffer>, Vec<Range<Anchor>>)>,
-                            buffer_index: usize
+                            buffer_index: usize,
                         }
 
                         let mut chunks = buffers.chunks(paths_per_worker);
@@ -5151,24 +5153,18 @@ impl Project {
                                         let status = if !buffer_matches.is_empty() {
                                             FinishedStatus {
                                                 entry: Some((buffer.clone(), buffer_matches)),
-                                                buffer_index
+                                                buffer_index,
                                             }
                                         } else {
                                             FinishedStatus {
                                                 entry: None,
-                                                buffer_index
+                                                buffer_index,
                                             }
                                         };
-                                        if finished_tx
-                                            .send(status)
-                                            .await
-                                            .is_err()
-                                        {
+                                        if finished_tx.send(status).await.is_err() {
                                             break;
                                         }
                                     }
-
-
                                 });
                             }
                         }
@@ -5373,7 +5369,6 @@ impl Project {
                 //     // Only enqueue files without storage on filesystem.
 
                 // }
-
             }
 
             let open_buffers = Rc::new(RefCell::new(open_buffers));
@@ -5402,7 +5397,8 @@ impl Project {
             }
 
             Result::<_, anyhow::Error>::Ok(())
-        }).detach();
+        })
+        .detach();
         buffers_rx
     }
 
