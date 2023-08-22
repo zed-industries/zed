@@ -5366,7 +5366,7 @@ impl Project {
         cx.spawn(|this, cx| async move {
             for buffer in &open_buffers {
                 let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                buffers_tx.send((buffer.clone(), snapshot)).await.log_err();
+                buffers_tx.send((buffer.clone(), snapshot)).await?;
                 // if snapshot.file().is_none() {
                 //     // Only enqueue files without storage on filesystem.
 
@@ -5399,7 +5399,7 @@ impl Project {
                 .detach();
             }
 
-
+            Result::<_, anyhow::Error>::Ok(())
         }).detach();
         buffers_rx
     }
