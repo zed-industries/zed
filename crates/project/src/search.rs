@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use client::proto;
 use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
-use language::{char_kind, Rope};
+use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -23,6 +23,7 @@ pub enum SearchQuery {
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
     },
+
     Regex {
         regex: Regex,
         query: Arc<str>,
@@ -193,12 +194,24 @@ impl SearchQuery {
         }
     }
 
-    pub async fn search(&self, rope: &Rope) -> Vec<Range<usize>> {
+    pub async fn search(
+        &self,
+        buffer: &BufferSnapshot,
+        subrange: Option<Range<usize>>,
+    ) -> Vec<Range<usize>> {
         const YIELD_INTERVAL: usize = 20000;
 
         if self.as_str().is_empty() {
             return Default::default();
         }
+        let language = buffer.language_at(0);
+        let rope = if let Some(range) = subrange {
+            buffer.as_rope().slice(range)
+        } else {
+            buffer.as_rope().clone()
+        };
+
+        let kind = |c| char_kind(language, c);
 
         let mut matches = Vec::new();
         match self {
@@ -215,10 +228,10 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(char_kind);
-                        let start_kind = char_kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = char_kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(char_kind);
+                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
+                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -226,6 +239,7 @@ impl SearchQuery {
                     matches.push(mat.start()..mat.end())
                 }
             }
+
             Self::Regex {
                 regex, multiline, ..
             } => {
@@ -263,6 +277,7 @@ impl SearchQuery {
                 }
             }
         }
+
         matches
     }
 

@@ -1865,13 +1865,16 @@ impl MultiBufferSnapshot {
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
+
+        let language = self.language_at(start);
+        let kind = |c| char_kind(language, c);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(char_kind),
-            next_chars.peek().copied().map(char_kind),
+            prev_chars.peek().copied().map(kind),
+            next_chars.peek().copied().map(kind),
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -1879,7 +1882,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
