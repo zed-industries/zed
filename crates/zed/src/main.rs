@@ -75,7 +75,8 @@ fn main() {
 
     log::info!("========== starting zed ==========");
     let platform = platform();
-    let foreground = std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
+    let foreground =
+        std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
     let fplatform = foreground_platform(foreground);
     let mut app = gpui::App::new(Assets, platform, fplatform).unwrap();
 

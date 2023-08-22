@@ -1,6 +1,4 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
-use anyhow::{anyhow, Result};
-use collections::VecDeque;
 use crate::{
     geometry::{
         rect::RectF,
@@ -9,6 +7,8 @@ use crate::{
     keymap_matcher::KeymapMatcher,
     Action, AnyWindowHandle, ClipboardItem, Menu,
 };
+use anyhow::{anyhow, Result};
+use collections::VecDeque;
 use parking_lot::Mutex;
 use postage::oneshot;
 use std::{
@@ -330,12 +330,7 @@ impl super::Window for Window {
 
     fn set_input_handler(&mut self, _: Box<dyn super::InputHandler>) {}
 
-    fn prompt(
-        &self,
-        _: super::PromptLevel,
-        _: &str,
-        _: &[&str],
-    ) -> oneshot::Receiver<usize> {
+    fn prompt(&self, _: super::PromptLevel, _: &str, _: &[&str]) -> oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
         self.pending_prompts.borrow_mut().push_back(done_tx);
         done_rx
