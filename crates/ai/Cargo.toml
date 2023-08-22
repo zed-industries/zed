@@ -24,6 +24,7 @@ workspace = { path = "../workspace" }
 anyhow.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 futures.workspace = true
+indoc.workspace = true
 isahc.workspace = true
 regex.workspace = true
 schemars.workspace = true

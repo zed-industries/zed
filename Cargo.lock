@@ -106,6 +106,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "indoc",
  "isahc",
  "language",
  "menu",
