@@ -5132,7 +5132,7 @@ impl Project {
                             if let Some(chunk) = chunk_for_worker {
                                 scope.spawn(async move {
                                     for (entry_id, (buffer, snapshot)) in chunk.iter().enumerate() {
-                                        let buffer_index = worker_id + entry_id;
+                                        let buffer_index = worker_id * paths_per_worker + entry_id;
                                         let buffer_matches = if query.file_matches(
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
@@ -5176,11 +5176,14 @@ impl Project {
                             let mut current_index = 0;
                             let mut scratch = vec![None; buffers_len];
                             while let Some(status) = finished_rx.next().await {
-                                //debug_assert!(scratch[status.buffer_index].is_none());
+                                debug_assert!(scratch[status.buffer_index].is_none());
                                 let index = status.buffer_index;
                                 scratch[index] = Some(status);
                                 while current_index < buffers_len {
                                     let Some(current_entry) = scratch[current_index].take() else {
+                                        // We intentionally **do not** increment `current_index` here. When next element arrives
+                                        // from `finished_rx`, we will inspect the same position again, hoping for it to be Some(_)
+                                        // this time.
                                         break;
                                     };
                                     if let Some(entry) = current_entry.entry {
