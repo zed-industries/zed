@@ -1346,10 +1346,7 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool
-    where
-        T: ToOffset,
-    {
+    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -1360,7 +1357,9 @@ impl MultiBuffer {
             return false;
         }
 
-        if char.is_alphanumeric() || char == '_' {
+        let language = self.language_at(position.clone(), cx);
+
+        if char_kind(language.as_ref(), char) == CharKind::Word {
             return true;
         }
 
