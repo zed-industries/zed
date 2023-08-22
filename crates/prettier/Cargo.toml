@@ -1,0 +1,9 @@
+[package]
+name = "prettier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[lib]
+path = "src/prettier.rs"

@@ -52,6 +52,7 @@ members = [
     "crates/plugin",
     "crates/plugin_macros",
     "crates/plugin_runtime",
+    "crates/prettier",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
