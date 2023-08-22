@@ -65,7 +65,7 @@ use language::{
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
-    hide_link_definition, show_link_definition, InlayCoordinates, LinkGoToDefinitionState,
+    hide_link_definition, show_link_definition, InlayRange, LinkGoToDefinitionState,
 };
 use log::error;
 use multi_buffer::ToOffsetUtf16;
@@ -7720,7 +7720,7 @@ impl Editor {
 
     pub fn highlight_inlays<T: 'static>(
         &mut self,
-        ranges: Vec<InlayCoordinates>,
+        ranges: Vec<InlayRange>,
         style: HighlightStyle,
         cx: &mut ViewContext<Self>,
     ) {
@@ -7737,20 +7737,7 @@ impl Editor {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
-    pub fn clear_text_highlights<T: 'static>(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        let highlights = self
-            .display_map
-            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
-        if highlights.is_some() {
-            cx.notify();
-        }
-        highlights
-    }
-
-    pub fn clear_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn clear_text_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
         let text_highlights = self
             .display_map
             .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
@@ -8353,7 +8340,7 @@ impl View for Editor {
 
             self.link_go_to_definition_state.task = None;
 
-            self.clear_highlights::<LinkGoToDefinitionState>(cx);
+            self.clear_text_highlights::<LinkGoToDefinitionState>(cx);
         }
 
         false

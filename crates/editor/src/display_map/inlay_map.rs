@@ -1108,7 +1108,7 @@ impl InlaySnapshot {
         &self,
         inlay_highlights: &std::sync::Arc<(
             HighlightStyle,
-            Vec<crate::link_go_to_definition::InlayCoordinates>,
+            Vec<crate::link_go_to_definition::InlayRange>,
         )>,
         transform_start: Anchor,
         transform_end: Anchor,

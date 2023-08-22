@@ -5,7 +5,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayCoordinates, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
+    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
@@ -43,7 +43,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<InlayCoordinates>)>>;
+type InlayHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<InlayRange>)>>;
 
 pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
@@ -225,7 +225,7 @@ impl DisplayMap {
     pub fn highlight_inlays(
         &mut self,
         type_id: TypeId,
-        ranges: Vec<InlayCoordinates>,
+        ranges: Vec<InlayRange>,
         style: HighlightStyle,
     ) {
         self.inlay_highlights
@@ -247,7 +247,7 @@ impl DisplayMap {
     pub fn clear_inlay_highlights(
         &mut self,
         type_id: TypeId,
-    ) -> Option<Arc<(HighlightStyle, Vec<InlayCoordinates>)>> {
+    ) -> Option<Arc<(HighlightStyle, Vec<InlayRange>)>> {
         self.inlay_highlights.remove(&Some(type_id))
     }
 

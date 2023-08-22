@@ -11,7 +11,7 @@ use util::TryFutureExt;
 #[derive(Debug, Default)]
 pub struct LinkGoToDefinitionState {
     pub last_trigger_point: Option<TriggerPoint>,
-    pub symbol_range: Option<SymbolRange>,
+    pub symbol_range: Option<DocumentRange>,
     pub kind: Option<LinkDefinitionKind>,
     pub definitions: Vec<LocationLink>,
     pub task: Option<Task<Option<()>>>,
@@ -19,12 +19,12 @@ pub struct LinkGoToDefinitionState {
 
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
-    InlayHint(InlayCoordinates, LocationLink),
+    InlayHint(InlayRange, LocationLink),
     None,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct InlayCoordinates {
+pub struct InlayRange {
     pub inlay_position: Anchor,
     pub highlight_start: InlayOffset,
     pub highlight_end: InlayOffset,
@@ -33,28 +33,28 @@ pub struct InlayCoordinates {
 #[derive(Debug, Clone)]
 pub enum TriggerPoint {
     Text(Anchor),
-    InlayHint(InlayCoordinates, LocationLink),
+    InlayHint(InlayRange, LocationLink),
 }
 
 #[derive(Debug, Clone)]
-pub enum SymbolRange {
+pub enum DocumentRange {
     Text(Range<Anchor>),
-    Inlay(InlayCoordinates),
+    Inlay(InlayRange),
 }
 
-impl SymbolRange {
+impl DocumentRange {
     fn point_within_range(&self, trigger_point: &TriggerPoint, snapshot: &EditorSnapshot) -> bool {
         match (self, trigger_point) {
-            (SymbolRange::Text(range), TriggerPoint::Text(point)) => {
+            (DocumentRange::Text(range), TriggerPoint::Text(point)) => {
                 let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
                 point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
             }
-            (SymbolRange::Inlay(range), TriggerPoint::InlayHint(point, _)) => {
+            (DocumentRange::Inlay(range), TriggerPoint::InlayHint(point, _)) => {
                 range.highlight_start.cmp(&point.highlight_end).is_le()
                     && range.highlight_end.cmp(&point.highlight_end).is_ge()
             }
-            (SymbolRange::Inlay(_), TriggerPoint::Text(_))
-            | (SymbolRange::Text(_), TriggerPoint::InlayHint(_, _)) => false,
+            (DocumentRange::Inlay(_), TriggerPoint::Text(_))
+            | (DocumentRange::Text(_), TriggerPoint::InlayHint(_, _)) => false,
         }
     }
 }
@@ -218,7 +218,7 @@ pub fn show_link_definition(
                                         .buffer_snapshot
                                         .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
 
-                                    SymbolRange::Text(start..end)
+                                    DocumentRange::Text(start..end)
                                 })
                             }),
                             definition_result,
@@ -226,14 +226,14 @@ pub fn show_link_definition(
                     })
                 }
                 TriggerPoint::InlayHint(trigger_source, trigger_target) => Some((
-                    Some(SymbolRange::Inlay(trigger_source.clone())),
+                    Some(DocumentRange::Inlay(trigger_source.clone())),
                     vec![trigger_target.clone()],
                 )),
             };
 
             this.update(&mut cx, |this, cx| {
                 // Clear any existing highlights
-                this.clear_highlights::<LinkGoToDefinitionState>(cx);
+                this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
                 this.link_go_to_definition_state.kind = Some(definition_kind);
                 this.link_go_to_definition_state.symbol_range = result
                     .as_ref()
@@ -276,24 +276,24 @@ pub fn show_link_definition(
                                 let snapshot = &snapshot.buffer_snapshot;
                                 // If no symbol range returned from language server, use the surrounding word.
                                 let (offset_range, _) = snapshot.surrounding_word(trigger_anchor);
-                                SymbolRange::Text(
+                                DocumentRange::Text(
                                     snapshot.anchor_before(offset_range.start)
                                         ..snapshot.anchor_after(offset_range.end),
                                 )
                             }
                             TriggerPoint::InlayHint(inlay_coordinates, _) => {
-                                SymbolRange::Inlay(inlay_coordinates)
+                                DocumentRange::Inlay(inlay_coordinates)
                             }
                         });
 
                         match highlight_range {
-                            SymbolRange::Text(text_range) => this
+                            DocumentRange::Text(text_range) => this
                                 .highlight_text::<LinkGoToDefinitionState>(
                                     vec![text_range],
                                     style,
                                     cx,
                                 ),
-                            SymbolRange::Inlay(inlay_coordinates) => this
+                            DocumentRange::Inlay(inlay_coordinates) => this
                                 .highlight_inlays::<LinkGoToDefinitionState>(
                                     vec![inlay_coordinates],
                                     style,
@@ -325,7 +325,7 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
     editor.link_go_to_definition_state.task = None;
 
-    editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+    editor.clear_text_highlights::<LinkGoToDefinitionState>(cx);
 }
 
 pub fn go_to_fetched_definition(

@@ -13,7 +13,7 @@ use crate::{
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        GoToDefinitionTrigger, InlayCoordinates,
+        GoToDefinitionTrigger, InlayRange,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -1929,7 +1929,7 @@ fn update_inlay_link_and_hover_points(
                                             update_go_to_definition_link(
                                                 editor,
                                                 GoToDefinitionTrigger::InlayHint(
-                                                    InlayCoordinates {
+                                                    InlayRange {
                                                         inlay_position: hovered_hint.position,
                                                         highlight_start: part_range.start,
                                                         highlight_end: part_range.end,
