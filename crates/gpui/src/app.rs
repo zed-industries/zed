@@ -4687,11 +4687,12 @@ impl AnyWeakModelHandle {
     }
 }
 
-#[derive(Copy)]
 pub struct WeakViewHandle<T> {
     any_handle: AnyWeakViewHandle,
     view_type: PhantomData<T>,
 }
+
+impl<T> Copy for WeakViewHandle<T> {}
 
 impl<T> Debug for WeakViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

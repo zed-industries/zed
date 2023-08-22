@@ -13,6 +13,8 @@ use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 use util::ResultExt;
 
+use crate::channel_buffer::ChannelBuffer;
+
 pub type ChannelId = u64;
 
 pub struct ChannelStore {
@@ -149,6 +151,14 @@ impl ChannelStore {
 
     pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<&Arc<Channel>> {
         self.channels_by_id.get(&channel_id)
+    }
+
+    pub fn open_channel_buffer(
+        &self,
+        channel_id: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
+        ChannelBuffer::new(cx.handle(), channel_id, self.client.clone(), cx)
     }
 
     pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {

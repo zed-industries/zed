@@ -1,6 +1,5 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 
-use channel::channel_buffer::ChannelBuffer;
 use client::UserId;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
@@ -22,8 +21,9 @@ async fn test_core_channel_buffers(
         .await;
 
     // Client A joins the channel buffer
-    let channel_buffer_a = cx_a
-        .update(|cx| ChannelBuffer::join_channel(zed_id, client_a.client().to_owned(), cx))
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| channel.open_channel_buffer(zed_id, cx))
         .await
         .unwrap();
 
@@ -45,8 +45,9 @@ async fn test_core_channel_buffers(
     assert_eq!(buffer_text(&buffer_a, cx_a), "hello, cruel world");
 
     // Client B joins the channel buffer
-    let channel_buffer_b = cx_b
-        .update(|cx| ChannelBuffer::join_channel(zed_id, client_b.client().to_owned(), cx))
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |channel, cx| channel.open_channel_buffer(zed_id, cx))
         .await
         .unwrap();
 
@@ -79,8 +80,9 @@ async fn test_core_channel_buffers(
     });
 
     // Client A rejoins the channel buffer
-    let _channel_buffer_a = cx_a
-        .update(|cx| ChannelBuffer::join_channel(zed_id, client_a.client().to_owned(), cx))
+    let _channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |channels, cx| channels.open_channel_buffer(zed_id, cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -104,7 +106,8 @@ async fn test_core_channel_buffers(
     });
 
     // TODO:
-    // - Test synchronizing offline updates, what happens to A's channel buffer?
+    // - Test synchronizing offline updates, what happens to A's channel buffer when A disconnects
+    // - Test interaction with channel deletion while buffer is open
 }
 
 #[track_caller]

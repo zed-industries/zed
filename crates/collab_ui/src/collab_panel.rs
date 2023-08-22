@@ -42,7 +42,10 @@ use workspace::{
     Workspace,
 };
 
-use crate::face_pile::FacePile;
+use crate::{
+    channel_view::{self, ChannelView},
+    face_pile::FacePile,
+};
 use channel_modal::ChannelModal;
 
 use self::contact_finder::ContactFinder;
@@ -77,6 +80,11 @@ struct RenameChannel {
     channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct OpenChannelBuffer {
+    channel_id: u64,
+}
+
 actions!(
     collab_panel,
     [
@@ -96,7 +104,8 @@ impl_actions!(
         InviteMembers,
         ManageMembers,
         RenameChannel,
-        ToggleCollapse
+        ToggleCollapse,
+        OpenChannelBuffer
     ]
 );
 
@@ -106,6 +115,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     settings::register::<panel_settings::CollaborationPanelSettings>(cx);
     contact_finder::init(cx);
     channel_modal::init(cx);
+    channel_view::init(cx);
 
     cx.add_action(CollabPanel::cancel);
     cx.add_action(CollabPanel::select_next);
@@ -121,7 +131,8 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::rename_channel);
     cx.add_action(CollabPanel::toggle_channel_collapsed);
     cx.add_action(CollabPanel::collapse_selected_channel);
-    cx.add_action(CollabPanel::expand_selected_channel)
+    cx.add_action(CollabPanel::expand_selected_channel);
+    cx.add_action(CollabPanel::open_channel_buffer);
 }
 
 #[derive(Debug)]
@@ -1888,6 +1899,7 @@ impl CollabPanel {
                     vec![
                         ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
                         ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
+                        ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id }),
                         ContextMenuItem::Separator,
                         ContextMenuItem::action("Invite to Channel", InviteMembers { channel_id }),
                         ContextMenuItem::Separator,
@@ -2205,6 +2217,34 @@ impl CollabPanel {
             self.update_entries(false, cx);
             self.select_channel_editor();
         }
+    }
+
+    fn open_channel_buffer(&mut self, action: &OpenChannelBuffer, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace;
+        let open = self.channel_store.update(cx, |channel_store, cx| {
+            channel_store.open_channel_buffer(action.channel_id, cx)
+        });
+
+        cx.spawn(|_, mut cx| async move {
+            let channel_buffer = open.await?;
+
+            let markdown = workspace
+                .read_with(&cx, |workspace, _| {
+                    workspace
+                        .app_state()
+                        .languages
+                        .language_for_name("Markdown")
+                })?
+                .await?;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                let channel_view = cx.add_view(|cx| ChannelView::new(channel_buffer, markdown, cx));
+                workspace.add_item(Box::new(channel_view), cx);
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {

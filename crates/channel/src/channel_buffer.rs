@@ -1,4 +1,4 @@
-use crate::ChannelId;
+use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::Result;
 use client::Client;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
@@ -16,6 +16,7 @@ pub struct ChannelBuffer {
     channel_id: ChannelId,
     collaborators: Vec<proto::Collaborator>,
     buffer: ModelHandle<language::Buffer>,
+    channel_store: ModelHandle<ChannelStore>,
     client: Arc<Client>,
     _subscription: client::Subscription,
 }
@@ -33,7 +34,8 @@ impl Entity for ChannelBuffer {
 }
 
 impl ChannelBuffer {
-    pub fn join_channel(
+    pub(crate) fn new(
+        channel_store: ModelHandle<ChannelStore>,
         channel_id: ChannelId,
         client: Arc<Client>,
         cx: &mut AppContext,
@@ -65,6 +67,7 @@ impl ChannelBuffer {
                     buffer,
                     client,
                     channel_id,
+                    channel_store,
                     collaborators,
                     _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
                 }
@@ -160,5 +163,12 @@ impl ChannelBuffer {
 
     pub fn collaborators(&self) -> &[proto::Collaborator] {
         &self.collaborators
+    }
+
+    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
+        self.channel_store
+            .read(cx)
+            .channel_for_id(self.channel_id)
+            .cloned()
     }
 }

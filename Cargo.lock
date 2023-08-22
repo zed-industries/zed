@@ -1529,6 +1529,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
+ "language",
  "log",
  "menu",
  "picker",
