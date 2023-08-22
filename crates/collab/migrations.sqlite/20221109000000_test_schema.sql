@@ -222,9 +222,6 @@ CREATE TABLE "buffer_operations" (
     "epoch" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
     "lamport_timestamp" INTEGER NOT NULL,
-    "local_timestamp" INTEGER NOT NULL,
-    "version" BLOB NOT NULL,
-    "is_undo" BOOLEAN NOT NULL,
     "value" BLOB NOT NULL,
     PRIMARY KEY(buffer_id, epoch, lamport_timestamp, replica_id)
 );

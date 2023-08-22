@@ -12,9 +12,6 @@ pub struct Model {
     pub lamport_timestamp: i32,
     #[sea_orm(primary_key)]
     pub replica_id: i32,
-    pub local_timestamp: i32,
-    pub version: Vec<u8>,
-    pub is_undo: bool,
     pub value: Vec<u8>,
 }
 

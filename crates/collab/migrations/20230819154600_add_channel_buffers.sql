@@ -10,10 +10,7 @@ CREATE TABLE "buffer_operations" (
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
     "epoch" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
-    "local_timestamp" INTEGER NOT NULL,
     "lamport_timestamp" INTEGER NOT NULL,
-    "version" BYTEA NOT NULL,
-    "is_undo" BOOLEAN NOT NULL,
     "value" BYTEA NOT NULL,
     PRIMARY KEY(buffer_id, epoch, lamport_timestamp, replica_id)
 );
