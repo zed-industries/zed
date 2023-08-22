@@ -39,7 +39,7 @@ use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
         self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
-        OpenChannelBufferResponse, RequestMessage,
+        RequestMessage,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -251,8 +251,8 @@ impl Server {
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_admin)
             .add_request_handler(rename_channel)
-            .add_request_handler(open_channel_buffer)
-            .add_request_handler(close_channel_buffer)
+            .add_request_handler(join_channel_buffer)
+            .add_request_handler(leave_channel_buffer)
             .add_message_handler(update_channel_buffer)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
@@ -2484,16 +2484,16 @@ async fn join_channel(
     Ok(())
 }
 
-async fn open_channel_buffer(
-    request: proto::OpenChannelBuffer,
-    response: Response<proto::OpenChannelBuffer>,
+async fn join_channel_buffer(
+    request: proto::JoinChannelBuffer,
+    response: Response<proto::JoinChannelBuffer>,
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
     let open_response = db
-        .join_buffer_for_channel(channel_id, session.user_id, session.connection_id)
+        .join_channel_buffer(channel_id, session.user_id, session.connection_id)
         .await?;
 
     response.send(open_response)?;
@@ -2501,16 +2501,18 @@ async fn open_channel_buffer(
     Ok(())
 }
 
-async fn close_channel_buffer(
-    request: proto::CloseChannelBuffer,
-    response: Response<proto::CloseChannelBuffer>,
+async fn leave_channel_buffer(
+    request: proto::LeaveChannelBuffer,
+    response: Response<proto::LeaveChannelBuffer>,
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
-    let buffer_id = BufferId::from_proto(request.buffer_id);
+    let channel_id = ChannelId::from_proto(request.channel_id);
 
-    // TODO: close channel buffer here
-    //
+    let collaborators_to_notify = db
+        .leave_channel_buffer(channel_id, session.connection_id)
+        .await?;
+
     response.send(Ack {})?;
 
     Ok(())

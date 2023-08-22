@@ -22,8 +22,6 @@ pub enum Relation {
         to = "super::channel::Column::Id"
     )]
     Channel,
-    #[sea_orm(has_many = "super::channel_buffer_collaborator::Entity")]
-    Collaborators,
 }
 
 impl Related<super::buffer_operation::Entity> for Entity {
@@ -41,12 +39,6 @@ impl Related<super::buffer_snapshot::Entity> for Entity {
 impl Related<super::channel::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Channel.def()
-    }
-}
-
-impl Related<super::channel_buffer_collaborator::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Collaborators.def()
     }
 }
 

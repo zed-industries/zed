@@ -238,15 +238,16 @@ CREATE TABLE "buffer_snapshots" (
 
 CREATE TABLE "channel_buffer_collaborators" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
+    "connection_lost" BOOLEAN NOT NULL DEFAULT false,
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "replica_id" INTEGER NOT NULL
 );
 
-CREATE INDEX "index_channel_buffer_collaborators_on_buffer_id" ON "channel_buffer_collaborators" ("buffer_id");
-CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_buffer_id_and_replica_id" ON "channel_buffer_collaborators" ("buffer_id", "replica_id");
+CREATE INDEX "index_channel_buffer_collaborators_on_channel_id" ON "channel_buffer_collaborators" ("channel_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_and_replica_id" ON "channel_buffer_collaborators" ("channel_id", "replica_id");
 CREATE INDEX "index_channel_buffer_collaborators_on_connection_server_id" ON "channel_buffer_collaborators" ("connection_server_id");
 CREATE INDEX "index_channel_buffer_collaborators_on_connection_id" ON "channel_buffer_collaborators" ("connection_id");
-CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_buffer_id_connection_id_and_server_id" ON "channel_buffer_collaborators" ("buffer_id", "connection_id", "connection_server_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection_id_and_server_id" ON "channel_buffer_collaborators" ("channel_id", "connection_id", "connection_server_id");

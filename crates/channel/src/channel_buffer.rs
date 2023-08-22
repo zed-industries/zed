@@ -36,7 +36,7 @@ impl ChannelBuffer {
     ) -> Task<Result<ModelHandle<Self>>> {
         cx.spawn(|mut cx| async move {
             let response = client
-                .request(proto::OpenChannelBuffer { channel_id })
+                .request(proto::JoinChannelBuffer { channel_id })
                 .await?;
 
             let base_text = response.base_text;

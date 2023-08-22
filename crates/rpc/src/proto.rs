@@ -249,9 +249,9 @@ messages!(
     (GetPrivateUserInfoResponse, Foreground),
     (GetChannelMembers, Foreground),
     (GetChannelMembersResponse, Foreground),
-    (OpenChannelBuffer, Foreground),
-    (OpenChannelBufferResponse, Foreground),
-    (CloseChannelBuffer, Background),
+    (JoinChannelBuffer, Foreground),
+    (JoinChannelBufferResponse, Foreground),
+    (LeaveChannelBuffer, Background),
     (UpdateChannelBuffer, Foreground)
 );
 
@@ -319,8 +319,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
-    (OpenChannelBuffer, OpenChannelBufferResponse),
-    (CloseChannelBuffer, Ack)
+    (JoinChannelBuffer, JoinChannelBufferResponse),
+    (LeaveChannelBuffer, Ack)
 );
 
 entity_messages!(

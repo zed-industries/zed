@@ -19,6 +19,8 @@ pub enum Relation {
     Buffer,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     Member,
+    #[sea_orm(has_many = "super::channel_buffer_collaborator::Entity")]
+    BufferCollaborators,
 }
 
 impl Related<super::channel_member::Entity> for Entity {
@@ -36,5 +38,11 @@ impl Related<super::room::Entity> for Entity {
 impl Related<super::buffer::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Buffer.def()
+    }
+}
+
+impl Related<super::channel_buffer_collaborator::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::BufferCollaborators.def()
     }
 }

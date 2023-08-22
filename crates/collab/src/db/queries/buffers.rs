@@ -2,66 +2,12 @@ use super::*;
 use prost::Message;
 
 impl Database {
-    pub async fn update_buffer(
-        &self,
-        buffer_id: BufferId,
-        operations: &[proto::Operation],
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            let buffer = buffer::Entity::find_by_id(buffer_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such buffer"))?;
-            buffer_operation::Entity::insert_many(operations.iter().filter_map(|operation| {
-                match operation.variant.as_ref()? {
-                    proto::operation::Variant::Edit(operation) => {
-                        let value =
-                            serialize_edit_operation(&operation.ranges, &operation.new_text);
-                        let version = serialize_version(&operation.version);
-                        Some(buffer_operation::ActiveModel {
-                            buffer_id: ActiveValue::Set(buffer_id),
-                            epoch: ActiveValue::Set(buffer.epoch),
-                            replica_id: ActiveValue::Set(operation.replica_id as i32),
-                            lamport_timestamp: ActiveValue::Set(operation.lamport_timestamp as i32),
-                            local_timestamp: ActiveValue::Set(operation.local_timestamp as i32),
-                            is_undo: ActiveValue::Set(false),
-                            version: ActiveValue::Set(version),
-                            value: ActiveValue::Set(value),
-                        })
-                    }
-                    proto::operation::Variant::Undo(operation) => {
-                        let value = serialize_undo_operation(&operation.counts);
-                        let version = serialize_version(&operation.version);
-                        Some(buffer_operation::ActiveModel {
-                            buffer_id: ActiveValue::Set(buffer_id),
-                            epoch: ActiveValue::Set(buffer.epoch),
-                            replica_id: ActiveValue::Set(operation.replica_id as i32),
-                            lamport_timestamp: ActiveValue::Set(operation.lamport_timestamp as i32),
-                            local_timestamp: ActiveValue::Set(operation.local_timestamp as i32),
-                            is_undo: ActiveValue::Set(true),
-                            version: ActiveValue::Set(version),
-                            value: ActiveValue::Set(value),
-                        })
-                    }
-                    proto::operation::Variant::UpdateSelections(_) => None,
-                    proto::operation::Variant::UpdateDiagnostics(_) => None,
-                    proto::operation::Variant::UpdateCompletionTriggers(_) => None,
-                }
-            }))
-            .exec(&*tx)
-            .await?;
-
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn join_buffer_for_channel(
+    pub async fn join_channel_buffer(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
         connection: ConnectionId,
-    ) -> Result<proto::OpenChannelBufferResponse> {
+    ) -> Result<proto::JoinChannelBufferResponse> {
         self.transaction(|tx| async move {
             let tx = tx;
 
@@ -90,8 +36,8 @@ impl Database {
             };
 
             // Join the collaborators
-            let mut collaborators = buffer
-                .find_related(channel_buffer_collaborator::Entity)
+            let mut collaborators = channel_buffer_collaborator::Entity::find()
+                .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
                 .all(&*tx)
                 .await?;
             let replica_ids = collaborators
@@ -103,7 +49,7 @@ impl Database {
                 replica_id.0 += 1;
             }
             let collaborator = channel_buffer_collaborator::ActiveModel {
-                buffer_id: ActiveValue::Set(buffer.id),
+                channel_id: ActiveValue::Set(channel_id),
                 connection_id: ActiveValue::Set(connection.id as i32),
                 connection_server_id: ActiveValue::Set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::Set(user_id),
@@ -168,7 +114,7 @@ impl Database {
                 })
             }
 
-            Ok(proto::OpenChannelBufferResponse {
+            Ok(proto::JoinChannelBufferResponse {
                 buffer_id: buffer.id.to_proto(),
                 base_text,
                 operations,
@@ -185,32 +131,112 @@ impl Database {
         .await
     }
 
-    pub async fn get_buffer_collaborators(&self, buffer: BufferId) -> Result<()> {
+    pub async fn leave_channel_buffer(
+        &self,
+        channel_id: ChannelId,
+        connection: ConnectionId,
+    ) -> Result<Vec<ConnectionId>> {
+        self.transaction(|tx| async move {
+            let result = channel_buffer_collaborator::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
+                        .add(
+                            channel_buffer_collaborator::Column::ConnectionId
+                                .eq(connection.id as i32),
+                        )
+                        .add(
+                            channel_buffer_collaborator::Column::ConnectionServerId
+                                .eq(connection.owner_id as i32),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+            if result.rows_affected == 0 {
+                Err(anyhow!("not a collaborator on this project"))?;
+            }
+
+            let mut connections = Vec::new();
+            let mut rows = channel_buffer_collaborator::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+                )
+                .stream(&*tx)
+                .await?;
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                connections.push(ConnectionId {
+                    id: row.connection_id as u32,
+                    owner_id: row.connection_server_id.0 as u32,
+                });
+            }
+
+            Ok(connections)
+        })
+        .await
+    }
+
+    pub async fn leave_channel_buffers(
+        &self,
+        connection: ConnectionId,
+    ) -> Result<Option<LeftChannelBuffers>> {
+        //
+    }
+
+    pub async fn get_channel_buffer_collaborators(&self, channel_id: ChannelId) -> Result<()> {
         todo!()
     }
 
-    pub async fn leave_buffer(&self, buffer: BufferId, user: UserId) -> Result<()> {
+    pub async fn update_channel_buffer(
+        &self,
+        buffer_id: BufferId,
+        operations: &[proto::Operation],
+    ) -> Result<()> {
         self.transaction(|tx| async move {
-            //TODO
-            // let tx = tx;
-            // let channel = channel::Entity::find_by_id(channel_id)
-            //     .one(&*tx)
-            //     .await?
-            //     .ok_or_else(|| anyhow!("invalid channel"))?;
+            let buffer = buffer::Entity::find_by_id(buffer_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such buffer"))?;
+            buffer_operation::Entity::insert_many(operations.iter().filter_map(|operation| {
+                match operation.variant.as_ref()? {
+                    proto::operation::Variant::Edit(operation) => {
+                        let value =
+                            serialize_edit_operation(&operation.ranges, &operation.new_text);
+                        let version = serialize_version(&operation.version);
+                        Some(buffer_operation::ActiveModel {
+                            buffer_id: ActiveValue::Set(buffer_id),
+                            epoch: ActiveValue::Set(buffer.epoch),
+                            replica_id: ActiveValue::Set(operation.replica_id as i32),
+                            lamport_timestamp: ActiveValue::Set(operation.lamport_timestamp as i32),
+                            local_timestamp: ActiveValue::Set(operation.local_timestamp as i32),
+                            is_undo: ActiveValue::Set(false),
+                            version: ActiveValue::Set(version),
+                            value: ActiveValue::Set(value),
+                        })
+                    }
+                    proto::operation::Variant::Undo(operation) => {
+                        let value = serialize_undo_operation(&operation.counts);
+                        let version = serialize_version(&operation.version);
+                        Some(buffer_operation::ActiveModel {
+                            buffer_id: ActiveValue::Set(buffer_id),
+                            epoch: ActiveValue::Set(buffer.epoch),
+                            replica_id: ActiveValue::Set(operation.replica_id as i32),
+                            lamport_timestamp: ActiveValue::Set(operation.lamport_timestamp as i32),
+                            local_timestamp: ActiveValue::Set(operation.local_timestamp as i32),
+                            is_undo: ActiveValue::Set(true),
+                            version: ActiveValue::Set(version),
+                            value: ActiveValue::Set(value),
+                        })
+                    }
+                    proto::operation::Variant::UpdateSelections(_) => None,
+                    proto::operation::Variant::UpdateDiagnostics(_) => None,
+                    proto::operation::Variant::UpdateCompletionTriggers(_) => None,
+                }
+            }))
+            .exec(&*tx)
+            .await?;
 
-            // if let Some(id) = channel.main_buffer_id {
-            //     return Ok(id);
-            // } else {
-            //     let buffer = buffer::ActiveModel::new().insert(&*tx).await?;
-            //     channel::ActiveModel {
-            //         id: ActiveValue::Unchanged(channel_id),
-            //         main_buffer_id: ActiveValue::Set(Some(buffer.id)),
-            //         ..Default::default()
-            //     }
-            //     .update(&*tx)
-            //     .await?;
-            //     Ok(buffer.id)
-            // }
             Ok(())
         })
         .await

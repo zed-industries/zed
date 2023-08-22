@@ -143,10 +143,10 @@ message Envelope {
         SetChannelMemberAdmin set_channel_member_admin = 129;
         RenameChannel rename_channel = 130;
 
-        OpenChannelBuffer open_channel_buffer = 131;
-        OpenChannelBufferResponse open_channel_buffer_response = 132;
+        JoinChannelBuffer join_channel_buffer = 131;
+        JoinChannelBufferResponse join_channel_buffer_response = 132;
         UpdateChannelBuffer update_channel_buffer = 133;
-        CloseChannelBuffer close_channel_buffer = 134;
+        LeaveChannelBuffer leave_channel_buffer = 134;
     }
 }
 
@@ -958,19 +958,19 @@ message RenameChannel {
     string name = 2;
 }
 
-message OpenChannelBuffer {
+message JoinChannelBuffer {
     uint64 channel_id = 1;
 }
 
-message OpenChannelBufferResponse {
+message JoinChannelBufferResponse {
     uint64 buffer_id = 1;
     string base_text = 2;
     repeated Operation operations = 3;
     repeated Collaborator collaborators = 4;
 }
 
-message CloseChannelBuffer {
-    uint64 buffer_id = 1;
+message LeaveChannelBuffer {
+    uint64 channel_id = 1;
 }
 
 message RespondToChannelInvite {

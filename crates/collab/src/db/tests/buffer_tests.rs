@@ -37,13 +37,14 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
+
     // This user will not be a part of the channel
     let c_id = db
         .create_user(
-            "user_b@example.com",
+            "user_c@example.com",
             false,
             NewUserParams {
-                github_login: "user_b".into(),
+                github_login: "user_c".into(),
                 github_user_id: 102,
                 invite_count: 0,
             },
@@ -64,8 +65,9 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap();
 
+    let connection_id_a = ConnectionId { owner_id, id: 1 };
     let buffer_response_a = db
-        .join_buffer_for_channel(zed_id, a_id, ConnectionId { owner_id, id: 1 })
+        .join_channel_buffer(zed_id, a_id, connection_id_a)
         .await
         .unwrap();
     let buffer_id = BufferId::from_proto(buffer_response_a.buffer_id);
@@ -83,10 +85,13 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
         .collect::<Vec<_>>();
 
-    db.update_buffer(buffer_id, &operations).await.unwrap();
+    db.update_channel_buffer(buffer_id, &operations)
+        .await
+        .unwrap();
 
+    let connection_id_b = ConnectionId { owner_id, id: 2 };
     let buffer_response_b = db
-        .join_buffer_for_channel(zed_id, b_id, ConnectionId { owner_id, id: 2 })
+        .join_channel_buffer(zed_id, b_id, connection_id_b)
         .await
         .unwrap();
 
@@ -106,7 +111,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     // Ensure that C fails to open the buffer
     assert!(db
-        .join_buffer_for_channel(zed_id, c_id, ConnectionId { owner_id, id: 3 })
+        .join_channel_buffer(zed_id, c_id, ConnectionId { owner_id, id: 3 })
         .await
         .is_err());
 
@@ -127,5 +132,14 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         ]
     );
 
-    // Leave buffer
+    let collaborators = db
+        .leave_channel_buffer(zed_id, connection_id_b)
+        .await
+        .unwrap();
+
+    assert_eq!(collaborators, &[connection_id_a],);
+
+    db.connection_lost(connection_id_a).await.unwrap();
+    // assert!()
+    // Test buffer epoch incrementing?
 }
