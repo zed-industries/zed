@@ -1,5 +1,6 @@
 pub mod assistant;
 mod assistant_settings;
+mod diff;
 mod refactor;
 
 use anyhow::{anyhow, Result};
