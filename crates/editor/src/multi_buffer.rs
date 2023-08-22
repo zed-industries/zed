@@ -1346,8 +1346,7 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool
-    {
+    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
