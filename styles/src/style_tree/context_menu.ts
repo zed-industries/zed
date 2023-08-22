@@ -31,16 +31,6 @@ export default function context_menu(): any {
                 state: {
                     hovered: {
                         background: background(theme.middle, "hovered"),
-                        label: text(theme.middle, "sans", "hovered", {
-                            size: "sm",
-                        }),
-                        keystroke: {
-                            ...text(theme.middle, "sans", "hovered", {
-                                size: "sm",
-                                weight: "bold",
-                            }),
-                            padding: { left: 3, right: 3 },
-                        },
                     },
                     clicked: {
                         background: background(theme.middle, "pressed"),

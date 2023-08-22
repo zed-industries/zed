@@ -7,44 +7,48 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, LayoutContext, PaintContext, SceneBuilder, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, PaintContext, SceneBuilder, View, ViewContext,
 };
 
-use crate::CollabTitlebarItem;
-
-pub(crate) struct FacePile {
+pub(crate) struct FacePile<V: View> {
     overlap: f32,
-    faces: Vec<AnyElement<CollabTitlebarItem>>,
+    faces: Vec<AnyElement<V>>,
 }
 
-impl FacePile {
-    pub fn new(overlap: f32) -> FacePile {
-        FacePile {
+impl<V: View> FacePile<V> {
+    pub fn new(overlap: f32) -> Self {
+        Self {
             overlap,
             faces: Vec::new(),
         }
     }
 }
 
-impl Element<CollabTitlebarItem> for FacePile {
+impl<V: View> Element<V> for FacePile<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        view: &mut CollabTitlebarItem,
-        cx: &mut LayoutContext<CollabTitlebarItem>,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
         let mut width = 0.;
+        let mut max_height = 0.;
         for face in &mut self.faces {
-            width += face.layout(constraint, view, cx).x();
+            let layout = face.layout(constraint, view, cx);
+            width += layout.x();
+            max_height = f32::max(max_height, layout.y());
         }
         width -= self.overlap * self.faces.len().saturating_sub(1) as f32;
 
-        (Vector2F::new(width, constraint.max.y()), ())
+        (
+            Vector2F::new(width, max_height.clamp(1., constraint.max.y())),
+            (),
+        )
     }
 
     fn paint(
@@ -53,8 +57,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
-        view: &mut CollabTitlebarItem,
-        cx: &mut PaintContext<CollabTitlebarItem>,
+        view: &mut V,
+        cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -64,6 +68,7 @@ impl Element<CollabTitlebarItem> for FacePile {
         for face in self.faces.iter_mut().rev() {
             let size = face.size();
             origin_x -= size.x();
+            let origin_y = origin_y + (bounds.height() - size.y()) / 2.0;
             scene.paint_layer(None, |scene| {
                 face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
             });
@@ -80,8 +85,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &CollabTitlebarItem,
-        _: &ViewContext<CollabTitlebarItem>,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -91,8 +96,8 @@ impl Element<CollabTitlebarItem> for FacePile {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &CollabTitlebarItem,
-        _: &ViewContext<CollabTitlebarItem>,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "FacePile",
@@ -101,8 +106,8 @@ impl Element<CollabTitlebarItem> for FacePile {
     }
 }
 
-impl Extend<AnyElement<CollabTitlebarItem>> for FacePile {
-    fn extend<T: IntoIterator<Item = AnyElement<CollabTitlebarItem>>>(&mut self, children: T) {
+impl<V: View> Extend<AnyElement<V>> for FacePile<V> {
+    fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

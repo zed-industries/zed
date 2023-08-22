@@ -23,6 +23,7 @@ test-support = [
 
 [dependencies]
 auto_update = { path = "../auto_update" }
+db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
 clock = { path = "../clock" }
@@ -37,6 +38,7 @@ picker = { path = "../picker" }
 project = { path = "../project" }
 recent_projects = {path = "../recent_projects"}
 settings = { path = "../settings" }
+staff_mode = {path = "../staff_mode"}
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
@@ -44,10 +46,10 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 zed-actions = {path = "../zed-actions"}
 
-
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true
+schemars.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

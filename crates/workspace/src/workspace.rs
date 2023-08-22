@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    ChannelStore, Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -400,8 +400,9 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub client: Arc<client::Client>,
-    pub user_store: ModelHandle<client::UserStore>,
+    pub client: Arc<Client>,
+    pub user_store: ModelHandle<UserStore>,
+    pub channel_store: ModelHandle<ChannelStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
@@ -424,6 +425,8 @@ impl AppState {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
 
         theme::init((), cx);
         client::init(&client, cx);
@@ -434,6 +437,7 @@ impl AppState {
             fs,
             languages,
             user_store,
+            channel_store,
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
             background_actions: || &[],
@@ -548,6 +552,8 @@ struct FollowerState {
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
+
+enum WorkspaceBounds {}
 
 impl Workspace {
     pub fn new(
@@ -2560,7 +2566,7 @@ impl Workspace {
         };
 
         enum TitleBar {}
-        MouseEventHandler::<TitleBar, _>::new(0, cx, |_, cx| {
+        MouseEventHandler::new::<TitleBar, _>(0, cx, |_, cx| {
             Stack::new()
                 .with_children(
                     self.titlebar_item
@@ -2649,7 +2655,7 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
-                MouseEventHandler::<DisconnectedOverlay, _>::new(0, cx, |_, cx| {
+                MouseEventHandler::new::<DisconnectedOverlay, _>(0, cx, |_, cx| {
                     let theme = &theme::current(cx);
                     Label::new(
                         "Your connection to the remote project has been lost.",
@@ -3403,10 +3409,16 @@ impl Workspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        let client = project.read(cx).client();
+        let user_store = project.read(cx).user_store();
+
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            client: project.read(cx).client(),
-            user_store: project.read(cx).user_store(),
+            client,
+            user_store,
+            channel_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
@@ -3614,7 +3626,7 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                                 bounds,
                                 background: Some(code_span_background_color),
                                 border: Default::default(),
-                                corner_radius: 2.0,
+                                corner_radii: (2.0).into(),
                             })
                         })
                         .into_any()
@@ -3750,14 +3762,23 @@ impl View for Workspace {
                                         )
                                     }))
                                     .with_children(self.modal.as_ref().map(|modal| {
-                                        ChildView::new(modal.view.as_any(), cx)
-                                            .contained()
-                                            .with_style(theme.workspace.modal)
-                                            .aligned()
-                                            .top()
+                                        // Prevent clicks within the modal from falling
+                                        // through to the rest of the workspace.
+                                        enum ModalBackground {}
+                                        MouseEventHandler::new::<ModalBackground, _>(
+                                            0,
+                                            cx,
+                                            |_, cx| ChildView::new(modal.view.as_any(), cx),
+                                        )
+                                        .on_click(MouseButton::Left, |_, _, _| {})
+                                        .contained()
+                                        .with_style(theme.workspace.modal)
+                                        .aligned()
+                                        .top()
                                     }))
                                     .with_children(self.render_notifications(&theme.workspace, cx)),
                             ))
+                            .provide_resize_bounds::<WorkspaceBounds>()
                             .flex(1.0, true),
                     )
                     .with_child(ChildView::new(&self.status_bar, cx))
@@ -4841,7 +4862,9 @@ mod tests {
                 panel_1.size(cx)
             );
 
-            left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
+            left_dock.update(cx, |left_dock, cx| {
+                left_dock.resize_active_panel(Some(1337.), cx)
+            });
             assert_eq!(
                 workspace
                     .right_dock()

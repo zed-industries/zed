@@ -19,7 +19,7 @@ pub fn dragged_item_receiver<Tag, D, F>(
     split_margin: Option<f32>,
     cx: &mut ViewContext<Pane>,
     render_child: F,
-) -> MouseEventHandler<Tag, Pane>
+) -> MouseEventHandler<Pane>
 where
     Tag: 'static,
     D: Element<Pane>,
@@ -39,7 +39,7 @@ where
         None
     };
 
-    let mut handler = MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
+    let mut handler = MouseEventHandler::above::<Tag, _>(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
         let drag_position = if state.hovered() { drag_position } else { None };
@@ -61,7 +61,7 @@ where
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
                                 border: Default::default(),
-                                corner_radius: 0.,
+                                corner_radii: Default::default(),
                             });
                         });
                     }

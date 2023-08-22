@@ -250,6 +250,10 @@ impl super::Screen for Screen {
         RectF::new(Vector2F::zero(), Vector2F::new(1920., 1080.))
     }
 
+    fn content_bounds(&self) -> RectF {
+        RectF::new(Vector2F::zero(), Vector2F::new(1920., 1080.))
+    }
+
     fn display_uuid(&self) -> Option<uuid::Uuid> {
         Some(uuid::Uuid::new_v4())
     }

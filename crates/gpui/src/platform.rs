@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
 pub use event::*;
+use pathfinder_geometry::vector::vec2f;
 use postage::oneshot;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -134,6 +135,7 @@ pub trait InputHandler {
 pub trait Screen: Debug {
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> RectF;
+    fn content_bounds(&self) -> RectF;
     fn display_uuid(&self) -> Option<Uuid>;
 }
 
@@ -178,6 +180,16 @@ pub struct WindowOptions<'a> {
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
+}
+
+impl<'a> WindowOptions<'a> {
+    pub fn with_bounds(bounds: Vector2F) -> Self {
+        Self {
+            bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), bounds)),
+            center: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -282,7 +282,7 @@ pub enum Event {
         new_peer_id: proto::PeerId,
     },
     CollaboratorLeft(proto::PeerId),
-    RefreshInlays,
+    RefreshInlayHints,
 }
 
 pub enum LanguageServerState {
@@ -2872,7 +2872,7 @@ impl Project {
                         .upgrade(&cx)
                         .ok_or_else(|| anyhow!("project dropped"))?;
                     this.update(&mut cx, |project, cx| {
-                        cx.emit(Event::RefreshInlays);
+                        cx.emit(Event::RefreshInlayHints);
                         project.remote_id().map(|project_id| {
                             project.client.send(proto::RefreshInlayHints { project_id })
                         })
@@ -3436,7 +3436,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            cx.emit(Event::RefreshInlays);
+            cx.emit(Event::RefreshInlayHints);
             status.pending_work.remove(&token);
             cx.notify();
         }
@@ -4454,10 +4454,20 @@ impl Project {
             };
 
             cx.spawn(|this, mut cx| async move {
-                let additional_text_edits = lang_server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?
-                    .additional_text_edits;
+                let can_resolve = lang_server
+                    .capabilities()
+                    .completion_provider
+                    .as_ref()
+                    .and_then(|options| options.resolve_provider)
+                    .unwrap_or(false);
+                let additional_text_edits = if can_resolve {
+                    lang_server
+                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                        .await?
+                        .additional_text_edits
+                } else {
+                    completion.lsp_completion.additional_text_edits
+                };
                 if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
@@ -6810,7 +6820,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
-            cx.emit(Event::RefreshInlays);
+            cx.emit(Event::RefreshInlayHints);
         });
         Ok(proto::Ack {})
     }

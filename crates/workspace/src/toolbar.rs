@@ -1,7 +1,7 @@
-use crate::{ItemHandle, Pane};
+use crate::ItemHandle;
 use gpui::{
-    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyElement, AnyViewHandle,
-    AppContext, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    elements::*, AnyElement, AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
+    WindowContext,
 };
 
 pub trait ToolbarItemView: View {
@@ -25,7 +25,7 @@ pub trait ToolbarItemView: View {
     /// Number of times toolbar's height will be repeated to get the effective height.
     /// Useful when multiple rows one under each other are needed.
     /// The rows have the same width and act as a whole when reacting to resizes and similar events.
-    fn row_count(&self) -> usize {
+    fn row_count(&self, _cx: &ViewContext<Self>) -> usize {
         1
     }
 }
@@ -54,7 +54,6 @@ pub struct Toolbar {
     active_item: Option<Box<dyn ItemHandle>>,
     hidden: bool,
     can_navigate: bool,
-    pane: Option<WeakViewHandle<Pane>>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
@@ -118,76 +117,10 @@ impl View for Toolbar {
             }
         }
 
-        let pane = self.pane.clone();
-        let mut enable_go_backward = false;
-        let mut enable_go_forward = false;
-        if let Some(pane) = pane.and_then(|pane| pane.upgrade(cx)) {
-            let pane = pane.read(cx);
-            enable_go_backward = pane.can_navigate_backward();
-            enable_go_forward = pane.can_navigate_forward();
-        }
-
         let container_style = theme.container;
         let height = theme.height * primary_items_row_count as f32;
-        let nav_button_height = theme.height;
-        let button_style = theme.nav_button;
-        let tooltip_style = theme::current(cx).tooltip.clone();
 
         let mut primary_items = Flex::row();
-        if self.can_navigate {
-            primary_items.add_child(nav_button(
-                "icons/arrow_left_16.svg",
-                button_style,
-                nav_button_height,
-                tooltip_style.clone(),
-                enable_go_backward,
-                spacing,
-                {
-                    move |toolbar, cx| {
-                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
-                        {
-                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
-                                let pane = pane.downgrade();
-                                cx.window_context().defer(move |cx| {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.go_back(pane, cx).detach_and_log_err(cx);
-                                    });
-                                })
-                            }
-                        }
-                    }
-                },
-                super::GoBack,
-                "Go Back",
-                cx,
-            ));
-            primary_items.add_child(nav_button(
-                "icons/arrow_right_16.svg",
-                button_style,
-                nav_button_height,
-                tooltip_style,
-                enable_go_forward,
-                spacing,
-                {
-                    move |toolbar, cx| {
-                        if let Some(pane) = toolbar.pane.as_ref().and_then(|pane| pane.upgrade(cx))
-                        {
-                            if let Some(workspace) = pane.read(cx).workspace().upgrade(cx) {
-                                let pane = pane.downgrade();
-                                cx.window_context().defer(move |cx| {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.go_forward(pane, cx).detach_and_log_err(cx);
-                                    });
-                                })
-                            }
-                        }
-                    }
-                },
-                super::GoForward,
-                "Go Forward",
-                cx,
-            ));
-        }
         primary_items.extend(primary_left_items);
         primary_items.extend(primary_right_items);
 
@@ -210,63 +143,65 @@ impl View for Toolbar {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
-    svg_path: &'static str,
-    style: theme::Interactive<theme::IconButton>,
-    nav_button_height: f32,
-    tooltip_style: TooltipStyle,
-    enabled: bool,
-    spacing: f32,
-    on_click: F,
-    tooltip_action: A,
-    action_name: &'static str,
-    cx: &mut ViewContext<Toolbar>,
-) -> AnyElement<Toolbar> {
-    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
-        let style = if enabled {
-            style.style_for(state)
-        } else {
-            style.disabled_style()
-        };
-        Svg::new(svg_path)
-            .with_color(style.color)
-            .constrained()
-            .with_width(style.icon_width)
-            .aligned()
-            .contained()
-            .with_style(style.container)
-            .constrained()
-            .with_width(style.button_width)
-            .with_height(nav_button_height)
-            .aligned()
-            .top()
-    })
-    .with_cursor_style(if enabled {
-        CursorStyle::PointingHand
-    } else {
-        CursorStyle::default()
-    })
-    .on_click(MouseButton::Left, move |_, toolbar, cx| {
-        on_click(toolbar, cx)
-    })
-    .with_tooltip::<A>(
-        0,
-        action_name,
-        Some(Box::new(tooltip_action)),
-        tooltip_style,
-        cx,
-    )
-    .contained()
-    .with_margin_right(spacing)
-    .into_any_named("nav button")
-}
+// <<<<<<< HEAD
+// =======
+// #[allow(clippy::too_many_arguments)]
+// fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
+//     svg_path: &'static str,
+//     style: theme::Interactive<theme::IconButton>,
+//     nav_button_height: f32,
+//     tooltip_style: TooltipStyle,
+//     enabled: bool,
+//     spacing: f32,
+//     on_click: F,
+//     tooltip_action: A,
+//     action_name: &'static str,
+//     cx: &mut ViewContext<Toolbar>,
+// ) -> AnyElement<Toolbar> {
+//     MouseEventHandler::new::<A, _>(0, cx, |state, _| {
+//         let style = if enabled {
+//             style.style_for(state)
+//         } else {
+//             style.disabled_style()
+//         };
+//         Svg::new(svg_path)
+//             .with_color(style.color)
+//             .constrained()
+//             .with_width(style.icon_width)
+//             .aligned()
+//             .contained()
+//             .with_style(style.container)
+//             .constrained()
+//             .with_width(style.button_width)
+//             .with_height(nav_button_height)
+//             .aligned()
+//             .top()
+//     })
+//     .with_cursor_style(if enabled {
+//         CursorStyle::PointingHand
+//     } else {
+//         CursorStyle::default()
+//     })
+//     .on_click(MouseButton::Left, move |_, toolbar, cx| {
+//         on_click(toolbar, cx)
+//     })
+//     .with_tooltip::<A>(
+//         0,
+//         action_name,
+//         Some(Box::new(tooltip_action)),
+//         tooltip_style,
+//         cx,
+//     )
+//     .contained()
+//     .with_margin_right(spacing)
+//     .into_any_named("nav button")
+// }
 
+// >>>>>>> 139cbbfd3aebd0863a7d51b0c12d748764cf0b2e
 impl Toolbar {
-    pub fn new(pane: Option<WeakViewHandle<Pane>>) -> Self {
+    pub fn new() -> Self {
         Self {
             active_item: None,
-            pane,
             items: Default::default(),
             hidden: false,
             can_navigate: true,
@@ -362,7 +297,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     }
 
     fn row_count(&self, cx: &WindowContext) -> usize {
-        self.read(cx).row_count()
+        self.read_with(cx, |this, cx| this.row_count(cx))
     }
 }
 

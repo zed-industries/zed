@@ -1,7 +1,9 @@
-use std::cmp::Ordering;
-
 use crate::Vim;
-use editor::{display_map::ToDisplayPoint, scroll::scroll_amount::ScrollAmount, Editor};
+use editor::{
+    display_map::ToDisplayPoint,
+    scroll::{scroll_amount::ScrollAmount, VERTICAL_SCROLL_MARGIN},
+    DisplayPoint, Editor,
+};
 use gpui::{actions, AppContext, ViewContext};
 use language::Bias;
 use workspace::Workspace;
@@ -53,13 +55,9 @@ fn scroll(cx: &mut ViewContext<Workspace>, by: fn(c: Option<f32>) -> ScrollAmoun
 
 fn scroll_editor(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
+
     editor.scroll_screen(amount, cx);
     if should_move_cursor {
-        let selection_ordering = editor.newest_selection_on_screen(cx);
-        if selection_ordering.is_eq() {
-            return;
-        }
-
         let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {
             visible_rows as u32
         } else {
@@ -69,21 +67,19 @@ fn scroll_editor(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContex
         let top_anchor = editor.scroll_manager.anchor().anchor;
 
         editor.change_selections(None, cx, |s| {
-            s.replace_cursors_with(|snapshot| {
-                let mut new_point = top_anchor.to_display_point(&snapshot);
+            s.move_heads_with(|map, head, goal| {
+                let top = top_anchor.to_display_point(map);
+                let min_row = top.row() + VERTICAL_SCROLL_MARGIN as u32;
+                let max_row = top.row() + visible_rows - VERTICAL_SCROLL_MARGIN as u32 - 1;
 
-                match selection_ordering {
-                    Ordering::Less => {
-                        new_point = snapshot.clip_point(new_point, Bias::Right);
-                    }
-                    Ordering::Greater => {
-                        *new_point.row_mut() += visible_rows - 1;
-                        new_point = snapshot.clip_point(new_point, Bias::Left);
-                    }
-                    Ordering::Equal => unreachable!(),
-                }
-
-                vec![new_point]
+                let new_head = if head.row() < min_row {
+                    map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)
+                } else if head.row() > max_row {
+                    map.clip_point(DisplayPoint::new(max_row, head.column()), Bias::Left)
+                } else {
+                    head
+                };
+                (new_head, goal)
             })
         });
     }

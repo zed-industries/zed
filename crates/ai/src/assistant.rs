@@ -158,7 +158,7 @@ impl AssistantPanel {
                     });
 
                     let toolbar = cx.add_view(|cx| {
-                        let mut toolbar = Toolbar::new(None);
+                        let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
                         toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
@@ -192,6 +192,7 @@ impl AssistantPanel {
                                 old_dock_position = new_dock_position;
                                 cx.emit(AssistantPanelEvent::DockPositionChanged);
                             }
+                            cx.notify();
                         })];
 
                     this
@@ -348,7 +349,7 @@ impl AssistantPanel {
         enum History {}
         let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::<History, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<History, _>(0, cx, |state, _| {
             let style = theme.assistant.hamburger_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -380,7 +381,7 @@ impl AssistantPanel {
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::<Split, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<Split, _>(0, cx, |state, _| {
             let style = theme.assistant.split_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -404,7 +405,7 @@ impl AssistantPanel {
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::<Assist, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<Assist, _>(0, cx, |state, _| {
             let style = theme.assistant.assist_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -422,7 +423,7 @@ impl AssistantPanel {
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::<QuoteSelection, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<QuoteSelection, _>(0, cx, |state, _| {
             let style = theme.assistant.quote_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -450,7 +451,7 @@ impl AssistantPanel {
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = theme::current(cx);
         let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::<NewConversation, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<NewConversation, _>(0, cx, |state, _| {
             let style = theme.assistant.plus_button.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -480,7 +481,7 @@ impl AssistantPanel {
             &theme.assistant.zoom_in_button
         };
 
-        MouseEventHandler::<ToggleZoomButton, _>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<ToggleZoomButton, _>(0, cx, |state, _| {
             let style = style.style_for(state);
             Svg::for_style(style.icon.clone())
                 .contained()
@@ -506,7 +507,7 @@ impl AssistantPanel {
     ) -> impl Element<Self> {
         let conversation = &self.saved_conversations[index];
         let path = conversation.path.clone();
-        MouseEventHandler::<SavedConversationMetadata, _>::new(index, cx, move |state, cx| {
+        MouseEventHandler::new::<SavedConversationMetadata, _>(index, cx, move |state, cx| {
             let style = &theme::current(cx).assistant.saved_conversation;
             Flex::row()
                 .with_child(
@@ -725,10 +726,10 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => self.width = Some(size),
-            DockPosition::Bottom => self.height = Some(size),
+            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Bottom => self.height = size,
         }
         cx.notify();
     }
@@ -780,8 +781,10 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/robot_14.svg"
+    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
+        settings::get::<AssistantSettings>(cx)
+            .button
+            .then(|| "icons/ai.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
@@ -1823,7 +1826,7 @@ impl ConversationEditor {
                             let theme = theme::current(cx);
                             let style = &theme.assistant;
                             let message_id = message.id;
-                            let sender = MouseEventHandler::<Sender, _>::new(
+                            let sender = MouseEventHandler::new::<Sender, _>(
                                 message_id.0,
                                 cx,
                                 |state, _| match message.role {
@@ -2046,7 +2049,7 @@ impl ConversationEditor {
     ) -> impl Element<Self> {
         enum Model {}
 
-        MouseEventHandler::<Model, _>::new(0, cx, |state, cx| {
+        MouseEventHandler::new::<Model, _>(0, cx, |state, cx| {
             let style = style.model.style_for(state);
             let model_display_name = self.conversation.read(cx).model.short_name();
             Label::new(model_display_name, style.text.clone())

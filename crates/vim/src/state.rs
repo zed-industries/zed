@@ -9,7 +9,18 @@ use crate::motion::Motion;
 pub enum Mode {
     Normal,
     Insert,
-    Visual { line: bool },
+    Visual,
+    VisualLine,
+    VisualBlock,
+}
+
+impl Mode {
+    pub fn is_visual(&self) -> bool {
+        match self {
+            Mode::Normal | Mode::Insert => false,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
+        }
+    }
 }
 
 impl Default for Mode {
@@ -30,15 +41,20 @@ pub enum Operator {
     FindBackward { after: bool },
 }
 
-#[derive(Default)]
-pub struct VimState {
+#[derive(Default, Clone)]
+pub struct EditorState {
     pub mode: Mode,
+    pub last_mode: Mode,
     pub operator_stack: Vec<Operator>,
-    pub search: SearchState,
+}
 
+#[derive(Default, Clone)]
+pub struct WorkspaceState {
+    pub search: SearchState,
     pub last_find: Option<Motion>,
 }
 
+#[derive(Clone)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
@@ -55,7 +71,7 @@ impl Default for SearchState {
     }
 }
 
-impl VimState {
+impl EditorState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
@@ -65,7 +81,7 @@ impl VimState {
                     CursorShape::Underscore
                 }
             }
-            Mode::Visual { .. } => CursorShape::Block,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -78,12 +94,15 @@ impl VimState {
             )
     }
 
-    pub fn clip_at_line_end(&self) -> bool {
-        !matches!(self.mode, Mode::Insert | Mode::Visual { .. })
+    pub fn should_autoindent(&self) -> bool {
+        !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
     }
 
-    pub fn empty_selections_only(&self) -> bool {
-        !matches!(self.mode, Mode::Visual { .. })
+    pub fn clip_at_line_ends(&self) -> bool {
+        match self.mode {
+            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => false,
+            Mode::Normal => true,
+        }
     }
 
     pub fn keymap_context_layer(&self) -> KeymapContext {
@@ -93,7 +112,7 @@ impl VimState {
             "vim_mode",
             match self.mode {
                 Mode::Normal => "normal",
-                Mode::Visual { .. } => "visual",
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
                 Mode::Insert => "insert",
             },
         );

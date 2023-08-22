@@ -1,18 +1,19 @@
 use crate::{
-    db::{NewUserParams, TestDb, UserId},
+    db::{test_db::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
-use call::ActiveCall;
+use call::{ActiveCall, Room};
 use client::{
-    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
+    self, proto::PeerId, ChannelStore, Client, Connection, Credentials, EstablishConnectionError,
+    UserStore,
 };
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext, WindowHandle};
+use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -30,6 +31,7 @@ use std::{
 use util::http::FakeHttpClient;
 use workspace::Workspace;
 
+mod channel_tests;
 mod integration_tests;
 mod randomized_integration_tests;
 
@@ -98,6 +100,9 @@ impl TestServer {
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
+            if cx.has_global::<SettingsStore>() {
+                panic!("Same cx used to create two test clients")
+            }
             cx.set_global(SettingsStore::test(cx));
         });
 
@@ -183,13 +188,16 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            channel_store: channel_store.clone(),
             languages: Arc::new(LanguageRegistry::test()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| unimplemented!(),
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
         });
 
@@ -210,12 +218,9 @@ impl TestServer {
             .unwrap();
 
         let client = TestClient {
-            client,
+            app_state,
             username: name.to_string(),
             state: Default::default(),
-            user_store,
-            fs,
-            language_registry: Arc::new(LanguageRegistry::test()),
         };
         client.wait_for_current_user(cx).await;
         client
@@ -243,6 +248,7 @@ impl TestServer {
             let (client_a, cx_a) = left.last_mut().unwrap();
             for (client_b, cx_b) in right {
                 client_a
+                    .app_state
                     .user_store
                     .update(*cx_a, |store, cx| {
                         store.request_contact(client_b.user_id().unwrap(), cx)
@@ -251,6 +257,7 @@ impl TestServer {
                     .unwrap();
                 cx_a.foreground().run_until_parked();
                 client_b
+                    .app_state
                     .user_store
                     .update(*cx_b, |store, cx| {
                         store.respond_to_contact_request(client_a.user_id().unwrap(), true, cx)
@@ -259,6 +266,52 @@ impl TestServer {
                     .unwrap();
             }
         }
+    }
+
+    async fn make_channel(
+        &self,
+        channel: &str,
+        admin: (&TestClient, &mut TestAppContext),
+        members: &mut [(&TestClient, &mut TestAppContext)],
+    ) -> u64 {
+        let (admin_client, admin_cx) = admin;
+        let channel_id = admin_client
+            .app_state
+            .channel_store
+            .update(admin_cx, |channel_store, cx| {
+                channel_store.create_channel(channel, None, cx)
+            })
+            .await
+            .unwrap();
+
+        for (member_client, member_cx) in members {
+            admin_client
+                .app_state
+                .channel_store
+                .update(admin_cx, |channel_store, cx| {
+                    channel_store.invite_member(
+                        channel_id,
+                        member_client.user_id().unwrap(),
+                        false,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+
+            admin_cx.foreground().run_until_parked();
+
+            member_client
+                .app_state
+                .channel_store
+                .update(*member_cx, |channels, _| {
+                    channels.respond_to_channel_invite(channel_id, true)
+                })
+                .await
+                .unwrap();
+        }
+
+        channel_id
     }
 
     async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
@@ -312,12 +365,9 @@ impl Drop for TestServer {
 }
 
 struct TestClient {
-    client: Arc<Client>,
     username: String,
     state: RefCell<TestClientState>,
-    pub user_store: ModelHandle<UserStore>,
-    language_registry: Arc<LanguageRegistry>,
-    fs: Arc<FakeFs>,
+    app_state: Arc<workspace::AppState>,
 }
 
 #[derive(Default)]
@@ -331,7 +381,7 @@ impl Deref for TestClient {
     type Target = Arc<Client>;
 
     fn deref(&self) -> &Self::Target {
-        &self.client
+        &self.app_state.client
     }
 }
 
@@ -342,22 +392,45 @@ struct ContactsSummary {
 }
 
 impl TestClient {
+    pub fn fs(&self) -> &FakeFs {
+        self.app_state.fs.as_fake()
+    }
+
+    pub fn channel_store(&self) -> &ModelHandle<ChannelStore> {
+        &self.app_state.channel_store
+    }
+
+    pub fn user_store(&self) -> &ModelHandle<UserStore> {
+        &self.app_state.user_store
+    }
+
+    pub fn language_registry(&self) -> &Arc<LanguageRegistry> {
+        &self.app_state.languages
+    }
+
+    pub fn client(&self) -> &Arc<Client> {
+        &self.app_state.client
+    }
+
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
         UserId::from_proto(
-            self.user_store
+            self.app_state
+                .user_store
                 .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
         )
     }
 
     async fn wait_for_current_user(&self, cx: &TestAppContext) {
         let mut authed_user = self
+            .app_state
             .user_store
             .read_with(cx, |user_store, _| user_store.watch_current_user());
         while authed_user.next().await.unwrap().is_none() {}
     }
 
     async fn clear_contacts(&self, cx: &mut TestAppContext) {
-        self.user_store
+        self.app_state
+            .user_store
             .update(cx, |store, _| store.clear_contacts())
             .await;
     }
@@ -395,23 +468,25 @@ impl TestClient {
     }
 
     fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {
-        self.user_store.read_with(cx, |store, _| ContactsSummary {
-            current: store
-                .contacts()
-                .iter()
-                .map(|contact| contact.user.github_login.clone())
-                .collect(),
-            outgoing_requests: store
-                .outgoing_contact_requests()
-                .iter()
-                .map(|user| user.github_login.clone())
-                .collect(),
-            incoming_requests: store
-                .incoming_contact_requests()
-                .iter()
-                .map(|user| user.github_login.clone())
-                .collect(),
-        })
+        self.app_state
+            .user_store
+            .read_with(cx, |store, _| ContactsSummary {
+                current: store
+                    .contacts()
+                    .iter()
+                    .map(|contact| contact.user.github_login.clone())
+                    .collect(),
+                outgoing_requests: store
+                    .outgoing_contact_requests()
+                    .iter()
+                    .map(|user| user.github_login.clone())
+                    .collect(),
+                incoming_requests: store
+                    .incoming_contact_requests()
+                    .iter()
+                    .map(|user| user.github_login.clone())
+                    .collect(),
+            })
     }
 
     async fn build_local_project(
@@ -421,10 +496,10 @@ impl TestClient {
     ) -> (ModelHandle<Project>, WorktreeId) {
         let project = cx.update(|cx| {
             Project::local(
-                self.client.clone(),
-                self.user_store.clone(),
-                self.language_registry.clone(),
-                self.fs.clone(),
+                self.client().clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
                 cx,
             )
         });
@@ -450,8 +525,8 @@ impl TestClient {
         room.update(guest_cx, |room, cx| {
             room.join_project(
                 host_project_id,
-                self.language_registry.clone(),
-                self.fs.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
                 cx,
             )
         })
@@ -464,12 +539,36 @@ impl TestClient {
         project: &ModelHandle<Project>,
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
-        cx.add_window(|cx| Workspace::test_new(project.clone(), cx))
+        cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
     }
 }
 
 impl Drop for TestClient {
     fn drop(&mut self) {
-        self.client.teardown();
+        self.app_state.client.teardown();
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RoomParticipants {
+    remote: Vec<String>,
+    pending: Vec<String>,
+}
+
+fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+    room.read_with(cx, |room, _| {
+        let mut remote = room
+            .remote_participants()
+            .iter()
+            .map(|(_, participant)| participant.user.github_login.clone())
+            .collect::<Vec<_>>();
+        let mut pending = room
+            .pending_participants()
+            .iter()
+            .map(|user| user.github_login.clone())
+            .collect::<Vec<_>>();
+        remote.sort();
+        pending.sort();
+        RoomParticipants { remote, pending }
+    })
 }

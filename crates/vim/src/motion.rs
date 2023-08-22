@@ -147,9 +147,9 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
     let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
     let operator = Vim::read(cx).active_operator();
-    match Vim::read(cx).state.mode {
+    match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, times, cx),
-        Mode::Visual { .. } => visual_motion(motion, times, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -158,7 +158,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 }
 
 fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).state.last_find.clone() {
+    let find = match Vim::read(cx).workspace_state.last_find.clone() {
         Some(Motion::FindForward { before, text }) => {
             if backwards {
                 Motion::FindBackward {
@@ -383,8 +383,7 @@ impl Motion {
 
 fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        *point.column_mut() = point.column().saturating_sub(1);
-        point = map.clip_point(point, Bias::Left);
+        point = movement::saturating_left(map, point);
         if point.column() == 0 {
             break;
         }
@@ -425,9 +424,7 @@ fn up(
 
 pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        let mut new_point = point;
-        *new_point.column_mut() += 1;
-        let new_point = map.clip_point(new_point, Bias::Right);
+        let new_point = movement::saturating_right(map, point);
         if point == new_point {
             break;
         }
@@ -654,7 +651,10 @@ fn find_backward(
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let new_row = (point.row() + times as u32).min(map.max_buffer_row());
-    map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+    first_non_whitespace(
+        map,
+        map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left),
+    )
 }
 
 #[cfg(test)]
@@ -801,5 +801,13 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇone\n  two\nthree").await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("one\n  ˇtwo\nthree").await;
     }
 }

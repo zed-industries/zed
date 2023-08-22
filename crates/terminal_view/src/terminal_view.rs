@@ -80,6 +80,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
+    cx.add_action(TerminalView::select_all)
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -312,6 +313,11 @@ impl TerminalView {
         }
     }
 
+    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.select_all());
+        cx.notify();
+    }
+
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
@@ -477,10 +483,8 @@ fn possible_open_targets(
 }
 
 pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
-    let searcher = match query {
-        project::search::SearchQuery::Text { query, .. } => RegexSearch::new(&query),
-        project::search::SearchQuery::Regex { query, .. } => RegexSearch::new(&query),
-    };
+    let query = query.as_str();
+    let searcher = RegexSearch::new(&query);
     searcher.ok()
 }
 
@@ -667,7 +671,7 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                gpui::elements::Svg::new("icons/terminal_12.svg")
+                gpui::elements::Svg::new("icons/terminal.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)

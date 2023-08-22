@@ -28,16 +28,16 @@ export default function status_bar(): any {
             right: 6,
         },
         border: border(layer, { top: true, overlay: true }),
-        cursor_position: text(layer, "sans", "variant", { size: "xs" }),
+        cursor_position: text(layer, "sans", "base", { size: "xs" }),
         vim_mode_indicator: {
             margin: { left: 6 },
-            ...text(layer, "mono", "variant", { size: "xs" }),
+            ...text(layer, "mono", "base", { size: "xs" }),
         },
         active_language: text_button({
-            color: "variant"
+            color: "base"
         }),
-        auto_update_progress_message: text(layer, "sans", "variant", { size: "xs" }),
-        auto_update_done_message: text(layer, "sans", "variant", { size: "xs" }),
+        auto_update_progress_message: text(layer, "sans", "base", { size: "xs" }),
+        auto_update_done_message: text(layer, "sans", "base", { size: "xs" }),
         lsp_status: interactive({
             base: {
                 ...diagnostic_status_container,
@@ -64,11 +64,11 @@ export default function status_bar(): any {
         diagnostic_summary: interactive({
             base: {
                 height: 20,
-                icon_width: 16,
+                icon_width: 14,
                 icon_spacing: 2,
                 summary_spacing: 6,
                 text: text(layer, "sans", { size: "sm" }),
-                icon_color_ok: foreground(layer, "variant"),
+                icon_color_ok: foreground(layer, "base"),
                 icon_color_warning: foreground(layer, "warning"),
                 icon_color_error: foreground(layer, "negative"),
                 container_ok: {
@@ -111,8 +111,9 @@ export default function status_bar(): any {
                 base: interactive({
                     base: {
                         ...status_container,
-                        icon_size: 16,
-                        icon_color: foreground(layer, "variant"),
+                        icon_size: 14,
+                        icon_color: foreground(layer, "base"),
+                        background: background(layer, "default"),
                         label: {
                             margin: { left: 6 },
                             ...text(layer, "sans", { size: "xs" }),
@@ -120,23 +121,25 @@ export default function status_bar(): any {
                     },
                     state: {
                         hovered: {
-                            icon_color: foreground(layer, "hovered"),
-                            background: background(layer, "variant"),
+                            background: background(layer, "hovered"),
                         },
+                        clicked: {
+                            background: background(layer, "pressed"),
+                        }
                     },
                 }),
                 state: {
                     active: {
                         default: {
-                            icon_color: foreground(layer, "active"),
-                            background: background(layer, "active"),
+                            icon_color: foreground(layer, "accent", "default"),
+                            background: background(layer, "default"),
                         },
                         hovered: {
-                            icon_color: foreground(layer, "hovered"),
+                            icon_color: foreground(layer, "accent", "hovered"),
                             background: background(layer, "hovered"),
                         },
                         clicked: {
-                            icon_color: foreground(layer, "pressed"),
+                            icon_color: foreground(layer, "accent", "pressed"),
                             background: background(layer, "pressed"),
                         },
                     },

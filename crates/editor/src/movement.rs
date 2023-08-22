@@ -13,6 +13,13 @@ pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     map.clip_point(point, Bias::Left)
 }
 
+pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    if point.column() > 0 {
+        *point.column_mut() -= 1;
+    }
+    map.clip_point(point, Bias::Left)
+}
+
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let max_column = map.line_len(point.row());
     if point.column() < max_column {
@@ -21,6 +28,11 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
+    map.clip_point(point, Bias::Right)
+}
+
+pub fn saturating_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    *point.column_mut() += 1;
     map.clip_point(point, Bias::Right)
 }
 
@@ -49,10 +61,10 @@ pub fn up_by_rows(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_column = if let SelectionGoal::Column(column) = goal {
-        column
-    } else {
-        map.column_to_chars(start.row(), start.column())
+    let mut goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => map.column_to_chars(start.row(), start.column()),
     };
 
     let prev_row = start.row().saturating_sub(row_count);
@@ -83,10 +95,10 @@ pub fn down_by_rows(
     goal: SelectionGoal,
     preserve_column_at_end: bool,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_column = if let SelectionGoal::Column(column) = goal {
-        column
-    } else {
-        map.column_to_chars(start.row(), start.column())
+    let mut goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => map.column_to_chars(start.row(), start.column()),
     };
 
     let new_row = start.row() + row_count;

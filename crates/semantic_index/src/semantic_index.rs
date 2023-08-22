@@ -49,9 +49,8 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<SemanticIndexSettings>(cx).enabled
-    {
+    // This needs to be removed at some point before stable.
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
 
@@ -97,10 +96,21 @@ struct ProjectState {
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
 
+#[derive(Clone)]
 struct JobHandle {
-    tx: Weak<Mutex<watch::Sender<usize>>>,
+    /// The outer Arc is here to count the clones of a JobHandle instance;
+    /// when the last handle to a given job is dropped, we decrement a counter (just once).
+    tx: Arc<Weak<Mutex<watch::Sender<usize>>>>,
 }
 
+impl JobHandle {
+    fn new(tx: &Arc<Mutex<watch::Sender<usize>>>) -> Self {
+        *tx.lock().borrow_mut() += 1;
+        Self {
+            tx: Arc::new(Arc::downgrade(&tx)),
+        }
+    }
+}
 impl ProjectState {
     fn db_id_for_worktree_id(&self, id: WorktreeId) -> Option<i64> {
         self.worktree_db_ids
@@ -381,6 +391,20 @@ impl SemanticIndex {
                     .await
                     .unwrap();
             }
+        } else {
+            // Insert the file in spite of failure so that future attempts to index it do not take place (unless the file is changed).
+            for (worktree_id, _, path, mtime, job_handle) in embeddings_queue.into_iter() {
+                db_update_tx
+                    .send(DbOperation::InsertFile {
+                        worktree_id,
+                        documents: vec![],
+                        path,
+                        mtime,
+                        job_handle,
+                    })
+                    .await
+                    .unwrap();
+            }
         }
     }
 
@@ -390,6 +414,7 @@ impl SemanticIndex {
         embeddings_queue: &mut Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>,
         embed_batch_tx: &channel::Sender<Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>>,
     ) {
+        // Handle edge case where individual file has more documents than max batch size
         let should_flush = match job {
             EmbeddingJob::Enqueue {
                 documents,
@@ -398,9 +423,43 @@ impl SemanticIndex {
                 mtime,
                 job_handle,
             } => {
-                *queue_len += &documents.len();
-                embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
-                *queue_len >= EMBEDDINGS_BATCH_SIZE
+                // If documents is greater than embeddings batch size, recursively batch existing rows.
+                if &documents.len() > &EMBEDDINGS_BATCH_SIZE {
+                    let first_job = EmbeddingJob::Enqueue {
+                        documents: documents[..EMBEDDINGS_BATCH_SIZE].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        first_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+
+                    let second_job = EmbeddingJob::Enqueue {
+                        documents: documents[EMBEDDINGS_BATCH_SIZE..].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        second_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+                    return;
+                } else {
+                    *queue_len += &documents.len();
+                    embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
+                    *queue_len >= EMBEDDINGS_BATCH_SIZE
+                }
             }
             EmbeddingJob::Flush => true,
         };
@@ -501,26 +560,12 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
-        let worktree_scans_complete = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| {
-                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
-                async move {
-                    scan_complete.await;
-                }
-            })
-            .collect::<Vec<_>>();
-
         let worktrees_indexed_previously = project
             .read(cx)
             .worktrees(cx)
             .map(|worktree| self.worktree_previously_indexed(worktree.read(cx).abs_path()))
             .collect::<Vec<_>>();
-
         cx.spawn(|_, _cx| async move {
-            futures::future::join_all(worktree_scans_complete).await;
-
             let worktree_indexed_previously =
                 futures::future::join_all(worktrees_indexed_previously).await;
 
@@ -628,10 +673,8 @@ impl SemanticIndex {
 
                                 if !already_stored {
                                     count += 1;
-                                    *job_count_tx.lock().borrow_mut() += 1;
-                                    let job_handle = JobHandle {
-                                        tx: Arc::downgrade(&job_count_tx),
-                                    };
+
+                                    let job_handle = JobHandle::new(&job_count_tx);
                                     parsing_files_tx
                                         .try_send(PendingFile {
                                             worktree_db_id: db_ids_by_worktree_id[&worktree.id()],
@@ -705,6 +748,7 @@ impl SemanticIndex {
         let database_url = self.database_url.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
+            let t0 = Instant::now();
             let database = VectorDatabase::new(fs.clone(), database_url.clone()).await?;
 
             let phrase_embedding = embedding_provider
@@ -713,6 +757,11 @@ impl SemanticIndex {
                 .into_iter()
                 .next()
                 .unwrap();
+
+            log::trace!(
+                "Embedding search phrase took: {:?} milliseconds",
+                t0.elapsed().as_millis()
+            );
 
             let file_ids =
                 database.retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)?;
@@ -788,6 +837,11 @@ impl SemanticIndex {
 
             let buffers = futures::future::join_all(tasks).await;
 
+            log::trace!(
+                "Semantic Searching took: {:?} milliseconds in total",
+                t0.elapsed().as_millis()
+            );
+
             Ok(buffers
                 .into_iter()
                 .zip(ranges)
@@ -809,9 +863,32 @@ impl Entity for SemanticIndex {
 
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        if let Some(tx) = self.tx.upgrade() {
-            let mut tx = tx.lock();
-            *tx.borrow_mut() -= 1;
+        if let Some(inner) = Arc::get_mut(&mut self.tx) {
+            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
+            if let Some(tx) = inner.upgrade() {
+                let mut tx = tx.lock();
+                *tx.borrow_mut() -= 1;
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    #[test]
+    fn test_job_handle() {
+        let (job_count_tx, job_count_rx) = watch::channel_with(0);
+        let tx = Arc::new(Mutex::new(job_count_tx));
+        let job_handle = JobHandle::new(&tx);
+
+        assert_eq!(1, *job_count_rx.borrow());
+        let new_job_handle = job_handle.clone();
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(job_handle);
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(new_job_handle);
+        assert_eq!(0, *job_count_rx.borrow());
     }
 }

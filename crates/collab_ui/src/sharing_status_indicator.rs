@@ -47,7 +47,7 @@ impl View for SharingStatusIndicator {
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
         };
 
-        MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
+        MouseEventHandler::new::<Self, _>(0, cx, |_, _| {
             Svg::new("icons/disable_screen_sharing_12.svg")
                 .with_color(color)
                 .constrained()

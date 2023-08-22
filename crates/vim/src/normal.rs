@@ -3,7 +3,7 @@ mod change;
 mod delete;
 mod scroll;
 mod search;
-mod substitute;
+pub mod substitute;
 mod yank;
 
 use std::{borrow::Cow, sync::Arc};
@@ -116,8 +116,8 @@ pub fn normal_motion(
 
 pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        match vim.state.operator_stack.pop() {
-            Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
+        match vim.maybe_pop_operator() {
+            Some(Operator::Object { around }) => match vim.maybe_pop_operator() {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),

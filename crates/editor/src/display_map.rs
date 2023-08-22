@@ -353,19 +353,26 @@ impl DisplaySnapshot {
         }
     }
 
+    // used by line_mode selections and tries to match vim behaviour
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let mut new_start = self.prev_line_boundary(range.start).0;
-        let mut new_end = self.next_line_boundary(range.end).0;
+        let new_start = if range.start.row == 0 {
+            Point::new(0, 0)
+        } else if range.start.row == self.max_buffer_row()
+            || (range.end.column > 0 && range.end.row == self.max_buffer_row())
+        {
+            Point::new(range.start.row - 1, self.line_len(range.start.row - 1))
+        } else {
+            self.prev_line_boundary(range.start).0
+        };
 
-        if new_start.row == range.start.row && new_end.row == range.end.row {
-            if new_end.row < self.buffer_snapshot.max_point().row {
-                new_end.row += 1;
-                new_end.column = 0;
-            } else if new_start.row > 0 {
-                new_start.row -= 1;
-                new_start.column = self.buffer_snapshot.line_len(new_start.row);
-            }
-        }
+        let new_end = if range.end.column == 0 {
+            range.end
+        } else if range.end.row < self.max_buffer_row() {
+            self.buffer_snapshot
+                .clip_point(Point::new(range.end.row + 1, 0), Bias::Left)
+        } else {
+            self.buffer_snapshot.max_point()
+        };
 
         new_start..new_end
     }

@@ -122,7 +122,17 @@
     // Amount of indentation for nested items.
     "indent_size": 20
   },
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": true,
+    // Where to dock channels panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the channels panel.
+    "default_width": 240
+  },
   "assistant": {
+    // Whether to show the assistant panel button in the status bar.
+    "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.

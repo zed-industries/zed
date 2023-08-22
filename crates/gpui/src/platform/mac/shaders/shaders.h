@@ -19,7 +19,10 @@ typedef struct {
   float border_bottom;
   float border_left;
   vector_uchar4 border_color;
-  float corner_radius;
+  float corner_radius_top_left;
+  float corner_radius_top_right;
+  float corner_radius_bottom_right;
+  float corner_radius_bottom_left;
 } GPUIQuad;
 
 typedef enum {
@@ -31,7 +34,10 @@ typedef enum {
 typedef struct {
   vector_float2 origin;
   vector_float2 size;
-  float corner_radius;
+  float corner_radius_top_left;
+  float corner_radius_top_right;
+  float corner_radius_bottom_right;
+  float corner_radius_bottom_left;
   float sigma;
   vector_uchar4 color;
 } GPUIShadow;
@@ -89,7 +95,10 @@ typedef struct {
   float border_bottom;
   float border_left;
   vector_uchar4 border_color;
-  float corner_radius;
+  float corner_radius_top_left;
+  float corner_radius_top_right;
+  float corner_radius_bottom_right;
+  float corner_radius_bottom_left;
   uint8_t grayscale;
 } GPUIImage;
 
