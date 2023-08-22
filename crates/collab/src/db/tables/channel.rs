@@ -1,4 +1,4 @@
-use crate::db::{BufferId, ChannelId};
+use crate::db::ChannelId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -15,7 +15,7 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum Relation {
     #[sea_orm(has_one = "super::room::Entity")]
     Room,
-    #[sea_orm(has_one = "super::room::Entity")]
+    #[sea_orm(has_one = "super::buffer::Entity")]
     Buffer,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     Member,

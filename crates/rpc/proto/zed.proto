@@ -966,6 +966,7 @@ message OpenChannelBufferResponse {
     uint64 buffer_id = 1;
     string base_text = 2;
     repeated Operation operations = 3;
+    repeated Collaborator collaborators = 4;
 }
 
 message CloseChannelBuffer {

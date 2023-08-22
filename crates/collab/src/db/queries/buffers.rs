@@ -1,11 +1,6 @@
 use super::*;
 use prost::Message;
 
-pub struct ChannelBuffer {
-    pub base_text: String,
-    pub operations: Vec<proto::Operation>,
-}
-
 impl Database {
     pub async fn update_buffer(
         &self,
@@ -66,7 +61,7 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         connection: ConnectionId,
-    ) -> Result<ChannelBuffer> {
+    ) -> Result<proto::OpenChannelBufferResponse> {
         self.transaction(|tx| async move {
             let tx = tx;
 
@@ -95,7 +90,7 @@ impl Database {
             };
 
             // Join the collaborators
-            let collaborators = buffer
+            let mut collaborators = buffer
                 .find_related(channel_buffer_collaborator::Entity)
                 .all(&*tx)
                 .await?;
@@ -107,7 +102,7 @@ impl Database {
             while replica_ids.contains(&replica_id) {
                 replica_id.0 += 1;
             }
-            channel_buffer_collaborator::ActiveModel {
+            let collaborator = channel_buffer_collaborator::ActiveModel {
                 buffer_id: ActiveValue::Set(buffer.id),
                 connection_id: ActiveValue::Set(connection.id as i32),
                 connection_server_id: ActiveValue::Set(ServerId(connection.owner_id as i32)),
@@ -117,6 +112,7 @@ impl Database {
             }
             .insert(&*tx)
             .await?;
+            collaborators.push(collaborator);
 
             // Assemble the buffer state
             let id = buffer.id;
@@ -172,9 +168,18 @@ impl Database {
                 })
             }
 
-            Ok(ChannelBuffer {
+            Ok(proto::OpenChannelBufferResponse {
+                buffer_id: buffer.id.to_proto(),
                 base_text,
                 operations,
+                collaborators: collaborators
+                    .into_iter()
+                    .map(|collaborator| proto::Collaborator {
+                        peer_id: Some(collaborator.connection().into()),
+                        user_id: collaborator.user_id.to_proto(),
+                        replica_id: collaborator.replica_id.0 as u32,
+                    })
+                    .collect(),
             })
         })
         .await

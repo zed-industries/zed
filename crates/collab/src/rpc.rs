@@ -2492,17 +2492,11 @@ async fn open_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let buffer_id = db.get_or_create_buffer_for_channel(channel_id).await?;
+    let open_response = db
+        .join_buffer_for_channel(channel_id, session.user_id, session.connection_id)
+        .await?;
 
-    // TODO: join channel_buffer
-
-    let buffer = db.open_buffer(buffer_id).await?;
-
-    response.send(OpenChannelBufferResponse {
-        buffer_id: buffer_id.to_proto(),
-        base_text: buffer.base_text,
-        operations: buffer.operations,
-    })?;
+    response.send(open_response)?;
 
     Ok(())
 }
