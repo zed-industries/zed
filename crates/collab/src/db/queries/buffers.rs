@@ -11,7 +11,6 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            // Get or create buffer from channel
             self.check_user_is_channel_member(channel_id, user_id, &tx)
                 .await?;
 
@@ -116,6 +115,7 @@ impl Database {
 
             Ok(proto::JoinChannelBufferResponse {
                 buffer_id: buffer.id.to_proto(),
+                replica_id: replica_id.to_proto() as u32,
                 base_text,
                 operations,
                 collaborators: collaborators
@@ -137,67 +137,128 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<Vec<ConnectionId>> {
         self.transaction(|tx| async move {
-            let result = channel_buffer_collaborator::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionId
-                                .eq(connection.id as i32),
-                        )
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-            if result.rows_affected == 0 {
-                Err(anyhow!("not a collaborator on this project"))?;
-            }
-
-            let mut connections = Vec::new();
-            let mut rows = channel_buffer_collaborator::Entity::find()
-                .filter(
-                    Condition::all()
-                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
-                )
-                .stream(&*tx)
-                .await?;
-            while let Some(row) = rows.next().await {
-                let row = row?;
-                connections.push(ConnectionId {
-                    id: row.connection_id as u32,
-                    owner_id: row.connection_server_id.0 as u32,
-                });
-            }
-
-            Ok(connections)
+            self.leave_channel_buffer_internal(channel_id, connection, &*tx)
+                .await
         })
         .await
+    }
+
+    pub async fn leave_channel_buffer_internal(
+        &self,
+        channel_id: ChannelId,
+        connection: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<ConnectionId>> {
+        let result = channel_buffer_collaborator::Entity::delete_many()
+            .filter(
+                Condition::all()
+                    .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
+                    .add(channel_buffer_collaborator::Column::ConnectionId.eq(connection.id as i32))
+                    .add(
+                        channel_buffer_collaborator::Column::ConnectionServerId
+                            .eq(connection.owner_id as i32),
+                    ),
+            )
+            .exec(&*tx)
+            .await?;
+        if result.rows_affected == 0 {
+            Err(anyhow!("not a collaborator on this project"))?;
+        }
+
+        let mut connections = Vec::new();
+        let mut rows = channel_buffer_collaborator::Entity::find()
+            .filter(
+                Condition::all().add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+            )
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            connections.push(ConnectionId {
+                id: row.connection_id as u32,
+                owner_id: row.connection_server_id.0 as u32,
+            });
+        }
+
+        Ok(connections)
     }
 
     pub async fn leave_channel_buffers(
         &self,
         connection: ConnectionId,
-    ) -> Result<Option<LeftChannelBuffers>> {
-        //
+    ) -> Result<Vec<(ChannelId, Vec<ConnectionId>)>> {
+        self.transaction(|tx| async move {
+            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+            enum QueryChannelIds {
+                ChannelId,
+            }
+
+            let channel_ids: Vec<ChannelId> = channel_buffer_collaborator::Entity::find()
+                .select_only()
+                .column(channel_buffer_collaborator::Column::ChannelId)
+                .filter(Condition::all().add(
+                    channel_buffer_collaborator::Column::ConnectionId.eq(connection.id as i32),
+                ))
+                .into_values::<_, QueryChannelIds>()
+                .all(&*tx)
+                .await?;
+
+            let mut result = Vec::new();
+            for channel_id in channel_ids {
+                let collaborators = self
+                    .leave_channel_buffer_internal(channel_id, connection, &*tx)
+                    .await?;
+                result.push((channel_id, collaborators));
+            }
+
+            Ok(result)
+        })
+        .await
     }
 
-    pub async fn get_channel_buffer_collaborators(&self, channel_id: ChannelId) -> Result<()> {
-        todo!()
+    #[cfg(debug_assertions)]
+    pub async fn get_channel_buffer_collaborators(
+        &self,
+        channel_id: ChannelId,
+    ) -> Result<Vec<UserId>> {
+        self.transaction(|tx| async move {
+            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+            enum QueryUserIds {
+                UserId,
+            }
+
+            let users: Vec<UserId> = channel_buffer_collaborator::Entity::find()
+                .select_only()
+                .column(channel_buffer_collaborator::Column::UserId)
+                .filter(
+                    Condition::all()
+                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+                )
+                .into_values::<_, QueryUserIds>()
+                .all(&*tx)
+                .await?;
+
+            Ok(users)
+        })
+        .await
     }
 
     pub async fn update_channel_buffer(
         &self,
-        buffer_id: BufferId,
+        channel_id: ChannelId,
+        user: UserId,
         operations: &[proto::Operation],
-    ) -> Result<()> {
+    ) -> Result<Vec<ConnectionId>> {
         self.transaction(|tx| async move {
-            let buffer = buffer::Entity::find_by_id(buffer_id)
+            self.check_user_is_channel_member(channel_id, user, &*tx)
+                .await?;
+
+            let buffer = buffer::Entity::find()
+                .filter(buffer::Column::ChannelId.eq(channel_id))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such buffer"))?;
+            let buffer_id = buffer.id;
             buffer_operation::Entity::insert_many(operations.iter().filter_map(|operation| {
                 match operation.variant.as_ref()? {
                     proto::operation::Variant::Edit(operation) => {
@@ -237,7 +298,23 @@ impl Database {
             .exec(&*tx)
             .await?;
 
-            Ok(())
+            let mut connections = Vec::new();
+            let mut rows = channel_buffer_collaborator::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+                )
+                .stream(&*tx)
+                .await?;
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                connections.push(ConnectionId {
+                    id: row.connection_id as u32,
+                    owner_id: row.connection_server_id.0 as u32,
+                });
+            }
+
+            Ok(connections)
         })
         .await
     }

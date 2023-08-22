@@ -252,7 +252,9 @@ messages!(
     (JoinChannelBuffer, Foreground),
     (JoinChannelBufferResponse, Foreground),
     (LeaveChannelBuffer, Background),
-    (UpdateChannelBuffer, Foreground)
+    (UpdateChannelBuffer, Foreground),
+    (RemoveChannelBufferCollaborator, Foreground),
+    (AddChannelBufferCollaborator, Foreground),
 );
 
 request_messages!(
@@ -376,7 +378,12 @@ entity_messages!(
     UpdateDiffBase
 );
 
-entity_messages!(buffer_id, UpdateChannelBuffer);
+entity_messages!(
+    channel_id,
+    UpdateChannelBuffer,
+    RemoveChannelBufferCollaborator,
+    AddChannelBufferCollaborator
+);
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;

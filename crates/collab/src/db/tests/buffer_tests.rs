@@ -66,11 +66,10 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .unwrap();
 
     let connection_id_a = ConnectionId { owner_id, id: 1 };
-    let buffer_response_a = db
+    let _ = db
         .join_channel_buffer(zed_id, a_id, connection_id_a)
         .await
         .unwrap();
-    let buffer_id = BufferId::from_proto(buffer_response_a.buffer_id);
 
     let mut buffer_a = Buffer::new(0, 0, "".to_string());
     let mut operations = Vec::new();
@@ -85,7 +84,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
         .collect::<Vec<_>>();
 
-    db.update_channel_buffer(buffer_id, &operations)
+    db.update_channel_buffer(zed_id, a_id, &operations)
         .await
         .unwrap();
 
@@ -115,7 +114,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .is_err());
 
-    //Ensure that both collaborators have shown up
+    // Ensure that both collaborators have shown up
     assert_eq!(
         buffer_response_b.collaborators,
         &[
@@ -132,6 +131,10 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         ]
     );
 
+    // Ensure that get_channel_buffer_collaborators works
+    let zed_collaborats = db.get_channel_buffer_collaborators(zed_id).await.unwrap();
+    assert_eq!(zed_collaborats, &[a_id, b_id]);
+
     let collaborators = db
         .leave_channel_buffer(zed_id, connection_id_b)
         .await
@@ -139,7 +142,18 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     assert_eq!(collaborators, &[connection_id_a],);
 
-    db.connection_lost(connection_id_a).await.unwrap();
-    // assert!()
-    // Test buffer epoch incrementing?
+    let cargo_id = db.create_root_channel("cargo", "2", a_id).await.unwrap();
+    let _ = db
+        .join_channel_buffer(cargo_id, a_id, connection_id_a)
+        .await
+        .unwrap();
+
+    db.leave_channel_buffers(connection_id_a).await.unwrap();
+
+    let zed_collaborators = db.get_channel_buffer_collaborators(zed_id).await.unwrap();
+    let cargo_collaborators = db.get_channel_buffer_collaborators(cargo_id).await.unwrap();
+    assert_eq!(zed_collaborators, &[]);
+    assert_eq!(cargo_collaborators, &[]);
+
+    // TODO: test buffer epoch incrementing
 }

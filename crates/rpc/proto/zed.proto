@@ -147,6 +147,8 @@ message Envelope {
         JoinChannelBufferResponse join_channel_buffer_response = 132;
         UpdateChannelBuffer update_channel_buffer = 133;
         LeaveChannelBuffer leave_channel_buffer = 134;
+        AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
+        RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
     }
 }
 
@@ -416,6 +418,16 @@ message RemoveProjectCollaborator {
     PeerId peer_id = 2;
 }
 
+message AddChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    Collaborator collaborator = 2;
+}
+
+message RemoveChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId peer_id = 2;
+}
+
 message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
@@ -546,8 +558,8 @@ message UpdateBuffer {
 }
 
 message UpdateChannelBuffer {
-    uint64 buffer_id = 2;
-    repeated Operation operations = 3;
+    uint64 channel_id = 1;
+    repeated Operation operations = 2;
 }
 
 message UpdateBufferFile {
@@ -964,9 +976,10 @@ message JoinChannelBuffer {
 
 message JoinChannelBufferResponse {
     uint64 buffer_id = 1;
-    string base_text = 2;
-    repeated Operation operations = 3;
-    repeated Collaborator collaborators = 4;
+    uint32 replica_id = 2;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated Collaborator collaborators = 5;
 }
 
 message LeaveChannelBuffer {
