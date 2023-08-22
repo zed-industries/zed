@@ -47,7 +47,7 @@ impl RefactoringAssistant {
                 RequestMessage {
                 role: Role::User,
                 content: format!(
-                    "Given the following {language_name} snippet:\n{selected_text}\n{prompt}. Avoid making remarks and reply only with the new code. Preserve indentation."
+                    "Given the following {language_name} snippet:\n{selected_text}\n{prompt}. Never make remarks and reply only with the new code. Never change the leading whitespace on each line."
                 ),
             }],
             stream: true,
@@ -81,9 +81,7 @@ impl RefactoringAssistant {
                             hunks_tx.send((hunks, new_text)).await?;
                         }
 
-                        if let Some(hunk) = diff.finish() {
-                            hunks_tx.send((vec![hunk], String::new())).await?;
-                        }
+                        hunks_tx.send((diff.finish(), String::new())).await?;
 
                         anyhow::Ok(())
                     });
@@ -92,14 +90,11 @@ impl RefactoringAssistant {
                         editor.update(&mut cx, |editor, cx| {
                             editor.buffer().update(cx, |buffer, cx| {
                                 buffer.start_transaction(cx);
-                                let mut new_text_ix = 0;
                                 for hunk in hunks {
                                     match hunk {
-                                        crate::diff::Hunk::Insert { len } => {
-                                            let text = &new_text[new_text_ix..new_text_ix + len];
+                                        crate::diff::Hunk::Insert { text } => {
                                             let edit_start = snapshot.anchor_after(edit_start);
                                             buffer.edit([(edit_start..edit_start, text)], None, cx);
-                                            new_text_ix += len;
                                         }
                                         crate::diff::Hunk::Remove { len } => {
                                             let edit_end = edit_start + len;
@@ -110,7 +105,6 @@ impl RefactoringAssistant {
                                         }
                                         crate::diff::Hunk::Keep { len } => {
                                             edit_start += len;
-                                            new_text_ix += len;
                                         }
                                     }
                                 }
