@@ -1,6 +1,6 @@
 use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
-    InlayHighlights, TextHighlights,
+    TextHighlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use gpui::{color::Color, fonts::HighlightStyle};
@@ -475,7 +475,7 @@ pub struct FoldSnapshot {
 impl FoldSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), false, None, None, None, None)
+        self.chunks(FoldOffset(0)..self.len(), false, None, None, None)
             .map(|c| c.text)
             .collect()
     }
@@ -652,7 +652,6 @@ impl FoldSnapshot {
         range: Range<FoldOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlights: Option<&'a InlayHighlights>,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> FoldChunks<'a> {
@@ -676,7 +675,6 @@ impl FoldSnapshot {
                 inlay_start..inlay_end,
                 language_aware,
                 text_highlights,
-                inlay_highlights,
                 inlay_highlight_style,
                 suggestion_highlight_style,
             ),
@@ -689,15 +687,8 @@ impl FoldSnapshot {
     }
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
-        self.chunks(
-            start.to_offset(self)..self.len(),
-            false,
-            None,
-            None,
-            None,
-            None,
-        )
-        .flat_map(|chunk| chunk.text.chars())
+        self.chunks(start.to_offset(self)..self.len(), false, None, None, None)
+            .flat_map(|chunk| chunk.text.chars())
     }
 
     #[cfg(test)]
@@ -1505,7 +1496,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false, None, None, None, None)
+                        .chunks(start..end, false, None, None, None)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

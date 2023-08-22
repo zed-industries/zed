@@ -1,7 +1,7 @@
 use super::{
     fold_map::FoldBufferRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
-    InlayHighlights, TextHighlights,
+    TextHighlights,
 };
 use crate::MultiBufferSnapshot;
 use gpui::{
@@ -447,7 +447,6 @@ impl WrapSnapshot {
                     None,
                     None,
                     None,
-                    None,
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -577,7 +576,6 @@ impl WrapSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlights: Option<&'a InlayHighlights>,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> WrapChunks<'a> {
@@ -597,7 +595,6 @@ impl WrapSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                inlay_highlights,
                 inlay_highlight_style,
                 suggestion_highlight_style,
             ),
@@ -1329,7 +1326,6 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
             )
             .map(|h| h.text)
         }
@@ -1354,7 +1350,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, true, None, None, None, None)
+                    .chunks(start_row..end_row, true, None, None, None)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

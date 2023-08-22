@@ -43,6 +43,13 @@ pub enum DocumentRange {
 }
 
 impl DocumentRange {
+    pub fn as_text_range(&self) -> Option<Range<Anchor>> {
+        match self {
+            Self::Text(range) => Some(range.clone()),
+            Self::Inlay(_) => None,
+        }
+    }
+
     fn point_within_range(&self, trigger_point: &TriggerPoint, snapshot: &EditorSnapshot) -> bool {
         match (self, trigger_point) {
             (DocumentRange::Text(range), TriggerPoint::Text(point)) => {

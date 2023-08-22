@@ -1,6 +1,6 @@
 use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
-    InlayHighlights, TextHighlights,
+    TextHighlights,
 };
 use crate::MultiBufferSnapshot;
 use gpui::fonts::HighlightStyle;
@@ -68,7 +68,6 @@ impl TabMap {
                 'outer: for chunk in old_snapshot.fold_snapshot.chunks(
                     fold_edit.old.end..old_end_row_successor_offset,
                     false,
-                    None,
                     None,
                     None,
                     None,
@@ -184,7 +183,7 @@ impl TabSnapshot {
             self.max_point()
         };
         for c in self
-            .chunks(range.start..line_end, false, None, None, None, None)
+            .chunks(range.start..line_end, false, None, None, None)
             .flat_map(|chunk| chunk.text.chars())
         {
             if c == '\n' {
@@ -201,7 +200,6 @@ impl TabSnapshot {
                 .chunks(
                     TabPoint::new(range.end.row(), 0)..range.end,
                     false,
-                    None,
                     None,
                     None,
                     None,
@@ -225,9 +223,8 @@ impl TabSnapshot {
         &'a self,
         range: Range<TabPoint>,
         language_aware: bool,
-        // TODO kb extract into one struct
+        // TODO kb extract into one struct?
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlights: Option<&'a InlayHighlights>,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> TabChunks<'a> {
@@ -250,7 +247,6 @@ impl TabSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                inlay_highlights,
                 inlay_highlight_style,
                 suggestion_highlight_style,
             ),
@@ -275,16 +271,9 @@ impl TabSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(
-            TabPoint::zero()..self.max_point(),
-            false,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map(|chunk| chunk.text)
-        .collect()
+        self.chunks(TabPoint::zero()..self.max_point(), false, None, None, None)
+            .map(|chunk| chunk.text)
+            .collect()
     }
 
     pub fn max_point(&self) -> TabPoint {
@@ -612,7 +601,6 @@ mod tests {
                         None,
                         None,
                         None,
-                        None,
                     )
                     .map(|c| c.text)
                     .collect::<String>(),
@@ -687,8 +675,7 @@ mod tests {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
-            for chunk in snapshot.chunks(start..snapshot.max_point(), false, None, None, None, None)
-            {
+            for chunk in snapshot.chunks(start..snapshot.max_point(), false, None, None, None) {
                 if chunk.is_tab != was_tab {
                     if !text.is_empty() {
                         chunks.push((mem::take(&mut text), was_tab));
@@ -757,7 +744,7 @@ mod tests {
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
                 tabs_snapshot
-                    .chunks(start..end, false, None, None, None, None)
+                    .chunks(start..end, false, None, None, None)
                     .map(|c| c.text)
                     .collect::<String>(),
                 expected_text,

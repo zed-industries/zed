@@ -65,7 +65,7 @@ use language::{
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
-    hide_link_definition, show_link_definition, InlayRange, LinkGoToDefinitionState,
+    hide_link_definition, show_link_definition, DocumentRange, InlayRange, LinkGoToDefinitionState,
 };
 use log::error;
 use multi_buffer::ToOffsetUtf16;
@@ -7733,7 +7733,7 @@ impl Editor {
     pub fn text_highlights<'a, T: 'static>(
         &'a self,
         cx: &'a AppContext,
-    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
+    ) -> Option<(HighlightStyle, &'a [DocumentRange])> {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
@@ -7741,10 +7741,7 @@ impl Editor {
         let text_highlights = self
             .display_map
             .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
-        let inlay_highlights = self
-            .display_map
-            .update(cx, |map, _| map.clear_inlay_highlights(TypeId::of::<T>()));
-        if text_highlights.is_some() || inlay_highlights.is_some() {
+        if text_highlights.is_some() {
             cx.notify();
         }
     }
@@ -7953,6 +7950,8 @@ impl Editor {
         Some(
             ranges
                 .iter()
+                // TODO kb mark inlays too
+                .filter_map(|range| range.as_text_range())
                 .map(move |range| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
                 })
@@ -8406,6 +8405,8 @@ impl View for Editor {
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        // TODO kb mark inlays too
+        let range = range.as_text_range()?;
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 
