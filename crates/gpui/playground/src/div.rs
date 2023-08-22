@@ -1,22 +1,24 @@
 use crate::{
     element::{AnyElement, Element, Layout, ParentElement},
+    interactive::{InteractionHandlers, Interactive},
     layout_context::LayoutContext,
     paint_context::PaintContext,
     style::{Style, StyleHelpers, StyleRefinement, Styleable},
 };
 use anyhow::Result;
-use gpui::{platform::MouseMovedEvent, EventContext, LayoutId};
+use gpui::LayoutId;
 use smallvec::SmallVec;
-use std::rc::Rc;
 
-pub struct Div<V> {
+pub struct Div<V: 'static> {
     style: StyleRefinement,
+    handlers: InteractionHandlers<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
 pub fn div<V>() -> Div<V> {
     Div {
         style: Default::default(),
+        handlers: Default::default(),
         children: Default::default(),
     }
 }
@@ -44,43 +46,32 @@ impl<V: 'static> Element<V> for Div<V> {
         let style = self.style();
 
         style.paint_background::<V, Self>(layout, cx);
+        for child in &mut self.children {
+            child.paint(view, cx);
+        }
     }
 }
 
 impl<V> Styleable for Div<V> {
     type Style = Style;
 
-    fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
+    fn declared_style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 }
 
 impl<V> StyleHelpers for Div<V> {}
 
+impl<V> Interactive<V> for Div<V> {
+    fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {
+        &mut self.handlers
+    }
+}
+
 impl<V: 'static> ParentElement<V> for Div<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
-}
-
-pub trait Interactive<V> {
-    fn declared_interactions(&mut self) -> &mut Interactions<V>;
-
-    fn on_mouse_move<H>(mut self, handler: H) -> Self
-    where
-        H: 'static + Fn(&mut V, &MouseMovedEvent, &mut EventContext<V>),
-        Self: Sized,
-    {
-        self.declared_interactions().mouse_moved = Some(Rc::new(move |view, event, cx| {
-            handler(view, event, cx);
-            cx.bubble
-        }));
-        self
-    }
-}
-
-pub struct Interactions<V> {
-    mouse_moved: Option<Rc<dyn Fn(&mut V, &MouseMovedEvent, &mut EventContext<V>) -> bool>>,
 }
 
 #[test]

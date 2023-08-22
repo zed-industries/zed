@@ -31,8 +31,6 @@ pub struct SceneBuilder {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
-    /// Used by the playground crate. I hope to replace it with event_handlers.
-    pub interactive_regions: Vec<InteractiveRegion>,
     /// Used by the playground crate.
     pub event_handlers: Vec<EventHandler>,
     #[cfg(debug_assertions)]
@@ -42,7 +40,6 @@ pub struct SceneBuilder {
 pub struct Scene {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
-    interactive_regions: Vec<InteractiveRegion>,
     event_handlers: Vec<EventHandler>,
 }
 
@@ -285,15 +282,9 @@ impl Scene {
             .collect()
     }
 
-    /// TODO: Hoping to replace this with take_event_handlers
-    pub fn take_interactive_regions(&mut self) -> Vec<InteractiveRegion> {
-        self.interactive_regions
-            .sort_by(|a, b| a.order.cmp(&b.order));
-        std::mem::take(&mut self.interactive_regions)
-    }
-
     pub fn take_event_handlers(&mut self) -> Vec<EventHandler> {
-        self.event_handlers.sort_by(|a, b| a.order.cmp(&b.order));
+        self.event_handlers
+            .sort_by(|a, b| a.order.cmp(&b.order).reverse());
         std::mem::take(&mut self.event_handlers)
     }
 }
@@ -307,7 +298,6 @@ impl SceneBuilder {
             active_stacking_context_stack: vec![0],
             #[cfg(debug_assertions)]
             mouse_region_ids: Default::default(),
-            interactive_regions: Vec::new(),
             event_handlers: Vec::new(),
         }
     }
@@ -318,7 +308,6 @@ impl SceneBuilder {
         Scene {
             scale_factor: self.scale_factor,
             stacking_contexts: self.stacking_contexts,
-            interactive_regions: self.interactive_regions,
             event_handlers: self.event_handlers,
         }
     }
@@ -716,23 +705,10 @@ impl MouseRegion {
     }
 }
 
-/// This is currently only used in the playground crate. It represents a region
-/// with which the user can interact via a pointing device. It aims to replace
-/// MouseRegion and CursorRegion.
-pub struct InteractiveRegion {
-    pub order: u32,
-    pub bounds: RectF,
-    pub outside_bounds: bool,
-    pub event_handler: Rc<dyn Fn(&mut dyn Any, &dyn Any, &mut WindowContext, usize)>,
-    pub event_type: TypeId,
-    pub view_id: usize,
-}
-
 pub struct EventHandler {
     pub order: u32,
-    // First param is a dynamic view reference
-    // Second param is a dynamic event reference
-    pub handler: Rc<dyn Fn(&mut dyn Any, &dyn Any, &mut WindowContext, usize)>,
+    // The &dyn Any parameter below expects an event.
+    pub handler: Rc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>,
     pub event_type: TypeId,
 }
 

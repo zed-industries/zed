@@ -16,6 +16,7 @@ mod components;
 mod div;
 mod element;
 mod hoverable;
+mod interactive;
 mod layout_context;
 mod paint_context;
 mod style;

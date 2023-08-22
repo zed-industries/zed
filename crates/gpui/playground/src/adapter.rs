@@ -47,7 +47,7 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
         let (layout_engine, layout_id) = layout_data.take().unwrap();
         legacy_cx.push_layout_engine(layout_engine);
         let mut cx = PaintContext::new(legacy_cx, scene);
-        self.0.paint(view, layout_id, &mut cx);
+        self.0.paint(view, &mut cx);
         *layout_data = legacy_cx.pop_layout_engine().zip(Some(layout_id));
         debug_assert!(layout_data.is_some());
     }

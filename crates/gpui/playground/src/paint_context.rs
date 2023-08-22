@@ -1,9 +1,6 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{
-    geometry::rect::RectF, scene::EventHandler, EngineLayout, EventContext, LayoutId,
-    RenderContext, ViewContext,
-};
+use gpui::{scene::EventHandler, EngineLayout, EventContext, LayoutId, RenderContext, ViewContext};
 pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
 use std::{any::TypeId, rc::Rc};
 pub use taffy::tree::NodeId;
@@ -47,46 +44,23 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         order: u32,
         handler: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
     ) {
+        let view = self.weak_handle();
+
         self.scene.event_handlers.push(EventHandler {
             order,
-            handler: Rc::new(move |view, event, window_cx, view_id| {
-                let mut view_context = ViewContext::mutable(window_cx, view_id);
-                handler(
-                    view.downcast_mut().unwrap(),
-                    event.downcast_ref().unwrap(),
-                    &mut view_context,
-                );
+            handler: Rc::new(move |event, window_cx| {
+                if let Some(view) = view.upgrade(window_cx) {
+                    view.update(window_cx, |view, view_cx| {
+                        let mut event_cx = EventContext::new(view_cx);
+                        handler(view, event.downcast_ref().unwrap(), &mut event_cx);
+                        event_cx.bubble
+                    })
+                } else {
+                    true
+                }
             }),
             event_type: TypeId::of::<E>(),
         })
-    }
-
-    pub fn draw_interactive_region<E: 'static>(
-        &mut self,
-        order: u32,
-        bounds: RectF,
-        outside_bounds: bool,
-        event_handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
-    ) {
-        // We'll sort these later when `take_interactive_regions` is called.
-        self.scene
-            .interactive_regions
-            .push(gpui::scene::InteractiveRegion {
-                order,
-                bounds,
-                outside_bounds,
-                event_handler: Rc::new(move |view, event, window_cx, view_id| {
-                    let mut view_context = ViewContext::mutable(window_cx, view_id);
-                    let mut event_context = EventContext::new(&mut view_context);
-                    event_handler(
-                        view.downcast_mut().unwrap(),
-                        event.downcast_ref().unwrap(),
-                        &mut event_context,
-                    );
-                }),
-                event_type: TypeId::of::<E>(),
-                view_id: self.view_id(),
-            });
     }
 
     pub(crate) fn computed_layout(&mut self, layout_id: LayoutId) -> Result<EngineLayout> {

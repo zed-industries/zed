@@ -10,6 +10,79 @@ pub use crate::paint_context::PaintContext;
 
 type LayoutId = gpui::LayoutId;
 
+pub trait Element<V: 'static>: 'static {
+    type Layout;
+
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<Layout<V, Self::Layout>>
+    where
+        Self: Sized;
+
+    fn paint(
+        &mut self,
+        view: &mut V,
+        layout: &mut Layout<V, Self::Layout>,
+        cx: &mut PaintContext<V>,
+    ) where
+        Self: Sized;
+
+    fn into_any(self) -> AnyElement<V>
+    where
+        Self: 'static + Sized,
+    {
+        AnyElement(Box::new(ElementState {
+            element: self,
+            layout: None,
+        }))
+    }
+}
+
+/// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
+trait ElementStateObject<V> {
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId>;
+    fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>);
+}
+
+/// A wrapper around an element that stores its layout state.
+struct ElementState<V: 'static, E: Element<V>> {
+    element: E,
+    layout: Option<Layout<V, E::Layout>>,
+}
+
+/// We blanket-implement the object-safe ElementStateObject interface to make ElementStates into trait objects
+impl<V, E: Element<V>> ElementStateObject<V> for ElementState<V, E> {
+    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
+        let layout = self.element.layout(view, cx)?;
+        let layout_id = layout.id;
+        self.layout = Some(layout);
+        Ok(layout_id)
+    }
+
+    fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
+        let layout = self.layout.as_mut().expect("paint called before layout");
+        if layout.engine_layout.is_none() {
+            layout.engine_layout = cx.computed_layout(layout.id).log_err()
+        }
+        self.element.paint(view, layout, cx)
+    }
+}
+
+/// A dynamic element.
+pub struct AnyElement<V>(Box<dyn ElementStateObject<V>>);
+
+impl<V> AnyElement<V> {
+    pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
+        self.0.layout(view, cx)
+    }
+
+    pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
+        self.0.paint(view, cx)
+    }
+}
+
 #[derive(Deref, DerefMut)]
 pub struct Layout<V, D> {
     id: LayoutId,
@@ -47,81 +120,8 @@ impl<V: 'static, D> Layout<V, D> {
 impl<V: 'static> Layout<V, Option<AnyElement<V>>> {
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
         let mut element = self.element_data.take().unwrap();
-        element.paint(view, self.id, cx);
+        element.paint(view, cx);
         self.element_data = Some(element);
-    }
-}
-
-pub trait Element<V: 'static>: 'static {
-    type Layout;
-
-    fn layout(
-        &mut self,
-        view: &mut V,
-        cx: &mut LayoutContext<V>,
-    ) -> Result<Layout<V, Self::Layout>>
-    where
-        Self: Sized;
-
-    fn paint(
-        &mut self,
-        view: &mut V,
-        layout: &mut Layout<V, Self::Layout>,
-        cx: &mut PaintContext<V>,
-    ) where
-        Self: Sized;
-
-    fn into_any(self) -> AnyElement<V>
-    where
-        Self: 'static + Sized,
-    {
-        AnyElement(Box::new(ElementState {
-            element: self,
-            layout: None,
-        }))
-    }
-}
-
-/// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
-trait ElementStateObject<V> {
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId>;
-    fn paint(&mut self, view: &mut V, layout_id: LayoutId, cx: &mut PaintContext<V>);
-}
-
-/// A wrapper around an element that stores its layout state.
-struct ElementState<V: 'static, E: Element<V>> {
-    element: E,
-    layout: Option<Layout<V, E::Layout>>,
-}
-
-/// We blanket-implement the object-safe ElementStateObject interface to make ElementStates into trait objects
-impl<V, E: Element<V>> ElementStateObject<V> for ElementState<V, E> {
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
-        let layout = self.element.layout(view, cx)?;
-        let layout_id = layout.id;
-        self.layout = Some(layout);
-        Ok(layout_id)
-    }
-
-    fn paint(&mut self, view: &mut V, layout_id: LayoutId, cx: &mut PaintContext<V>) {
-        let layout = self.layout.as_mut().expect("paint called before layout");
-        if layout.engine_layout.is_none() {
-            layout.engine_layout = cx.computed_layout(layout_id).log_err()
-        }
-        self.element.paint(view, layout, cx)
-    }
-}
-
-/// A dynamic element.
-pub struct AnyElement<V>(Box<dyn ElementStateObject<V>>);
-
-impl<V> AnyElement<V> {
-    pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
-        self.0.layout(view, cx)
-    }
-
-    pub fn paint(&mut self, view: &mut V, layout_id: LayoutId, cx: &mut PaintContext<V>) {
-        self.0.paint(view, layout_id, cx)
     }
 }
 

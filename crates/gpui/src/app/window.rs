@@ -8,9 +8,9 @@ use crate::{
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
     },
     scene::{
-        CursorRegion, InteractiveRegion, MouseClick, MouseClickOut, MouseDown, MouseDownOut,
-        MouseDrag, MouseEvent, MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp,
-        MouseUpOut, Scene,
+        CursorRegion, EventHandler, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
+        MouseEvent, MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
+        Scene,
     },
     text_layout::TextLayoutCache,
     util::post_inc,
@@ -57,7 +57,7 @@ pub struct Window {
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
-    interactive_regions: Vec<InteractiveRegion>,
+    event_handlers: Vec<EventHandler>,
     last_mouse_moved_event: Option<Event>,
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
@@ -91,7 +91,7 @@ impl Window {
             rendered_views: Default::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
-            interactive_regions: Vec::new(),
+            event_handlers: Default::default(),
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
@@ -119,8 +119,8 @@ impl Window {
             .expect("root_view called during window construction")
     }
 
-    pub fn take_interactive_regions(&mut self) -> Vec<InteractiveRegion> {
-        mem::take(&mut self.interactive_regions)
+    pub fn take_event_handlers(&mut self) -> Vec<EventHandler> {
+        mem::take(&mut self.event_handlers)
     }
 }
 
@@ -889,26 +889,13 @@ impl<'a> WindowContext<'a> {
     fn dispatch_to_interactive_regions(&mut self, event: &Event) {
         if let Some(mouse_event) = event.mouse_event() {
             let mouse_position = event.position().expect("mouse events must have a position");
-            let interactive_regions = self.window.take_interactive_regions();
-
-            for region in interactive_regions.iter().rev() {
-                if region.event_type == mouse_event.type_id() {
-                    let in_bounds = region.bounds.contains_point(mouse_position);
-
-                    if in_bounds == !region.outside_bounds {
-                        self.update_any_view(region.view_id, |view, window_cx| {
-                            (region.event_handler)(
-                                view.as_any_mut(),
-                                mouse_event,
-                                window_cx,
-                                region.view_id,
-                            );
-                        });
-                    }
+            let event_handlers = self.window.take_event_handlers();
+            for event_handler in event_handlers.iter().rev() {
+                if event_handler.event_type == mouse_event.type_id() {
+                    (event_handler.handler)(mouse_event, self);
                 }
             }
-
-            self.window.interactive_regions = interactive_regions;
+            self.window.event_handlers = event_handlers;
         }
     }
 
@@ -1066,7 +1053,7 @@ impl<'a> WindowContext<'a> {
         let mut scene = scene_builder.build();
         self.window.cursor_regions = scene.cursor_regions();
         self.window.mouse_regions = scene.mouse_regions();
-        self.window.interactive_regions = scene.take_interactive_regions();
+        self.window.event_handlers = scene.take_event_handlers();
 
         if self.window_is_active() {
             if let Some(event) = self.window.last_mouse_moved_event.clone() {

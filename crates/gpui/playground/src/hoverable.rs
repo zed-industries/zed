@@ -42,14 +42,6 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
     where
         Self: Sized,
     {
-        if self.hovered.get() {
-            // If hovered, refine the child's style with this element's style.
-            self.child.declared_style().refine(&self.hovered_style);
-        } else {
-            // Otherwise, set the child's style back to its original style.
-            *self.child.declared_style() = self.child_style.clone();
-        }
-
         self.child.layout(view, cx)
     }
 
@@ -61,10 +53,24 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
     ) where
         Self: Sized,
     {
+        if self.hovered.get() {
+            // If hovered, refine the child's style with this element's style.
+            self.child.declared_style().refine(&self.hovered_style);
+        } else {
+            // Otherwise, set the child's style back to its original style.
+            *self.child.declared_style() = self.child_style.clone();
+        }
+
         let bounds = layout.bounds(cx);
         let order = layout.order(cx);
         self.hovered.set(bounds.contains_point(cx.mouse_position()));
-        let hovered = self.hovered.clone();
-        cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {});
+        let was_hovered = self.hovered.clone();
+        cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {
+            let is_hovered = bounds.contains_point(event.position);
+            if is_hovered != was_hovered.get() {
+                was_hovered.set(is_hovered);
+                cx.repaint();
+            }
+        });
     }
 }

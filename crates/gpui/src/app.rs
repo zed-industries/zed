@@ -4680,18 +4680,37 @@ impl<V: 'static> WeakViewHandle<V> {
         })
     }
 
-    pub fn update<T>(
+    pub fn update<T, B>(
         &self,
-        cx: &mut AsyncAppContext,
+        cx: &mut B,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
-    ) -> Result<T> {
-        cx.update(|cx| {
-            let handle = cx
-                .upgrade_view_handle(self)
-                .ok_or_else(|| anyhow!("view was dropped"))?;
-            cx.update_window(self.window, |cx| handle.update(cx, update))
-                .ok_or_else(|| anyhow!("window was removed"))
+    ) -> Result<T>
+    where
+        B: BorrowWindowContext,
+        B::Result<Option<T>>: Flatten<T>,
+    {
+        cx.update_window(self.window(), |cx| {
+            cx.upgrade_view_handle(self)
+                .map(|handle| handle.update(cx, update))
         })
+        .flatten()
+        .ok_or_else(|| anyhow!("window was removed"))
+    }
+}
+
+pub trait Flatten<T> {
+    fn flatten(self) -> Option<T>;
+}
+
+impl<T> Flatten<T> for Option<Option<T>> {
+    fn flatten(self) -> Option<T> {
+        self.flatten()
+    }
+}
+
+impl<T> Flatten<T> for Option<T> {
+    fn flatten(self) -> Option<T> {
+        self
     }
 }
 
