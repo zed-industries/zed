@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub epoch: i32,
     pub text: String,
+    pub operation_serialization_version: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -14,6 +14,7 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
+clock = { path = "../clock" }
 collections = { path = "../collections" }
 live_kit_server = { path = "../live_kit_server" }
 text = { path = "../text" }

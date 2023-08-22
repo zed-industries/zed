@@ -10,7 +10,6 @@ test_both_dbs!(
 );
 
 async fn test_channel_buffers(db: &Arc<Database>) {
-    // Prep database test info
     let a_id = db
         .create_user(
             "user_a@example.com",
@@ -155,5 +154,12 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     assert_eq!(zed_collaborators, &[]);
     assert_eq!(cargo_collaborators, &[]);
 
-    // TODO: test buffer epoch incrementing
+    // When everyone has left the channel, the operations are collapsed into
+    // a new base text.
+    let buffer_response_b = db
+        .join_channel_buffer(zed_id, b_id, connection_id_b)
+        .await
+        .unwrap();
+    assert_eq!(buffer_response_b.base_text, "hello, cruel world");
+    assert_eq!(buffer_response_b.operations, &[]);
 }

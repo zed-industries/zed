@@ -233,6 +233,7 @@ CREATE TABLE "buffer_snapshots" (
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
     "epoch" INTEGER NOT NULL,
     "text" TEXT NOT NULL,
+    "operation_serialization_version" INTEGER NOT NULL,
     PRIMARY KEY(buffer_id, epoch)
 );
 
