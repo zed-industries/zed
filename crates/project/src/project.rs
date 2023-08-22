@@ -5180,7 +5180,7 @@ impl Project {
                                         snapshot.file().map(|file| file.path().as_ref()),
                                     ) {
                                         query
-                                            .search(snapshot.as_rope())
+                                            .search(&snapshot, None)
                                             .await
                                             .iter()
                                             .map(|range| {
