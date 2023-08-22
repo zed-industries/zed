@@ -685,17 +685,19 @@ impl SemanticIndex {
 
             let (job_count_tx, job_count_rx) = watch::channel_with(0);
             let job_count_tx = Arc::new(Mutex::new(job_count_tx));
-            this.update(&mut cx, |this, _| {
-                let project_state = ProjectState::new(
-                    _subscription,
-                    worktree_db_ids,
-                    worktree_file_mtimes.clone(),
-                    job_count_rx.clone(),
-                    job_count_tx.clone(),
-                );
-                this.projects.insert(project.downgrade(), project_state);
-            });
+            let job_count_tx_longlived = job_count_tx.clone();
+            // this.update(&mut cx, |this, _| {
+            //     let project_state = ProjectState::new(
+            //         _subscription,
+            //         worktree_db_ids,
+            //         worktree_file_mtimes.clone(),
+            //         job_count_rx.clone(),
+            //         job_count_tx.clone(),
+            //     );
+            //     this.projects.insert(project.downgrade(), project_state);
+            // });
 
+            let worktree_file_mtimes_all = worktree_file_mtimes.clone();
             let worktree_files = cx
                 .background()
                 .spawn(async move {
@@ -750,6 +752,14 @@ impl SemanticIndex {
                 .await?;
 
             this.update(&mut cx, |this, cx| {
+                let project_state = ProjectState::new(
+                    _subscription,
+                    worktree_db_ids,
+                    worktree_file_mtimes_all,
+                    job_count_rx,
+                    job_count_tx_longlived,
+                );
+
                 if let Some(project_state) = this.projects.get_mut(&project.downgrade()) {
                     for (worktree_id, index_operations) in &worktree_files {
                         for op in index_operations {
@@ -757,6 +767,8 @@ impl SemanticIndex {
                         }
                     }
                 }
+
+                this.projects.insert(project.downgrade(), project_state);
             });
 
             cx.background().spawn(async move { anyhow::Ok(()) }).await
