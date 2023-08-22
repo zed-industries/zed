@@ -640,6 +640,7 @@ impl ProjectSearchView {
             self.search_options = SearchOptions::none();
 
             let project = self.model.read(cx).project.clone();
+
             let index_task = semantic_index.update(cx, |semantic_index, cx| {
                 semantic_index.index_project(project, cx)
             });
@@ -759,7 +760,7 @@ impl ProjectSearchView {
     }
 
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
-        let project;
+        let mut project;
         let excerpts;
         let mut query_text = String::new();
         let mut options = SearchOptions::NONE;
@@ -842,6 +843,15 @@ impl ProjectSearchView {
         })
         .detach();
         let filters_enabled = false;
+
+        // Initialize Semantic Index if Needed
+        if SemanticIndex::enabled(cx) {
+            let model = model.read(cx);
+            project = model.project.clone();
+            SemanticIndex::global(cx).map(|semantic| {
+                semantic.update(cx, |this, cx| this.initialize_project(project, cx))
+            });
+        }
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {

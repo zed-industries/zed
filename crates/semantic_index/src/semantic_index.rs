@@ -92,7 +92,8 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
-    file_mtimes: HashMap<PathBuf, SystemTime>,
+    worktree_file_mtimes: HashMap<WorktreeId, HashMap<PathBuf, SystemTime>>,
+    subscription: gpui::Subscription,
     outstanding_job_count_rx: watch::Receiver<usize>,
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
 }
@@ -113,6 +114,25 @@ impl JobHandle {
     }
 }
 impl ProjectState {
+    fn new(
+        subscription: gpui::Subscription,
+        worktree_db_ids: Vec<(WorktreeId, i64)>,
+        worktree_file_mtimes: HashMap<WorktreeId, HashMap<PathBuf, SystemTime>>,
+        outstanding_job_count_rx: watch::Receiver<usize>,
+        _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    ) -> Self {
+        let (job_count_tx, job_count_rx) = watch::channel_with(0);
+        let job_count_tx = Arc::new(Mutex::new(job_count_tx));
+
+        Self {
+            worktree_db_ids,
+            worktree_file_mtimes,
+            outstanding_job_count_rx,
+            _outstanding_job_count_tx,
+            subscription,
+        }
+    }
+
     fn db_id_for_worktree_id(&self, id: WorktreeId) -> Option<i64> {
         self.worktree_db_ids
             .iter()
@@ -577,6 +597,84 @@ impl SemanticIndex {
         })
     }
 
+    pub fn initialize_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_scans_complete = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| {
+                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
+                async move {
+                    scan_complete.await;
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let worktree_db_ids = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| {
+                self.find_or_create_worktree(worktree.read(cx).abs_path().to_path_buf())
+            })
+            .collect::<Vec<_>>();
+
+        let _subscription = cx.subscribe(&project, |this, project, event, cx| {
+            if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
+                todo!();
+                // this.project_entries_changed(project, changes, cx, worktree_id);
+            }
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            futures::future::join_all(worktree_scans_complete).await;
+
+            let worktree_db_ids = futures::future::join_all(worktree_db_ids).await;
+            let worktrees = project.read_with(&cx, |project, cx| {
+                project
+                    .worktrees(cx)
+                    .map(|worktree| worktree.read(cx).snapshot())
+                    .collect::<Vec<_>>()
+            });
+
+            let mut worktree_file_mtimes = HashMap::new();
+            let mut db_ids_by_worktree_id = HashMap::new();
+
+            for (worktree, db_id) in worktrees.iter().zip(worktree_db_ids) {
+                let db_id = db_id?;
+                db_ids_by_worktree_id.insert(worktree.id(), db_id);
+                worktree_file_mtimes.insert(
+                    worktree.id(),
+                    this.read_with(&cx, |this, _| this.get_file_mtimes(db_id))
+                        .await?,
+                );
+            }
+
+            let worktree_db_ids = db_ids_by_worktree_id
+                .iter()
+                .map(|(a, b)| (*a, *b))
+                .collect();
+
+            let (job_count_tx, job_count_rx) = watch::channel_with(0);
+            let job_count_tx = Arc::new(Mutex::new(job_count_tx));
+            this.update(&mut cx, |this, _| {
+                let project_state = ProjectState::new(
+                    _subscription,
+                    worktree_db_ids,
+                    worktree_file_mtimes.clone(),
+                    job_count_rx,
+                    job_count_tx,
+                );
+                this.projects.insert(project.downgrade(), project_state);
+            });
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
+    }
+
     pub fn index_project(
         &mut self,
         project: ModelHandle<Project>,
@@ -605,6 +703,22 @@ impl SemanticIndex {
         let db_update_tx = self.db_update_tx.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
 
+        let state = self.projects.get(&project.downgrade());
+        let state = if state.is_none() {
+            return Task::Ready(Some(Err(anyhow!("Project not yet initialized"))));
+        } else {
+            state.unwrap()
+        };
+
+        let state = state.clone().to_owned();
+
+        let _subscription = cx.subscribe(&project, |this, project, event, _cx| {
+            if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
+                todo!();
+                // this.project_entries_changed(project, changes, cx, worktree_id);
+            }
+        });
+
         cx.spawn(|this, mut cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
@@ -629,20 +743,22 @@ impl SemanticIndex {
                 );
             }
 
+            let worktree_db_ids = db_ids_by_worktree_id
+                .iter()
+                .map(|(a, b)| (*a, *b))
+                .collect();
+
             let (job_count_tx, job_count_rx) = watch::channel_with(0);
             let job_count_tx = Arc::new(Mutex::new(job_count_tx));
             this.update(&mut cx, |this, _| {
-                this.projects.insert(
-                    project.downgrade(),
-                    ProjectState {
-                        worktree_db_ids: db_ids_by_worktree_id
-                            .iter()
-                            .map(|(a, b)| (*a, *b))
-                            .collect(),
-                        outstanding_job_count_rx: job_count_rx.clone(),
-                        _outstanding_job_count_tx: job_count_tx.clone(),
-                    },
+                let project_state = ProjectState::new(
+                    _subscription,
+                    worktree_db_ids,
+                    worktree_file_mtimes.clone(),
+                    job_count_rx.clone(),
+                    job_count_tx.clone(),
                 );
+                this.projects.insert(project.downgrade(), project_state);
             });
 
             cx.background()
