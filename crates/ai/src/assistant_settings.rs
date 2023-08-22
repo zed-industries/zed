@@ -6,30 +6,30 @@ use settings::Setting;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAIModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
-    GptThreeFiveTurbo0613,
+    One,
     #[serde(rename = "gpt-4-0613")]
-    GptFour0613,
+    Two,
 }
 
 impl OpenAIModel {
     pub fn full_name(&self) -> &'static str {
         match self {
-            OpenAIModel::GptThreeFiveTurbo0613 => "gpt-3.5-turbo-0613",
-            OpenAIModel::GptFour0613 => "gpt-4-0613",
+            OpenAIModel::One => "gpt-3.5-turbo-0613",
+            OpenAIModel::Two => "gpt-4-0613",
         }
     }
 
     pub fn short_name(&self) -> &'static str {
         match self {
-            OpenAIModel::GptThreeFiveTurbo0613 => "gpt-3.5-turbo",
-            OpenAIModel::GptFour0613 => "gpt-4",
+            OpenAIModel::One => "gpt-3.5-turbo",
+            OpenAIModel::Two => "gpt-4",
         }
     }
 
     pub fn cycle(&mut self) -> Self {
         match self {
-            OpenAIModel::GptThreeFiveTurbo0613 => OpenAIModel::GptFour0613,
-            OpenAIModel::GptFour0613 => OpenAIModel::GptThreeFiveTurbo0613,
+            OpenAIModel::One => OpenAIModel::Two,
+            OpenAIModel::Two => OpenAIModel::One,
         }
     }
 }
