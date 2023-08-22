@@ -5098,47 +5098,62 @@ impl Project {
             ))
             .detach();
 
-        let buffers_rx = self.read_open_buffers_yeet(matching_paths_rx, cx);
+        let mut buffers_rx = self.read_open_buffers_yeet(matching_paths_rx, cx);
 
         let background = cx.background().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
         cx.background()
             .spawn(async move {
+                let mut buffers = vec![];
+                while let Some(entry) = buffers_rx.next().await {
+                    buffers.push(entry);
+                }
+                buffers.sort_by_key(|(buffer, snapshot)| snapshot.file().map(move |file| file.path()).cloned());
+
                 let query = &query;
+                let paths_per_worker = (buffers.len() + workers - 1) / workers;
+                if paths_per_worker == 0 {
+                    return;
+                }
                 background
                     .scoped(|scope| {
-                        for _ in 0..workers {
-                            let mut buffers_rx = buffers_rx.clone();
+                        let mut chunks = buffers.chunks(paths_per_worker);
+                        for worker_id in 0..workers {
+                            let chunk_for_worker = chunks.next();
                             let result_tx = result_tx.clone();
-                            scope.spawn(async move {
-                                while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    let buffer_matches = if query.file_matches(
-                                        snapshot.file().map(|file| file.path().as_ref()),
-                                    ) {
-                                        query
-                                            .search(snapshot.as_rope())
-                                            .await
-                                            .iter()
-                                            .map(|range| {
-                                                snapshot.anchor_before(range.start)
-                                                    ..snapshot.anchor_after(range.end)
-                                            })
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
-                                    if !buffer_matches.is_empty() {
-                                        if result_tx
-                                            .send((buffer.clone(), buffer_matches))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
+                            if let Some(chunk) = chunk_for_worker {
+                                scope.spawn(async move {
+                                    for (buffer, snapshot) in chunk {
+                                        let buffer_matches = if query.file_matches(
+                                            snapshot.file().map(|file| file.path().as_ref()),
+                                        ) {
+                                            query
+                                                .search(snapshot.as_rope())
+                                                .await
+                                                .iter()
+                                                .map(|range| {
+                                                    snapshot.anchor_before(range.start)
+                                                        ..snapshot.anchor_after(range.end)
+                                                })
+                                                .collect()
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        if !buffer_matches.is_empty() {
+                                            if result_tx
+                                                .send((buffer.clone(), buffer_matches))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                            // worker_matched_buffers.insert(buffer.clone(), buffer_matches);
                                         }
-                                        // worker_matched_buffers.insert(buffer.clone(), buffer_matches);
                                     }
-                                }
-                            });
+
+
+                                });
+                            }
                         }
                     })
                     .await;
@@ -5168,12 +5183,6 @@ impl Project {
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;
-
-                    // Regex crate uses a thread-safe scratch space pool, which is lock-free for an "owner" thread - the first
-                    // thread that ran a match against a given regex.
-                    // By cloning here instead of taking a reference, we're avoiding locking against a mutex within `regex` itself.
-                    // https://github.com/rust-lang/regex/issues/934
-                    let query = query.clone();
 
                     scope.spawn(async move {
                         let mut snapshot_start_ix = 0;
@@ -5318,7 +5327,11 @@ impl Project {
         cx.spawn(|this, cx| async move {
             for buffer in &open_buffers {
                 let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                buffers_tx.send((buffer.clone(), snapshot)).await?;
+                if snapshot.file().is_none() {
+                    // Only enqueue files without storage on filesystem.
+                    buffers_tx.send((buffer.clone(), snapshot)).await.log_err();
+                }
+
             }
 
             let open_buffers = Rc::new(RefCell::new(open_buffers));
@@ -5326,7 +5339,6 @@ impl Project {
                 if buffers_tx.is_closed() {
                     break;
                 }
-
                 let this = this.clone();
                 let open_buffers = open_buffers.clone();
                 let buffers_tx = buffers_tx.clone();
@@ -5338,7 +5350,7 @@ impl Project {
                     {
                         if open_buffers.borrow_mut().insert(buffer.clone()) {
                             let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            buffers_tx.send((buffer, snapshot)).await?;
+                            buffers_tx.send((buffer, snapshot)).await.log_err();
                         }
                     }
 
@@ -5347,10 +5359,8 @@ impl Project {
                 .detach();
             }
 
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
 
+        }).detach();
         buffers_rx
     }
 
