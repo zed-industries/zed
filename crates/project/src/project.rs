@@ -5191,8 +5191,10 @@ impl Project {
                                     }
                                     current_index += 1;
                                 }
+                                if current_index == buffers_len {
+                                    break;
+                                }
                             }
-
                         });
                     })
                     .await;
