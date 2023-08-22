@@ -1,4 +1,4 @@
-use crate::db::BufferId;
+use crate::db::{BufferId, ChannelId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -7,6 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: BufferId,
     pub epoch: i32,
+    pub channel_id: ChannelId,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -15,6 +16,14 @@ pub enum Relation {
     Operations,
     #[sea_orm(has_many = "super::buffer_snapshot::Entity")]
     Snapshots,
+    #[sea_orm(
+        belongs_to = "super::channel::Entity",
+        from = "Column::ChannelId",
+        to = "super::channel::Column::Id"
+    )]
+    Channel,
+    #[sea_orm(has_many = "super::channel_buffer_collaborator::Entity")]
+    Collaborators,
 }
 
 impl Related<super::buffer_operation::Entity> for Entity {
@@ -26,6 +35,18 @@ impl Related<super::buffer_operation::Entity> for Entity {
 impl Related<super::buffer_snapshot::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Snapshots.def()
+    }
+}
+
+impl Related<super::channel::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Channel.def()
+    }
+}
+
+impl Related<super::channel_buffer_collaborator::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Collaborators.def()
     }
 }
 

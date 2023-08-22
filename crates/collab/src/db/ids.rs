@@ -124,3 +124,4 @@ id_type!(ReplicaId);
 id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
+id_type!(ChannelBufferCollaboratorId);

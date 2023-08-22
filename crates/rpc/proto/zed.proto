@@ -143,8 +143,10 @@ message Envelope {
         SetChannelMemberAdmin set_channel_member_admin = 129;
         RenameChannel rename_channel = 130;
 
-        GetChannelBuffer get_channel_buffer = 131;
-        GetChannelBufferResponse get_channel_buffer_response = 132;
+        OpenChannelBuffer open_channel_buffer = 131;
+        OpenChannelBufferResponse open_channel_buffer_response = 132;
+        UpdateChannelBuffer update_channel_buffer = 133;
+        CloseChannelBuffer close_channel_buffer = 134;
     }
 }
 
@@ -539,6 +541,11 @@ message CreateBufferForPeer {
 
 message UpdateBuffer {
     uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated Operation operations = 3;
+}
+
+message UpdateChannelBuffer {
     uint64 buffer_id = 2;
     repeated Operation operations = 3;
 }
@@ -951,13 +958,18 @@ message RenameChannel {
     string name = 2;
 }
 
-message GetChannelBuffer {
+message OpenChannelBuffer {
     uint64 channel_id = 1;
 }
 
-message GetChannelBufferResponse {
-    string base_text = 1;
-    repeated Operation operations = 2;
+message OpenChannelBufferResponse {
+    uint64 buffer_id = 1;
+    string base_text = 2;
+    repeated Operation operations = 3;
+}
+
+message CloseChannelBuffer {
+    uint64 buffer_id = 1;
 }
 
 message RespondToChannelInvite {
@@ -1155,7 +1167,6 @@ enum GitStatus {
     Modified = 1;
     Conflict = 2;
 }
-
 
 message BufferState {
     uint64 id = 1;

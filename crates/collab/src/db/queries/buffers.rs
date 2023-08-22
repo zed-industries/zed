@@ -1,20 +1,12 @@
 use super::*;
 use prost::Message;
 
-pub struct Buffer {
+pub struct ChannelBuffer {
     pub base_text: String,
     pub operations: Vec<proto::Operation>,
 }
 
 impl Database {
-    pub async fn create_buffer(&self) -> Result<BufferId> {
-        self.transaction(|tx| async move {
-            let buffer = buffer::ActiveModel::new().insert(&*tx).await?;
-            Ok(buffer.id)
-        })
-        .await
-    }
-
     pub async fn update_buffer(
         &self,
         buffer_id: BufferId,
@@ -69,13 +61,65 @@ impl Database {
         .await
     }
 
-    pub async fn get_buffer(&self, id: BufferId) -> Result<Buffer> {
+    pub async fn join_buffer_for_channel(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        connection: ConnectionId,
+    ) -> Result<ChannelBuffer> {
         self.transaction(|tx| async move {
-            let buffer = buffer::Entity::find_by_id(id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such buffer"))?;
+            let tx = tx;
 
+            // Get or create buffer from channel
+            self.check_user_is_channel_member(channel_id, user_id, &tx)
+                .await?;
+
+            let buffer = channel::Model {
+                id: channel_id,
+                ..Default::default()
+            }
+            .find_related(buffer::Entity)
+            .one(&*tx)
+            .await?;
+
+            let buffer = if let Some(buffer) = buffer {
+                buffer
+            } else {
+                let buffer = buffer::ActiveModel {
+                    channel_id: ActiveValue::Set(channel_id),
+                    ..Default::default()
+                }
+                .insert(&*tx)
+                .await?;
+                buffer
+            };
+
+            // Join the collaborators
+            let collaborators = buffer
+                .find_related(channel_buffer_collaborator::Entity)
+                .all(&*tx)
+                .await?;
+            let replica_ids = collaborators
+                .iter()
+                .map(|c| c.replica_id)
+                .collect::<HashSet<_>>();
+            let mut replica_id = ReplicaId(0);
+            while replica_ids.contains(&replica_id) {
+                replica_id.0 += 1;
+            }
+            channel_buffer_collaborator::ActiveModel {
+                buffer_id: ActiveValue::Set(buffer.id),
+                connection_id: ActiveValue::Set(connection.id as i32),
+                connection_server_id: ActiveValue::Set(ServerId(connection.owner_id as i32)),
+                user_id: ActiveValue::Set(user_id),
+                replica_id: ActiveValue::Set(replica_id),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+
+            // Assemble the buffer state
+            let id = buffer.id;
             let base_text = if buffer.epoch > 0 {
                 buffer_snapshot::Entity::find()
                     .filter(
@@ -128,10 +172,41 @@ impl Database {
                 })
             }
 
-            Ok(Buffer {
+            Ok(ChannelBuffer {
                 base_text,
                 operations,
             })
+        })
+        .await
+    }
+
+    pub async fn get_buffer_collaborators(&self, buffer: BufferId) -> Result<()> {
+        todo!()
+    }
+
+    pub async fn leave_buffer(&self, buffer: BufferId, user: UserId) -> Result<()> {
+        self.transaction(|tx| async move {
+            //TODO
+            // let tx = tx;
+            // let channel = channel::Entity::find_by_id(channel_id)
+            //     .one(&*tx)
+            //     .await?
+            //     .ok_or_else(|| anyhow!("invalid channel"))?;
+
+            // if let Some(id) = channel.main_buffer_id {
+            //     return Ok(id);
+            // } else {
+            //     let buffer = buffer::ActiveModel::new().insert(&*tx).await?;
+            //     channel::ActiveModel {
+            //         id: ActiveValue::Unchanged(channel_id),
+            //         main_buffer_id: ActiveValue::Set(Some(buffer.id)),
+            //         ..Default::default()
+            //     }
+            //     .update(&*tx)
+            //     .await?;
+            //     Ok(buffer.id)
+            // }
+            Ok(())
         })
         .await
     }

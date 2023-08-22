@@ -189,8 +189,7 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now,
-    "main_buffer_id" INTEGER REFERENCES buffers (id)
+    "created_at" TIMESTAMP NOT NULL DEFAULT now
 );
 
 CREATE TABLE "channel_paths" (
@@ -212,8 +211,11 @@ CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channe
 
 CREATE TABLE "buffers" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
     "epoch" INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX "index_buffers_on_channel_id" ON "buffers" ("channel_id");
 
 CREATE TABLE "buffer_operations" (
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
@@ -233,3 +235,18 @@ CREATE TABLE "buffer_snapshots" (
     "text" TEXT NOT NULL,
     PRIMARY KEY(buffer_id, epoch)
 );
+
+CREATE TABLE "channel_buffer_collaborators" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "connection_id" INTEGER NOT NULL,
+    "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "replica_id" INTEGER NOT NULL
+);
+
+CREATE INDEX "index_channel_buffer_collaborators_on_buffer_id" ON "channel_buffer_collaborators" ("buffer_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_buffer_id_and_replica_id" ON "channel_buffer_collaborators" ("buffer_id", "replica_id");
+CREATE INDEX "index_channel_buffer_collaborators_on_connection_server_id" ON "channel_buffer_collaborators" ("connection_server_id");
+CREATE INDEX "index_channel_buffer_collaborators_on_connection_id" ON "channel_buffer_collaborators" ("connection_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_buffer_id_connection_id_and_server_id" ON "channel_buffer_collaborators" ("buffer_id", "connection_id", "connection_server_id");

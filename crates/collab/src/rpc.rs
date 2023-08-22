@@ -2,7 +2,10 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{
+        self, BufferId, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User,
+        UserId,
+    },
     executor::Executor,
     AppState, Result,
 };
@@ -35,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, GetChannelBufferResponse,
-        LiveKitConnectionInfo, RequestMessage,
+        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
+        OpenChannelBufferResponse, RequestMessage,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -248,7 +251,9 @@ impl Server {
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_admin)
             .add_request_handler(rename_channel)
-            .add_request_handler(get_channel_buffer)
+            .add_request_handler(open_channel_buffer)
+            .add_request_handler(close_channel_buffer)
+            .add_message_handler(update_channel_buffer)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -2479,9 +2484,9 @@ async fn join_channel(
     Ok(())
 }
 
-async fn get_channel_buffer(
-    request: proto::GetChannelBuffer,
-    response: Response<proto::GetChannelBuffer>,
+async fn open_channel_buffer(
+    request: proto::OpenChannelBuffer,
+    response: Response<proto::OpenChannelBuffer>,
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
@@ -2489,12 +2494,41 @@ async fn get_channel_buffer(
 
     let buffer_id = db.get_or_create_buffer_for_channel(channel_id).await?;
 
-    let buffer = db.get_buffer(buffer_id).await?;
+    // TODO: join channel_buffer
 
-    response.send(GetChannelBufferResponse {
+    let buffer = db.open_buffer(buffer_id).await?;
+
+    response.send(OpenChannelBufferResponse {
+        buffer_id: buffer_id.to_proto(),
         base_text: buffer.base_text,
         operations: buffer.operations,
     })?;
+
+    Ok(())
+}
+
+async fn close_channel_buffer(
+    request: proto::CloseChannelBuffer,
+    response: Response<proto::CloseChannelBuffer>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let buffer_id = BufferId::from_proto(request.buffer_id);
+
+    // TODO: close channel buffer here
+    //
+    response.send(Ack {})?;
+
+    Ok(())
+}
+
+async fn update_channel_buffer(
+    request: proto::UpdateChannelBuffer,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+
+    // TODO: Broadcast to buffer members
 
     Ok(())
 }

@@ -249,8 +249,10 @@ messages!(
     (GetPrivateUserInfoResponse, Foreground),
     (GetChannelMembers, Foreground),
     (GetChannelMembersResponse, Foreground),
-    (GetChannelBuffer, Foreground),
-    (GetChannelBufferResponse, Foreground)
+    (OpenChannelBuffer, Foreground),
+    (OpenChannelBufferResponse, Foreground),
+    (CloseChannelBuffer, Background),
+    (UpdateChannelBuffer, Foreground)
 );
 
 request_messages!(
@@ -317,7 +319,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
-    (GetChannelBuffer, GetChannelBufferResponse)
+    (OpenChannelBuffer, OpenChannelBufferResponse),
+    (CloseChannelBuffer, Ack)
 );
 
 entity_messages!(
@@ -372,6 +375,8 @@ entity_messages!(
     UpdateWorktreeSettings,
     UpdateDiffBase
 );
+
+entity_messages!(buffer_id, UpdateChannelBuffer);
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;

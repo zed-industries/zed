@@ -19,45 +19,39 @@ async fn test_channel_buffers(
         .make_channel("zed", (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
-    let a_document =
-        cx_a.add_model(|cx| ChannelBuffer::for_channel(zed_id, client_a.client().to_owned(), cx));
-    let channel_buffer_a = a_document
-        .update(cx_a, |doc, cx| doc.buffer(cx))
+    let channel_buffer_a = cx_a
+        .update(|cx| ChannelBuffer::for_channel(zed_id, client_a.client().to_owned(), cx))
         .await
         .unwrap();
 
-    edit_channel_buffer(&channel_buffer_a, cx_a, [(0..0, "hello world")]);
-    edit_channel_buffer(&channel_buffer_a, cx_a, [(5..5, ", cruel")]);
-    edit_channel_buffer(&channel_buffer_a, cx_a, [(0..5, "goodbye")]);
-    undo_channel_buffer(&channel_buffer_a, cx_a);
+    let buffer_a = channel_buffer_a.read_with(cx_a, |buffer, _| buffer.buffer());
 
-    assert_eq!(
-        channel_buffer_text(&channel_buffer_a, cx_a),
-        "hello, cruel world"
-    );
+    edit_channel_buffer(&buffer_a, cx_a, [(0..0, "hello world")]);
+    edit_channel_buffer(&buffer_a, cx_a, [(5..5, ", cruel")]);
+    edit_channel_buffer(&buffer_a, cx_a, [(0..5, "goodbye")]);
+    undo_channel_buffer(&buffer_a, cx_a);
 
-    let b_document =
-        cx_b.add_model(|cx| ChannelBuffer::for_channel(zed_id, client_b.client().to_owned(), cx));
-    let channel_buffer_b = b_document
-        .update(cx_b, |doc, cx| doc.buffer(cx))
+    assert_eq!(channel_buffer_text(&buffer_a, cx_a), "hello, cruel world");
+
+    let channel_buffer_b = cx_b
+        .update(|cx| ChannelBuffer::for_channel(zed_id, client_b.client().to_owned(), cx))
         .await
         .unwrap();
 
-    assert_eq!(
-        channel_buffer_text(&channel_buffer_b, cx_b),
-        "hello, cruel world"
-    );
+    let buffer_b = channel_buffer_b.read_with(cx_b, |buffer, _| buffer.buffer());
 
-    edit_channel_buffer(&channel_buffer_b, cx_b, [(7..12, "beautiful")]);
+    assert_eq!(channel_buffer_text(&buffer_b, cx_b), "hello, cruel world");
+
+    edit_channel_buffer(&buffer_b, cx_b, [(7..12, "beautiful")]);
 
     deterministic.run_until_parked();
 
     assert_eq!(
-        channel_buffer_text(&channel_buffer_a, cx_a),
+        channel_buffer_text(&buffer_a, cx_a),
         "hello, beautiful world"
     );
     assert_eq!(
-        channel_buffer_text(&channel_buffer_b, cx_b),
+        channel_buffer_text(&buffer_b, cx_b),
         "hello, beautiful world"
     );
 }

@@ -6,7 +6,60 @@ use text::Buffer;
 test_both_dbs!(test_buffers, test_buffers_postgres, test_buffers_sqlite);
 
 async fn test_buffers(db: &Arc<Database>) {
-    let buffer_id = db.create_buffer().await.unwrap();
+    // Prep database test info
+    let a_id = db
+        .create_user(
+            "user_a@example.com",
+            false,
+            NewUserParams {
+                github_login: "user_a".into(),
+                github_user_id: 101,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    let b_id = db
+        .create_user(
+            "user_b@example.com",
+            false,
+            NewUserParams {
+                github_login: "user_b".into(),
+                github_user_id: 102,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    // This user will not be a part of the channel
+    let c_id = db
+        .create_user(
+            "user_b@example.com",
+            false,
+            NewUserParams {
+                github_login: "user_b".into(),
+                github_user_id: 102,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+
+    db.invite_channel_member(zed_id, b_id, a_id, false)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(zed_id, b_id, true)
+        .await
+        .unwrap();
+
+    // TODO: Join buffer
+    let buffer_id = db.get_or_create_buffer_for_channel(zed_id);
 
     let mut buffer = Buffer::new(0, 0, "".to_string());
     let mut operations = Vec::new();
@@ -23,7 +76,7 @@ async fn test_buffers(db: &Arc<Database>) {
 
     db.update_buffer(buffer_id, &operations).await.unwrap();
 
-    let buffer_data = db.get_buffer(buffer_id).await.unwrap();
+    let buffer_data = db.open_buffer(buffer_id).await.unwrap();
 
     let mut buffer_2 = Buffer::new(0, 0, buffer_data.base_text);
     buffer_2
