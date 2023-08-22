@@ -37,6 +37,15 @@ pub struct ContainerStyle {
     pub cursor: Option<CursorStyle>,
 }
 
+impl ContainerStyle {
+    pub fn fill(color: Color) -> Self {
+        Self {
+            background_color: Some(color),
+            ..Default::default()
+        }
+    }
+}
+
 pub struct Container<V> {
     child: AnyElement<V>,
     style: ContainerStyle,

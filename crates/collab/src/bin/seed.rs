@@ -64,9 +64,9 @@ async fn main() {
             .expect("failed to fetch user")
             .is_none()
         {
-            if let Some(email) = &github_user.email {
+            if admin {
                 db.create_user(
-                    email,
+                    &format!("{}@zed.dev", github_user.login),
                     admin,
                     db::NewUserParams {
                         github_login: github_user.login,
@@ -76,15 +76,11 @@ async fn main() {
                 )
                 .await
                 .expect("failed to insert user");
-            } else if admin {
-                db.create_user(
-                    &format!("{}@zed.dev", github_user.login),
-                    admin,
-                    db::NewUserParams {
-                        github_login: github_user.login,
-                        github_user_id: github_user.id,
-                        invite_count: 5,
-                    },
+            } else {
+                db.get_or_create_user_by_github_account(
+                    &github_user.login,
+                    Some(github_user.id),
+                    github_user.email.as_deref(),
                 )
                 .await
                 .expect("failed to insert user");

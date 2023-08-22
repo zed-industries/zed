@@ -82,7 +82,7 @@ impl View for Breadcrumbs {
                 .into_any();
         }
 
-        MouseEventHandler::<Breadcrumbs, Breadcrumbs>::new(0, cx, |state, _| {
+        MouseEventHandler::new::<Breadcrumbs, _>(0, cx, |state, _| {
             let style = style.style_for(state);
             crumbs.with_style(style.container)
         })

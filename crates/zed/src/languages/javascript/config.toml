@@ -1,5 +1,5 @@
 name = "JavaScript"
-path_suffixes = ["js", "jsx", "mjs"]
+path_suffixes = ["js", "jsx", "mjs", "cjs"]
 first_line_pattern = '^#!.*\bnode\b'
 line_comment = "// "
 autoclose_before = ";:.,=}])>"

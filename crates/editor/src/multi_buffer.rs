@@ -1565,6 +1565,25 @@ impl MultiBuffer {
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
+    pub fn build_multi<const COUNT: usize>(
+        excerpts: [(&str, Vec<Range<Point>>); COUNT],
+        cx: &mut gpui::AppContext,
+    ) -> ModelHandle<Self> {
+        let multi = cx.add_model(|_| Self::new(0));
+        for (text, ranges) in excerpts {
+            let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+            let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
+                context: range,
+                primary: None,
+            });
+            multi.update(cx, |multi, cx| {
+                multi.push_excerpts(buffer, excerpt_ranges, cx)
+            });
+        }
+
+        multi
+    }
+
     pub fn build_from_buffer(
         buffer: ModelHandle<Buffer>,
         cx: &mut gpui::AppContext,
@@ -1846,13 +1865,16 @@ impl MultiBufferSnapshot {
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
+
+        let language = self.language_at(start);
+        let kind = |c| char_kind(language, c);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(char_kind),
-            next_chars.peek().copied().map(char_kind),
+            prev_chars.peek().copied().map(kind),
+            next_chars.peek().copied().map(kind),
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -1860,7 +1882,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;

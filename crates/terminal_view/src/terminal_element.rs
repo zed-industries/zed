@@ -400,7 +400,8 @@ impl TerminalElement {
         region = region
             // Start selections
             .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
-                cx.focus_parent();
+                let terminal_view = cx.handle();
+                cx.focus(&terminal_view);
                 v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
                 if let Some(conn_handle) = connection.upgrade(cx) {
                     conn_handle.update(cx, |terminal, cx| {

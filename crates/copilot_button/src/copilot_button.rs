@@ -62,7 +62,7 @@ impl View for CopilotButton {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self, _>::new(0, cx, {
+                MouseEventHandler::new::<Self, _>(0, cx, {
                     let theme = theme.clone();
                     let status = status.clone();
                     move |state, _cx| {

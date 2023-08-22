@@ -202,7 +202,7 @@ impl<V: 'static> DragAndDrop<V> {
                         let position = (position - region_offset).round();
                         Some(
                             Overlay::new(
-                                MouseEventHandler::<DraggedElementHandler, V>::new(
+                                MouseEventHandler::new::<DraggedElementHandler, _>(
                                     0,
                                     cx,
                                     |_, cx| render(payload, cx),
@@ -235,7 +235,7 @@ impl<V: 'static> DragAndDrop<V> {
                     }
 
                     State::Canceled => Some(
-                        MouseEventHandler::<DraggedElementHandler, V>::new(0, cx, |_, _| {
+                        MouseEventHandler::new::<DraggedElementHandler, _>(0, cx, |_, _| {
                             Empty::new().constrained().with_width(0.).with_height(0.)
                         })
                         .on_up(MouseButton::Left, |_, _, cx| {
@@ -301,7 +301,7 @@ pub trait Draggable<V> {
         Self: Sized;
 }
 
-impl<Tag, V: 'static> Draggable<V> for MouseEventHandler<Tag, V> {
+impl<V: 'static> Draggable<V> for MouseEventHandler<V> {
     fn as_draggable<D: View, P: Any>(
         self,
         payload: P,

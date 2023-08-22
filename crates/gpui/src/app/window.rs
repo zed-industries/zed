@@ -507,7 +507,7 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
-        self.dispatch_to_interactive_regions(&event);
+        self.dispatch_to_new_event_handlers(&event);
 
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
@@ -886,9 +886,8 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
-    fn dispatch_to_interactive_regions(&mut self, event: &Event) {
+    fn dispatch_to_new_event_handlers(&mut self, event: &Event) {
         if let Some(mouse_event) = event.mouse_event() {
-            let mouse_position = event.position().expect("mouse events must have a position");
             let event_handlers = self.window.take_event_handlers();
             for event_handler in event_handlers.iter().rev() {
                 if event_handler.event_type == mouse_event.type_id() {

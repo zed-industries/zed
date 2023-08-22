@@ -2145,27 +2145,46 @@ impl BufferSnapshot {
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
-        let mut range = 0..self.len();
-        let mut scope = self.language.clone().map(|language| LanguageScope {
-            language,
-            override_id: None,
-        });
+        let mut scope = None;
+        let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
             let mut cursor = layer.node().walk();
-            while cursor.goto_first_child_for_byte(offset).is_some() {}
-            let node_range = cursor.node().byte_range();
-            if node_range.to_inclusive().contains(&offset) && node_range.len() < range.len() {
-                range = node_range;
-                scope = Some(LanguageScope {
-                    language: layer.language.clone(),
-                    override_id: layer.override_id(offset, &self.text),
-                });
+
+            let mut range = None;
+            loop {
+                let child_range = cursor.node().byte_range();
+                if !child_range.to_inclusive().contains(&offset) {
+                    break;
+                }
+
+                range = Some(child_range);
+                if cursor.goto_first_child_for_byte(offset).is_none() {
+                    break;
+                }
+            }
+
+            if let Some(range) = range {
+                if smallest_range
+                    .as_ref()
+                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
+                {
+                    smallest_range = Some(range);
+                    scope = Some(LanguageScope {
+                        language: layer.language.clone(),
+                        override_id: layer.override_id(offset, &self.text),
+                    });
+                }
             }
         }
 
-        scope
+        scope.or_else(|| {
+            self.language.clone().map(|language| LanguageScope {
+                language,
+                override_id: None,
+            })
+        })
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
@@ -2173,13 +2192,16 @@ impl BufferSnapshot {
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
+
+        let language = self.language_at(start);
+        let kind = |c| char_kind(language, c);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(char_kind),
-            next_chars.peek().copied().map(char_kind),
+            prev_chars.peek().copied().map(kind),
+            next_chars.peek().copied().map(kind),
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2187,7 +2209,7 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -2984,14 +3006,18 @@ pub fn contiguous_ranges(
     })
 }
 
-pub fn char_kind(c: char) -> CharKind {
+pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
     if c.is_whitespace() {
-        CharKind::Whitespace
+        return CharKind::Whitespace;
     } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
+        return CharKind::Word;
     }
+    if let Some(language) = language {
+        if language.config.word_characters.contains(&c) {
+            return CharKind::Word;
+        }
+    }
+    CharKind::Punctuation
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines

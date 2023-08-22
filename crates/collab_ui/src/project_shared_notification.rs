@@ -1,10 +1,11 @@
+use crate::notification_window_options;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{
     elements::*,
-    geometry::{rect::RectF, vector::vec2f},
-    platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
+    geometry::vector::vec2f,
+    platform::{CursorStyle, MouseButton},
     AppContext, Entity, View, ViewContext,
 };
 use std::sync::{Arc, Weak};
@@ -20,35 +21,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             project_id,
             worktree_root_names,
         } => {
-            const PADDING: f32 = 16.;
             let theme = &theme::current(cx).project_shared_notification;
             let window_size = vec2f(theme.window_width, theme.window_height);
 
             for screen in cx.platform().screens() {
-                let screen_bounds = screen.bounds();
-                let window = cx.add_window(
-                    WindowOptions {
-                        bounds: WindowBounds::Fixed(RectF::new(
-                            screen_bounds.upper_right() - vec2f(PADDING + window_size.x(), PADDING),
-                            window_size,
-                        )),
-                        titlebar: None,
-                        center: false,
-                        focus: false,
-                        show: true,
-                        kind: WindowKind::PopUp,
-                        is_movable: false,
-                        screen: Some(screen),
-                    },
-                    |_| {
+                let window =
+                    cx.add_window(notification_window_options(screen, window_size), |_| {
                         ProjectSharedNotification::new(
                             owner.clone(),
                             *project_id,
                             worktree_root_names.clone(),
                             app_state.clone(),
                         )
-                    },
-                );
+                    });
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
@@ -170,7 +155,7 @@ impl ProjectSharedNotification {
         let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Open, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
@@ -182,7 +167,7 @@ impl ProjectSharedNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, _| {
+                MouseEventHandler::new::<Dismiss, _>(0, cx, |_, _| {
                     let theme = &theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()

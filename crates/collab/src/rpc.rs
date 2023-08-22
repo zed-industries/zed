@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{self, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -34,7 +34,10 @@ use futures::{
 use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
-    proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
+    proto::{
+        self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
+        RequestMessage,
+    },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
 use serde::{Serialize, Serializer};
@@ -239,6 +242,15 @@ impl Server {
             .add_request_handler(request_contact)
             .add_request_handler(remove_contact)
             .add_request_handler(respond_to_contact_request)
+            .add_request_handler(create_channel)
+            .add_request_handler(remove_channel)
+            .add_request_handler(invite_channel_member)
+            .add_request_handler(remove_channel_member)
+            .add_request_handler(set_channel_member_admin)
+            .add_request_handler(rename_channel)
+            .add_request_handler(get_channel_members)
+            .add_request_handler(respond_to_channel_invite)
+            .add_request_handler(join_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -287,6 +299,15 @@ impl Server {
                                 "refreshed room"
                             );
                             room_updated(&refreshed_room.room, &peer);
+                            if let Some(channel_id) = refreshed_room.channel_id {
+                                channel_updated(
+                                    channel_id,
+                                    &refreshed_room.room,
+                                    &refreshed_room.channel_members,
+                                    &peer,
+                                    &*pool.lock(),
+                                );
+                            }
                             contacts_to_update
                                 .extend(refreshed_room.stale_participant_user_ids.iter().copied());
                             contacts_to_update
@@ -508,15 +529,21 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, invite_code) = future::try_join(
+            let (contacts, invite_code, channels_for_user, channel_invites) = future::try_join4(
                 this.app_state.db.get_contacts(user_id),
-                this.app_state.db.get_invite_code_for_user(user_id)
+                this.app_state.db.get_invite_code_for_user(user_id),
+                this.app_state.db.get_channels_for_user(user_id),
+                this.app_state.db.get_channel_invites_for_user(user_id)
             ).await?;
 
             {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
+                this.peer.send(connection_id, build_initial_channels_update(
+                    channels_for_user,
+                    channel_invites
+                ))?;
 
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
@@ -857,42 +884,41 @@ async fn create_room(
     session: Session,
 ) -> Result<()> {
     let live_kit_room = nanoid::nanoid!(30);
-    let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
-        if let Some(_) = live_kit
-            .create_room(live_kit_room.clone())
-            .await
-            .trace_err()
-        {
-            if let Some(token) = live_kit
+
+    let live_kit_connection_info = {
+        let live_kit_room = live_kit_room.clone();
+        let live_kit = session.live_kit_client.as_ref();
+
+        util::async_iife!({
+            let live_kit = live_kit?;
+
+            live_kit
+                .create_room(live_kit_room.clone())
+                .await
+                .trace_err()?;
+
+            let token = live_kit
                 .room_token(&live_kit_room, &session.user_id.to_string())
-                .trace_err()
-            {
-                Some(proto::LiveKitConnectionInfo {
-                    server_url: live_kit.url().into(),
-                    token,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+                .trace_err()?;
 
-    {
-        let room = session
-            .db()
-            .await
-            .create_room(session.user_id, session.connection_id, &live_kit_room)
-            .await?;
-
-        response.send(proto::CreateRoomResponse {
-            room: Some(room.clone()),
-            live_kit_connection_info,
-        })?;
+            Some(proto::LiveKitConnectionInfo {
+                server_url: live_kit.url().into(),
+                token,
+            })
+        })
     }
+    .await;
+
+    let room = session
+        .db()
+        .await
+        .create_room(session.user_id, session.connection_id, &live_kit_room)
+        .await?;
+
+    response.send(proto::CreateRoomResponse {
+        room: Some(room.clone()),
+        live_kit_connection_info,
+    })?;
 
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
@@ -904,15 +930,25 @@ async fn join_room(
     session: Session,
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.id);
-    let room = {
+    let joined_room = {
         let room = session
             .db()
             .await
             .join_room(room_id, session.user_id, session.connection_id)
             .await?;
-        room_updated(&room, &session.peer);
-        room.clone()
+        room_updated(&room.room, &session.peer);
+        room.into_inner()
     };
+
+    if let Some(channel_id) = joined_room.channel_id {
+        channel_updated(
+            channel_id,
+            &joined_room.room,
+            &joined_room.channel_members,
+            &session.peer,
+            &*session.connection_pool().await,
+        )
+    }
 
     for connection_id in session
         .connection_pool()
@@ -932,7 +968,10 @@ async fn join_room(
 
     let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
         if let Some(token) = live_kit
-            .room_token(&room.live_kit_room, &session.user_id.to_string())
+            .room_token(
+                &joined_room.room.live_kit_room,
+                &session.user_id.to_string(),
+            )
             .trace_err()
         {
             Some(proto::LiveKitConnectionInfo {
@@ -947,7 +986,8 @@ async fn join_room(
     };
 
     response.send(proto::JoinRoomResponse {
-        room: Some(room),
+        room: Some(joined_room.room),
+        channel_id: joined_room.channel_id.map(|id| id.to_proto()),
         live_kit_connection_info,
     })?;
 
@@ -960,6 +1000,9 @@ async fn rejoin_room(
     response: Response<proto::RejoinRoom>,
     session: Session,
 ) -> Result<()> {
+    let room;
+    let channel_id;
+    let channel_members;
     {
         let mut rejoined_room = session
             .db()
@@ -1121,6 +1164,22 @@ async fn rejoin_room(
                 )?;
             }
         }
+
+        let rejoined_room = rejoined_room.into_inner();
+
+        room = rejoined_room.room;
+        channel_id = rejoined_room.channel_id;
+        channel_members = rejoined_room.channel_members;
+    }
+
+    if let Some(channel_id) = channel_id {
+        channel_updated(
+            channel_id,
+            &room,
+            &channel_members,
+            &session.peer,
+            &*session.connection_pool().await,
+        );
     }
 
     update_user_contacts(session.user_id, &session).await?;
@@ -1282,11 +1341,12 @@ async fn update_participant_location(
     let location = request
         .location
         .ok_or_else(|| anyhow!("invalid location"))?;
-    let room = session
-        .db()
-        .await
+
+    let db = session.db().await;
+    let room = db
         .update_room_participant_location(room_id, session.connection_id, location)
         .await?;
+
     room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
     Ok(())
@@ -2084,6 +2144,340 @@ async fn remove_contact(
     Ok(())
 }
 
+async fn create_channel(
+    request: proto::CreateChannel,
+    response: Response<proto::CreateChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
+
+    if let Some(live_kit) = session.live_kit_client.as_ref() {
+        live_kit.create_room(live_kit_room.clone()).await?;
+    }
+
+    let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
+    let id = db
+        .create_channel(&request.name, parent_id, &live_kit_room, session.user_id)
+        .await?;
+
+    let channel = proto::Channel {
+        id: id.to_proto(),
+        name: request.name,
+        parent_id: request.parent_id,
+    };
+
+    response.send(proto::ChannelResponse {
+        channel: Some(channel.clone()),
+    })?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(channel);
+
+    let user_ids_to_notify = if let Some(parent_id) = parent_id {
+        db.get_channel_members(parent_id).await?
+    } else {
+        vec![session.user_id]
+    };
+
+    let connection_pool = session.connection_pool().await;
+    for user_id in user_ids_to_notify {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
+            let mut update = update.clone();
+            if user_id == session.user_id {
+                update.channel_permissions.push(proto::ChannelPermission {
+                    channel_id: id.to_proto(),
+                    is_admin: true,
+                });
+            }
+            session.peer.send(connection_id, update)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn remove_channel(
+    request: proto::RemoveChannel,
+    response: Response<proto::RemoveChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+
+    let channel_id = request.channel_id;
+    let (removed_channels, member_ids) = db
+        .remove_channel(ChannelId::from_proto(channel_id), session.user_id)
+        .await?;
+    response.send(proto::Ack {})?;
+
+    // Notify members of removed channels
+    let mut update = proto::UpdateChannels::default();
+    update
+        .remove_channels
+        .extend(removed_channels.into_iter().map(|id| id.to_proto()));
+
+    let connection_pool = session.connection_pool().await;
+    for member_id in member_ids {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn invite_channel_member(
+    request: proto::InviteChannelMember,
+    response: Response<proto::InviteChannelMember>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let invitee_id = UserId::from_proto(request.user_id);
+    db.invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
+        .await?;
+
+    let (channel, _) = db
+        .get_channel(channel_id, session.user_id)
+        .await?
+        .ok_or_else(|| anyhow!("channel not found"))?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channel_invitations.push(proto::Channel {
+        id: channel.id.to_proto(),
+        name: channel.name,
+        parent_id: None,
+    });
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(invitee_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn remove_channel_member(
+    request: proto::RemoveChannelMember,
+    response: Response<proto::RemoveChannelMember>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let member_id = UserId::from_proto(request.user_id);
+
+    db.remove_channel_member(channel_id, member_id, session.user_id)
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.remove_channels.push(channel_id.to_proto());
+
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(member_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn set_channel_member_admin(
+    request: proto::SetChannelMemberAdmin,
+    response: Response<proto::SetChannelMemberAdmin>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let member_id = UserId::from_proto(request.user_id);
+    db.set_channel_member_admin(channel_id, session.user_id, member_id, request.admin)
+        .await?;
+
+    let (channel, has_accepted) = db
+        .get_channel(channel_id, member_id)
+        .await?
+        .ok_or_else(|| anyhow!("channel not found"))?;
+
+    let mut update = proto::UpdateChannels::default();
+    if has_accepted {
+        update.channel_permissions.push(proto::ChannelPermission {
+            channel_id: channel.id.to_proto(),
+            is_admin: request.admin,
+        });
+    }
+
+    for connection_id in session
+        .connection_pool()
+        .await
+        .user_connection_ids(member_id)
+    {
+        session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn rename_channel(
+    request: proto::RenameChannel,
+    response: Response<proto::RenameChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let new_name = db
+        .rename_channel(channel_id, session.user_id, &request.name)
+        .await?;
+
+    let channel = proto::Channel {
+        id: request.channel_id,
+        name: new_name,
+        parent_id: None,
+    };
+    response.send(proto::ChannelResponse {
+        channel: Some(channel.clone()),
+    })?;
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(channel);
+
+    let member_ids = db.get_channel_members(channel_id).await?;
+
+    let connection_pool = session.connection_pool().await;
+    for member_id in member_ids {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn get_channel_members(
+    request: proto::GetChannelMembers,
+    response: Response<proto::GetChannelMembers>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let members = db
+        .get_channel_member_details(channel_id, session.user_id)
+        .await?;
+    response.send(proto::GetChannelMembersResponse { members })?;
+    Ok(())
+}
+
+async fn respond_to_channel_invite(
+    request: proto::RespondToChannelInvite,
+    response: Response<proto::RespondToChannelInvite>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update
+        .remove_channel_invitations
+        .push(channel_id.to_proto());
+    if request.accept {
+        let result = db.get_channels_for_user(session.user_id).await?;
+        update
+            .channels
+            .extend(result.channels.into_iter().map(|channel| proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name,
+                parent_id: channel.parent_id.map(ChannelId::to_proto),
+            }));
+        update
+            .channel_participants
+            .extend(
+                result
+                    .channel_participants
+                    .into_iter()
+                    .map(|(channel_id, user_ids)| proto::ChannelParticipants {
+                        channel_id: channel_id.to_proto(),
+                        participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
+                    }),
+            );
+        update
+            .channel_permissions
+            .extend(
+                result
+                    .channels_with_admin_privileges
+                    .into_iter()
+                    .map(|channel_id| proto::ChannelPermission {
+                        channel_id: channel_id.to_proto(),
+                        is_admin: true,
+                    }),
+            );
+    }
+    session.peer.send(session.connection_id, update)?;
+    response.send(proto::Ack {})?;
+
+    Ok(())
+}
+
+async fn join_channel(
+    request: proto::JoinChannel,
+    response: Response<proto::JoinChannel>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+
+    let joined_room = {
+        leave_room_for_session(&session).await?;
+        let db = session.db().await;
+
+        let room_id = db.room_id_for_channel(channel_id).await?;
+
+        let joined_room = db
+            .join_room(room_id, session.user_id, session.connection_id)
+            .await?;
+
+        let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
+            let token = live_kit
+                .room_token(
+                    &joined_room.room.live_kit_room,
+                    &session.user_id.to_string(),
+                )
+                .trace_err()?;
+
+            Some(LiveKitConnectionInfo {
+                server_url: live_kit.url().into(),
+                token,
+            })
+        });
+
+        response.send(proto::JoinRoomResponse {
+            room: Some(joined_room.room.clone()),
+            channel_id: joined_room.channel_id.map(|id| id.to_proto()),
+            live_kit_connection_info,
+        })?;
+
+        room_updated(&joined_room.room, &session.peer);
+
+        joined_room.into_inner()
+    };
+
+    channel_updated(
+        channel_id,
+        &joined_room.room,
+        &joined_room.channel_members,
+        &session.peer,
+        &*session.connection_pool().await,
+    );
+
+    update_user_contacts(session.user_id, &session).await?;
+
+    Ok(())
+}
+
 async fn update_diff_base(request: proto::UpdateDiffBase, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
@@ -2154,6 +2548,52 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     }
 }
 
+fn build_initial_channels_update(
+    channels: ChannelsForUser,
+    channel_invites: Vec<db::Channel>,
+) -> proto::UpdateChannels {
+    let mut update = proto::UpdateChannels::default();
+
+    for channel in channels.channels {
+        update.channels.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: channel.parent_id.map(|id| id.to_proto()),
+        });
+    }
+
+    for (channel_id, participants) in channels.channel_participants {
+        update
+            .channel_participants
+            .push(proto::ChannelParticipants {
+                channel_id: channel_id.to_proto(),
+                participant_user_ids: participants.into_iter().map(|id| id.to_proto()).collect(),
+            });
+    }
+
+    update
+        .channel_permissions
+        .extend(
+            channels
+                .channels_with_admin_privileges
+                .into_iter()
+                .map(|id| proto::ChannelPermission {
+                    channel_id: id.to_proto(),
+                    is_admin: true,
+                }),
+        );
+
+    for channel in channel_invites {
+        update.channel_invitations.push(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name,
+            parent_id: None,
+        });
+    }
+
+    update
+}
+
 fn build_initial_contacts_update(
     contacts: Vec<db::Contact>,
     pool: &ConnectionPool,
@@ -2218,8 +2658,42 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
     );
 }
 
+fn channel_updated(
+    channel_id: ChannelId,
+    room: &proto::Room,
+    channel_members: &[UserId],
+    peer: &Peer,
+    pool: &ConnectionPool,
+) {
+    let participants = room
+        .participants
+        .iter()
+        .map(|p| p.user_id)
+        .collect::<Vec<_>>();
+
+    broadcast(
+        None,
+        channel_members
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    channel_participants: vec![proto::ChannelParticipants {
+                        channel_id: channel_id.to_proto(),
+                        participant_user_ids: participants.clone(),
+                    }],
+                    ..Default::default()
+                },
+            )
+        },
+    );
+}
+
 async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> {
     let db = session.db().await;
+
     let contacts = db.get_contacts(user_id).await?;
     let busy = db.is_user_busy(user_id).await?;
 
@@ -2259,6 +2733,10 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let canceled_calls_to_user_ids;
     let live_kit_room;
     let delete_live_kit_room;
+    let room;
+    let channel_members;
+    let channel_id;
+
     if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
 
@@ -2266,13 +2744,27 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             project_left(project, session);
         }
 
-        room_updated(&left_room.room, &session.peer);
         room_id = RoomId::from_proto(left_room.room.id);
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
-        delete_live_kit_room = left_room.room.participants.is_empty();
+        delete_live_kit_room = left_room.deleted;
+        room = mem::take(&mut left_room.room);
+        channel_members = mem::take(&mut left_room.channel_members);
+        channel_id = left_room.channel_id;
+
+        room_updated(&room, &session.peer);
     } else {
         return Ok(());
+    }
+
+    if let Some(channel_id) = channel_id {
+        channel_updated(
+            channel_id,
+            &room,
+            &channel_members,
+            &session.peer,
+            &*session.connection_pool().await,
+        );
     }
 
     {

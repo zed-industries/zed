@@ -51,7 +51,7 @@ where
                     .flex(1., true),
                 )
                 .with_child(
-                    MouseEventHandler::<Dismiss, V>::new(user.id as usize, cx, |state, _| {
+                    MouseEventHandler::new::<Dismiss, _>(user.id as usize, cx, |state, _| {
                         let style = theme.dismiss_button.style_for(state);
                         Svg::new("icons/x_mark_8.svg")
                             .with_color(style.color)
@@ -91,7 +91,7 @@ where
                 Flex::row()
                     .with_children(buttons.into_iter().enumerate().map(
                         |(ix, (message, handler))| {
-                            MouseEventHandler::<Button, V>::new(ix, cx, |state, _| {
+                            MouseEventHandler::new::<Button, _>(ix, cx, |state, _| {
                                 let button = theme.button.style_for(state);
                                 Label::new(message, button.text.clone())
                                     .contained()

@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use client::proto;
 use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
-use language::{char_kind, Rope};
+use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -14,23 +14,39 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
+pub struct SearchInputs {
+    query: Arc<str>,
+    files_to_include: Vec<PathMatcher>,
+    files_to_exclude: Vec<PathMatcher>,
+}
+
+impl SearchInputs {
+    pub fn as_str(&self) -> &str {
+        self.query.as_ref()
+    }
+    pub fn files_to_include(&self) -> &[PathMatcher] {
+        &self.files_to_include
+    }
+    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+        &self.files_to_exclude
+    }
+}
+#[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
-        query: Arc<str>,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        inner: SearchInputs,
     },
+
     Regex {
         regex: Regex,
-        query: Arc<str>,
+
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        inner: SearchInputs,
     },
 }
 
@@ -72,13 +88,16 @@ impl SearchQuery {
             .auto_configure(&[&query])
             .ascii_case_insensitive(!case_sensitive)
             .build(&[&query]);
+        let inner = SearchInputs {
+            query: query.into(),
+            files_to_exclude,
+            files_to_include,
+        };
         Self::Text {
             search: Arc::new(search),
-            query: Arc::from(query),
             whole_word,
             case_sensitive,
-            files_to_include,
-            files_to_exclude,
+            inner,
         }
     }
 
@@ -104,14 +123,17 @@ impl SearchQuery {
             .case_insensitive(!case_sensitive)
             .multi_line(multiline)
             .build()?;
+        let inner = SearchInputs {
+            query: initial_query,
+            files_to_exclude,
+            files_to_include,
+        };
         Ok(Self::Regex {
             regex,
-            query: initial_query,
             multiline,
             whole_word,
             case_sensitive,
-            files_to_include,
-            files_to_exclude,
+            inner,
         })
     }
 
@@ -193,12 +215,24 @@ impl SearchQuery {
         }
     }
 
-    pub async fn search(&self, rope: &Rope) -> Vec<Range<usize>> {
+    pub async fn search(
+        &self,
+        buffer: &BufferSnapshot,
+        subrange: Option<Range<usize>>,
+    ) -> Vec<Range<usize>> {
         const YIELD_INTERVAL: usize = 20000;
 
         if self.as_str().is_empty() {
             return Default::default();
         }
+        let language = buffer.language_at(0);
+        let rope = if let Some(range) = subrange {
+            buffer.as_rope().slice(range)
+        } else {
+            buffer.as_rope().clone()
+        };
+
+        let kind = |c| char_kind(language, c);
 
         let mut matches = Vec::new();
         match self {
@@ -215,10 +249,10 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(char_kind);
-                        let start_kind = char_kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = char_kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(char_kind);
+                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
+                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -226,6 +260,7 @@ impl SearchQuery {
                     matches.push(mat.start()..mat.end())
                 }
             }
+
             Self::Regex {
                 regex, multiline, ..
             } => {
@@ -263,14 +298,12 @@ impl SearchQuery {
                 }
             }
         }
+
         matches
     }
 
     pub fn as_str(&self) -> &str {
-        match self {
-            Self::Text { query, .. } => query.as_ref(),
-            Self::Regex { query, .. } => query.as_ref(),
-        }
+        self.as_inner().as_str()
     }
 
     pub fn whole_word(&self) -> bool {
@@ -292,25 +325,11 @@ impl SearchQuery {
     }
 
     pub fn files_to_include(&self) -> &[PathMatcher] {
-        match self {
-            Self::Text {
-                files_to_include, ..
-            } => files_to_include,
-            Self::Regex {
-                files_to_include, ..
-            } => files_to_include,
-        }
+        self.as_inner().files_to_include()
     }
 
     pub fn files_to_exclude(&self) -> &[PathMatcher] {
-        match self {
-            Self::Text {
-                files_to_exclude, ..
-            } => files_to_exclude,
-            Self::Regex {
-                files_to_exclude, ..
-            } => files_to_exclude,
-        }
+        self.as_inner().files_to_exclude()
     }
 
     pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
@@ -327,6 +346,11 @@ impl SearchQuery {
                             .any(|include_glob| include_glob.is_match(file_path)))
             }
             None => self.files_to_include().is_empty(),
+        }
+    }
+    pub fn as_inner(&self) -> &SearchInputs {
+        match self {
+            Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
         }
     }
 }

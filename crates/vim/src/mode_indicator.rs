@@ -34,7 +34,7 @@ impl ModeIndicator {
             if settings::get::<VimModeSetting>(cx).0 {
                 mode_indicator.mode = cx
                     .has_global::<Vim>()
-                    .then(|| cx.global::<Vim>().state.mode);
+                    .then(|| cx.global::<Vim>().state().mode);
             } else {
                 mode_indicator.mode.take();
             }
@@ -46,7 +46,7 @@ impl ModeIndicator {
             .has_global::<Vim>()
             .then(|| {
                 let vim = cx.global::<Vim>();
-                vim.enabled.then(|| vim.state.mode)
+                vim.enabled.then(|| vim.state().mode)
             })
             .flatten();
 
@@ -80,14 +80,12 @@ impl View for ModeIndicator {
 
         let theme = &theme::current(cx).workspace.status_bar;
 
-        // we always choose text to be 12 monospace characters
-        // so that as the mode indicator changes, the rest of the
-        // UI stays still.
         let text = match mode {
             Mode::Normal => "-- NORMAL --",
             Mode::Insert => "-- INSERT --",
-            Mode::Visual { line: false } => "-- VISUAL --",
-            Mode::Visual { line: true } => "VISUAL LINE ",
+            Mode::Visual => "-- VISUAL --",
+            Mode::VisualLine => "-- VISUAL LINE --",
+            Mode::VisualBlock => "-- VISUAL BLOCK --",
         };
         Label::new(text, theme.vim_mode_indicator.text.clone())
             .contained()

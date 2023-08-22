@@ -94,7 +94,7 @@ impl View for DiagnosticIndicator {
         let tooltip_style = theme::current(cx).tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
-            MouseEventHandler::<Summary, _>::new(0, cx, |state, cx| {
+            MouseEventHandler::new::<Summary, _>(0, cx, |state, cx| {
                 let theme = theme::current(cx);
                 let style = theme
                     .workspace
@@ -105,7 +105,7 @@ impl View for DiagnosticIndicator {
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
                     summary_row.add_child(
-                        Svg::new("icons/circle_x_mark_16.svg")
+                        Svg::new("icons/error.svg")
                             .with_color(style.icon_color_error)
                             .constrained()
                             .with_width(style.icon_width)
@@ -121,7 +121,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.warning_count > 0 {
                     summary_row.add_child(
-                        Svg::new("icons/triangle_exclamation_16.svg")
+                        Svg::new("icons/warning.svg")
                             .with_color(style.icon_color_warning)
                             .constrained()
                             .with_width(style.icon_width)
@@ -142,7 +142,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.error_count == 0 && self.summary.warning_count == 0 {
                     summary_row.add_child(
-                        Svg::new("icons/circle_check_16.svg")
+                        Svg::new("icons/check_circle.svg")
                             .with_color(style.icon_color_ok)
                             .constrained()
                             .with_width(style.icon_width)
@@ -195,7 +195,7 @@ impl View for DiagnosticIndicator {
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();
             element.add_child(
-                MouseEventHandler::<Message, _>::new(1, cx, |state, _| {
+                MouseEventHandler::new::<Message, _>(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
                         message_style.style_for(state).text.clone(),

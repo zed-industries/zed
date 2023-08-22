@@ -11,12 +11,12 @@ use crate::{
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
     AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SceneBuilder, SizeConstraint, ViewContext,
+    SceneBuilder, SizeConstraint, TypeTag, ViewContext,
 };
 use serde_json::json;
-use std::{marker::PhantomData, ops::Range};
+use std::ops::Range;
 
-pub struct MouseEventHandler<Tag: 'static, V> {
+pub struct MouseEventHandler<V: 'static> {
     child: AnyElement<V>,
     region_id: usize,
     cursor_style: Option<CursorStyle>,
@@ -26,13 +26,13 @@ pub struct MouseEventHandler<Tag: 'static, V> {
     notify_on_click: bool,
     above: bool,
     padding: Padding,
-    _tag: PhantomData<Tag>,
+    tag: TypeTag,
 }
 
 /// Element which provides a render_child callback with a MouseState and paints a mouse
 /// region under (or above) it for easy mouse event handling.
-impl<Tag, V: 'static> MouseEventHandler<Tag, V> {
-    pub fn for_child(child: impl Element<V>, region_id: usize) -> Self {
+impl<V: 'static> MouseEventHandler<V> {
+    pub fn for_child<Tag: 'static>(child: impl Element<V>, region_id: usize) -> Self {
         Self {
             child: child.into_any(),
             region_id,
@@ -43,16 +43,19 @@ impl<Tag, V: 'static> MouseEventHandler<Tag, V> {
             hoverable: false,
             above: false,
             padding: Default::default(),
-            _tag: PhantomData,
+            tag: TypeTag::new::<Tag>(),
         }
     }
 
-    pub fn new<E, F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
+    pub fn new<Tag: 'static, E>(
+        region_id: usize,
+        cx: &mut ViewContext<V>,
+        render_child: impl FnOnce(&mut MouseState, &mut ViewContext<V>) -> E,
+    ) -> Self
     where
         E: Element<V>,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> E,
     {
-        let mut mouse_state = cx.mouse_state::<Tag>(region_id);
+        let mut mouse_state = cx.mouse_state_dynamic(TypeTag::new::<Tag>(), region_id);
         let child = render_child(&mut mouse_state, cx).into_any();
         let notify_on_hover = mouse_state.accessed_hovered();
         let notify_on_click = mouse_state.accessed_clicked();
@@ -66,19 +69,46 @@ impl<Tag, V: 'static> MouseEventHandler<Tag, V> {
             hoverable: true,
             above: false,
             padding: Default::default(),
-            _tag: PhantomData,
+            tag: TypeTag::new::<Tag>(),
+        }
+    }
+
+    pub fn new_dynamic(
+        tag: TypeTag,
+        region_id: usize,
+        cx: &mut ViewContext<V>,
+        render_child: impl FnOnce(&mut MouseState, &mut ViewContext<V>) -> AnyElement<V>,
+    ) -> Self {
+        let mut mouse_state = cx.mouse_state_dynamic(tag, region_id);
+        let child = render_child(&mut mouse_state, cx);
+        let notify_on_hover = mouse_state.accessed_hovered();
+        let notify_on_click = mouse_state.accessed_clicked();
+        Self {
+            child,
+            region_id,
+            cursor_style: None,
+            handlers: Default::default(),
+            notify_on_hover,
+            notify_on_click,
+            hoverable: true,
+            above: false,
+            padding: Default::default(),
+            tag,
         }
     }
 
     /// Modifies the MouseEventHandler to render the MouseRegion above the child element. Useful
     /// for drag and drop handling and similar events which should be captured before the child
     /// gets the opportunity
-    pub fn above<D, F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
+    pub fn above<Tag: 'static, D>(
+        region_id: usize,
+        cx: &mut ViewContext<V>,
+        render_child: impl FnOnce(&mut MouseState, &mut ViewContext<V>) -> D,
+    ) -> Self
     where
         D: Element<V>,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> D,
     {
-        let mut handler = Self::new(region_id, cx, render_child);
+        let mut handler = Self::new::<Tag, _>(region_id, cx, render_child);
         handler.above = true;
         handler
     }
@@ -223,7 +253,8 @@ impl<Tag, V: 'static> MouseEventHandler<Tag, V> {
             });
         }
         scene.push_mouse_region(
-            MouseRegion::from_handlers::<Tag>(
+            MouseRegion::from_handlers(
+                self.tag,
                 cx.view_id(),
                 self.region_id,
                 hit_bounds,
@@ -236,7 +267,7 @@ impl<Tag, V: 'static> MouseEventHandler<Tag, V> {
     }
 }
 
-impl<Tag, V: 'static> Element<V> for MouseEventHandler<Tag, V> {
+impl<V: 'static> Element<V> for MouseEventHandler<V> {
     type LayoutState = ();
     type PaintState = ();
 

@@ -1,13 +1,8 @@
-use crate::{platform::MouseButton, window::WindowContext, EventContext, ViewContext};
+use crate::{platform::MouseButton, window::WindowContext, EventContext, TypeTag, ViewContext};
 use collections::HashMap;
 use pathfinder_geometry::rect::RectF;
 use smallvec::SmallVec;
-use std::{
-    any::{Any, TypeId},
-    fmt::Debug,
-    mem::Discriminant,
-    rc::Rc,
-};
+use std::{any::Any, fmt::Debug, mem::Discriminant, rc::Rc};
 
 use super::{
     mouse_event::{
@@ -33,14 +28,27 @@ impl MouseRegion {
     /// should pass a different (consistent) region_id. If you have one big region that covers your
     /// whole component, just pass the view_id again.
     pub fn new<Tag: 'static>(view_id: usize, region_id: usize, bounds: RectF) -> Self {
-        Self::from_handlers::<Tag>(view_id, region_id, bounds, Default::default())
+        Self::from_handlers(
+            TypeTag::new::<Tag>(),
+            view_id,
+            region_id,
+            bounds,
+            Default::default(),
+        )
     }
 
     pub fn handle_all<Tag: 'static>(view_id: usize, region_id: usize, bounds: RectF) -> Self {
-        Self::from_handlers::<Tag>(view_id, region_id, bounds, HandlerSet::capture_all())
+        Self::from_handlers(
+            TypeTag::new::<Tag>(),
+            view_id,
+            region_id,
+            bounds,
+            HandlerSet::capture_all(),
+        )
     }
 
-    pub fn from_handlers<Tag: 'static>(
+    pub fn from_handlers(
+        tag: TypeTag,
         view_id: usize,
         region_id: usize,
         bounds: RectF,
@@ -49,10 +57,8 @@ impl MouseRegion {
         Self {
             id: MouseRegionId {
                 view_id,
-                tag: TypeId::of::<Tag>(),
+                tag,
                 region_id,
-                #[cfg(debug_assertions)]
-                tag_type_name: std::any::type_name::<Tag>(),
             },
             bounds,
             handlers,
@@ -180,20 +186,16 @@ impl MouseRegion {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
 pub struct MouseRegionId {
     view_id: usize,
-    tag: TypeId,
+    tag: TypeTag,
     region_id: usize,
-    #[cfg(debug_assertions)]
-    tag_type_name: &'static str,
 }
 
 impl MouseRegionId {
-    pub(crate) fn new<Tag: 'static>(view_id: usize, region_id: usize) -> Self {
+    pub(crate) fn new(tag: TypeTag, view_id: usize, region_id: usize) -> Self {
         MouseRegionId {
             view_id,
             region_id,
-            tag: TypeId::of::<Tag>(),
-            #[cfg(debug_assertions)]
-            tag_type_name: std::any::type_name::<Tag>(),
+            tag,
         }
     }
 
@@ -203,7 +205,7 @@ impl MouseRegionId {
 
     #[cfg(debug_assertions)]
     pub fn tag_type_name(&self) -> &'static str {
-        self.tag_type_name
+        self.tag.type_name()
     }
 }
 

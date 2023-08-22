@@ -574,6 +574,14 @@ impl AppContext {
         }
     }
 
+    pub fn optional_global<T: 'static>(&self) -> Option<&T> {
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            Some(global.downcast_ref().unwrap())
+        } else {
+            None
+        }
+    }
+
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
@@ -3284,7 +3292,11 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
+        self.mouse_state_dynamic(TypeTag::new::<Tag>(), region_id)
+    }
+
+    pub fn mouse_state_dynamic(&self, tag: TypeTag, region_id: usize) -> MouseState {
+        let region_id = MouseRegionId::new(tag, self.view_id, region_id);
         MouseState {
             hovered: self.window.hovered_region_ids.contains(&region_id),
             clicked: if let Some((clicked_region_id, button)) = self.window.clicked_region {
@@ -3306,10 +3318,19 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
         element_id: usize,
         initial: T,
     ) -> ElementStateHandle<T> {
+        self.element_state_dynamic(TypeTag::new::<Tag>(), element_id, initial)
+    }
+
+    pub fn element_state_dynamic<T: 'static>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+        initial: T,
+    ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
             element_id,
-            tag: TypeId::of::<Tag>(),
+            tag,
         };
         self.element_states
             .entry(id)
@@ -3327,16 +3348,62 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
     pub fn rem_pixels(&self) -> f32 {
         16.
     }
+
+    pub fn default_element_state_dynamic<T: 'static + Default>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state_dynamic::<T>(tag, element_id, T::default())
+    }
 }
 
 impl<V: View> ViewContext<'_, '_, V> {
-    pub fn emit(&mut self, payload: V::Event) {
+    pub fn emit(&mut self, event: V::Event) {
         self.window_context
             .pending_effects
             .push_back(Effect::Event {
                 entity_id: self.view_id,
-                payload: Box::new(payload),
+                payload: Box::new(event),
             });
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeTag {
+    tag: TypeId,
+    composed: Option<TypeId>,
+    #[cfg(debug_assertions)]
+    tag_type_name: &'static str,
+}
+
+impl TypeTag {
+    pub fn new<Tag: 'static>() -> Self {
+        Self {
+            tag: TypeId::of::<Tag>(),
+            composed: None,
+            #[cfg(debug_assertions)]
+            tag_type_name: std::any::type_name::<Tag>(),
+        }
+    }
+
+    pub fn dynamic(tag: TypeId, #[cfg(debug_assertions)] type_name: &'static str) -> Self {
+        Self {
+            tag,
+            composed: None,
+            #[cfg(debug_assertions)]
+            tag_type_name: type_name,
+        }
+    }
+
+    pub fn compose(mut self, other: TypeTag) -> Self {
+        self.composed = Some(other.tag);
+        self
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn type_name(&self) -> &'static str {
+        self.tag_type_name
     }
 }
 
@@ -4789,7 +4856,7 @@ impl Hash for AnyWeakViewHandle {
 pub struct ElementStateId {
     view_id: usize,
     element_id: usize,
-    tag: TypeId,
+    tag: TypeTag,
 }
 
 pub struct ElementStateHandle<T> {
@@ -5251,7 +5318,7 @@ mod tests {
             fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new())
+                MouseEventHandler::new::<Handler, _>(0, cx, |_, _| Empty::new())
                     .on_down(MouseButton::Left, move |_, _, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
                     })

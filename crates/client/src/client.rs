@@ -1,6 +1,10 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+#[cfg(test)]
+mod channel_store_tests;
+
+pub mod channel_store;
 pub mod telemetry;
 pub mod user;
 
@@ -44,6 +48,7 @@ use util::channel::ReleaseChannel;
 use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
+pub use channel_store::*;
 pub use rpc::*;
 pub use telemetry::ClickhouseEvent;
 pub use user::*;
@@ -535,6 +540,7 @@ impl Client {
         }
     }
 
+    #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
         model: ModelHandle<E>,
@@ -570,7 +576,13 @@ impl Client {
             }),
         );
         if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
+            let location = std::panic::Location::caller();
+            panic!(
+                "{}:{} registered handler for the same message {} twice",
+                location.file(),
+                location.line(),
+                std::any::type_name::<M>()
+            );
         }
 
         Subscription::Message {
