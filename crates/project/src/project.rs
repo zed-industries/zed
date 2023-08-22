@@ -5108,22 +5108,31 @@ impl Project {
                 while let Some(entry) = buffers_rx.next().await {
                     buffers.push(entry);
                 }
-                buffers.sort_by_key(|(buffer, snapshot)| snapshot.file().map(move |file| file.path()).cloned());
-
+                buffers.sort_by_key(|(_, snapshot)| snapshot.file().map(move |file| file.path()).cloned());
+                let buffers_len = buffers.len();
                 let query = &query;
                 let paths_per_worker = (buffers.len() + workers - 1) / workers;
                 if paths_per_worker == 0 {
                     return;
                 }
+                let (finished_tx, mut finished_rx) = smol::channel::unbounded();
                 background
                     .scoped(|scope| {
+                        #[derive(Clone)]
+                        struct FinishedStatus {
+                            entry: Option<(ModelHandle<Buffer>, Vec<Range<Anchor>>)>,
+                            buffer_index: usize
+                        }
+
                         let mut chunks = buffers.chunks(paths_per_worker);
                         for worker_id in 0..workers {
                             let chunk_for_worker = chunks.next();
-                            let result_tx = result_tx.clone();
+                            let finished_tx = finished_tx.clone();
+
                             if let Some(chunk) = chunk_for_worker {
                                 scope.spawn(async move {
-                                    for (buffer, snapshot) in chunk {
+                                    for (entry_id, (buffer, snapshot)) in chunk.iter().enumerate() {
+                                        let buffer_index = worker_id + entry_id;
                                         let buffer_matches = if query.file_matches(
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
@@ -5139,15 +5148,23 @@ impl Project {
                                         } else {
                                             Vec::new()
                                         };
-                                        if !buffer_matches.is_empty() {
-                                            if result_tx
-                                                .send((buffer.clone(), buffer_matches))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
+                                        let status = if !buffer_matches.is_empty() {
+                                            FinishedStatus {
+                                                entry: Some((buffer.clone(), buffer_matches)),
+                                                buffer_index
                                             }
-                                            // worker_matched_buffers.insert(buffer.clone(), buffer_matches);
+                                        } else {
+                                            FinishedStatus {
+                                                entry: None,
+                                                buffer_index
+                                            }
+                                        };
+                                        if finished_tx
+                                            .send(status)
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
                                         }
                                     }
 
@@ -5155,6 +5172,25 @@ impl Project {
                                 });
                             }
                         }
+                        scope.spawn(async move {
+                            let mut current_index = 0;
+                            let mut scratch = vec![None; buffers_len];
+                            while let Some(status) = finished_rx.next().await {
+                                //debug_assert!(scratch[status.buffer_index].is_none());
+                                let index = status.buffer_index;
+                                scratch[index] = Some(status);
+                                while current_index < buffers_len {
+                                    let Some(current_entry) = scratch[current_index].take() else {
+                                        break;
+                                    };
+                                    if let Some(entry) = current_entry.entry {
+                                        result_tx.send(entry).await.log_err();
+                                    }
+                                    current_index += 1;
+                                }
+                            }
+
+                        });
                     })
                     .await;
                 // Ok(matched_buffers.into_iter().flatten().collect())
@@ -5327,10 +5363,11 @@ impl Project {
         cx.spawn(|this, cx| async move {
             for buffer in &open_buffers {
                 let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                if snapshot.file().is_none() {
-                    // Only enqueue files without storage on filesystem.
-                    buffers_tx.send((buffer.clone(), snapshot)).await.log_err();
-                }
+                buffers_tx.send((buffer.clone(), snapshot)).await.log_err();
+                // if snapshot.file().is_none() {
+                //     // Only enqueue files without storage on filesystem.
+
+                // }
 
             }
 
