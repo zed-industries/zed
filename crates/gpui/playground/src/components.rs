@@ -7,7 +7,6 @@ use crate::{
 };
 use gpui::ViewContext;
 use playground_macros::Element;
-
 use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {

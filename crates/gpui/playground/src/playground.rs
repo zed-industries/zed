@@ -48,7 +48,7 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     div()
         .text_color(black())
         .h_full()
-        .w_24()
+        .w_1_2()
         .fill(theme.success(0.5))
     // .hover()
     // .fill(theme.error(0.5))
