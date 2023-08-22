@@ -3,6 +3,9 @@ use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
 use std::path::PathBuf;
 use terminal::{Terminal, TerminalBuilder, TerminalSettings};
 
+#[cfg(target_os = "macos")]
+use std::os::unix::ffi::OsStrExt;
+
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModelHandle<terminal::Terminal>>,
 }
@@ -47,11 +50,57 @@ impl Project {
                 })
                 .detach();
 
+                let setting = settings::get::<TerminalSettings>(cx);
+
+                if setting.automatically_activate_python_virtual_environment {
+                    self.set_up_python_virtual_environment(&terminal_handle, cx);
+                }
+
                 terminal_handle
             });
 
             terminal
         }
+    }
+
+    fn set_up_python_virtual_environment(
+        &mut self,
+        terminal_handle: &ModelHandle<Terminal>,
+        cx: &mut ModelContext<Project>,
+    ) {
+        let virtual_environment = self.find_python_virtual_environment(cx);
+        if let Some(virtual_environment) = virtual_environment {
+            // Paths are not strings so we need to jump through some hoops to format the command without `format!`
+            let mut command = Vec::from("source ".as_bytes());
+            command.extend_from_slice(virtual_environment.as_os_str().as_bytes());
+            command.push(b'\n');
+
+            terminal_handle.update(cx, |this, _| this.input_bytes(command));
+        }
+    }
+
+    pub fn find_python_virtual_environment(
+        &mut self,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<PathBuf> {
+        const VIRTUAL_ENVIRONMENT_NAMES: [&str; 4] = [".env", "env", ".venv", "venv"];
+
+        let worktree_paths = self
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path());
+
+        for worktree_path in worktree_paths {
+            for virtual_environment_name in VIRTUAL_ENVIRONMENT_NAMES {
+                let mut path = worktree_path.join(virtual_environment_name);
+                path.push("bin/activate");
+
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+
+        None
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakModelHandle<terminal::Terminal>> {

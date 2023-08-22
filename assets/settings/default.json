@@ -284,8 +284,6 @@
     //          "directory": "~/zed/projects/"
     //        }
     //      }
-    //
-    //
     "working_directory": "current_project_directory",
     // Set the cursor blinking behavior in the terminal.
     // May take 4 values:
@@ -334,13 +332,23 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    "line_height": "comfortable"
+    "line_height": "comfortable",
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
-    // "font_size": "15"
+    // "font_size": "15",
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Mono"
+    // "font_family": "Zed Mono",
+    // ---
+    // Whether or not to automatically search for, and activate, Python virtual
+    //  environments.
+    // Current limitations:
+    //     - Only ".env", "env", ".venv", and "venv" are searched for at the
+    //       root of the project
+    //     - Only works with Posix-complaint shells
+    //     - Only activates the first virtual environment it finds, regardless
+    //       of the nunber of projects in the workspace.
+    "automatically_activate_python_virtual_environment": false
   },
   // Difference settings for semantic_index
   "semantic_index": {

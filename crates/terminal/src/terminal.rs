@@ -158,6 +158,7 @@ pub struct TerminalSettings {
     pub dock: TerminalDockPosition,
     pub default_width: f32,
     pub default_height: f32,
+    pub automatically_activate_python_virtual_environment: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -176,6 +177,7 @@ pub struct TerminalSettingsContent {
     pub dock: Option<TerminalDockPosition>,
     pub default_width: Option<f32>,
     pub default_height: Option<f32>,
+    pub automatically_activate_python_virtual_environment: Option<bool>,
 }
 
 impl TerminalSettings {
@@ -1018,12 +1020,24 @@ impl Terminal {
         self.pty_tx.notify(input.into_bytes());
     }
 
+    fn write_bytes_to_pty(&self, input: Vec<u8>) {
+        self.pty_tx.notify(input);
+    }
+
     pub fn input(&mut self, input: String) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
+    }
+
+    pub fn input_bytes(&mut self, input: Vec<u8>) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events.push_back(InternalEvent::SetSelection(None));
+
+        self.write_bytes_to_pty(input);
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
