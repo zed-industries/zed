@@ -1,35 +1,12 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, DeriveInput, GenericParam, Generics, Ident, Lit, Meta,
-    WhereClause,
+    parse_macro_input, parse_quote, DeriveInput, GenericParam, Generics, Ident, WhereClause,
 };
 
 pub fn derive_into_element(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = ast.ident;
-
-    let crate_name: String = ast
-        .attrs
-        .iter()
-        .find_map(|attr| {
-            if attr.path.is_ident("element_crate") {
-                match attr.parse_meta() {
-                    Ok(Meta::NameValue(nv)) => {
-                        if let Lit::Str(s) = nv.lit {
-                            Some(s.value())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| String::from("playground"));
-    let crate_name = format_ident!("{}", crate_name);
 
     let placeholder_view_generics: Generics = parse_quote! { <V: 'static> };
     let placeholder_view_type_name: Ident = parse_quote! { V };
@@ -63,7 +40,6 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 
     impl_into_element(
         &impl_generics,
-        &crate_name,
         &view_type_name,
         &type_name,
         &type_generics,
@@ -74,14 +50,13 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 
 pub fn impl_into_element(
     impl_generics: &syn::ImplGenerics<'_>,
-    crate_name: &Ident,
     view_type_name: &Ident,
     type_name: &Ident,
     type_generics: &Option<syn::TypeGenerics<'_>>,
     where_clause: &Option<&WhereClause>,
 ) -> proc_macro2::TokenStream {
     quote! {
-        impl #impl_generics #crate_name::element::IntoElement<#view_type_name> for #type_name #type_generics
+        impl #impl_generics playground::element::IntoElement<#view_type_name> for #type_name #type_generics
         #where_clause
         {
             type Element = Self;

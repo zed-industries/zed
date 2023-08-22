@@ -49,6 +49,6 @@ impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
             .ok_or_else(|| anyhow!("no layout engine"))?
             .add_node(style.to_taffy(rem_size), children)?;
 
-        Ok(Layout::new(id, None, element_data))
+        Ok(Layout::new(id, element_data))
     }
 }

@@ -257,7 +257,7 @@ pub trait Styleable {
     }
 }
 
-// Tailwind-style helpers methods that take and return mut self
+// Helpers methods that take and return mut self. This includes tailwind style methods for standard sizes etc.
 //
 // Example:
 // // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
@@ -265,4 +265,22 @@ pub trait Styleable {
 use crate as playground; // Macro invocation references this crate as playground.
 pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
+
+    fn fill<F>(mut self, fill: F) -> Self
+    where
+        F: Into<Fill>,
+        Self: Sized,
+    {
+        self.declared_style().fill = Some(fill.into());
+        self
+    }
+
+    fn text_color<C>(mut self, color: C) -> Self
+    where
+        C: Into<Hsla>,
+        Self: Sized,
+    {
+        self.declared_style().text_color = Some(color.into());
+        self
+    }
 }

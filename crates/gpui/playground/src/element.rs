@@ -1,12 +1,12 @@
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
-use gpui::geometry::rect::RectF;
-use gpui::EngineLayout;
+use gpui::{geometry::rect::RectF, EngineLayout};
+use smallvec::SmallVec;
 use std::marker::PhantomData;
 use util::ResultExt;
 
-use crate::layout_context::LayoutContext;
-use crate::paint_context::PaintContext;
+pub use crate::layout_context::LayoutContext;
+pub use crate::paint_context::PaintContext;
 
 type LayoutId = gpui::LayoutId;
 
@@ -21,11 +21,11 @@ pub struct Layout<V, D> {
 }
 
 impl<V: 'static, D> Layout<V, D> {
-    pub fn new(id: LayoutId, engine_layout: Option<EngineLayout>, element_data: D) -> Self {
+    pub fn new(id: LayoutId, element_data: D) -> Self {
         Self {
             id,
-            engine_layout,
-            element_data,
+            engine_layout: None,
+            element_data: element_data,
             view_type: PhantomData,
         }
     }
@@ -41,6 +41,14 @@ impl<V: 'static, D> Layout<V, D> {
     fn engine_layout(&mut self, cx: &mut PaintContext<'_, '_, '_, '_, V>) -> &mut EngineLayout {
         self.engine_layout
             .get_or_insert_with(|| cx.computed_layout(self.id).log_err().unwrap_or_default())
+    }
+}
+
+impl<V: 'static> Layout<V, Option<AnyElement<V>>> {
+    pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
+        let mut element = self.element_data.take().unwrap();
+        element.paint(view, self.id, cx);
+        self.element_data = Some(element);
     }
 }
 
@@ -97,6 +105,9 @@ impl<V, E: Element<V>> ElementStateObject<V> for ElementState<V, E> {
 
     fn paint(&mut self, view: &mut V, layout_id: LayoutId, cx: &mut PaintContext<V>) {
         let layout = self.layout.as_mut().expect("paint called before layout");
+        if layout.engine_layout.is_none() {
+            layout.engine_layout = cx.computed_layout(layout_id).log_err()
+        }
         self.element.paint(view, layout, cx)
     }
 }
@@ -115,7 +126,7 @@ impl<V> AnyElement<V> {
 }
 
 pub trait ParentElement<V: 'static> {
-    fn children_mut(&mut self) -> &mut Vec<AnyElement<V>>;
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
     fn child(mut self, child: impl IntoElement<V>) -> Self
     where

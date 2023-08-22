@@ -1,8 +1,8 @@
 use crate::{
-    element::{AnyElement, Element, Layout},
+    element::{AnyElement, Element, Layout, ParentElement},
     layout_context::LayoutContext,
     paint_context::PaintContext,
-    style::{Style, StyleRefinement, Styleable},
+    style::{Style, StyleHelpers, StyleRefinement, Styleable},
 };
 use anyhow::Result;
 use gpui::{platform::MouseMovedEvent, EventContext, LayoutId};
@@ -12,14 +12,6 @@ use std::rc::Rc;
 pub struct Div<V> {
     style: StyleRefinement,
     children: SmallVec<[AnyElement<V>; 2]>,
-}
-
-impl<V> Styleable for Div<V> {
-    type Style = Style;
-
-    fn declared_style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
 }
 
 pub fn div<V>() -> Div<V> {
@@ -52,6 +44,22 @@ impl<V: 'static> Element<V> for Div<V> {
         let style = self.style();
 
         style.paint_background::<V, Self>(layout, cx);
+    }
+}
+
+impl<V> Styleable for Div<V> {
+    type Style = Style;
+
+    fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl<V> StyleHelpers for Div<V> {}
+
+impl<V: 'static> ParentElement<V> for Div<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        &mut self.children
     }
 }
 
