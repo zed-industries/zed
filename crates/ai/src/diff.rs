@@ -64,41 +64,40 @@ impl Debug for Matrix {
 }
 
 #[derive(Debug)]
-enum Hunk {
-    Insert(char),
-    Remove(char),
-    Keep(char),
+pub enum Hunk {
+    Insert { len: usize },
+    Remove { len: usize },
+    Keep { len: usize },
 }
 
-struct Diff {
+pub struct Diff {
     old: String,
     new: String,
     scores: Matrix,
-    last_diff_row: usize,
+    old_text_ix: usize,
 }
 
 impl Diff {
-    fn new(old: String) -> Self {
+    pub fn new(old: String) -> Self {
         let mut scores = Matrix::new();
         scores.resize(old.len() + 1, 1);
         for i in 0..=old.len() {
             scores.set(i, 0, -(i as isize));
         }
-        dbg!(&scores);
         Self {
             old,
             new: String::new(),
             scores,
-            last_diff_row: 0,
+            old_text_ix: 0,
         }
     }
 
-    fn push_new(&mut self, text: &str) -> Vec<Hunk> {
-        let last_diff_column = self.new.len();
+    pub fn push_new(&mut self, text: &str) -> Vec<Hunk> {
+        let new_text_ix = self.new.len();
         self.new.push_str(text);
         self.scores.resize(self.old.len() + 1, self.new.len() + 1);
 
-        for j in last_diff_column + 1..=self.new.len() {
+        for j in new_text_ix + 1..=self.new.len() {
             self.scores.set(0, j, -(j as isize));
             for i in 1..=self.old.len() {
                 let insertion_score = self.scores.get(i, j - 1) - 1;
@@ -114,8 +113,8 @@ impl Diff {
         }
 
         let mut max_score = isize::MIN;
-        let mut best_row = self.last_diff_row;
-        for i in self.last_diff_row..=self.old.len() {
+        let mut best_row = self.old_text_ix;
+        for i in self.old_text_ix..=self.old.len() {
             let score = self.scores.get(i, self.new.len());
             if score > max_score {
                 max_score = score;
@@ -126,18 +125,18 @@ impl Diff {
         let mut hunks = Vec::new();
         let mut i = best_row;
         let mut j = self.new.len();
-        while (i, j) != (self.last_diff_row, last_diff_column) {
-            let insertion_score = if j > last_diff_column {
+        while (i, j) != (self.old_text_ix, new_text_ix) {
+            let insertion_score = if j > new_text_ix {
                 Some((i, j - 1))
             } else {
                 None
             };
-            let deletion_score = if i > self.last_diff_row {
+            let deletion_score = if i > self.old_text_ix {
                 Some((i - 1, j))
             } else {
                 None
             };
-            let equality_score = if i > self.last_diff_row && j > last_diff_column {
+            let equality_score = if i > self.old_text_ix && j > new_text_ix {
                 Some((i - 1, j - 1))
             } else {
                 None
@@ -150,19 +149,41 @@ impl Diff {
                 .unwrap();
 
             if prev_i == i && prev_j == j - 1 {
-                hunks.push(Hunk::Insert(self.new.chars().skip(j - 1).next().unwrap()));
+                if let Some(Hunk::Insert { len }) = hunks.last_mut() {
+                    *len += 1;
+                } else {
+                    hunks.push(Hunk::Insert { len: 1 })
+                }
             } else if prev_i == i - 1 && prev_j == j {
-                hunks.push(Hunk::Remove(self.old.chars().skip(i - 1).next().unwrap()));
+                if let Some(Hunk::Remove { len }) = hunks.last_mut() {
+                    *len += 1;
+                } else {
+                    hunks.push(Hunk::Remove { len: 1 })
+                }
             } else {
-                hunks.push(Hunk::Keep(self.old.chars().skip(i - 1).next().unwrap()));
+                if let Some(Hunk::Keep { len }) = hunks.last_mut() {
+                    *len += 1;
+                } else {
+                    hunks.push(Hunk::Keep { len: 1 })
+                }
             }
 
             i = prev_i;
             j = prev_j;
         }
-        self.last_diff_row = best_row;
+        self.old_text_ix = best_row;
         hunks.reverse();
         hunks
+    }
+
+    pub fn finish(self) -> Option<Hunk> {
+        if self.old_text_ix < self.old.len() {
+            Some(Hunk::Remove {
+                len: self.old.len() - self.old_text_ix,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -173,8 +194,9 @@ mod tests {
     #[test]
     fn test_diff() {
         let mut diff = Diff::new("hello world".to_string());
-        dbg!(diff.push_new("hello"));
-        dbg!(diff.push_new(" ciaone"));
-        dbg!(diff.push_new(" world"));
+        diff.push_new("hello");
+        diff.push_new(" ciaone");
+        diff.push_new(" world");
+        diff.finish();
     }
 }
