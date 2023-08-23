@@ -416,8 +416,18 @@ impl DisplaySnapshot {
             .to_offset(self.display_point_to_inlay_point(point, bias))
     }
 
-    pub fn inlay_point_to_inlay_offset(&self, point: InlayPoint) -> InlayOffset {
-        self.inlay_snapshot.to_offset(point)
+    pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
+        self.inlay_snapshot
+            .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
+    }
+
+    pub fn inlay_offset_to_display_point(&self, offset: InlayOffset, bias: Bias) -> DisplayPoint {
+        let inlay_point = self.inlay_snapshot.to_point(offset);
+        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
+        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {

@@ -225,6 +225,7 @@ impl<'a> EditorTestContext<'a> {
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .into_iter()
+                .filter_map(|range| range.as_text_range())
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
