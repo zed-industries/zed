@@ -348,7 +348,7 @@
     //     - Only works with Posix-complaint shells
     //     - Only activates the first virtual environment it finds, regardless
     //       of the nunber of projects in the workspace.
-    "automatically_activate_python_virtual_environment": false
+    "activate_python_virtual_environment": false
   },
   // Difference settings for semantic_index
   "semantic_index": {

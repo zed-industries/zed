@@ -23,9 +23,8 @@ impl Project {
             ));
         } else {
             let settings = settings::get::<TerminalSettings>(cx);
-            let automatically_activate_python_virtual_environment = settings
-                .automatically_activate_python_virtual_environment
-                .clone();
+            let activate_python_virtual_environment =
+                settings.activate_python_virtual_environment.clone();
             let shell = settings.shell.clone();
 
             let terminal = TerminalBuilder::new(
@@ -54,7 +53,7 @@ impl Project {
                 })
                 .detach();
 
-                if automatically_activate_python_virtual_environment {
+                if activate_python_virtual_environment {
                     let activate_script_path = self.find_activate_script_path(&shell, cx);
                     self.activate_python_virtual_environment(
                         activate_script_path,

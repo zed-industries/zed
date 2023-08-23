@@ -158,7 +158,7 @@ pub struct TerminalSettings {
     pub dock: TerminalDockPosition,
     pub default_width: f32,
     pub default_height: f32,
-    pub automatically_activate_python_virtual_environment: bool,
+    pub activate_python_virtual_environment: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -177,7 +177,7 @@ pub struct TerminalSettingsContent {
     pub dock: Option<TerminalDockPosition>,
     pub default_width: Option<f32>,
     pub default_height: Option<f32>,
-    pub automatically_activate_python_virtual_environment: Option<bool>,
+    pub activate_python_virtual_environment: Option<bool>,
 }
 
 impl TerminalSettings {
