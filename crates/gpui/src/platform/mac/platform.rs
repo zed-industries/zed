@@ -18,7 +18,7 @@ use cocoa::{
     },
     base::{id, nil, selector, BOOL, YES},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSPoint, NSProcessInfo, NSString,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
         NSUInteger, NSURL,
     },
 };
@@ -37,7 +37,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+
 use postage::oneshot;
 use ptr::null_mut;
 use std::{
@@ -783,11 +783,6 @@ impl platform::Platform for MacPlatform {
             }
         }
         Ok(())
-    }
-
-    fn mouse_position(&self) -> Vector2F {
-        let position: NSPoint = unsafe { msg_send![class!(NSEvent), mouseLocation] };
-        vec2f(position.x as f32, position.y as f32)
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {

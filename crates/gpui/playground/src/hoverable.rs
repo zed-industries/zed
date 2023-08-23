@@ -66,7 +66,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
 
         let hovered = self.hovered.clone();
         cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {
-            if bounds.contains_point(event.position) != hovered.get() {
+            if bounds.contains_point(cx.mouse_position()) != hovered.get() {
                 cx.repaint();
             }
         });

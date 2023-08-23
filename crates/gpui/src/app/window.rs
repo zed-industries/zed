@@ -70,7 +70,6 @@ impl Window {
     pub fn new<V, F>(
         handle: AnyWindowHandle,
         platform_window: Box<dyn platform::Window>,
-        mouse_position: Vector2F,
         cx: &mut AppContext,
         build_view: F,
     ) -> Self
@@ -98,7 +97,7 @@ impl Window {
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
             clicked_region: None,
-            mouse_position,
+            mouse_position: Default::default(),
             titlebar_height,
             appearance,
         };
@@ -508,7 +507,9 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
-        self.dispatch_to_new_event_handlers(&event);
+        if !event_reused {
+            self.dispatch_to_new_event_handlers(&event);
+        }
 
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();

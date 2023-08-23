@@ -1363,14 +1363,7 @@ impl AppContext {
             window: handle,
         }));
 
-        let mouse_position = self.platform.mouse_position();
-        let mut window = Window::new(
-            handle,
-            platform_window,
-            mouse_position,
-            self,
-            build_root_view,
-        );
+        let mut window = Window::new(handle, platform_window, self, build_root_view);
         let mut cx = WindowContext::mutable(self, &mut window, handle);
         cx.layout(false).expect("initial layout should not error");
         let scene = cx.paint().expect("initial paint should not error");

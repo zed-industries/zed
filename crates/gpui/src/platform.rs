@@ -75,7 +75,6 @@ pub trait Platform: Send + Sync {
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
     fn delete_credentials(&self, url: &str) -> Result<()>;
 
-    fn mouse_position(&self) -> Vector2F;
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
@@ -147,6 +146,7 @@ pub trait Window {
     fn titlebar_height(&self) -> f32;
     fn appearance(&self) -> Appearance;
     fn screen(&self) -> Rc<dyn Screen>;
+    fn mouse_position(&self) -> Vector2F;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
