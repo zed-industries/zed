@@ -34,7 +34,7 @@ pub mod disclosure {
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
 
-    use super::{action_button::Button, svg::Svg, ComponentExt, IconButtonStyle};
+    use super::{action_button::Button, svg::Svg, IconButtonStyle};
 
     #[derive(Clone, Default, Deserialize, JsonSchema)]
     pub struct DisclosureStyle<S> {
@@ -100,7 +100,7 @@ pub mod disclosure {
     }
 
     impl<C: SafeStylable> Component for Disclosable<C, DisclosureStyle<C::Style>> {
-        fn render<V: gpui::View>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             Flex::row()
                 .with_spacing(self.style.spacing)
                 .with_child(if let Some(disclosed) = self.disclosed {
@@ -172,7 +172,7 @@ pub mod toggle {
     }
 
     impl<C: SafeStylable> Component for Toggle<C, Toggleable<C::Style>> {
-        fn render<V: gpui::View>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             self.component
                 .with_style(self.style.in_state(self.active).clone())
                 .render(cx)
@@ -186,7 +186,7 @@ pub mod action_button {
     use gpui::{
         elements::{Component, ContainerStyle, MouseEventHandler, SafeStylable, TooltipStyle},
         platform::{CursorStyle, MouseButton},
-        Action, Element, EventContext, TypeTag, View,
+        Action, Element, TypeTag,
     };
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
@@ -274,7 +274,7 @@ pub mod action_button {
     }
 
     impl<C: SafeStylable> Component for Button<C, ButtonStyle<C::Style>> {
-        fn render<V: View>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             let mut button = MouseEventHandler::new_dynamic(self.tag, self.id, cx, |state, cx| {
                 let style = self.style.style_for(state);
                 let mut contents = self
@@ -297,7 +297,7 @@ pub mod action_button {
             })
             .on_click(MouseButton::Left, {
                 let action = self.action.boxed_clone();
-                move |_, _, cx: &mut EventContext<V>| {
+                move |_, _, cx| {
                     let window = cx.window();
                     let view = cx.view_id();
                     let action = action.boxed_clone();
@@ -421,7 +421,7 @@ pub mod svg {
     }
 
     impl Component for Svg<SvgStyle> {
-        fn render<V: gpui::View>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+        fn render<V: 'static>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             if let Some(path) = self.path {
                 gpui::elements::Svg::new(path)
                     .with_color(self.style.color)
@@ -474,7 +474,7 @@ pub mod label {
     }
 
     impl Component for Label<LabelStyle> {
-        fn render<V: gpui::View>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+        fn render<V: 'static>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             gpui::elements::Label::new(self.text, self.style).into_any()
         }
     }

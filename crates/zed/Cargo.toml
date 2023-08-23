@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.101.0"
+version = "0.102.0"
 publish = false
 
 [lib]
@@ -94,7 +94,7 @@ postage.workspace = true
 rand.workspace = true
 regex.workspace = true
 rsa = "0.4"
-rust-embed = { version = "6.3", features = ["include-exclude"] }
+rust-embed.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

@@ -1,6 +1,5 @@
 use gpui::{
     actions,
-    color::Color,
     elements::{Component, Flex, ParentElement, SafeStylable},
     AppContext, Element, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -97,7 +96,7 @@ impl View for ComponentTest {
 }
 
 impl Item for ComponentTest {
-    fn tab_content<V: View>(
+    fn tab_content<V: 'static>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,

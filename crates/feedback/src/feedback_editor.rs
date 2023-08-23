@@ -268,7 +268,7 @@ impl Item for FeedbackEditor {
         Some("Send Feedback".into())
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,

@@ -3,7 +3,7 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 use crate::{
     json::{self, ToJson, Value},
     AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder,
-    SizeConstraint, Vector2FExt, View, ViewContext,
+    SizeConstraint, Vector2FExt, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -17,7 +17,7 @@ struct ScrollState {
     scroll_position: Cell<f32>,
 }
 
-pub struct Flex<V: View> {
+pub struct Flex<V> {
     axis: Axis,
     children: Vec<AnyElement<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
@@ -25,7 +25,7 @@ pub struct Flex<V: View> {
     spacing: f32,
 }
 
-impl<V: View> Flex<V> {
+impl<V: 'static> Flex<V> {
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
@@ -127,13 +127,13 @@ impl<V: View> Flex<V> {
     }
 }
 
-impl<V: View> Extend<AnyElement<V>> for Flex<V> {
+impl<V> Extend<AnyElement<V>> for Flex<V> {
     fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
         self.children.extend(children);
     }
 }
 
-impl<V: View> Element<V> for Flex<V> {
+impl<V: 'static> Element<V> for Flex<V> {
     type LayoutState = f32;
     type PaintState = ();
 
@@ -422,12 +422,12 @@ struct FlexParentData {
     float: bool,
 }
 
-pub struct FlexItem<V: View> {
+pub struct FlexItem<V> {
     metadata: FlexParentData,
     child: AnyElement<V>,
 }
 
-impl<V: View> FlexItem<V> {
+impl<V: 'static> FlexItem<V> {
     pub fn new(child: impl Element<V>) -> Self {
         FlexItem {
             metadata: FlexParentData {
@@ -449,7 +449,7 @@ impl<V: View> FlexItem<V> {
     }
 }
 
-impl<V: View> Element<V> for FlexItem<V> {
+impl<V: 'static> Element<V> for FlexItem<V> {
     type LayoutState = ();
     type PaintState = ();
 

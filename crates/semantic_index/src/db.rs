@@ -156,25 +156,27 @@ impl VectorDatabase {
         mtime: SystemTime,
         documents: Vec<Document>,
     ) -> Result<()> {
-        // Write to files table, and return generated id.
-        self.db.execute(
-            "
-            DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2;
-            ",
-            params![worktree_id, path.to_str()],
-        )?;
+        // Return the existing ID, if both the file and mtime match
         let mtime = Timestamp::from(mtime);
-        self.db.execute(
-            "
-            INSERT INTO files
-            (worktree_id, relative_path, mtime_seconds, mtime_nanos)
-            VALUES
-            (?1, ?2, $3, $4);
-            ",
-            params![worktree_id, path.to_str(), mtime.seconds, mtime.nanos],
-        )?;
-
-        let file_id = self.db.last_insert_rowid();
+        let mut existing_id_query = self.db.prepare("SELECT id FROM files WHERE worktree_id = ?1 AND relative_path = ?2 AND mtime_seconds = ?3 AND mtime_nanos = ?4")?;
+        let existing_id = existing_id_query
+            .query_row(
+                params![worktree_id, path.to_str(), mtime.seconds, mtime.nanos],
+                |row| Ok(row.get::<_, i64>(0)?),
+            )
+            .map_err(|err| anyhow!(err));
+        let file_id = if existing_id.is_ok() {
+            // If already exists, just return the existing id
+            existing_id.unwrap()
+        } else {
+            // Delete Existing Row
+            self.db.execute(
+                "DELETE FROM files WHERE worktree_id = ?1 AND relative_path = ?2;",
+                params![worktree_id, path.to_str()],
+            )?;
+            self.db.execute("INSERT INTO files (worktree_id, relative_path, mtime_seconds, mtime_nanos) VALUES (?1, ?2, ?3, ?4);", params![worktree_id, path.to_str(), mtime.seconds, mtime.nanos])?;
+            self.db.last_insert_rowid()
+        };
 
         // Currently inserting at approximately 3400 documents a second
         // I imagine we can speed this up with a bulk insert of some kind.

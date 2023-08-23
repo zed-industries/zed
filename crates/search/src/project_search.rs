@@ -482,7 +482,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
@@ -499,10 +499,14 @@ impl Item for ProjectSearchView {
                     .with_margin_right(tab_theme.spacing),
             )
             .with_child({
-                let tab_name: Option<Cow<_>> =
-                    self.model.read(cx).active_query.as_ref().map(|query| {
-                        let query_text =
-                            util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
+                let tab_name: Option<Cow<_>> = self
+                    .model
+                    .read(cx)
+                    .search_history
+                    .current()
+                    .as_ref()
+                    .map(|query| {
+                        let query_text = util::truncate_and_trailoff(query, MAX_TAB_TITLE_LEN);
                         query_text.into()
                     });
                 Label::new(

@@ -1,14 +1,14 @@
-use std::{borrow::Cow, cmp, sync::Arc};
+use std::{cmp, sync::Arc};
 
 use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::autoscroll::Autoscroll,
-    Bias, ClipboardSelection, DisplayPoint, Editor,
+    Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, AppContext, ViewContext, WindowContext};
-use language::{AutoindentMode, Selection, SelectionGoal};
+use language::{Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
@@ -27,7 +27,6 @@ actions!(
         ToggleVisualBlock,
         VisualDelete,
         VisualYank,
-        VisualPaste,
         OtherEnd,
     ]
 );
@@ -47,7 +46,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(other_end);
     cx.add_action(delete);
     cx.add_action(yank);
-    cx.add_action(paste);
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -324,110 +322,6 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                 });
                 if vim.state().mode == Mode::VisualBlock {
                     s.select_anchors(vec![s.first_anchor()])
-                }
-            });
-        });
-        vim.switch_mode(Mode::Normal, true, cx);
-    });
-}
-
-pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                if let Some(item) = cx.read_from_clipboard() {
-                    copy_selections_content(editor, editor.selections.line_mode, cx);
-                    let mut clipboard_text = Cow::Borrowed(item.text());
-                    if let Some(mut clipboard_selections) =
-                        item.metadata::<Vec<ClipboardSelection>>()
-                    {
-                        let (display_map, selections) = editor.selections.all_adjusted_display(cx);
-                        let all_selections_were_entire_line =
-                            clipboard_selections.iter().all(|s| s.is_entire_line);
-                        if clipboard_selections.len() != selections.len() {
-                            let mut newline_separated_text = String::new();
-                            let mut clipboard_selections =
-                                clipboard_selections.drain(..).peekable();
-                            let mut ix = 0;
-                            while let Some(clipboard_selection) = clipboard_selections.next() {
-                                newline_separated_text
-                                    .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
-                                ix += clipboard_selection.len;
-                                if clipboard_selections.peek().is_some() {
-                                    newline_separated_text.push('\n');
-                                }
-                            }
-                            clipboard_text = Cow::Owned(newline_separated_text);
-                        }
-
-                        let mut new_selections = Vec::new();
-                        editor.buffer().update(cx, |buffer, cx| {
-                            let snapshot = buffer.snapshot(cx);
-                            let mut start_offset = 0;
-                            let mut edits = Vec::new();
-                            for (ix, selection) in selections.iter().enumerate() {
-                                let to_insert;
-                                let linewise;
-                                if let Some(clipboard_selection) = clipboard_selections.get(ix) {
-                                    let end_offset = start_offset + clipboard_selection.len;
-                                    to_insert = &clipboard_text[start_offset..end_offset];
-                                    linewise = clipboard_selection.is_entire_line;
-                                    start_offset = end_offset;
-                                } else {
-                                    to_insert = clipboard_text.as_str();
-                                    linewise = all_selections_were_entire_line;
-                                }
-
-                                let mut selection = selection.clone();
-                                if !selection.reversed {
-                                    let adjusted = selection.end;
-                                    // If the selection is empty, move both the start and end forward one
-                                    // character
-                                    if selection.is_empty() {
-                                        selection.start = adjusted;
-                                        selection.end = adjusted;
-                                    } else {
-                                        selection.end = adjusted;
-                                    }
-                                }
-
-                                let range = selection.map(|p| p.to_point(&display_map)).range();
-
-                                let new_position = if linewise {
-                                    edits.push((range.start..range.start, "\n"));
-                                    let mut new_position = range.start;
-                                    new_position.column = 0;
-                                    new_position.row += 1;
-                                    new_position
-                                } else {
-                                    range.start
-                                };
-
-                                new_selections.push(selection.map(|_| new_position));
-
-                                if linewise && to_insert.ends_with('\n') {
-                                    edits.push((
-                                        range.clone(),
-                                        &to_insert[0..to_insert.len().saturating_sub(1)],
-                                    ))
-                                } else {
-                                    edits.push((range.clone(), to_insert));
-                                }
-
-                                if linewise {
-                                    edits.push((range.end..range.end, "\n"));
-                                }
-                            }
-                            drop(snapshot);
-                            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
-                        });
-
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select(new_selections)
-                        });
-                    } else {
-                        editor.insert(&clipboard_text, cx);
-                    }
                 }
             });
         });
@@ -794,65 +688,6 @@ mod test {
         cx.assert_clipboard_content(Some(indoc! {"
             quick brown
             fox jumps o"}));
-    }
-
-    #[gpui::test]
-    async fn test_visual_paste(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        cx.set_state(
-            indoc! {"
-                The quick brown
-                fox «jumpsˇ» over
-                the lazy dog"},
-            Mode::Visual,
-        );
-        cx.simulate_keystroke("y");
-        cx.set_state(
-            indoc! {"
-                The quick brown
-                fox jumpˇs over
-                the lazy dog"},
-            Mode::Normal,
-        );
-        cx.simulate_keystroke("p");
-        cx.assert_state(
-            indoc! {"
-                The quick brown
-                fox jumpsjumpˇs over
-                the lazy dog"},
-            Mode::Normal,
-        );
-
-        cx.set_state(
-            indoc! {"
-                The quick brown
-                fox ju«mˇ»ps over
-                the lazy dog"},
-            Mode::VisualLine,
-        );
-        cx.simulate_keystroke("d");
-        cx.assert_state(
-            indoc! {"
-                The quick brown
-                the laˇzy dog"},
-            Mode::Normal,
-        );
-        cx.set_state(
-            indoc! {"
-                The quick brown
-                the «lazyˇ» dog"},
-            Mode::Visual,
-        );
-        cx.simulate_keystroke("p");
-        cx.assert_state(
-            &indoc! {"
-                The quick brown
-                the_
-                ˇfox jumps over
-                dog"}
-            .replace("_", " "), // Hack for trailing whitespace
-            Mode::Normal,
-        );
     }
 
     #[gpui::test]

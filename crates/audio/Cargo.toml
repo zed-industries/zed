@@ -13,7 +13,7 @@ gpui = { path = "../gpui" }
 collections = { path = "../collections" }
 util = { path = "../util" }
 
-rodio = "0.17.1"
+rodio ={version = "0.17.1", default-features=false, features = ["wav"]}
 
 log.workspace = true
 

@@ -7,7 +7,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
     Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    Task, TypeTag, View, ViewContext,
+    Task, TypeTag, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -22,7 +22,7 @@ use util::ResultExt;
 
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
-pub struct Tooltip<V: View> {
+pub struct Tooltip<V> {
     child: AnyElement<V>,
     tooltip: Option<AnyElement<V>>,
     _state: ElementStateHandle<Rc<TooltipState>>,
@@ -52,7 +52,7 @@ pub struct KeystrokeStyle {
     text: TextStyle,
 }
 
-impl<V: View> Tooltip<V> {
+impl<V: 'static> Tooltip<V> {
     pub fn new<Tag: 'static>(
         id: usize,
         text: impl Into<Cow<'static, str>>,
@@ -181,7 +181,7 @@ impl<V: View> Tooltip<V> {
     }
 }
 
-impl<V: View> Element<V> for Tooltip<V> {
+impl<V: 'static> Element<V> for Tooltip<V> {
     type LayoutState = ();
     type PaintState = ();
 
