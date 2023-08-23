@@ -1,5 +1,6 @@
 use crate::{
-    element::{Element, Layout},
+    element::{AnyElement, Element, IntoElement, Layout, ParentElement},
+    interactive::{InteractionHandlers, Interactive},
     layout_context::LayoutContext,
     paint_context::PaintContext,
     style::{Style, StyleHelpers, Styleable},
@@ -7,6 +8,7 @@ use crate::{
 use anyhow::Result;
 use gpui::platform::MouseButtonEvent;
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
 
 pub struct Pressable<E: Styleable> {
@@ -79,3 +81,23 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
 }
 
 impl<E: Styleable<Style = Style>> StyleHelpers for Pressable<E> {}
+
+impl<V: 'static, E: Interactive<V> + Styleable> Interactive<V> for Pressable<E> {
+    fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {
+        self.child.interaction_handlers()
+    }
+}
+
+impl<V: 'static, E: ParentElement<V> + Styleable> ParentElement<V> for Pressable<E> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        self.child.children_mut()
+    }
+}
+
+impl<V: 'static, E: Element<V> + Styleable> IntoElement<V> for Pressable<E> {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}

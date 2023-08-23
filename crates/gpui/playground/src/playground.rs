@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables)]
 use crate::{
     color::black,
+    element::ParentElement,
     style::{StyleHelpers, Styleable},
 };
 use element::Element;
@@ -59,7 +60,14 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .fill(theme.error(0.5))
         .pressed()
         .fill(theme.warning(0.5))
-    // .child(button().label("Hello").click(|_, _, _| println!("click!")))
+        .child(
+            div()
+                .h_6()
+                .w_6()
+                .absolute()
+                .bottom_0()
+                .fill(theme.success(0.)),
+        )
 }
 
 //     todo!()

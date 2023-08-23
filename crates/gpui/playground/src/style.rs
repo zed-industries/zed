@@ -274,6 +274,22 @@ pub trait Styleable {
 pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
 
+    fn relative(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().position = Some(Position::Relative);
+        self
+    }
+
+    fn absolute(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().position = Some(Position::Absolute);
+        self
+    }
+
     fn fill<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,

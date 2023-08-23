@@ -1,5 +1,5 @@
 use crate::{
-    element::{AnyElement, Element, Layout, ParentElement},
+    element::{AnyElement, Element, IntoElement, Layout, ParentElement},
     interactive::{InteractionHandlers, Interactive},
     layout_context::LayoutContext,
     paint_context::PaintContext,
@@ -47,6 +47,8 @@ impl<V: 'static> Element<V> for Div<V> {
     {
         self.computed_style()
             .paint_background(layout.bounds(cx), cx);
+        self.interaction_handlers()
+            .paint(layout.order(cx), layout.bounds(cx), cx);
         for child in &mut self.children {
             child.paint(view, cx);
         }
@@ -79,35 +81,10 @@ impl<V: 'static> ParentElement<V> for Div<V> {
     }
 }
 
-#[test]
-fn test() {
-    // let elt = div().w_auto();
+impl<V: 'static> IntoElement<V> for Div<V> {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
 }
-
-// trait Element<V: 'static> {
-//     type Style;
-
-//     fn layout()
-// }
-
-// trait Stylable<V: 'static>: Element<V> {
-//     type Style;
-
-//     fn with_style(self, style: Self::Style) -> Self;
-// }
-
-// pub struct HoverStyle<S> {
-//     default: S,
-//     hovered: S,
-// }
-
-// struct Hover<V: 'static, C: Stylable<V>> {
-//     child: C,
-//     style: HoverStyle<C::Style>,
-// }
-
-// impl<V: 'static, C: Stylable<V>> Hover<V, C> {
-//     fn new(child: C, style: HoverStyle<C::Style>) -> Self {
-//         Self { child, style }
-//     }
-// }

@@ -42,7 +42,7 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
     pub fn on_event<E: 'static>(
         &mut self,
         order: u32,
-        handler: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+        handler: impl Fn(&mut V, &E, &mut EventContext<V>) + 'static,
     ) {
         let view = self.weak_handle();
 
