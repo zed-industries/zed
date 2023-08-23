@@ -1,4 +1,4 @@
-use crate::{stream_completion, OpenAIRequest, RequestMessage, Role};
+use crate::{diff::Diff, stream_completion, OpenAIRequest, RequestMessage, Role};
 use collections::HashMap;
 use editor::{Editor, ToOffset};
 use futures::{channel::mpsc, SinkExt, StreamExt};
@@ -64,7 +64,7 @@ impl RefactoringAssistant {
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                     let diff = cx.background().spawn(async move {
                         let mut messages = response.await?.ready_chunks(4);
-                        let mut diff = crate::diff::Diff::new(selected_text);
+                        let mut diff = Diff::new(selected_text);
 
                         while let Some(messages) = messages.next().await {
                             let mut new_text = String::new();
