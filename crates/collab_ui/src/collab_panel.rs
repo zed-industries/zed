@@ -16,8 +16,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{
-        Canvas, ChildView, Empty, Flex, Image, Label, List, ListOffset, ListState,
-        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, Stack, Svg,
+        Canvas, ChildView, Component, Empty, Flex, Image, Label, List, ListOffset, ListState,
+        MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement, SafeStylable,
+        Stack, Svg,
     },
     geometry::{
         rect::RectF,
@@ -35,7 +36,7 @@ use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
 use staff_mode::StaffMode;
 use std::{borrow::Cow, mem, sync::Arc};
-use theme::IconButton;
+use theme::{components::ComponentExt, IconButton};
 use util::{iife, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -50,6 +51,11 @@ use self::contact_finder::ContactFinder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
+    channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ToggleCollapse {
     channel_id: u64,
 }
 
@@ -73,7 +79,16 @@ struct RenameChannel {
     channel_id: u64,
 }
 
-actions!(collab_panel, [ToggleFocus, Remove, Secondary]);
+actions!(
+    collab_panel,
+    [
+        ToggleFocus,
+        Remove,
+        Secondary,
+        CollapseSelectedChannel,
+        ExpandSelectedChannel
+    ]
+);
 
 impl_actions!(
     collab_panel,
@@ -82,7 +97,8 @@ impl_actions!(
         NewChannel,
         InviteMembers,
         ManageMembers,
-        RenameChannel
+        RenameChannel,
+        ToggleCollapse
     ]
 );
 
@@ -105,6 +121,9 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::manage_members);
     cx.add_action(CollabPanel::rename_selected_channel);
     cx.add_action(CollabPanel::rename_channel);
+    cx.add_action(CollabPanel::toggle_channel_collapsed);
+    cx.add_action(CollabPanel::collapse_selected_channel);
+    cx.add_action(CollabPanel::expand_selected_channel)
 }
 
 #[derive(Debug)]
@@ -147,6 +166,7 @@ pub struct CollabPanel {
     list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
+    collapsed_channels: Vec<ChannelId>,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
 }
@@ -398,6 +418,7 @@ impl CollabPanel {
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
+                collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
@@ -657,9 +678,23 @@ impl CollabPanel {
                         self.entries.push(ListEntry::ChannelEditor { depth: 0 });
                     }
                 }
+                let mut collapse_depth = None;
                 for mat in matches {
                     let (depth, channel) =
                         channel_store.channel_at_index(mat.candidate_id).unwrap();
+
+                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else if let Some(collapsed_depth) = collapse_depth {
+                        if depth > collapsed_depth {
+                            continue;
+                        }
+                        if self.is_channel_collapsed(channel.id) {
+                            collapse_depth = Some(depth);
+                        } else {
+                            collapse_depth = None;
+                        }
+                    }
 
                     match &self.channel_editing_state {
                         Some(ChannelEditingState::Create { parent_id, .. })
@@ -1332,7 +1367,7 @@ impl CollabPanel {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
                     if can_collapse {
-                        this.toggle_expanded(section, cx);
+                        this.toggle_section_expanded(section, cx);
                     }
                 })
         }
@@ -1480,6 +1515,11 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         Flex::row()
             .with_child(
+                Empty::new()
+                    .constrained()
+                    .with_width(theme.collab_panel.disclosure.button_space()),
+            )
+            .with_child(
                 Svg::new("icons/hash.svg")
                     .with_color(theme.collab_panel.channel_hash.color)
                     .constrained()
@@ -1537,6 +1577,10 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
+        let has_children = self.channel_store.read(cx).has_children(channel_id);
+        let disclosed =
+            has_children.then(|| !self.collapsed_channels.binary_search(&channel_id).is_ok());
+
         let is_active = iife!({
             let call_channel = ActiveCall::global(cx)
                 .read(cx)
@@ -1550,7 +1594,7 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
 
         MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
-            Flex::row()
+            Flex::<Self>::row()
                 .with_child(
                     Svg::new("icons/hash.svg")
                         .with_color(theme.channel_hash.color)
@@ -1599,6 +1643,11 @@ impl CollabPanel {
                     }
                 })
                 .align_children_center()
+                .styleable_component()
+                .disclosable(disclosed, Box::new(ToggleCollapse { channel_id }))
+                .with_id(channel_id as usize)
+                .with_style(theme.disclosure.clone())
+                .element()
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
@@ -1825,6 +1874,12 @@ impl CollabPanel {
                     OverlayPositionMode::Window
                 });
 
+                let expand_action_name = if self.is_channel_collapsed(channel_id) {
+                    "Expand Subchannels"
+                } else {
+                    "Collapse Subchannels"
+                };
+
                 context_menu.show(
                     position.unwrap_or_default(),
                     if self.context_menu_on_selected {
@@ -1833,6 +1888,7 @@ impl CollabPanel {
                         gpui::elements::AnchorCorner::BottomLeft
                     },
                     vec![
+                        ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
                         ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
                         ContextMenuItem::Separator,
                         ContextMenuItem::action("Invite to Channel", InviteMembers { channel_id }),
@@ -1912,7 +1968,7 @@ impl CollabPanel {
                         | Section::Online
                         | Section::Offline
                         | Section::ChannelInvites => {
-                            self.toggle_expanded(*section, cx);
+                            self.toggle_section_expanded(*section, cx);
                         }
                     },
                     ListEntry::Contact { contact, calling } => {
@@ -2000,13 +2056,61 @@ impl CollabPanel {
         }
     }
 
-    fn toggle_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
+    fn toggle_section_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
             self.collapsed_sections.remove(ix);
         } else {
             self.collapsed_sections.push(section);
         }
         self.update_entries(false, cx);
+    }
+
+    fn collapse_selected_channel(
+        &mut self,
+        _: &CollapseSelectedChannel,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
+            return;
+        };
+
+        if self.is_channel_collapsed(channel_id) {
+            return;
+        }
+
+        self.toggle_channel_collapsed(&ToggleCollapse { channel_id }, cx)
+    }
+
+    fn expand_selected_channel(&mut self, _: &ExpandSelectedChannel, cx: &mut ViewContext<Self>) {
+        let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
+            return;
+        };
+
+        if !self.is_channel_collapsed(channel_id) {
+            return;
+        }
+
+        self.toggle_channel_collapsed(&ToggleCollapse { channel_id }, cx)
+    }
+
+    fn toggle_channel_collapsed(&mut self, action: &ToggleCollapse, cx: &mut ViewContext<Self>) {
+        let channel_id = action.channel_id;
+
+        match self.collapsed_channels.binary_search(&channel_id) {
+            Ok(ix) => {
+                self.collapsed_channels.remove(ix);
+            }
+            Err(ix) => {
+                self.collapsed_channels.insert(ix, channel_id);
+            }
+        };
+        self.update_entries(true, cx);
+        cx.notify();
+        cx.focus_self();
+    }
+
+    fn is_channel_collapsed(&self, channel: ChannelId) -> bool {
+        self.collapsed_channels.binary_search(&channel).is_ok()
     }
 
     fn leave_call(cx: &mut ViewContext<Self>) {
@@ -2048,6 +2152,8 @@ impl CollabPanel {
     }
 
     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
+        self.collapsed_channels
+            .retain(|&channel| channel != action.channel_id);
         self.channel_editing_state = Some(ChannelEditingState::Create {
             parent_id: Some(action.channel_id),
             pending_name: None,

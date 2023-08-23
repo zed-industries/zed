@@ -44,10 +44,10 @@ export function icon_button({ color, margin, layer, variant, size }: IconButtonO
     }
 
     const padding = {
-        top: size === Button.size.Small ? 0 : 2,
-        bottom: size === Button.size.Small ? 0 : 2,
-        left: size === Button.size.Small ? 0 : 4,
-        right: size === Button.size.Small ? 0 : 4,
+        top: size === Button.size.Small ? 2 : 2,
+        bottom: size === Button.size.Small ? 2 : 2,
+        left: size === Button.size.Small ? 2 : 4,
+        right: size === Button.size.Small ? 2 : 4,
     }
 
     return interactive({
@@ -55,10 +55,10 @@ export function icon_button({ color, margin, layer, variant, size }: IconButtonO
             corner_radius: 6,
             padding: padding,
             margin: m,
-            icon_width: 14,
+            icon_width: 12,
             icon_height: 14,
-            button_width: 20,
-            button_height: 16,
+            button_width: size === Button.size.Small ? 16 : 20,
+            button_height: 14,
         },
         state: {
             default: {

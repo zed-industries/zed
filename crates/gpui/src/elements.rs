@@ -234,6 +234,27 @@ pub trait Element<V: 'static>: 'static {
     {
         MouseEventHandler::for_child::<Tag>(self.into_any(), region_id)
     }
+
+    fn component(self) -> StatelessElementAdapter
+    where
+        Self: Sized,
+    {
+        StatelessElementAdapter::new(self.into_any())
+    }
+
+    fn stateful_component(self) -> StatefulElementAdapter<V>
+    where
+        Self: Sized,
+    {
+        StatefulElementAdapter::new(self.into_any())
+    }
+
+    fn styleable_component(self) -> StylableAdapter<StatelessElementAdapter>
+    where
+        Self: Sized,
+    {
+        StatelessElementAdapter::new(self.into_any()).stylable()
+    }
 }
 
 trait AnyElementState<V> {

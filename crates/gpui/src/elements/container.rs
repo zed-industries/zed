@@ -44,6 +44,14 @@ impl ContainerStyle {
             ..Default::default()
         }
     }
+
+    pub fn additional_length(&self) -> f32 {
+        self.padding.left
+            + self.padding.right
+            + self.border.width * 2.
+            + self.margin.left
+            + self.margin.right
+    }
 }
 
 pub struct Container<V> {
