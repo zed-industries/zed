@@ -5034,7 +5034,6 @@ impl Project {
     ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
         // Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
-
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
             let (tx, rx) = smol::channel::unbounded();
