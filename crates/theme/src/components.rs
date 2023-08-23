@@ -4,7 +4,8 @@ use crate::{Interactive, Toggleable};
 
 use self::{action_button::ButtonStyle, disclosure::Disclosable, svg::SvgStyle, toggle::Toggle};
 
-pub type ToggleIconButtonStyle = Toggleable<Interactive<ButtonStyle<SvgStyle>>>;
+pub type IconButtonStyle = Interactive<ButtonStyle<SvgStyle>>;
+pub type ToggleIconButtonStyle = Toggleable<IconButtonStyle>;
 
 pub trait ComponentExt<C: SafeStylable> {
     fn toggleable(self, active: bool) -> Toggle<C, ()>;
@@ -27,17 +28,19 @@ impl<C: SafeStylable> ComponentExt<C> for C {
 pub mod disclosure {
 
     use gpui::{
-        elements::{Component, Empty, Flex, ParentElement, SafeStylable},
+        elements::{Component, ContainerStyle, Empty, Flex, ParentElement, SafeStylable},
         Action, Element,
     };
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
 
-    use super::{action_button::Button, svg::Svg, ComponentExt, ToggleIconButtonStyle};
+    use super::{action_button::Button, svg::Svg, ComponentExt, IconButtonStyle};
 
     #[derive(Clone, Default, Deserialize, JsonSchema)]
     pub struct DisclosureStyle<S> {
-        pub button: ToggleIconButtonStyle,
+        pub button: IconButtonStyle,
+        #[serde(flatten)]
+        pub container: ContainerStyle,
         pub spacing: f32,
         #[serde(flatten)]
         content: S,
@@ -99,6 +102,7 @@ pub mod disclosure {
     impl<C: SafeStylable> Component for Disclosable<C, DisclosureStyle<C::Style>> {
         fn render<V: gpui::View>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             Flex::row()
+                .with_spacing(self.style.spacing)
                 .with_child(if let Some(disclosed) = self.disclosed {
                     Button::dynamic_action(self.action)
                         .with_id(self.id)
@@ -107,7 +111,6 @@ pub mod disclosure {
                         } else {
                             "icons/file_icons/chevron_right.svg"
                         }))
-                        .toggleable(disclosed)
                         .with_style(self.style.button)
                         .element()
                         .into_any()
@@ -119,7 +122,6 @@ pub mod disclosure {
                         .with_width(self.style.button.button_width.unwrap())
                         .into_any()
                 })
-                .with_child(Empty::new().constrained().with_width(self.style.spacing))
                 .with_child(
                     self.content
                         .with_style(self.style.content)
@@ -127,6 +129,8 @@ pub mod disclosure {
                         .flex(1., true),
                 )
                 .align_children_center()
+                .contained()
+                .with_style(self.style.container)
                 .into_any()
         }
     }

@@ -1,18 +1,26 @@
-import { toggle_label_button_style } from "../component/label_button"
+
 import { useTheme } from "../common"
 import { text_button } from "../component/text_button"
-import { toggleable_icon_button } from "../component/icon_button"
+import { icon_button } from "../component/icon_button"
 import { text } from "./components"
+import { toggleable } from "../element"
 
 export default function contacts_panel(): any {
     const theme = useTheme()
 
     return {
         button: text_button({}),
-        toggle: toggle_label_button_style({ active_color: "accent" }),
+        toggle: toggleable({
+            base: text_button({}),
+            state: {
+                active: {
+                    ...text_button({ color: "accent" })
+                }
+            }
+        }),
         disclosure: {
             ...text(theme.lowest, "sans", "base"),
-            button: toggleable_icon_button(theme, {}),
+            button: icon_button({ variant: "ghost" }),
             spacing: 4,
         }
     }
