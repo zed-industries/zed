@@ -1,7 +1,7 @@
 use crate::Project;
 use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
 use std::path::PathBuf;
-use terminal::{Terminal, TerminalBuilder, TerminalSettings};
+use terminal::{Shell, Terminal, TerminalBuilder, TerminalSettings};
 
 #[cfg(target_os = "macos")]
 use std::os::unix::ffi::OsStrExt;
@@ -23,10 +23,14 @@ impl Project {
             ));
         } else {
             let settings = settings::get::<TerminalSettings>(cx);
+            let automatically_activate_python_virtual_environment = settings
+                .automatically_activate_python_virtual_environment
+                .clone();
+            let shell = settings.shell.clone();
 
             let terminal = TerminalBuilder::new(
                 working_directory.clone(),
-                settings.shell.clone(),
+                shell.clone(),
                 settings.env.clone(),
                 Some(settings.blinking.clone()),
                 settings.alternate_scroll,
@@ -50,10 +54,13 @@ impl Project {
                 })
                 .detach();
 
-                let setting = settings::get::<TerminalSettings>(cx);
-
-                if setting.automatically_activate_python_virtual_environment {
-                    self.set_up_python_virtual_environment(&terminal_handle, cx);
+                if automatically_activate_python_virtual_environment {
+                    let activate_script_path = self.find_activate_script_path(&shell, cx);
+                    self.activate_python_virtual_environment(
+                        activate_script_path,
+                        &terminal_handle,
+                        cx,
+                    );
                 }
 
                 terminal_handle
@@ -63,36 +70,35 @@ impl Project {
         }
     }
 
-    fn set_up_python_virtual_environment(
+    pub fn find_activate_script_path(
         &mut self,
-        terminal_handle: &ModelHandle<Terminal>,
-        cx: &mut ModelContext<Project>,
-    ) {
-        let virtual_environment = self.find_python_virtual_environment(cx);
-        if let Some(virtual_environment) = virtual_environment {
-            // Paths are not strings so we need to jump through some hoops to format the command without `format!`
-            let mut command = Vec::from("source ".as_bytes());
-            command.extend_from_slice(virtual_environment.as_os_str().as_bytes());
-            command.push(b'\n');
-
-            terminal_handle.update(cx, |this, _| this.input_bytes(command));
-        }
-    }
-
-    pub fn find_python_virtual_environment(
-        &mut self,
+        shell: &Shell,
         cx: &mut ModelContext<Project>,
     ) -> Option<PathBuf> {
-        const VIRTUAL_ENVIRONMENT_NAMES: [&str; 4] = [".env", "env", ".venv", "venv"];
+        let program = match shell {
+            terminal::Shell::System => "Figure this out",
+            terminal::Shell::Program(program) => program,
+            terminal::Shell::WithArguments { program, args } => program,
+        };
+
+        // This is so hacky - find a better way to do this
+        let script_name = if program.contains("fish") {
+            "activate.fish"
+        } else {
+            "activate"
+        };
 
         let worktree_paths = self
             .worktrees(cx)
             .map(|worktree| worktree.read(cx).abs_path());
 
+        const VIRTUAL_ENVIRONMENT_NAMES: [&str; 4] = [".env", "env", ".venv", "venv"];
+
         for worktree_path in worktree_paths {
             for virtual_environment_name in VIRTUAL_ENVIRONMENT_NAMES {
                 let mut path = worktree_path.join(virtual_environment_name);
-                path.push("bin/activate");
+                path.push("bin/");
+                path.push(script_name);
 
                 if path.exists() {
                     return Some(path);
@@ -101,6 +107,22 @@ impl Project {
         }
 
         None
+    }
+
+    fn activate_python_virtual_environment(
+        &mut self,
+        activate_script: Option<PathBuf>,
+        terminal_handle: &ModelHandle<Terminal>,
+        cx: &mut ModelContext<Project>,
+    ) {
+        if let Some(activate_script) = activate_script {
+            // Paths are not strings so we need to jump through some hoops to format the command without `format!`
+            let mut command = Vec::from("source ".as_bytes());
+            command.extend_from_slice(activate_script.as_os_str().as_bytes());
+            command.push(b'\n');
+
+            terminal_handle.update(cx, |this, _| this.input_bytes(command));
+        }
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakModelHandle<terminal::Terminal>> {
