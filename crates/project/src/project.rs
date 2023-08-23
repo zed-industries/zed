@@ -5382,11 +5382,12 @@ impl Project {
     ) {
         let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
         let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
-        let task = cx.spawn(|this, cx| async move {
+        cx.spawn(|this, cx| async move {
             let mut buffers = vec![];
             while let Some(entry) = matching_paths_rx.next().await {
                 buffers.push(entry);
             }
+            dbg!("Got all the paths");
             buffers.sort_by_key(|candidate| match candidate {
                 SearchMatchCandidate::Unnamed { .. } => None,
                 SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
@@ -5423,7 +5424,7 @@ impl Project {
                 })
                 .detach();
             }
-        });
+        }).detach();
         (sorted_buffers_rx, buffers_rx)
     }
 
