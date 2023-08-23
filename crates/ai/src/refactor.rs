@@ -3,10 +3,10 @@ use collections::HashMap;
 use editor::{Editor, ToOffset};
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, platform::MouseButton, AnyViewHandle, AppContext, Entity, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
-use menu::Confirm;
+use menu::{Cancel, Confirm};
 use std::{env, sync::Arc};
 use util::TryFutureExt;
 use workspace::{Modal, Workspace};
@@ -17,6 +17,7 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(RefactoringAssistant::new());
     cx.add_action(RefactoringModal::deploy);
     cx.add_action(RefactoringModal::confirm);
+    cx.add_action(RefactoringModal::cancel);
 }
 
 pub struct RefactoringAssistant {
@@ -139,14 +140,18 @@ impl RefactoringAssistant {
     }
 }
 
+enum Event {
+    Dismissed,
+}
+
 struct RefactoringModal {
-    editor: WeakViewHandle<Editor>,
+    active_editor: WeakViewHandle<Editor>,
     prompt_editor: ViewHandle<Editor>,
     has_focus: bool,
 }
 
 impl Entity for RefactoringModal {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for RefactoringModal {
@@ -155,11 +160,24 @@ impl View for RefactoringModal {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        ChildView::new(&self.prompt_editor, cx).into_any()
+        let theme = theme::current(cx);
+
+        ChildView::new(&self.prompt_editor, cx)
+            .constrained()
+            .with_width(theme.assistant.modal.width)
+            .contained()
+            .with_style(theme.assistant.modal.container)
+            .mouse::<Self>(0)
+            .on_click_out(MouseButton::Left, |_, _, cx| cx.emit(Event::Dismissed))
+            .on_click_out(MouseButton::Right, |_, _, cx| cx.emit(Event::Dismissed))
+            .aligned()
+            .right()
+            .into_any()
     }
 
-    fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_focus = true;
+        cx.focus(&self.prompt_editor);
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
@@ -173,29 +191,29 @@ impl Modal for RefactoringModal {
     }
 
     fn dismiss_on_event(event: &Self::Event) -> bool {
-        // TODO
-        false
+        matches!(event, Self::Event::Dismissed)
     }
 }
 
 impl RefactoringModal {
     fn deploy(workspace: &mut Workspace, _: &Refactor, cx: &mut ViewContext<Workspace>) {
-        if let Some(editor) = workspace
+        if let Some(active_editor) = workspace
             .active_item(cx)
             .and_then(|item| Some(item.downcast::<Editor>()?.downgrade()))
         {
             workspace.toggle_modal(cx, |_, cx| {
                 let prompt_editor = cx.add_view(|cx| {
                     let mut editor = Editor::auto_height(
-                        4,
-                        Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                        theme::current(cx).assistant.modal.editor_max_lines,
+                        Some(Arc::new(|theme| theme.assistant.modal.editor.clone())),
                         cx,
                     );
-                    editor.set_text("Replace with if statement.", cx);
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
                     editor
                 });
                 cx.add_view(|_| RefactoringModal {
-                    editor,
+                    active_editor,
                     prompt_editor,
                     has_focus: false,
                 })
@@ -203,12 +221,17 @@ impl RefactoringModal {
         }
     }
 
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Dismissed);
+    }
+
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = self.editor.upgrade(cx) {
+        if let Some(editor) = self.active_editor.upgrade(cx) {
             let prompt = self.prompt_editor.read(cx).text(cx);
             cx.update_global(|assistant: &mut RefactoringAssistant, cx| {
                 assistant.refactor(&editor, &prompt, cx);
             });
+            cx.emit(Event::Dismissed);
         }
     }
 }

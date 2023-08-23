@@ -1124,6 +1124,16 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
+    pub modal: ModalAssistantStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ModalAssistantStyle {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
+    pub editor_max_lines: usize,
+    pub editor: FieldEditor,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

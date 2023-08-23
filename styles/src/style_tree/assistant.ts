@@ -59,6 +59,22 @@ export default function assistant(): any {
             background: background(theme.highest),
             padding: { left: 12 },
         },
+        modal: {
+            background: background(theme.lowest),
+            border: border(theme.lowest),
+            shadow: theme.modal_shadow,
+            corner_radius: 12,
+            padding: { left: 12, right: 0, top: 12, bottom: 12 },
+            margin: { right: 12 },
+            width: 500,
+            editor_max_lines: 6,
+            editor: {
+                background: background(theme.lowest),
+                text: text(theme.lowest, "mono", "on"),
+                placeholder_text: text(theme.lowest, "sans", "on", "disabled"),
+                selection: theme.players[0],
+            }
+        },
         message_header: {
             margin: { bottom: 4, top: 4 },
             background: background(theme.highest),
