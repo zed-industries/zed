@@ -204,14 +204,67 @@ impl Diff {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::env;
 
-    #[test]
-    fn test_diff() {
-        let mut diff = Diff::new("hello world".to_string());
-        dbg!(diff.push_new("hello"));
-        dbg!(diff.push_new(" ciaone"));
-        // dbg!(diff.push_new(" world"));
-        dbg!(diff.finish());
+    use super::*;
+    use rand::prelude::*;
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_diffs(mut rng: StdRng) {
+        let old_text_len = env::var("OLD_TEXT_LEN")
+            .map(|i| i.parse().expect("invalid `OLD_TEXT_LEN` variable"))
+            .unwrap_or(10);
+        let new_text_len = env::var("NEW_TEXT_LEN")
+            .map(|i| i.parse().expect("invalid `NEW_TEXT_LEN` variable"))
+            .unwrap_or(10);
+
+        let old = util::RandomCharIter::new(&mut rng)
+            .take(old_text_len)
+            .collect::<String>();
+        log::info!("old text: {:?}", old);
+
+        let mut diff = Diff::new(old.clone());
+        let mut hunks = Vec::new();
+        let mut new_len = 0;
+        let mut new = String::new();
+        while new_len < new_text_len {
+            let new_chunk_len = rng.gen_range(1..=new_text_len - new_len);
+            let new_chunk = util::RandomCharIter::new(&mut rng)
+                .take(new_len)
+                .collect::<String>();
+            log::info!("new chunk: {:?}", new_chunk);
+            new_len += new_chunk_len;
+            new.push_str(&new_chunk);
+            let new_hunks = diff.push_new(&new_chunk);
+            log::info!("hunks: {:?}", new_hunks);
+            hunks.extend(new_hunks);
+        }
+        let final_hunks = diff.finish();
+        log::info!("final hunks: {:?}", final_hunks);
+        hunks.extend(final_hunks);
+
+        log::info!("new text: {:?}", new);
+        let mut old_ix = 0;
+        let mut new_ix = 0;
+        let mut patched = String::new();
+        for hunk in hunks {
+            match hunk {
+                Hunk::Keep { len } => {
+                    assert_eq!(&old[old_ix..old_ix + len], &new[new_ix..new_ix + len]);
+                    patched.push_str(&old[old_ix..old_ix + len]);
+                    old_ix += len;
+                    new_ix += len;
+                }
+                Hunk::Remove { len } => {
+                    old_ix += len;
+                }
+                Hunk::Insert { text } => {
+                    assert_eq!(text, &new[new_ix..new_ix + text.len()]);
+                    patched.push_str(&text);
+                    new_ix += text.len();
+                }
+            }
+        }
+        assert_eq!(patched, new);
     }
 }

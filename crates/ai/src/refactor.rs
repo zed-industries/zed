@@ -78,15 +78,14 @@ impl RefactoringAssistant {
                             }
 
                             let hunks = diff.push_new(&new_text);
-                            hunks_tx.send((hunks, new_text)).await?;
+                            hunks_tx.send(hunks).await?;
                         }
-
-                        hunks_tx.send((diff.finish(), String::new())).await?;
+                        hunks_tx.send(diff.finish()).await?;
 
                         anyhow::Ok(())
                     });
 
-                    while let Some((hunks, new_text)) = hunks_rx.next().await {
+                    while let Some(hunks) = hunks_rx.next().await {
                         editor.update(&mut cx, |editor, cx| {
                             editor.buffer().update(cx, |buffer, cx| {
                                 buffer.start_transaction(cx);
