@@ -1459,6 +1459,7 @@ dependencies = [
  "clap 3.2.25",
  "client",
  "clock",
+ "collab_ui",
  "collections",
  "ctor",
  "dashmap",

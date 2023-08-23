@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, UserId, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -250,6 +250,7 @@ enum ProjectClientState {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -7756,6 +7757,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

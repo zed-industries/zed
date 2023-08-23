@@ -1,8 +1,11 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
-
+use call::ActiveCall;
 use client::UserId;
+use collab_ui::channel_view::ChannelView;
+use collections::HashMap;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
+use serde_json::json;
 use std::sync::Arc;
 
 #[gpui::test]
@@ -82,7 +85,9 @@ async fn test_core_channel_buffers(
     // Client A rejoins the channel buffer
     let _channel_buffer_a = client_a
         .channel_store()
-        .update(cx_a, |channels, cx| channels.open_channel_buffer(zed_id, cx))
+        .update(cx_a, |channels, cx| {
+            channels.open_channel_buffer(zed_id, cx)
+        })
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -108,6 +113,133 @@ async fn test_core_channel_buffers(
     // TODO:
     // - Test synchronizing offline updates, what happens to A's channel buffer when A disconnects
     // - Test interaction with channel deletion while buffer is open
+}
+
+#[gpui::test]
+async fn test_channel_buffer_replica_ids(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let channel_id = server
+        .make_channel(
+            "zed",
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Clients A and B join a channel.
+    active_call_a
+        .update(cx_a, |call, cx| call.join_channel(channel_id, cx))
+        .await
+        .unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_id, cx))
+        .await
+        .unwrap();
+
+    // Clients A, B, and C join a channel buffer
+    // C first so that the replica IDs in the project and the channel buffer are different
+    let channel_buffer_c = client_c
+        .channel_store()
+        .update(cx_c, |channel, cx| {
+            channel.open_channel_buffer(channel_id, cx)
+        })
+        .await
+        .unwrap();
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |channel, cx| {
+            channel.open_channel_buffer(channel_id, cx)
+        })
+        .await
+        .unwrap();
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| {
+            channel.open_channel_buffer(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Client B shares a project
+    client_b
+        .fs()
+        .insert_tree("/dir", json!({ "file.txt": "contents" }))
+        .await;
+    let (project_b, _) = client_b.build_local_project("/dir", cx_b).await;
+    let shared_project_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client A joins the project
+    let project_a = client_a.build_remote_project(shared_project_id, cx_a).await;
+    deterministic.run_until_parked();
+
+    // Client C is in a separate project.
+    client_c.fs().insert_tree("/dir", json!({})).await;
+    let (project_c, _) = client_c.build_local_project("/dir", cx_c).await;
+
+    // Note that each user has a different replica id in the projects vs the
+    // channel buffer.
+    channel_buffer_a.read_with(cx_a, |channel_buffer, cx| {
+        assert_eq!(project_a.read(cx).replica_id(), 1);
+        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 2);
+    });
+    channel_buffer_b.read_with(cx_b, |channel_buffer, cx| {
+        assert_eq!(project_b.read(cx).replica_id(), 0);
+        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 1);
+    });
+    channel_buffer_c.read_with(cx_c, |channel_buffer, cx| {
+        // C is not in the project
+        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 0);
+    });
+
+    let channel_window_a = cx_a
+        .add_window(|cx| ChannelView::new(project_a.clone(), channel_buffer_a.clone(), None, cx));
+    let channel_window_b = cx_b
+        .add_window(|cx| ChannelView::new(project_b.clone(), channel_buffer_b.clone(), None, cx));
+    let channel_window_c = cx_c
+        .add_window(|cx| ChannelView::new(project_c.clone(), channel_buffer_c.clone(), None, cx));
+
+    let channel_view_a = channel_window_a.root(cx_a);
+    let channel_view_b = channel_window_b.root(cx_b);
+    let channel_view_c = channel_window_c.root(cx_c);
+
+    // For clients A and B, the replica ids in the channel buffer are mapped
+    // so that they match the same users' replica ids in their shared project.
+    channel_view_a.read_with(cx_a, |view, cx| {
+        assert_eq!(
+            view.project_replica_ids_by_channel_buffer_replica_id(cx),
+            [(1, 0), (2, 1)].into_iter().collect::<HashMap<_, _>>()
+        );
+    });
+    channel_view_b.read_with(cx_b, |view, cx| {
+        assert_eq!(
+            view.project_replica_ids_by_channel_buffer_replica_id(cx),
+            [(1, 0), (2, 1)].into_iter().collect::<HashMap<u16, u16>>(),
+        )
+    });
+
+    // Client C only sees themself, as they're not part of any shared project
+    channel_view_c.read_with(cx_c, |view, cx| {
+        assert_eq!(
+            view.project_replica_ids_by_channel_buffer_replica_id(cx),
+            [(0, 0)].into_iter().collect::<HashMap<u16, u16>>(),
+        );
+    });
 }
 
 #[track_caller]

@@ -1,4 +1,6 @@
 use channel::channel_buffer::ChannelBuffer;
+use clock::ReplicaId;
+use collections::HashMap;
 use editor::Editor;
 use gpui::{
     actions,
@@ -6,6 +8,7 @@ use gpui::{
     AnyElement, AppContext, Element, Entity, ModelHandle, View, ViewContext, ViewHandle,
 };
 use language::Language;
+use project::Project;
 use std::sync::Arc;
 use workspace::item::{Item, ItemHandle};
 
@@ -17,22 +20,56 @@ pub(crate) fn init(cx: &mut AppContext) {
 
 pub struct ChannelView {
     editor: ViewHandle<Editor>,
+    project: ModelHandle<Project>,
     channel_buffer: ModelHandle<ChannelBuffer>,
 }
 
 impl ChannelView {
     pub fn new(
+        project: ModelHandle<Project>,
         channel_buffer: ModelHandle<ChannelBuffer>,
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx));
+        buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
         let editor = cx.add_view(|cx| Editor::for_buffer(buffer, None, cx));
-        Self {
+        let this = Self {
             editor,
+            project,
             channel_buffer,
+        };
+        let mapping = this.project_replica_ids_by_channel_buffer_replica_id(cx);
+        this.editor
+            .update(cx, |editor, cx| editor.set_replica_id_mapping(mapping, cx));
+        this
+    }
+
+    /// Channel Buffer Replica ID -> Project Replica ID
+    pub fn project_replica_ids_by_channel_buffer_replica_id(
+        &self,
+        cx: &AppContext,
+    ) -> HashMap<ReplicaId, ReplicaId> {
+        let project = self.project.read(cx);
+        let mut result = HashMap::default();
+        result.insert(
+            self.channel_buffer.read(cx).replica_id(cx),
+            project.replica_id(),
+        );
+        for collaborator in self.channel_buffer.read(cx).collaborators() {
+            let project_replica_id =
+                project
+                    .collaborators()
+                    .values()
+                    .find_map(|project_collaborator| {
+                        (project_collaborator.user_id == collaborator.user_id)
+                            .then_some(project_collaborator.replica_id)
+                    });
+            if let Some(project_replica_id) = project_replica_id {
+                result.insert(collaborator.replica_id as ReplicaId, project_replica_id);
+            }
         }
+        result
     }
 }
 

@@ -2238,7 +2238,14 @@ impl CollabPanel {
                 .await?;
 
             workspace.update(&mut cx, |workspace, cx| {
-                let channel_view = cx.add_view(|cx| ChannelView::new(channel_buffer, markdown, cx));
+                let channel_view = cx.add_view(|cx| {
+                    ChannelView::new(
+                        workspace.project().to_owned(),
+                        channel_buffer,
+                        Some(markdown),
+                        cx,
+                    )
+                });
                 workspace.add_item(Box::new(channel_view), cx);
             })?;
 

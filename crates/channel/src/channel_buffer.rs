@@ -171,4 +171,8 @@ impl ChannelBuffer {
             .channel_for_id(self.channel_id)
             .cloned()
     }
+
+    pub fn replica_id(&self, cx: &AppContext) -> u16 {
+        self.buffer.read(cx).replica_id()
+    }
 }

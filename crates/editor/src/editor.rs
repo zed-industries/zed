@@ -559,6 +559,7 @@ pub struct Editor {
     blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     mode: EditorMode,
+    replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -1394,6 +1395,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            replica_id_mapping: None,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -1602,6 +1604,15 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_replica_id_mapping(
+        &mut self,
+        mapping: HashMap<ReplicaId, ReplicaId>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.replica_id_mapping = Some(mapping);
+        cx.notify();
     }
 
     fn selections_did_change(
