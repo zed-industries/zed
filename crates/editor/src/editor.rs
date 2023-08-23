@@ -1736,6 +1736,31 @@ impl Editor {
         });
     }
 
+    pub fn edit_with_block_indent<I, S, T>(
+        &mut self,
+        edits: I,
+        original_indent_columns: Vec<u32>,
+        cx: &mut ViewContext<Self>,
+    ) where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only {
+            return;
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            )
+        });
+    }
+
     fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
         self.hide_context_menu(cx);
 
@@ -2667,7 +2692,6 @@ impl Editor {
             false
         });
     }
-
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -4742,12 +4766,18 @@ impl Editor {
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
+            let mut is_first = true;
             for selection in &mut selections {
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
                     selection.goal = SelectionGoal::None;
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    text += "\n";
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(selection.start..selection.end) {
@@ -4779,6 +4809,7 @@ impl Editor {
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
+            let mut is_first = true;
             for selection in selections.iter() {
                 let mut start = selection.start;
                 let mut end = selection.end;
@@ -4786,6 +4817,11 @@ impl Editor {
                 if is_entire_line {
                     start = Point::new(start.row, 0);
                     end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    text += "\n";
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(start..end) {
@@ -4806,7 +4842,7 @@ impl Editor {
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.read_from_clipboard() {
-                let mut clipboard_text = Cow::Borrowed(item.text());
+                let clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
                     let old_selections = this.selections.all::<usize>(cx);
                     let all_selections_were_entire_line =
@@ -4814,18 +4850,7 @@ impl Editor {
                     let first_selection_indent_column =
                         clipboard_selections.first().map(|s| s.first_line_indent);
                     if clipboard_selections.len() != old_selections.len() {
-                        let mut newline_separated_text = String::new();
-                        let mut clipboard_selections = clipboard_selections.drain(..).peekable();
-                        let mut ix = 0;
-                        while let Some(clipboard_selection) = clipboard_selections.next() {
-                            newline_separated_text
-                                .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
-                            ix += clipboard_selection.len;
-                            if clipboard_selections.peek().is_some() {
-                                newline_separated_text.push('\n');
-                            }
-                        }
-                        clipboard_text = Cow::Owned(newline_separated_text);
+                        clipboard_selections.drain(..);
                     }
 
                     this.buffer.update(cx, |buffer, cx| {
@@ -4841,8 +4866,9 @@ impl Editor {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
+                                dbg!(start_offset, end_offset, &clipboard_text, &to_insert);
                                 entire_line = clipboard_selection.is_entire_line;
-                                start_offset = end_offset;
+                                start_offset = end_offset + 1;
                                 original_indent_column =
                                     Some(clipboard_selection.first_line_indent);
                             } else {
@@ -8537,6 +8563,7 @@ fn build_style(
                 font_size,
                 font_properties,
                 underline: Default::default(),
+                soft_wrap: false,
             },
             placeholder_text: None,
             line_height_scalar,

@@ -8,7 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -128,7 +128,7 @@ impl Label {
     }
 }
 
-impl<V: View> Element<V> for Label {
+impl<V: 'static> Element<V> for Label {
     type LayoutState = Line;
     type PaintState = ();
 

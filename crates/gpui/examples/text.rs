@@ -58,6 +58,7 @@ impl gpui::View for TextView {
                 font_family_id: family,
                 underline: Default::default(),
                 font_properties: Default::default(),
+                soft_wrap: false,
             },
         )
         .with_highlights(vec![(17..26, underline), (34..40, underline)])

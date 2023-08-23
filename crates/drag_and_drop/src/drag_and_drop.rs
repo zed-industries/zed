@@ -11,7 +11,7 @@ use gpui::{
 
 const DEAD_ZONE: f32 = 4.;
 
-enum State<V: View> {
+enum State<V> {
     Down {
         region_offset: Vector2F,
         region: RectF,
@@ -31,7 +31,7 @@ enum State<V: View> {
     Canceled,
 }
 
-impl<V: View> Clone for State<V> {
+impl<V> Clone for State<V> {
     fn clone(&self) -> Self {
         match self {
             &State::Down {
@@ -68,12 +68,12 @@ impl<V: View> Clone for State<V> {
     }
 }
 
-pub struct DragAndDrop<V: View> {
+pub struct DragAndDrop<V> {
     containers: HashSet<WeakViewHandle<V>>,
     currently_dragged: Option<State<V>>,
 }
 
-impl<V: View> Default for DragAndDrop<V> {
+impl<V> Default for DragAndDrop<V> {
     fn default() -> Self {
         Self {
             containers: Default::default(),
@@ -82,7 +82,7 @@ impl<V: View> Default for DragAndDrop<V> {
     }
 }
 
-impl<V: View> DragAndDrop<V> {
+impl<V: 'static> DragAndDrop<V> {
     pub fn register_container(&mut self, handle: WeakViewHandle<V>) {
         self.containers.insert(handle);
     }
@@ -291,7 +291,7 @@ impl<V: View> DragAndDrop<V> {
     }
 }
 
-pub trait Draggable<V: View> {
+pub trait Draggable<V> {
     fn as_draggable<D: View, P: Any>(
         self,
         payload: P,
@@ -301,7 +301,7 @@ pub trait Draggable<V: View> {
         Self: Sized;
 }
 
-impl<V: View> Draggable<V> for MouseEventHandler<V> {
+impl<V: 'static> Draggable<V> for MouseEventHandler<V> {
     fn as_draggable<D: View, P: Any>(
         self,
         payload: P,

@@ -129,14 +129,23 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
         let neovim = self.neovim_state().await;
-        if neovim != marked_text {
-            let initial_state = self
-                .last_set_state
-                .as_ref()
-                .unwrap_or(&"N/A".to_string())
-                .clone();
-            panic!(
-                indoc! {"Test is incorrect (currently expected != neovim state)
+        let editor = self.editor_state();
+        if neovim == marked_text && neovim == editor {
+            return;
+        }
+        let initial_state = self
+            .last_set_state
+            .as_ref()
+            .unwrap_or(&"N/A".to_string())
+            .clone();
+
+        let message = if neovim != marked_text {
+            "Test is incorrect (currently expected != neovim_state)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+        panic!(
+            indoc! {"{}
                 # initial state:
                 {}
                 # keystrokes:
@@ -147,14 +156,59 @@ impl<'a> NeovimBackedTestContext<'a> {
                 {}
                 # zed state:
                 {}"},
-                initial_state,
-                self.recent_keystrokes.join(" "),
-                marked_text,
-                neovim,
-                self.editor_state(),
-            )
+            message,
+            initial_state,
+            self.recent_keystrokes.join(" "),
+            marked_text,
+            neovim,
+            editor
+        )
+    }
+
+    pub async fn assert_shared_clipboard(&mut self, text: &str) {
+        let neovim = self.neovim.read_register('"').await;
+        let editor = self
+            .platform()
+            .read_from_clipboard()
+            .unwrap()
+            .text()
+            .clone();
+
+        if text == neovim && text == editor {
+            return;
         }
-        self.assert_editor_state(marked_text)
+
+        let message = if neovim != text {
+            "Test is incorrect (currently expected != neovim)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+
+        let initial_state = self
+            .last_set_state
+            .as_ref()
+            .unwrap_or(&"N/A".to_string())
+            .clone();
+
+        panic!(
+            indoc! {"{}
+                # initial state:
+                {}
+                # keystrokes:
+                {}
+                # currently expected:
+                {}
+                # neovim clipboard:
+                {}
+                # zed clipboard:
+                {}"},
+            message,
+            initial_state,
+            self.recent_keystrokes.join(" "),
+            text,
+            neovim,
+            editor
+        )
     }
 
     pub async fn neovim_state(&mut self) -> String {

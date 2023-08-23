@@ -2,7 +2,6 @@
   {
     "bindings": {
       "cmd-shift-o": "projects::OpenRecent",
-      "cmd-shift-b": "branches::OpenRecent",
       "cmd-alt-tab": "project_panel::ToggleFocus"
     }
   },
@@ -12,8 +11,9 @@
       "cmd-l": "go_to_line::Toggle",
       "ctrl-shift-d": "editor::DuplicateLine",
       "cmd-b": "editor::GoToDefinition",
-      "alt-cmd-b": "editor::GoToDefinition",
       "cmd-j": "editor::ScrollCursorCenter",
+      "cmd-enter": "editor::NewlineBelow",
+      "cmd-alt-enter": "editor::NewLineAbove",
       "cmd-shift-l": "editor::SelectLine",
       "cmd-shift-t": "outline::Toggle",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
@@ -51,14 +51,17 @@
         }
       ],
       "ctrl-shift-left": "editor::SelectToPreviousSubwordStart",
-      "ctrl-shift-right": "editor::SelectToNextSubwordEnd"
+      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-w": "editor::SelectNext",
+      "ctrl-u": "editor::ConvertToUpperCase",
+      "ctrl-shift-u": "editor::ConvertToLowerCase",
+      "ctrl-alt-u": "editor::ConvertToUpperCamelCase",
+      "ctrl-_": "editor::ConvertToSnakeCase"
     }
   },
   {
     "context": "Editor && mode == full",
-    "bindings": {
-      "cmd-alt-enter": "editor::NewlineAbove"
-    }
+    "bindings": {}
   },
   {
     "context": "BufferSearchBar",
@@ -84,6 +87,10 @@
   },
   {
     "context": "ProjectPanel",
+    "bindings": {}
+  },
+  {
+    "context": "Dock",
     "bindings": {}
   }
 ]

@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    AnyElement, LayoutContext, MouseRegion, PaintContext, SceneBuilder, View, ViewContext,
+    AnyElement, LayoutContext, MouseRegion, PaintContext, SceneBuilder, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -36,13 +36,13 @@ struct StateInner {
     scroll_to: Option<ScrollTarget>,
 }
 
-pub struct UniformListLayoutState<V: View> {
+pub struct UniformListLayoutState<V> {
     scroll_max: f32,
     item_height: f32,
     items: Vec<AnyElement<V>>,
 }
 
-pub struct UniformList<V: View> {
+pub struct UniformList<V> {
     state: UniformListState,
     item_count: usize,
     #[allow(clippy::type_complexity)]
@@ -53,7 +53,7 @@ pub struct UniformList<V: View> {
     view_id: usize,
 }
 
-impl<V: View> UniformList<V> {
+impl<V: 'static> UniformList<V> {
     pub fn new<F>(
         state: UniformListState,
         item_count: usize,
@@ -61,7 +61,6 @@ impl<V: View> UniformList<V> {
         append_items: F,
     ) -> Self
     where
-        V: View,
         F: 'static + Fn(&mut V, Range<usize>, &mut Vec<AnyElement<V>>, &mut ViewContext<V>),
     {
         Self {
@@ -151,7 +150,7 @@ impl<V: View> UniformList<V> {
     }
 }
 
-impl<V: View> Element<V> for UniformList<V> {
+impl<V: 'static> Element<V> for UniformList<V> {
     type LayoutState = UniformListLayoutState<V>;
     type PaintState = ();
 

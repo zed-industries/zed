@@ -1976,12 +1976,12 @@ impl NavHistoryState {
     }
 }
 
-pub struct PaneBackdrop<V: View> {
+pub struct PaneBackdrop<V> {
     child_view: usize,
     child: AnyElement<V>,
 }
 
-impl<V: View> PaneBackdrop<V> {
+impl<V> PaneBackdrop<V> {
     pub fn new(pane_item_view: usize, child: AnyElement<V>) -> Self {
         PaneBackdrop {
             child,
@@ -1990,7 +1990,7 @@ impl<V: View> PaneBackdrop<V> {
     }
 }
 
-impl<V: View> Element<V> for PaneBackdrop<V> {
+impl<V: 'static> Element<V> for PaneBackdrop<V> {
     type LayoutState = ();
 
     type PaintState = ();
