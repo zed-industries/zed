@@ -1,11 +1,12 @@
-[[bin]]
-name = "playground"
-path = "src/playground.rs"
-
 [package]
 name = "playground"
 version = "0.1.0"
 edition = "2021"
+publish = false
+
+[[bin]]
+name = "playground"
+path = "src/playground.rs"
 
 [dependencies]
 anyhow.workspace = true
