@@ -6,6 +6,7 @@ use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 
 mod c;
+mod css;
 mod elixir;
 mod go;
 mod html;
@@ -52,7 +53,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_cpp::language(),
         vec![Arc::new(c::CLspAdapter)],
     );
-    language("css", tree_sitter_css::language(), vec![]);
+    language(
+        "css",
+        tree_sitter_css::language(),
+        vec![
+            Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
+    );
     language(
         "elixir",
         tree_sitter_elixir::language(),
