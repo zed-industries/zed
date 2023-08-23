@@ -1,5 +1,8 @@
 #![allow(dead_code, unused_variables)]
-use crate::{color::black, style::StyleHelpers};
+use crate::{
+    color::black,
+    style::{StyleHelpers, Styleable},
+};
 use element::Element;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
@@ -51,8 +54,8 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_1_2()
         .fill(theme.success(0.5))
-    // .hover()
-    // .fill(theme.error(0.5))
+        .hoverable()
+        .fill(theme.error(0.5))
     // .child(button().label("Hello").click(|_, _, _| println!("click!")))
 }
 

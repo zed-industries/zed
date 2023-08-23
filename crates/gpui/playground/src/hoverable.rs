@@ -2,40 +2,38 @@ use crate::{
     element::{Element, Layout},
     layout_context::LayoutContext,
     paint_context::PaintContext,
-    style::{StyleRefinement, Styleable},
+    style::{Style, StyleHelpers, StyleRefinement, Styleable},
 };
 use anyhow::Result;
 use gpui::platform::MouseMovedEvent;
 use refineable::Refineable;
-use std::{cell::Cell, marker::PhantomData};
+use std::cell::Cell;
 
-pub struct Hoverable<V: 'static, E: Element<V> + Styleable> {
+pub struct Hoverable<E: Styleable> {
     hovered: Cell<bool>,
     child_style: StyleRefinement,
     hovered_style: StyleRefinement,
     child: E,
-    view_type: PhantomData<V>,
 }
 
-pub fn hoverable<V, E: Element<V> + Styleable>(mut child: E) -> Hoverable<V, E> {
+pub fn hoverable<E: Styleable>(mut child: E) -> Hoverable<E> {
     Hoverable {
         hovered: Cell::new(false),
         child_style: child.declared_style().clone(),
         hovered_style: Default::default(),
         child,
-        view_type: PhantomData,
     }
 }
 
-impl<V, E: Element<V> + Styleable> Styleable for Hoverable<V, E> {
+impl<E: Styleable> Styleable for Hoverable<E> {
     type Style = E::Style;
 
     fn declared_style(&mut self) -> &mut crate::style::StyleRefinement {
-        self.child.declared_style()
+        &mut self.hovered_style
     }
 }
 
-impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
+impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
     type Layout = E::Layout;
 
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<Layout<V, Self::Layout>>
@@ -53,6 +51,10 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
     ) where
         Self: Sized,
     {
+        let bounds = layout.bounds(cx);
+        let order = layout.order(cx);
+
+        self.hovered.set(bounds.contains_point(cx.mouse_position()));
         if self.hovered.get() {
             // If hovered, refine the child's style with this element's style.
             self.child.declared_style().refine(&self.hovered_style);
@@ -61,16 +63,15 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<V, E> {
             *self.child.declared_style() = self.child_style.clone();
         }
 
-        let bounds = layout.bounds(cx);
-        let order = layout.order(cx);
-        self.hovered.set(bounds.contains_point(cx.mouse_position()));
-        let was_hovered = self.hovered.clone();
+        let hovered = self.hovered.clone();
         cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {
-            let is_hovered = bounds.contains_point(event.position);
-            if is_hovered != was_hovered.get() {
-                was_hovered.set(is_hovered);
+            if bounds.contains_point(event.position) != hovered.get() {
                 cx.repaint();
             }
         });
+
+        self.child.paint(view, layout, cx);
     }
 }
+
+impl<E: Styleable<Style = Style>> StyleHelpers for Hoverable<E> {}

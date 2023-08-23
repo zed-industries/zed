@@ -1,6 +1,7 @@
 use crate::{
     color::Hsla,
     element::{Element, Layout},
+    hoverable::{hoverable, Hoverable},
     paint_context::PaintContext,
 };
 use gpui::{
@@ -254,6 +255,13 @@ pub trait Styleable {
         let mut style = playground::style::Style::default();
         style.refine(self.declared_style());
         style
+    }
+
+    fn hoverable(self) -> Hoverable<Self>
+    where
+        Self: Sized,
+    {
+        hoverable(self)
     }
 }
 

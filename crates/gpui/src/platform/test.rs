@@ -195,6 +195,10 @@ impl super::Platform for Platform {
         Ok(())
     }
 
+    fn mouse_position(&self) -> Vector2F {
+        Vector2F::zero()
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         *self.cursor.lock() = style;
     }

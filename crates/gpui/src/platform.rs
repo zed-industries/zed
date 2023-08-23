@@ -75,6 +75,7 @@ pub trait Platform: Send + Sync {
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
     fn delete_credentials(&self, url: &str) -> Result<()>;
 
+    fn mouse_position(&self) -> Vector2F;
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 

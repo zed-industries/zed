@@ -70,6 +70,7 @@ impl Window {
     pub fn new<V, F>(
         handle: AnyWindowHandle,
         platform_window: Box<dyn platform::Window>,
+        mouse_position: Vector2F,
         cx: &mut AppContext,
         build_view: F,
     ) -> Self
@@ -97,7 +98,7 @@ impl Window {
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
             clicked_region: None,
-            mouse_position: vec2f(0., 0.),
+            mouse_position,
             titlebar_height,
             appearance,
         };
