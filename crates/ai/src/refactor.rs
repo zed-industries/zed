@@ -86,6 +86,8 @@ impl RefactoringAssistant {
 
                     while let Some(hunks) = hunks_rx.next().await {
                         editor.update(&mut cx, |editor, cx| {
+                            let mut highlights = Vec::new();
+
                             editor.buffer().update(cx, |buffer, cx| {
                                 buffer.start_transaction(cx);
                                 for hunk in hunks {
@@ -102,16 +104,33 @@ impl RefactoringAssistant {
                                             edit_start = edit_end;
                                         }
                                         crate::diff::Hunk::Keep { len } => {
+                                            let edit_end = edit_start + len;
+                                            let edit_range = snapshot.anchor_after(edit_start)
+                                                ..snapshot.anchor_before(edit_end);
+                                            highlights.push(edit_range);
                                             edit_start += len;
                                         }
                                     }
                                 }
                                 buffer.end_transaction(cx);
-                            })
+                            });
+
+                            editor.highlight_text::<Self>(
+                                highlights,
+                                gpui::fonts::HighlightStyle {
+                                    fade_out: Some(0.6),
+                                    ..Default::default()
+                                },
+                                cx,
+                            );
                         })?;
                     }
 
                     diff.await?;
+                    editor.update(&mut cx, |editor, cx| {
+                        editor.clear_text_highlights::<Self>(cx);
+                    })?;
+
                     anyhow::Ok(())
                 }
                 .log_err()
@@ -172,7 +191,7 @@ impl RefactoringModal {
                         Some(Arc::new(|theme| theme.search.editor.input.clone())),
                         cx,
                     );
-                    editor.set_text("Replace with match statement.", cx);
+                    editor.set_text("Replace with if statement.", cx);
                     editor
                 });
                 cx.add_view(|_| RefactoringModal {
