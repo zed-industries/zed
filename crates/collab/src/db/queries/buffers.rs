@@ -215,7 +215,7 @@ impl Database {
         user: UserId,
         operations: &[proto::Operation],
     ) -> Result<Vec<ConnectionId>> {
-        self.transaction(|tx| async move {
+        self.transaction(move |tx| async move {
             self.check_user_is_channel_member(channel_id, user, &*tx)
                 .await?;
 
@@ -240,11 +240,15 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("missing buffer snapshot"))?;
 
-            buffer_operation::Entity::insert_many(operations.iter().filter_map(|operation| {
-                operation_to_storage(operation, &buffer, serialization_version)
-            }))
-            .exec(&*tx)
-            .await?;
+            let operations = operations
+                .iter()
+                .filter_map(|op| operation_to_storage(op, &buffer, serialization_version))
+                .collect::<Vec<_>>();
+            if !operations.is_empty() {
+                buffer_operation::Entity::insert_many(operations)
+                    .exec(&*tx)
+                    .await?;
+            }
 
             let mut connections = Vec::new();
             let mut rows = channel_buffer_collaborator::Entity::find()
