@@ -3,21 +3,22 @@ use crate::{
     interactive::{InteractionHandlers, Interactive},
     layout_context::LayoutContext,
     paint_context::PaintContext,
-    style::{Style, StyleHelpers, StyleRefinement, Styleable},
+    style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
 use gpui::LayoutId;
+use refineable::{Refineable, RefinementCascade};
 use smallvec::SmallVec;
 
 pub struct Div<V: 'static> {
-    style: StyleRefinement,
+    styles: RefinementCascade<Style>,
     handlers: InteractionHandlers<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
 pub fn div<V>() -> Div<V> {
     Div {
-        style: Default::default(),
+        styles: Default::default(),
         handlers: Default::default(),
         children: Default::default(),
     }
@@ -36,16 +37,16 @@ impl<V: 'static> Element<V> for Div<V> {
             .map(|child| child.layout(view, cx))
             .collect::<Result<Vec<LayoutId>>>()?;
 
-        cx.add_layout_node(self.style(), (), children)
+        let style = Style::from_refinement(&self.style_cascade().merged());
+        cx.add_layout_node(style.clone(), (), children)
     }
 
     fn paint(&mut self, view: &mut V, layout: &mut Layout<V, ()>, cx: &mut PaintContext<V>)
     where
         Self: Sized,
     {
-        let style = self.style();
-
-        style.paint_background::<V, Self>(layout, cx);
+        self.computed_style()
+            .paint_background(layout.bounds(cx), cx);
         for child in &mut self.children {
             child.paint(view, cx);
         }
@@ -55,8 +56,12 @@ impl<V: 'static> Element<V> for Div<V> {
 impl<V> Styleable for Div<V> {
     type Style = Style;
 
-    fn declared_style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+        &mut self.styles
+    }
+
+    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement {
+        self.styles.base()
     }
 }
 

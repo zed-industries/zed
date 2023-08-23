@@ -22,6 +22,7 @@ mod hoverable;
 mod interactive;
 mod layout_context;
 mod paint_context;
+mod pressable;
 mod style;
 mod text;
 mod themes;
@@ -54,8 +55,10 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_1_2()
         .fill(theme.success(0.5))
-        .hoverable()
+        .hovered()
         .fill(theme.error(0.5))
+        .pressed()
+        .fill(theme.warning(0.5))
     // .child(button().label("Hello").click(|_, _, _| println!("click!")))
 }
 

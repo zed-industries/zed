@@ -1,18 +1,18 @@
 use crate::{
     color::Hsla,
-    element::{Element, Layout},
     hoverable::{hoverable, Hoverable},
     paint_context::PaintContext,
+    pressable::{pressable, Pressable},
 };
 use gpui::{
     fonts::TextStyleRefinement,
     geometry::{
-        AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length, Point, PointRefinement,
-        Size, SizeRefinement,
+        rect::RectF, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length, Point,
+        PointRefinement, Size, SizeRefinement,
     },
 };
 use playground_macros::styleable_helpers;
-use refineable::Refineable;
+use refineable::{Refineable, RefinementCascade};
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
@@ -126,12 +126,7 @@ impl Style {
 
     /// Paints the background of an element styled with this style.
     /// Return the bounds in which to paint the content.
-    pub fn paint_background<V: 'static, E: Element<V>>(
-        &self,
-        layout: &mut Layout<V, E::Layout>,
-        cx: &mut PaintContext<V>,
-    ) {
-        let bounds = layout.bounds(cx);
+    pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
         let rem_size = cx.rem_pixels();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
             cx.scene.push_quad(gpui::Quad {
@@ -202,7 +197,7 @@ impl OptionalTextStyle {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Fill {
     Color(Hsla),
 }
@@ -247,21 +242,27 @@ impl CornerRadii {
 }
 
 pub trait Styleable {
-    type Style: refineable::Refineable;
+    type Style: Refineable + Default;
 
-    fn declared_style(&mut self) -> &mut playground::style::StyleRefinement;
+    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style>;
+    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement;
 
-    fn style(&mut self) -> playground::style::Style {
-        let mut style = playground::style::Style::default();
-        style.refine(self.declared_style());
-        style
+    fn computed_style(&mut self) -> Self::Style {
+        Self::Style::from_refinement(&self.style_cascade().merged())
     }
 
-    fn hoverable(self) -> Hoverable<Self>
+    fn hovered(self) -> Hoverable<Self>
     where
         Self: Sized,
     {
         hoverable(self)
+    }
+
+    fn pressed(self) -> Pressable<Self>
+    where
+        Self: Sized,
+    {
+        pressable(self)
     }
 }
 
@@ -270,7 +271,6 @@ pub trait Styleable {
 // Example:
 // // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
 // fn p_2(mut self) -> Self where Self: Sized;
-use crate as playground; // Macro invocation references this crate as playground.
 pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
 

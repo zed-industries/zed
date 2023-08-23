@@ -1,5 +1,4 @@
-use anyhow::Result;
-use derive_more::{Deref, DerefMut};
+use anyhow::{anyhow, Result};
 use gpui::{geometry::rect::RectF, EngineLayout};
 use smallvec::SmallVec;
 use std::marker::PhantomData;
@@ -83,13 +82,10 @@ impl<V> AnyElement<V> {
     }
 }
 
-#[derive(Deref, DerefMut)]
 pub struct Layout<V, D> {
     id: LayoutId,
     engine_layout: Option<EngineLayout>,
-    #[deref]
-    #[deref_mut]
-    element_data: D,
+    element_data: Option<D>,
     view_type: PhantomData<V>,
 }
 
@@ -98,7 +94,7 @@ impl<V: 'static, D> Layout<V, D> {
         Self {
             id,
             engine_layout: None,
-            element_data: element_data,
+            element_data: Some(element_data),
             view_type: PhantomData,
         }
     }
@@ -111,17 +107,23 @@ impl<V: 'static, D> Layout<V, D> {
         self.engine_layout(cx).order
     }
 
+    pub fn update<F, T>(&mut self, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self, &mut D) -> T,
+    {
+        self.element_data
+            .take()
+            .map(|mut element_data| {
+                let result = update(self, &mut element_data);
+                self.element_data = Some(element_data);
+                result
+            })
+            .ok_or_else(|| anyhow!("reentrant calls to Layout::update are not allowed"))
+    }
+
     fn engine_layout(&mut self, cx: &mut PaintContext<'_, '_, '_, '_, V>) -> &mut EngineLayout {
         self.engine_layout
             .get_or_insert_with(|| cx.computed_layout(self.id).log_err().unwrap_or_default())
-    }
-}
-
-impl<V: 'static> Layout<V, Option<AnyElement<V>>> {
-    pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
-        let mut element = self.element_data.take().unwrap();
-        element.paint(view, cx);
-        self.element_data = Some(element);
     }
 }
 

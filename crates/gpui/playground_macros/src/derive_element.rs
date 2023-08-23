@@ -62,16 +62,16 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
         impl #impl_generics playground::element::Element<#view_type_name> for #type_name #type_generics
         #where_clause
         {
-            type Layout = Option<playground::element::AnyElement<#view_type_name #lifetimes>>;
+            type Layout = playground::element::AnyElement<#view_type_name #lifetimes>;
 
             fn layout(
                 &mut self,
                 view: &mut V,
                 cx: &mut playground::element::LayoutContext<V>,
             ) -> anyhow::Result<playground::element::Layout<V, Self::Layout>> {
-                let mut element = self.render(view, cx).into_any();
-                let layout_id = element.layout(view, cx)?;
-                Ok(playground::element::Layout::new(layout_id, Some(element)))
+                let mut rendered_element = self.render(view, cx).into_any();
+                let layout_id = rendered_element.layout(view, cx)?;
+                Ok(playground::element::Layout::new(layout_id, rendered_element))
             }
 
             fn paint(
@@ -80,7 +80,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 layout: &mut playground::element::Layout<V, Self::Layout>,
                 cx: &mut playground::element::PaintContext<V>,
             ) {
-                layout.paint(view, cx);
+                layout.update(|_, rendered_element| rendered_element.paint(view, cx)).ok();
             }
         }
 

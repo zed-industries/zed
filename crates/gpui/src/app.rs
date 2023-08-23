@@ -1905,7 +1905,6 @@ impl AppContext {
 
     fn handle_repaint_window_effect(&mut self, window: AnyWindowHandle) {
         self.update_window(window, |cx| {
-            cx.layout(false).log_err();
             if let Some(scene) = cx.paint().log_err() {
                 cx.window.platform_window.present_scene(scene);
             }

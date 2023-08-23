@@ -20,6 +20,7 @@ pub fn styleable_helpers(input: TokenStream) -> TokenStream {
     let output = quote! {
         #(#methods)*
     };
+
     output.into()
 }
 
