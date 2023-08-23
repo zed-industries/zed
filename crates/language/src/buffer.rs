@@ -1294,6 +1294,14 @@ impl Buffer {
         self.text.forget_transaction(transaction_id);
     }
 
+    pub fn merge_transaction_into(
+        &mut self,
+        transaction: TransactionId,
+        destination: TransactionId,
+    ) {
+        self.text.merge_transaction_into(transaction, destination);
+    }
+
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,

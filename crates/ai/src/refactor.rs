@@ -85,35 +85,51 @@ impl RefactoringAssistant {
                         anyhow::Ok(())
                     });
 
+                    let mut last_transaction = None;
                     while let Some(hunks) = hunks_rx.next().await {
                         editor.update(&mut cx, |editor, cx| {
                             let mut highlights = Vec::new();
 
                             editor.buffer().update(cx, |buffer, cx| {
+                                buffer.finalize_last_transaction(cx);
+
                                 buffer.start_transaction(cx);
-                                for hunk in hunks {
-                                    match hunk {
+                                buffer.edit(
+                                    hunks.into_iter().filter_map(|hunk| match hunk {
                                         crate::diff::Hunk::Insert { text } => {
                                             let edit_start = snapshot.anchor_after(edit_start);
-                                            buffer.edit([(edit_start..edit_start, text)], None, cx);
+                                            Some((edit_start..edit_start, text))
                                         }
                                         crate::diff::Hunk::Remove { len } => {
                                             let edit_end = edit_start + len;
                                             let edit_range = snapshot.anchor_after(edit_start)
                                                 ..snapshot.anchor_before(edit_end);
-                                            buffer.edit([(edit_range, "")], None, cx);
                                             edit_start = edit_end;
+                                            Some((edit_range, String::new()))
                                         }
                                         crate::diff::Hunk::Keep { len } => {
                                             let edit_end = edit_start + len;
                                             let edit_range = snapshot.anchor_after(edit_start)
                                                 ..snapshot.anchor_before(edit_end);
-                                            highlights.push(edit_range);
                                             edit_start += len;
+                                            highlights.push(edit_range);
+                                            None
                                         }
+                                    }),
+                                    None,
+                                    cx,
+                                );
+                                if let Some(transaction) = buffer.end_transaction(cx) {
+                                    if let Some(last_transaction) = last_transaction {
+                                        buffer.merge_transaction_into(
+                                            last_transaction,
+                                            transaction,
+                                            cx,
+                                        );
                                     }
+                                    last_transaction = Some(transaction);
+                                    buffer.finalize_last_transaction(cx);
                                 }
-                                buffer.end_transaction(cx);
                             });
 
                             editor.highlight_text::<Self>(
@@ -199,7 +215,7 @@ impl RefactoringModal {
     fn deploy(workspace: &mut Workspace, _: &Refactor, cx: &mut ViewContext<Workspace>) {
         if let Some(active_editor) = workspace
             .active_item(cx)
-            .and_then(|item| Some(item.downcast::<Editor>()?.downgrade()))
+            .and_then(|item| Some(item.act_as::<Editor>(cx)?.downgrade()))
         {
             workspace.toggle_modal(cx, |_, cx| {
                 let prompt_editor = cx.add_view(|cx| {

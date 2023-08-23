@@ -615,6 +615,42 @@ impl MultiBuffer {
         }
     }
 
+    pub fn merge_transaction_into(
+        &mut self,
+        transaction: TransactionId,
+        destination: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.merge_transaction_into(transaction, destination)
+            });
+        } else {
+            if let Some(transaction) = self.history.remove_transaction(transaction) {
+                if let Some(destination) = self.history.transaction_mut(destination) {
+                    for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                        if let Some(destination_buffer_transaction_id) =
+                            destination.buffer_transactions.get(&buffer_id)
+                        {
+                            if let Some(state) = self.buffers.borrow().get(&buffer_id) {
+                                state.buffer.update(cx, |buffer, _| {
+                                    buffer.merge_transaction_into(
+                                        buffer_transaction_id,
+                                        *destination_buffer_transaction_id,
+                                    )
+                                });
+                            }
+                        } else {
+                            destination
+                                .buffer_transactions
+                                .insert(buffer_id, buffer_transaction_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
         self.history.finalize_last_transaction();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
@@ -3331,6 +3367,35 @@ impl History {
         if let Some(transaction) = self.undo_stack.last_mut() {
             transaction.suppress_grouping = true;
         }
+    }
+
+    fn remove_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        if let Some(ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)
+        {
+            Some(self.undo_stack.remove(ix))
+        } else if let Some(ix) = self
+            .redo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)
+        {
+            Some(self.redo_stack.remove(ix))
+        } else {
+            None
+        }
+    }
+
+    fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
+        self.undo_stack
+            .iter_mut()
+            .find(|transaction| transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter_mut()
+                    .find(|transaction| transaction.id == transaction_id)
+            })
     }
 
     fn pop_undo(&mut self) -> Option<&mut Transaction> {

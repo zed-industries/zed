@@ -278,20 +278,43 @@ impl History {
         &self.redo_stack[redo_stack_start_len..]
     }
 
-    fn forget(&mut self, transaction_id: TransactionId) {
+    fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(entry_ix) = self
             .undo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            self.undo_stack.remove(entry_ix);
+            Some(self.undo_stack.remove(entry_ix).transaction)
         } else if let Some(entry_ix) = self
             .redo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            self.undo_stack.remove(entry_ix);
+            Some(self.redo_stack.remove(entry_ix).transaction)
+        } else {
+            None
+        }
+    }
+
+    fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
+        let entry = self
+            .undo_stack
+            .iter_mut()
+            .rfind(|entry| entry.transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter_mut()
+                    .rfind(|entry| entry.transaction.id == transaction_id)
+            })?;
+        Some(&mut entry.transaction)
+    }
+
+    fn merge_transaction_into(&mut self, transaction: TransactionId, destination: TransactionId) {
+        if let Some(transaction) = self.forget(transaction) {
+            if let Some(destination) = self.transaction_mut(destination) {
+                destination.edit_ids.extend(transaction.edit_ids);
+            }
         }
     }
 
@@ -1200,6 +1223,15 @@ impl Buffer {
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
         self.history.forget(transaction_id);
+    }
+
+    pub fn merge_transaction_into(
+        &mut self,
+        transaction: TransactionId,
+        destination: TransactionId,
+    ) {
+        self.history
+            .merge_transaction_into(transaction, destination);
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
