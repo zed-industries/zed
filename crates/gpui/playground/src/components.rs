@@ -1,11 +1,12 @@
 use crate::{
     div::div,
     element::{Element, ParentElement},
+    interactive::Interactive,
     style::StyleHelpers,
     text::ArcCow,
     themes::rose_pine,
 };
-use gpui::ViewContext;
+use gpui::{platform::MouseButton, ViewContext};
 use playground_macros::Element;
 use std::{marker::PhantomData, rc::Rc};
 
@@ -53,7 +54,7 @@ impl<V: 'static> Button<V, ()> {
     }
 }
 
-// Impl block for *any* button.
+// Impl block for button regardless of its data type.
 impl<V: 'static, D: 'static> Button<V, D> {
     pub fn label(mut self, label: impl Into<ArcCow<'static, str>>) -> Self {
         self.label = Some(label.into());
@@ -65,12 +66,10 @@ impl<V: 'static, D: 'static> Button<V, D> {
         self
     }
 
-    // pub fn click(self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
-    //     let data = self.data.clone();
-    //     Self::click(self, MouseButton::Left, move |view, _, cx| {
-    //         handler(view, data.as_ref(), cx);
-    //     })
-    // }
+    pub fn on_click(mut self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
+        self.handlers.click = Some(Rc::new(handler));
+        self
+    }
 }
 
 pub fn button<V>() -> Button<V, ()> {
@@ -78,23 +77,24 @@ pub fn button<V>() -> Button<V, ()> {
 }
 
 impl<V: 'static, D: 'static> Button<V, D> {
-    fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(
+        &mut self,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<V> + Interactive<V> {
         // TODO: Drive theme from the context
         let button = div()
             .fill(rose_pine::dawn().error(0.5))
             .h_4()
             .children(self.label.clone());
 
-        button
-
-        // TODO: Event handling
-        // if let Some(handler) = self.handlers.click.clone() {
-        //     let data = self.data.clone();
-        //     // button.mouse_down(MouseButton::Left, move |view, event, cx| {
-        //     //     handler(view, data.as_ref(), cx)
-        //     // })
-        // } else {
-        //     button
-        // }
+        if let Some(handler) = self.handlers.click.clone() {
+            let data = self.data.clone();
+            button.on_mouse_down(MouseButton::Left, move |view, event, cx| {
+                handler(view, data.as_ref(), cx)
+            })
+        } else {
+            button
+        }
     }
 }

@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables)]
 use crate::{
     color::black,
+    components::button,
     element::ParentElement,
     style::{StyleHelpers, Styleable},
 };
@@ -67,6 +68,22 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
                 .absolute()
                 .bottom_0()
                 .fill(theme.success(0.)),
+        )
+        .child(
+            button()
+                .label("Click me")
+                .data(1_usize)
+                .on_click(|_, data, _| {
+                    dbg!(*data);
+                }),
+        )
+        .child(
+            button()
+                .label("And me")
+                .data(2_usize)
+                .on_click(|_, data, _| {
+                    dbg!(*data);
+                }),
         )
 }
 
