@@ -5120,7 +5120,7 @@ impl Project {
             ))
             .detach();
 
-        let (buffers, mut buffers_rx) = Self::read_open_buffers_yeet(matching_paths_rx, cx);
+        let (buffers, buffers_rx) = Self::read_open_buffers_yeet(matching_paths_rx, cx);
         let background = cx.background().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
         cx.background()
@@ -5138,13 +5138,12 @@ impl Project {
                             buffer_index: usize,
                         }
 
-                        for worker_id in 0..workers {
+                        for _ in 0..workers {
                             let finished_tx = finished_tx.clone();
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((entry, buffer_index)) = buffers_rx.next().await {
-                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref()
-                                    {
+                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref() {
                                         if query.file_matches(
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
@@ -5165,8 +5164,7 @@ impl Project {
                                     };
 
                                     let status = if !buffer_matches.is_empty() {
-                                        let entry = if let Some((buffer, snapshot)) = entry.as_ref()
-                                        {
+                                        let entry = if let Some((buffer, _)) = entry.as_ref() {
                                             Some((buffer.clone(), buffer_matches))
                                         } else {
                                             None
@@ -5394,7 +5392,7 @@ impl Project {
                 SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
             });
             let matching_paths = buffers.clone();
-            sorted_buffers_tx.send(buffers);
+            let _ = sorted_buffers_tx.send(buffers);
             for (index, candidate) in matching_paths.into_iter().enumerate() {
                 if buffers_tx.is_closed() {
                     break;
@@ -5425,8 +5423,7 @@ impl Project {
                 })
                 .detach();
             }
-        })
-        .detach();
+        }).detach();
         (sorted_buffers_rx, buffers_rx)
     }
 
