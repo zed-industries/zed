@@ -5387,7 +5387,6 @@ impl Project {
             while let Some(entry) = matching_paths_rx.next().await {
                 buffers.push(entry);
             }
-            dbg!("Got all the paths");
             buffers.sort_by_key(|candidate| match candidate {
                 SearchMatchCandidate::Unnamed { .. } => None,
                 SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
