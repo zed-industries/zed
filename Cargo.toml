@@ -98,7 +98,7 @@ postage = { version = "0.5", features = ["futures-traits"] }
 rand = { version = "0.8.5" }
 refineable = { path = "./crates/refineable" }
 regex = { version = "1.5" }
-rust-embed = { version = "6.3", features = ["include-exclude"] }
+rust-embed = { version = "8.0", features = ["include-exclude"] }
 schemars = { version = "0.8" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
