@@ -112,6 +112,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
     language(
@@ -120,6 +121,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
     language(
