@@ -849,6 +849,7 @@ impl ProjectSearchView {
             let model = model.read(cx);
             project = model.project.clone();
             SemanticIndex::global(cx).map(|semantic| {
+                dbg!("Initializing project");
                 semantic.update(cx, |this, cx| this.initialize_project(project.clone(), cx));
             });
         }
