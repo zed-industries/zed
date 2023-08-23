@@ -1,10 +1,7 @@
 use std::{
-    cmp,
     fmt::{self, Debug},
     ops::Range,
 };
-
-use collections::BinaryHeap;
 
 struct Matrix {
     cells: Vec<isize>,

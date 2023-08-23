@@ -7,8 +7,7 @@ use gpui::{
     WeakViewHandle,
 };
 use menu::Confirm;
-use similar::{Change, ChangeTag, TextDiff};
-use std::{env, iter, ops::Range, sync::Arc};
+use std::{env, sync::Arc};
 use util::TryFutureExt;
 use workspace::{Modal, Workspace};
 
