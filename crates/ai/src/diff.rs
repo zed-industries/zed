@@ -79,7 +79,7 @@ pub struct Diff {
 impl Diff {
     const INSERTION_SCORE: isize = -1;
     const DELETION_SCORE: isize = -4;
-    const EQUALITY_SCORE: isize = 5;
+    const EQUALITY_SCORE: isize = 15;
 
     pub fn new(old: String) -> Self {
         let old = old.chars().collect::<Vec<_>>();
