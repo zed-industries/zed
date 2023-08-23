@@ -1,3 +1,4 @@
+use collections::HashMap;
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -74,12 +75,13 @@ pub struct Diff {
     scores: Matrix,
     old_text_ix: usize,
     new_text_ix: usize,
+    equal_runs: HashMap<(usize, usize), u32>,
 }
 
 impl Diff {
     const INSERTION_SCORE: isize = -1;
-    const DELETION_SCORE: isize = -4;
-    const EQUALITY_SCORE: isize = 15;
+    const DELETION_SCORE: isize = -5;
+    const EQUALITY_BASE: isize = 2;
 
     pub fn new(old: String) -> Self {
         let old = old.chars().collect::<Vec<_>>();
@@ -94,6 +96,7 @@ impl Diff {
             scores,
             old_text_ix: 0,
             new_text_ix: 0,
+            equal_runs: Default::default(),
         }
     }
 
@@ -107,36 +110,38 @@ impl Diff {
                 let insertion_score = self.scores.get(i, j - 1) + Self::INSERTION_SCORE;
                 let deletion_score = self.scores.get(i - 1, j) + Self::DELETION_SCORE;
                 let equality_score = if self.old[i - 1] == self.new[j - 1] {
+                    let mut equal_run = self.equal_runs.get(&(i - 1, j - 1)).copied().unwrap_or(0);
+                    equal_run += 1;
+                    self.equal_runs.insert((i, j), equal_run);
+
                     if self.old[i - 1] == ' ' {
                         self.scores.get(i - 1, j - 1)
                     } else {
-                        self.scores.get(i - 1, j - 1) + Self::EQUALITY_SCORE
+                        self.scores.get(i - 1, j - 1) + Self::EQUALITY_BASE.pow(equal_run / 3)
                     }
                 } else {
                     isize::MIN
                 };
+
                 let score = insertion_score.max(deletion_score).max(equality_score);
                 self.scores.set(i, j, score);
             }
         }
 
         let mut max_score = isize::MIN;
-        let mut best_row = self.old_text_ix;
-        let mut best_col = self.new_text_ix;
+        let mut next_old_text_ix = self.old_text_ix;
+        let next_new_text_ix = self.new.len();
         for i in self.old_text_ix..=self.old.len() {
-            for j in self.new_text_ix..=self.new.len() {
-                let score = self.scores.get(i, j);
-                if score > max_score {
-                    max_score = score;
-                    best_row = i;
-                    best_col = j;
-                }
+            let score = self.scores.get(i, next_new_text_ix);
+            if score > max_score {
+                max_score = score;
+                next_old_text_ix = i;
             }
         }
 
-        let hunks = self.backtrack(best_row, best_col);
-        self.old_text_ix = best_row;
-        self.new_text_ix = best_col;
+        let hunks = self.backtrack(next_old_text_ix, next_new_text_ix);
+        self.old_text_ix = next_old_text_ix;
+        self.new_text_ix = next_new_text_ix;
         hunks
     }
 
