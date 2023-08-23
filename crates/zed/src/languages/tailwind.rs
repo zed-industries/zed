@@ -103,23 +103,24 @@ impl LspAdapter for TailwindLspAdapter {
         }))
     }
 
-    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
-        Some(
-            future::ready(json!({
-                "tailwindCSS": {
-                    "emmetCompletions": true,
-                }
-            }))
-            .boxed(),
-        )
+    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+        future::ready(json!({
+            "tailwindCSS": {
+                "emmetCompletions": true,
+            }
+        }))
+        .boxed()
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("HTML".to_string(), "html".to_string()),
-            ("CSS".to_string(), "css".to_string()),
-            ("JavaScript".to_string(), "javascript".to_string()),
-        ])
+        HashMap::from_iter(
+            [
+                ("HTML".to_string(), "html".to_string()),
+                ("CSS".to_string(), "css".to_string()),
+                ("JavaScript".to_string(), "javascript".to_string()),
+            ]
+            .into_iter(),
+        )
     }
 }
 

@@ -603,7 +603,7 @@ impl Project {
                     cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
                 ],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
-                _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
+                _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
                 languages,
                 client,
@@ -673,7 +673,7 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
-                _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
+                _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
                 fs,
@@ -2441,35 +2441,42 @@ impl Project {
         })
     }
 
-    fn maintain_workspace_config(
-        languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Project>,
-    ) -> Task<()> {
+    fn maintain_workspace_config(cx: &mut ModelContext<Project>) -> Task<()> {
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
         let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
 
         let settings_observation = cx.observe_global::<SettingsStore, _>(move |_, _| {
             *settings_changed_tx.borrow_mut() = ();
         });
+
         cx.spawn_weak(|this, mut cx| async move {
             while let Some(_) = settings_changed_rx.next().await {
-                let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.read_with(&cx, |this, _| {
-                        for server_state in this.language_servers.values() {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                server
-                                    .notify::<lsp::notification::DidChangeConfiguration>(
-                                        lsp::DidChangeConfigurationParams {
-                                            settings: workspace_config.clone(),
-                                        },
-                                    )
-                                    .ok();
-                            }
-                        }
-                    })
-                } else {
+                let Some(this) = this.upgrade(&cx) else {
                     break;
+                };
+
+                let servers: Vec<_> = this.read_with(&cx, |this, _| {
+                    this.language_servers
+                        .values()
+                        .filter_map(|state| match state {
+                            LanguageServerState::Starting(_) => None,
+                            LanguageServerState::Running {
+                                adapter, server, ..
+                            } => Some((adapter.clone(), server.clone())),
+                        })
+                        .collect()
+                });
+
+                for (adapter, server) in servers {
+                    let workspace_config =
+                        cx.update(|cx| adapter.workspace_configuration(cx)).await;
+                    server
+                        .notify::<lsp::notification::DidChangeConfiguration>(
+                            lsp::DidChangeConfigurationParams {
+                                settings: workspace_config.clone(),
+                            },
+                        )
+                        .ok();
                 }
             }
 
@@ -2584,7 +2591,6 @@ impl Project {
         let state = LanguageServerState::Starting({
             let adapter = adapter.clone();
             let server_name = adapter.name.0.clone();
-            let languages = self.languages.clone();
             let language = language.clone();
             let key = key.clone();
 
@@ -2594,7 +2600,6 @@ impl Project {
                     initialization_options,
                     pending_server,
                     adapter.clone(),
-                    languages,
                     language.clone(),
                     server_id,
                     key,
@@ -2698,7 +2703,6 @@ impl Project {
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
-        languages: Arc<LanguageRegistry>,
         language: Arc<Language>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
@@ -2709,7 +2713,6 @@ impl Project {
             initialization_options,
             pending_server,
             adapter.clone(),
-            languages,
             server_id,
             cx,
         );
@@ -2742,11 +2745,10 @@ impl Project {
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
-        languages: Arc<LanguageRegistry>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
-        let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
+        let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx)).await;
         let language_server = match pending_server.task.await? {
             Some(server) => server,
             None => return Ok(None),
@@ -2788,12 +2790,12 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
-                let languages = languages.clone();
+                let adapter = adapter.clone();
                 move |params, mut cx| {
-                    let languages = languages.clone();
+                    let adapter = adapter.clone();
                     async move {
                         let workspace_config =
-                            cx.update(|cx| languages.workspace_configuration(cx)).await;
+                            cx.update(|cx| adapter.workspace_configuration(cx)).await;
                         Ok(params
                             .items
                             .into_iter()

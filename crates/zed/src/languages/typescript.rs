@@ -202,18 +202,16 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
-        Some(
-            future::ready(json!({
-                "": {
-                    "validate": "on",
-                    "rulesCustomizations": [],
-                    "run": "onType",
-                    "nodePath": null,
-                }
-            }))
-            .boxed(),
-        )
+    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+        future::ready(json!({
+            "": {
+                "validate": "on",
+                "rulesCustomizations": [],
+                "run": "onType",
+                "nodePath": null,
+            }
+        }))
+        .boxed()
     }
 
     async fn name(&self) -> LanguageServerName {

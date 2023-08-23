@@ -86,21 +86,20 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &self.node).await
     }
-    fn workspace_configuration(&self, cx: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
+    fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
         let tab_size = all_language_settings(None, cx)
             .language(Some("YAML"))
             .tab_size;
-        Some(
-            future::ready(serde_json::json!({
-                "yaml": {
-                    "keyOrdering": false
-                },
-                "[yaml]": {
-                    "editor.tabSize": tab_size,
-                }
-            }))
-            .boxed(),
-        )
+
+        future::ready(serde_json::json!({
+            "yaml": {
+                "keyOrdering": false
+            },
+            "[yaml]": {
+                "editor.tabSize": tab_size,
+            }
+        }))
+        .boxed()
     }
 }
 
