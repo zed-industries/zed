@@ -4,11 +4,11 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     AnyElement, Axis, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder,
-    SizeConstraint, View, ViewContext,
+    SizeConstraint, ViewContext,
 };
 use serde_json::json;
 
-pub struct Overlay<V: View> {
+pub struct Overlay<V> {
     child: AnyElement<V>,
     anchor_position: Option<Vector2F>,
     anchor_corner: AnchorCorner,
@@ -73,7 +73,7 @@ impl AnchorCorner {
     }
 }
 
-impl<V: View> Overlay<V> {
+impl<V: 'static> Overlay<V> {
     pub fn new(child: impl Element<V>) -> Self {
         Self {
             child: child.into_any(),
@@ -117,7 +117,7 @@ impl<V: View> Overlay<V> {
     }
 }
 
-impl<V: View> Element<V> for Overlay<V> {
+impl<V: 'static> Element<V> for Overlay<V> {
     type LayoutState = Vector2F;
     type PaintState = ();
 

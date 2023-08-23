@@ -39,6 +39,7 @@ pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
 postage.workspace = true
 rand.workspace = true
+refineable.workspace = true
 resvg = "0.14"
 schemars = "0.8"
 seahash = "4.1"
@@ -47,6 +48,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "dab541d6104d58e2e10ce90c4a1dad0b703160cd", features = ["flexbox"] }
 time.workspace = true
 tiny-skia = "0.5"
 usvg = { version = "0.14", features = [] }

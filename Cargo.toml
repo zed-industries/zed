@@ -17,6 +17,8 @@ members = [
     "crates/copilot",
     "crates/copilot_button",
     "crates/db",
+    "crates/refineable",
+    "crates/refineable/derive_refineable",
     "crates/diagnostics",
     "crates/drag_and_drop",
     "crates/editor",
@@ -28,6 +30,8 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
+    "crates/gpui/playground",
+    "crates/gpui/playground_macros",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",
@@ -92,6 +96,7 @@ ordered-float = { version = "2.1.1" }
 parking_lot = { version = "0.11.1" }
 postage = { version = "0.5", features = ["futures-traits"] }
 rand = { version = "0.8.5" }
+refineable = { path = "./crates/refineable" }
 regex = { version = "1.5" }
 rust-embed = { version = "8.0", features = ["include-exclude"] }
 schemars = { version = "0.8" }

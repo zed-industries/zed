@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    LayoutContext, PaintContext, SceneBuilder, View, ViewContext,
+    LayoutContext, PaintContext, SceneBuilder, ViewContext,
 };
 use crate::{Element, SizeConstraint};
 
@@ -26,7 +26,7 @@ impl Empty {
     }
 }
 
-impl<V: View> Element<V> for Empty {
+impl<V: 'static> Element<V> for Empty {
     type LayoutState = ();
     type PaintState = ();
 

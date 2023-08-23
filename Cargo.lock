@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -2082,6 +2082,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version 0.4.0",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "derive_refineable"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
  "syn 1.0.109",
 ]
 
@@ -3067,6 +3076,7 @@ dependencies = [
  "png",
  "postage",
  "rand 0.8.5",
+ "refineable",
  "resvg",
  "schemars",
  "seahash",
@@ -3078,6 +3088,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
+ "taffy",
  "time 0.3.24",
  "tiny-skia",
  "usvg",
@@ -3090,10 +3101,17 @@ dependencies = [
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "grid"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eec1c01eb1de97451ee0d60de7d81cf1e72aabefb021616027f3d1c3ec1c723c"
 
 [[package]]
 name = "h2"
@@ -5088,6 +5106,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
+name = "playground"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "gpui",
+ "log",
+ "parking_lot 0.11.2",
+ "playground_macros",
+ "refineable",
+ "serde",
+ "simplelog",
+ "smallvec",
+ "taffy",
+ "util",
+]
+
+[[package]]
+name = "playground_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "plist"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5762,6 +5807,16 @@ dependencies = [
  "getrandom 0.2.10",
  "redox_syscall 0.2.16",
  "thiserror",
+]
+
+[[package]]
+name = "refineable"
+version = "0.1.0"
+dependencies = [
+ "derive_refineable",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -6930,6 +6985,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "826167069c09b99d56f31e9ae5c99049e932a98c9dc2dac47645b08dbbf76ba7"
 
 [[package]]
+name = "slotmap"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1e08e261d0e8f5c43123b7adf3e4ca1690d655377ac93a03b2c9d3e98de1342"
+dependencies = [
+ "version_check",
+]
+
+[[package]]
 name = "sluice"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7366,6 +7430,17 @@ dependencies = [
  "rustix 0.33.7",
  "winapi 0.3.9",
  "winx",
+]
+
+[[package]]
+name = "taffy"
+version = "0.3.11"
+source = "git+https://github.com/DioxusLabs/taffy?rev=dab541d6104d58e2e10ce90c4a1dad0b703160cd#dab541d6104d58e2e10ce90c4a1dad0b703160cd"
+dependencies = [
+ "arrayvec 0.7.4",
+ "grid",
+ "num-traits",
+ "slotmap",
 ]
 
 [[package]]
@@ -9557,7 +9632,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "activity_indicator",
  "ai",

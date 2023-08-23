@@ -1,5 +1,6 @@
 mod mouse_event;
 mod mouse_region;
+mod region;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;
@@ -8,7 +9,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use serde_json::json;
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    rc::Rc,
+    sync::Arc,
+};
 
 use crate::{
     color::Color,
@@ -16,7 +22,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::{current::Surface, CursorStyle},
-    ImageData,
+    ImageData, WindowContext,
 };
 pub use mouse_event::*;
 pub use mouse_region::*;
@@ -25,6 +31,8 @@ pub struct SceneBuilder {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
+    /// Used by the playground crate.
+    pub event_handlers: Vec<EventHandler>,
     #[cfg(debug_assertions)]
     mouse_region_ids: HashSet<MouseRegionId>,
 }
@@ -32,6 +40,7 @@ pub struct SceneBuilder {
 pub struct Scene {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
+    event_handlers: Vec<EventHandler>,
 }
 
 struct StackingContext {
@@ -272,6 +281,12 @@ impl Scene {
             })
             .collect()
     }
+
+    pub fn take_event_handlers(&mut self) -> Vec<EventHandler> {
+        self.event_handlers
+            .sort_by(|a, b| a.order.cmp(&b.order).reverse());
+        std::mem::take(&mut self.event_handlers)
+    }
 }
 
 impl SceneBuilder {
@@ -283,6 +298,7 @@ impl SceneBuilder {
             active_stacking_context_stack: vec![0],
             #[cfg(debug_assertions)]
             mouse_region_ids: Default::default(),
+            event_handlers: Vec::new(),
         }
     }
 
@@ -292,6 +308,7 @@ impl SceneBuilder {
         Scene {
             scale_factor: self.scale_factor,
             stacking_contexts: self.stacking_contexts,
+            event_handlers: self.event_handlers,
         }
     }
 
@@ -686,6 +703,13 @@ impl MouseRegion {
     pub fn id(&self) -> MouseRegionId {
         self.id
     }
+}
+
+pub struct EventHandler {
+    pub order: u32,
+    // The &dyn Any parameter below expects an event.
+    pub handler: Rc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>,
+    pub event_type: TypeId,
 }
 
 fn can_draw(bounds: RectF) -> bool {

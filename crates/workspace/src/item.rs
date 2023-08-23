@@ -101,7 +101,7 @@ pub trait Item: View {
     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
         None
     }
-    fn tab_content<V: View>(
+    fn tab_content<V: 'static>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
@@ -943,7 +943,7 @@ pub mod test {
             })
         }
 
-        fn tab_content<V: View>(
+        fn tab_content<V: 'static>(
             &self,
             detail: Option<usize>,
             _: &theme::Tab,

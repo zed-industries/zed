@@ -1,6 +1,6 @@
 use crate::{
     elements::AnyRootElement,
-    geometry::rect::RectF,
+    geometry::{rect::RectF, Size},
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
     platform::{
@@ -8,8 +8,9 @@ use crate::{
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
     },
     scene::{
-        CursorRegion, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag, MouseEvent,
-        MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
+        CursorRegion, EventHandler, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
+        MouseEvent, MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
+        Scene,
     },
     text_layout::TextLayoutCache,
     util::post_inc,
@@ -31,7 +32,11 @@ use sqlez::{
 use std::{
     any::TypeId,
     mem,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut, Range, Sub},
+};
+use taffy::{
+    tree::{Measurable, MeasureFunc},
+    Taffy,
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -39,6 +44,7 @@ use uuid::Uuid;
 use super::{Reference, ViewMetadata};
 
 pub struct Window {
+    layout_engines: Vec<LayoutEngine>,
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
     pub(crate) parents: HashMap<usize, usize>,
@@ -51,6 +57,7 @@ pub struct Window {
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
+    event_handlers: Vec<EventHandler>,
     last_mouse_moved_event: Option<Event>,
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
@@ -67,12 +74,13 @@ impl Window {
         build_view: F,
     ) -> Self
     where
-        F: FnOnce(&mut ViewContext<V>) -> V,
         V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
     {
         let titlebar_height = platform_window.titlebar_height();
         let appearance = platform_window.appearance();
         let mut window = Self {
+            layout_engines: Vec::new(),
             root_view: None,
             focused_view_id: None,
             parents: Default::default(),
@@ -83,6 +91,7 @@ impl Window {
             rendered_views: Default::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
+            event_handlers: Default::default(),
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
@@ -108,6 +117,10 @@ impl Window {
             .root_view
             .as_ref()
             .expect("root_view called during window construction")
+    }
+
+    pub fn take_event_handlers(&mut self) -> Vec<EventHandler> {
+        mem::take(&mut self.event_handlers)
     }
 }
 
@@ -207,6 +220,24 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    pub fn repaint(&mut self) {
+        let window = self.window();
+        self.pending_effects
+            .push_back(Effect::RepaintWindow { window });
+    }
+
+    pub fn layout_engine(&mut self) -> Option<&mut LayoutEngine> {
+        self.window.layout_engines.last_mut()
+    }
+
+    pub fn push_layout_engine(&mut self, engine: LayoutEngine) {
+        self.window.layout_engines.push(engine);
+    }
+
+    pub fn pop_layout_engine(&mut self) -> Option<LayoutEngine> {
+        self.window.layout_engines.pop()
+    }
+
     pub fn remove_window(&mut self) {
         self.removed = true;
     }
@@ -227,6 +258,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.content_size()
     }
 
+    pub fn mouse_position(&self) -> Vector2F {
+        self.window.mouse_position
+    }
+
     pub fn text_layout_cache(&self) -> &TextLayoutCache {
         &self.window.text_layout_cache
     }
@@ -242,14 +277,11 @@ impl<'a> WindowContext<'a> {
         Some(result)
     }
 
-    pub(crate) fn update_view<T, S>(
+    pub(crate) fn update_view<V: 'static, S>(
         &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
+        handle: &ViewHandle<V>,
+        update: &mut dyn FnMut(&mut V, &mut ViewContext<V>) -> S,
+    ) -> S {
         self.update_any_view(handle.view_id, |view, cx| {
             let mut cx = ViewContext::mutable(cx, handle.view_id);
             update(
@@ -475,6 +507,8 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
+        self.dispatch_to_new_event_handlers(&event);
+
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
         let handle = self.window_handle;
@@ -852,6 +886,18 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
+    fn dispatch_to_new_event_handlers(&mut self, event: &Event) {
+        if let Some(mouse_event) = event.mouse_event() {
+            let event_handlers = self.window.take_event_handlers();
+            for event_handler in event_handlers.iter().rev() {
+                if event_handler.event_type == mouse_event.type_id() {
+                    (event_handler.handler)(mouse_event, self);
+                }
+            }
+            self.window.event_handlers = event_handlers;
+        }
+    }
+
     pub(crate) fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
         let handle = self.window_handle;
         if let Some(focused_view_id) = self.window.focused_view_id {
@@ -942,14 +988,16 @@ impl<'a> WindowContext<'a> {
         Ok(element)
     }
 
-    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
+    pub fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
         let window_size = self.window.platform_window.content_size();
         let root_view_id = self.window.root_view().id();
+
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+
         let mut new_parents = HashMap::default();
         let mut views_to_notify_if_ancestors_change = HashMap::default();
         rendered_root.layout(
-            SizeConstraint::strict(window_size),
+            SizeConstraint::new(window_size, window_size),
             &mut new_parents,
             &mut views_to_notify_if_ancestors_change,
             refreshing,
@@ -982,7 +1030,7 @@ impl<'a> WindowContext<'a> {
         Ok(old_parents)
     }
 
-    pub(crate) fn paint(&mut self) -> Result<Scene> {
+    pub fn paint(&mut self) -> Result<Scene> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
@@ -1001,9 +1049,10 @@ impl<'a> WindowContext<'a> {
             .insert(root_view_id, rendered_root);
 
         self.window.text_layout_cache.finish_frame();
-        let scene = scene_builder.build();
+        let mut scene = scene_builder.build();
         self.window.cursor_regions = scene.cursor_regions();
         self.window.mouse_regions = scene.mouse_regions();
+        self.window.event_handlers = scene.take_event_handlers();
 
         if self.window_is_active() {
             if let Some(event) = self.window.last_mouse_moved_event.clone() {
@@ -1012,6 +1061,11 @@ impl<'a> WindowContext<'a> {
         }
 
         Ok(scene)
+    }
+
+    pub fn root_element(&self) -> &Box<dyn AnyRootElement> {
+        let view_id = self.window.root_view().id();
+        self.window.rendered_views.get(&view_id).unwrap()
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
@@ -1216,6 +1270,119 @@ impl<'a> WindowContext<'a> {
     }
 }
 
+#[derive(Default)]
+pub struct LayoutEngine(Taffy);
+pub use taffy::style::Style as LayoutStyle;
+
+impl LayoutEngine {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn add_node<C>(&mut self, style: LayoutStyle, children: C) -> Result<LayoutId>
+    where
+        C: IntoIterator<Item = LayoutId>,
+    {
+        Ok(self
+            .0
+            .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
+    }
+
+    pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutId>
+    where
+        F: Fn(MeasureParams) -> Size<f32> + Sync + Send + 'static,
+    {
+        Ok(self
+            .0
+            .new_leaf_with_measure(style, MeasureFunc::Boxed(Box::new(MeasureFn(measure))))?)
+    }
+
+    pub fn compute_layout(&mut self, root: LayoutId, available_space: Vector2F) -> Result<()> {
+        self.0.compute_layout(
+            root,
+            taffy::geometry::Size {
+                width: available_space.x().into(),
+                height: available_space.y().into(),
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
+        Ok(self.0.layout(node)?.into())
+    }
+}
+
+pub struct MeasureFn<F>(F);
+
+impl<F: Send + Sync> Measurable for MeasureFn<F>
+where
+    F: Fn(MeasureParams) -> Size<f32>,
+{
+    fn measure(
+        &self,
+        known_dimensions: taffy::prelude::Size<Option<f32>>,
+        available_space: taffy::prelude::Size<taffy::style::AvailableSpace>,
+    ) -> taffy::prelude::Size<f32> {
+        (self.0)(MeasureParams {
+            known_dimensions: known_dimensions.into(),
+            available_space: available_space.into(),
+        })
+        .into()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EngineLayout {
+    pub bounds: RectF,
+    pub order: u32,
+}
+
+pub struct MeasureParams {
+    pub known_dimensions: Size<Option<f32>>,
+    pub available_space: Size<AvailableSpace>,
+}
+
+#[derive(Clone)]
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Pixels(f32),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
+}
+
+impl Default for AvailableSpace {
+    fn default() -> Self {
+        Self::Pixels(0.)
+    }
+}
+
+impl From<taffy::prelude::AvailableSpace> for AvailableSpace {
+    fn from(value: taffy::prelude::AvailableSpace) -> Self {
+        match value {
+            taffy::prelude::AvailableSpace::Definite(pixels) => Self::Pixels(pixels),
+            taffy::prelude::AvailableSpace::MinContent => Self::MinContent,
+            taffy::prelude::AvailableSpace::MaxContent => Self::MaxContent,
+        }
+    }
+}
+
+impl From<&taffy::tree::Layout> for EngineLayout {
+    fn from(value: &taffy::tree::Layout) -> Self {
+        Self {
+            bounds: RectF::new(
+                vec2f(value.location.x, value.location.y),
+                vec2f(value.size.width, value.size.height),
+            ),
+            order: value.order,
+        }
+    }
+}
+
+pub type LayoutId = taffy::prelude::NodeId;
+
 pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
@@ -1324,6 +1491,12 @@ impl SizeConstraint {
             max: size,
         }
     }
+    pub fn loose(max: Vector2F) -> Self {
+        Self {
+            min: Vector2F::zero(),
+            max,
+        }
+    }
 
     pub fn strict_along(axis: Axis, max: f32) -> Self {
         match axis {
@@ -1360,6 +1533,17 @@ impl SizeConstraint {
     }
 }
 
+impl Sub<Vector2F> for SizeConstraint {
+    type Output = SizeConstraint;
+
+    fn sub(self, rhs: Vector2F) -> SizeConstraint {
+        SizeConstraint {
+            min: self.min - rhs,
+            max: self.max - rhs,
+        }
+    }
+}
+
 impl Default for SizeConstraint {
     fn default() -> Self {
         SizeConstraint {
@@ -1378,6 +1562,7 @@ impl ToJson for SizeConstraint {
     }
 }
 
+#[derive(Clone)]
 pub struct ChildView {
     view_id: usize,
     view_name: &'static str,
@@ -1393,7 +1578,7 @@ impl ChildView {
     }
 }
 
-impl<V: View> Element<V> for ChildView {
+impl<V: 'static> Element<V> for ChildView {
     type LayoutState = ();
     type PaintState = ();
 

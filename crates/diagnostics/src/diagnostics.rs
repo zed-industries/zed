@@ -538,7 +538,7 @@ impl ProjectDiagnosticsEditor {
 }
 
 impl Item for ProjectDiagnosticsEditor {
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         style: &theme::Tab,
@@ -735,7 +735,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
-pub(crate) fn render_summary<T: View>(
+pub(crate) fn render_summary<T: 'static>(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,

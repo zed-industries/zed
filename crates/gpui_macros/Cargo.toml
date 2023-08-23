@@ -10,6 +10,7 @@ proc-macro = true
 doctest = false
 
 [dependencies]
+lazy_static.workspace = true
+proc-macro2 = "1.0"
 syn = "1.0"
 quote = "1.0"
-proc-macro2 = "1.0"
