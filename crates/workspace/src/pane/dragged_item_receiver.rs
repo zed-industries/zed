@@ -7,7 +7,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Element, EventContext, MouseState, Quad, View, ViewContext, WeakViewHandle,
+    AppContext, Element, EventContext, MouseState, Quad, ViewContext, WeakViewHandle,
 };
 use project::ProjectEntryId;
 
@@ -107,7 +107,7 @@ where
     handler
 }
 
-pub fn handle_dropped_item<V: View>(
+pub fn handle_dropped_item<V: 'static>(
     event: MouseUp,
     workspace: WeakViewHandle<Workspace>,
     pane: &WeakViewHandle<Pane>,

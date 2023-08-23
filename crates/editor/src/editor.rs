@@ -8563,6 +8563,7 @@ fn build_style(
                 font_size,
                 font_properties,
                 underline: Default::default(),
+                soft_wrap: false,
             },
             placeholder_text: None,
             line_height_scalar,

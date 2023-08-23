@@ -4,21 +4,21 @@ use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde_json::json;
 
 use crate::{
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
     ViewContext,
 };
 
-pub struct Clipped<V: View> {
+pub struct Clipped<V> {
     child: AnyElement<V>,
 }
 
-impl<V: View> Clipped<V> {
+impl<V> Clipped<V> {
     pub fn new(child: AnyElement<V>) -> Self {
         Self { child }
     }
 }
 
-impl<V: View> Element<V> for Clipped<V> {
+impl<V: 'static> Element<V> for Clipped<V> {
     type LayoutState = ();
     type PaintState = ();
 
