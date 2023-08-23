@@ -59,7 +59,6 @@ use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use std::{
-    cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
     hash::Hash,
@@ -68,7 +67,6 @@ use std::{
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
-    rc::Rc,
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -516,6 +514,17 @@ impl FormatTrigger {
             _ => FormatTrigger::Save,
         }
     }
+}
+#[derive(Clone, Debug, PartialEq)]
+enum SearchMatchCandidate {
+    Unnamed {
+        buffer: ModelHandle<Buffer>
+    },
+    Path {
+        worktree_id: WorktreeId,
+        path: Arc<Path>
+    },
+
 }
 
 impl Project {
@@ -5086,8 +5095,18 @@ impl Project {
         }
         let workers = background.num_cpus().min(path_count);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let buffers = self.opened_buffers.values().filter_map(|b| {
+            let buffer = b.upgrade(cx)?;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            if snapshot.file().is_some() {
+                None
+            } else {
+                           Some(SearchMatchCandidate::Unnamed{ buffer })
+            }
+        }).collect::<Vec<_>>();
         cx.background()
             .spawn(Self::background_search(
+                buffers,
                 cx.background().clone(),
                 self.fs.clone(),
                 workers,
@@ -5201,20 +5220,25 @@ impl Project {
     }
 
     async fn background_search(
+        unnamed_buffers: Vec<SearchMatchCandidate>,
         background: Arc<Background>,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
         path_count: usize,
         snapshots: Vec<LocalSnapshot>,
-        matching_paths_tx: Sender<(WorktreeId, Arc<Path>)>,
+        matching_paths_tx: Sender<SearchMatchCandidate>,
     ) {
         let fs = &fs;
         let query = &query;
         let matching_paths_tx = &matching_paths_tx;
         let snapshots = &snapshots;
-
         let paths_per_worker = (path_count + workers - 1) / workers;
+        for buffer in unnamed_buffers
+        {
+            matching_paths_tx.send(buffer).await.log_err();
+        }
+
         background
             .scoped(|scope| {
                 for worker_ix in 0..workers {
@@ -5227,6 +5251,7 @@ impl Project {
                         for snapshot in snapshots {
                             let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
                             if worker_end_ix <= snapshot_start_ix {
+
                                 break;
                             } else if worker_start_ix > snapshot_end_ix {
                                 snapshot_start_ix = snapshot_end_ix;
@@ -5259,7 +5284,7 @@ impl Project {
                                     };
 
                                     if matches {
-                                        let project_path = (snapshot.id(), entry.path.clone());
+                                        let project_path = SearchMatchCandidate::Path{ worktree_id: snapshot.id(), path: entry.path.clone() };
                                         if matching_paths_tx.send(project_path).await.is_err() {
                                             break;
                                         }
@@ -5271,8 +5296,10 @@ impl Project {
                         }
                     });
                 }
+
             })
             .await;
+
     }
 
     // TODO: Wire this up to allow selecting a server?
@@ -5351,44 +5378,36 @@ impl Project {
 
     fn read_open_buffers_yeet(
         &self,
-        mut matching_paths_rx: Receiver<(WorktreeId, Arc<Path>)>,
+        mut matching_paths_rx: Receiver<SearchMatchCandidate>,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<(ModelHandle<Buffer>, BufferSnapshot)> {
         let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-        let open_buffers = self
-            .opened_buffers
-            .values()
-            .filter_map(|b| b.upgrade(cx))
-            .collect::<HashSet<_>>();
 
         cx.spawn(|this, cx| async move {
-            for buffer in &open_buffers {
-                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                buffers_tx.send((buffer.clone(), snapshot)).await?;
-                // if snapshot.file().is_none() {
-                //     // Only enqueue files without storage on filesystem.
-
-                // }
-            }
-
-            let open_buffers = Rc::new(RefCell::new(open_buffers));
-            while let Some(project_path) = matching_paths_rx.next().await {
+            while let Some(candidate) = matching_paths_rx.next().await {
                 if buffers_tx.is_closed() {
                     break;
                 }
                 let this = this.clone();
-                let open_buffers = open_buffers.clone();
                 let buffers_tx = buffers_tx.clone();
                 cx.spawn(|mut cx| async move {
-                    if let Some(buffer) = this
-                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                        .await
-                        .log_err()
+                    let buffer = match candidate {
+                        SearchMatchCandidate::Unnamed {
+                            buffer
+                        } => Some(buffer),
+                        SearchMatchCandidate::Path {
+                            worktree_id,
+                            path
+                        } => this
+                            .update(&mut cx, |this, cx| this.open_buffer((worktree_id, path), cx))
+                            .await
+                            .log_err()
+                    };
+                    if let Some(buffer) = buffer
                     {
-                        if open_buffers.borrow_mut().insert(buffer.clone()) {
                             let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
                             buffers_tx.send((buffer, snapshot)).await.log_err();
-                        }
+
                     }
 
                     Ok::<_, anyhow::Error>(())
