@@ -85,7 +85,7 @@ impl RefactoringAssistant {
                         anyhow::Ok(())
                     });
 
-                    let mut last_transaction = None;
+                    let mut first_transaction = None;
                     while let Some(hunks) = hunks_rx.next().await {
                         editor.update(&mut cx, |editor, cx| {
                             let mut highlights = Vec::new();
@@ -120,14 +120,15 @@ impl RefactoringAssistant {
                                     cx,
                                 );
                                 if let Some(transaction) = buffer.end_transaction(cx) {
-                                    if let Some(last_transaction) = last_transaction {
+                                    if let Some(first_transaction) = first_transaction {
                                         buffer.merge_transaction_into(
-                                            last_transaction,
                                             transaction,
+                                            first_transaction,
                                             cx,
                                         );
+                                    } else {
+                                        first_transaction = Some(transaction);
                                     }
-                                    last_transaction = Some(transaction);
                                     buffer.finalize_last_transaction(cx);
                                 }
                             });
