@@ -471,14 +471,14 @@ impl DisplaySnapshot {
         &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
             Some(&self.text_highlights),
-            inlay_highlight_style,
+            hint_highlight_style,
             suggestion_highlight_style,
         )
     }

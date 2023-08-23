@@ -652,7 +652,7 @@ impl FoldSnapshot {
         range: Range<FoldOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
@@ -675,7 +675,7 @@ impl FoldSnapshot {
                 inlay_start..inlay_end,
                 language_aware,
                 text_highlights,
-                inlay_highlight_style,
+                hint_highlight_style,
                 suggestion_highlight_style,
             ),
             inlay_chunk: None,

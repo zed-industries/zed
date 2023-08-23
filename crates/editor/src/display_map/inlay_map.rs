@@ -997,74 +997,74 @@ impl InlaySnapshot {
         range: Range<InlayOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
 
-        let empty_text_highlights = TextHighlights::default();
-        let text_highlights = text_highlights.unwrap_or_else(|| &empty_text_highlights);
-
         let mut highlight_endpoints = Vec::new();
-        if !text_highlights.is_empty() {
-            while cursor.start().0 < range.end {
-                let transform_start = self
-                    .buffer
-                    .anchor_after(self.to_buffer_offset(cmp::max(range.start, cursor.start().0)));
-                let transform_start = self.to_inlay_offset(transform_start.to_offset(&self.buffer));
+        if let Some(text_highlights) = text_highlights {
+            if !text_highlights.is_empty() {
+                while cursor.start().0 < range.end {
+                    let transform_start = self.buffer.anchor_after(
+                        self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
+                    );
+                    let transform_start =
+                        self.to_inlay_offset(transform_start.to_offset(&self.buffer));
 
-                let transform_end = {
-                    let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
-                    self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
-                        cursor.end(&()).0,
-                        cursor.start().0 + overshoot,
-                    )))
-                };
-                let transform_end = self.to_inlay_offset(transform_end.to_offset(&self.buffer));
-
-                for (tag, text_highlights) in text_highlights.iter() {
-                    let style = text_highlights.0;
-                    let ranges = &text_highlights.1;
-
-                    let start_ix = match ranges.binary_search_by(|probe| {
-                        let cmp = self
-                            .document_to_inlay_range(probe)
-                            .end
-                            .cmp(&transform_start);
-                        if cmp.is_gt() {
-                            cmp::Ordering::Greater
-                        } else {
-                            cmp::Ordering::Less
-                        }
-                    }) {
-                        Ok(i) | Err(i) => i,
+                    let transform_end = {
+                        let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
+                        self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
+                            cursor.end(&()).0,
+                            cursor.start().0 + overshoot,
+                        )))
                     };
-                    for range in &ranges[start_ix..] {
-                        let range = self.document_to_inlay_range(range);
-                        if range.start.cmp(&transform_end).is_ge() {
-                            break;
+                    let transform_end = self.to_inlay_offset(transform_end.to_offset(&self.buffer));
+
+                    for (tag, text_highlights) in text_highlights.iter() {
+                        let style = text_highlights.0;
+                        let ranges = &text_highlights.1;
+
+                        let start_ix = match ranges.binary_search_by(|probe| {
+                            let cmp = self
+                                .document_to_inlay_range(probe)
+                                .end
+                                .cmp(&transform_start);
+                            if cmp.is_gt() {
+                                cmp::Ordering::Greater
+                            } else {
+                                cmp::Ordering::Less
+                            }
+                        }) {
+                            Ok(i) | Err(i) => i,
+                        };
+                        for range in &ranges[start_ix..] {
+                            let range = self.document_to_inlay_range(range);
+                            if range.start.cmp(&transform_end).is_ge() {
+                                break;
+                            }
+
+                            highlight_endpoints.push(HighlightEndpoint {
+                                offset: range.start,
+                                is_start: true,
+                                tag: *tag,
+                                style,
+                            });
+                            highlight_endpoints.push(HighlightEndpoint {
+                                offset: range.end,
+                                is_start: false,
+                                tag: *tag,
+                                style,
+                            });
                         }
-
-                        highlight_endpoints.push(HighlightEndpoint {
-                            offset: range.start,
-                            is_start: true,
-                            tag: *tag,
-                            style,
-                        });
-                        highlight_endpoints.push(HighlightEndpoint {
-                            offset: range.end,
-                            is_start: false,
-                            tag: *tag,
-                            style,
-                        });
                     }
-                }
 
-                cursor.next(&());
+                    cursor.next(&());
+                }
+                highlight_endpoints.sort();
+                cursor.seek(&range.start, Bias::Right, &());
             }
-            highlight_endpoints.sort();
-            cursor.seek(&range.start, Bias::Right, &());
         }
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
@@ -1078,7 +1078,7 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            hint_highlight_style: inlay_highlight_style,
+            hint_highlight_style,
             suggestion_highlight_style,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),

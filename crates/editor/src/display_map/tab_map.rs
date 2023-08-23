@@ -224,7 +224,7 @@ impl TabSnapshot {
         range: Range<TabPoint>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
@@ -246,7 +246,7 @@ impl TabSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                inlay_highlight_style,
+                hint_highlight_style,
                 suggestion_highlight_style,
             ),
             input_column,

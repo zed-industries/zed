@@ -589,7 +589,7 @@ impl BlockSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        inlay_highlight_style: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
@@ -623,7 +623,7 @@ impl BlockSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
-                inlay_highlight_style,
+                hint_highlight_style,
                 suggestion_highlight_style,
             ),
             input_chunk: Default::default(),

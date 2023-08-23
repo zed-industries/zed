@@ -1935,8 +1935,9 @@ impl InlayHints {
 
     pub fn project_to_proto_hint(response_hint: InlayHint, cx: &AppContext) -> proto::InlayHint {
         let (state, lsp_resolve_state) = match response_hint.resolve_state {
+            ResolveState::Resolved => (0, None),
             ResolveState::CanResolve(server_id, resolve_data) => (
-                0,
+                1,
                 resolve_data
                     .map(|json_data| {
                         serde_json::to_string(&json_data)
@@ -1947,7 +1948,6 @@ impl InlayHints {
                         value,
                     }),
             ),
-            ResolveState::Resolved => (1, None),
             ResolveState::Resolving => (2, None),
         };
         let resolve_state = Some(proto::ResolveState {

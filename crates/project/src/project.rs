@@ -5091,7 +5091,7 @@ impl Project {
                         InlayHints::proto_to_project_hint(resolved_hint, &project, &mut cx)
                             .await
                             .map(Some)
-                            .context("inlay hints proto response conversion")
+                            .context("inlay hints proto resolve response conversion")
                     }
                     None => Ok(None),
                 }
