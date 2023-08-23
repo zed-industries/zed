@@ -59,10 +59,10 @@ pub struct Window {
     mouse_regions: Vec<(MouseRegion, usize)>,
     event_handlers: Vec<EventHandler>,
     last_mouse_moved_event: Option<Event>,
+    last_mouse_position: Vector2F,
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
-    mouse_position: Vector2F,
     text_layout_cache: TextLayoutCache,
 }
 
@@ -94,10 +94,10 @@ impl Window {
             event_handlers: Default::default(),
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
+            last_mouse_position: Vector2F::zero(),
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
             clicked_region: None,
-            mouse_position: Default::default(),
             titlebar_height,
             appearance,
         };
@@ -259,7 +259,7 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn mouse_position(&self) -> Vector2F {
-        self.window.mouse_position
+        self.window.platform_window.mouse_position()
     }
 
     pub fn text_layout_cache(&self) -> &TextLayoutCache {
@@ -578,7 +578,7 @@ impl<'a> WindowContext<'a> {
                 // Synthesize one last drag event to end the drag
                 mouse_events.push(MouseEvent::Drag(MouseDrag {
                     region: Default::default(),
-                    prev_mouse_position: self.window.mouse_position,
+                    prev_mouse_position: self.window.last_mouse_position,
                     platform_event: MouseMovedEvent {
                         position: e.position,
                         pressed_button: Some(e.button),
@@ -631,14 +631,14 @@ impl<'a> WindowContext<'a> {
                     if pressed_button.is_some() {
                         mouse_events.push(MouseEvent::Drag(MouseDrag {
                             region: Default::default(),
-                            prev_mouse_position: self.window.mouse_position,
+                            prev_mouse_position: self.window.last_mouse_position,
                             platform_event: e.clone(),
                             end: false,
                         }));
                     } else if let Some((_, clicked_button)) = self.window.clicked_region {
                         mouse_events.push(MouseEvent::Drag(MouseDrag {
                             region: Default::default(),
-                            prev_mouse_position: self.window.mouse_position,
+                            prev_mouse_position: self.window.last_mouse_position,
                             platform_event: e.clone(),
                             end: true,
                         }));
@@ -698,7 +698,7 @@ impl<'a> WindowContext<'a> {
         }
 
         if let Some(position) = event.position() {
-            self.window.mouse_position = position;
+            self.window.last_mouse_position = position;
         }
 
         // 2. Dispatch mouse events on regions
@@ -712,7 +712,7 @@ impl<'a> WindowContext<'a> {
             match &mouse_event {
                 MouseEvent::Hover(_) => {
                     let mut highest_z_index = None;
-                    let mouse_position = self.window.mouse_position.clone();
+                    let mouse_position = self.mouse_position();
                     let window = &mut *self.window;
                     let prev_hovered_regions = mem::take(&mut window.hovered_region_ids);
                     for (region, z_index) in window.mouse_regions.iter().rev() {
@@ -757,7 +757,7 @@ impl<'a> WindowContext<'a> {
 
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
                     for (region, _) in self.window.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(self.window.mouse_position) {
+                        if region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(region.clone());
                             if region.notify_on_click {
                                 notified_views.insert(region.id().view_id());
@@ -784,10 +784,7 @@ impl<'a> WindowContext<'a> {
                         // Find regions which still overlap with the mouse since the last MouseDown happened
                         for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                             if clicked_region_ids.contains(&mouse_region.id()) {
-                                if mouse_region
-                                    .bounds
-                                    .contains_point(self.window.mouse_position)
-                                {
+                                if mouse_region.bounds.contains_point(self.mouse_position()) {
                                     valid_regions.push(mouse_region.clone());
                                 }
                             }
@@ -809,10 +806,7 @@ impl<'a> WindowContext<'a> {
                 | MouseEvent::ClickOut(_) => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
-                        if !mouse_region
-                            .bounds
-                            .contains_point(self.window.mouse_position)
-                        {
+                        if !mouse_region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
@@ -821,10 +815,7 @@ impl<'a> WindowContext<'a> {
                 _ => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // Contains
-                        if mouse_region
-                            .bounds
-                            .contains_point(self.window.mouse_position)
-                        {
+                        if mouse_region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
