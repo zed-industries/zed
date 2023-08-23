@@ -166,6 +166,7 @@ fn main() {
         terminal_view::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
         ai::init(cx);
+        component_test::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))

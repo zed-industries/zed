@@ -2,7 +2,7 @@ use button_component::Button;
 
 use gpui::{
     color::Color,
-    elements::{Component, ContainerStyle, Flex, Label, ParentElement},
+    elements::{ContainerStyle, Flex, Label, ParentElement, StatefulComponent},
     fonts::{self, TextStyle},
     platform::WindowOptions,
     AnyElement, App, Element, Entity, View, ViewContext,
@@ -114,7 +114,7 @@ mod theme {
 // Component creation:
 mod toggleable_button {
     use gpui::{
-        elements::{Component, ContainerStyle, LabelStyle},
+        elements::{ContainerStyle, LabelStyle, StatefulComponent},
         scene::MouseClick,
         EventContext, View,
     };
@@ -156,7 +156,7 @@ mod toggleable_button {
         }
     }
 
-    impl<V: View> Component<V> for ToggleableButton<V> {
+    impl<V: View> StatefulComponent<V> for ToggleableButton<V> {
         fn render(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             let button = if let Some(style) = self.style {
                 self.button.with_style(*style.style_for(self.active))
@@ -171,7 +171,7 @@ mod toggleable_button {
 mod button_component {
 
     use gpui::{
-        elements::{Component, ContainerStyle, Label, LabelStyle, MouseEventHandler},
+        elements::{ContainerStyle, Label, LabelStyle, MouseEventHandler, StatefulComponent},
         platform::MouseButton,
         scene::MouseClick,
         AnyElement, Element, EventContext, TypeTag, View, ViewContext,
@@ -212,7 +212,7 @@ mod button_component {
         }
     }
 
-    impl<V: View> Component<V> for Button<V> {
+    impl<V: View> StatefulComponent<V> for Button<V> {
         fn render(self, _: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V> {
             let click_handler = self.click_handler;
 
