@@ -1,4 +1,4 @@
-use channel::channel_buffer::ChannelBuffer;
+use channel::channel_buffer::{self, ChannelBuffer};
 use client::proto;
 use clock::ReplicaId;
 use collections::HashMap;
@@ -24,7 +24,7 @@ pub(crate) fn init(cx: &mut AppContext) {
 }
 
 pub struct ChannelView {
-    editor: ViewHandle<Editor>,
+    pub editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
     channel_buffer: ModelHandle<ChannelBuffer>,
     remote_id: Option<ViewId>,
@@ -43,6 +43,10 @@ impl ChannelView {
         let editor = cx.add_view(|cx| Editor::for_buffer(buffer, None, cx));
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
 
+        cx.subscribe(&project, Self::handle_project_event).detach();
+        cx.subscribe(&channel_buffer, Self::handle_channel_buffer_event)
+            .detach();
+
         let this = Self {
             editor,
             project,
@@ -50,38 +54,70 @@ impl ChannelView {
             remote_id: None,
             _editor_event_subscription,
         };
-        let mapping = this.project_replica_ids_by_channel_buffer_replica_id(cx);
-        this.editor
-            .update(cx, |editor, cx| editor.set_replica_id_mapping(mapping, cx));
-
+        this.refresh_replica_id_map(cx);
         this
     }
 
-    /// Channel Buffer Replica ID -> Project Replica ID
-    pub fn project_replica_ids_by_channel_buffer_replica_id(
-        &self,
-        cx: &AppContext,
-    ) -> HashMap<ReplicaId, ReplicaId> {
-        let project = self.project.read(cx);
-        let mut result = HashMap::default();
-        result.insert(
-            self.channel_buffer.read(cx).replica_id(cx),
-            project.replica_id(),
-        );
-        for collaborator in self.channel_buffer.read(cx).collaborators() {
-            let project_replica_id =
-                project
-                    .collaborators()
-                    .values()
-                    .find_map(|project_collaborator| {
-                        (project_collaborator.user_id == collaborator.user_id)
-                            .then_some(project_collaborator.replica_id)
-                    });
-            if let Some(project_replica_id) = project_replica_id {
-                result.insert(collaborator.replica_id as ReplicaId, project_replica_id);
-            }
+    fn handle_project_event(
+        &mut self,
+        _: ModelHandle<Project>,
+        event: &project::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            project::Event::RemoteIdChanged(_) => {}
+            project::Event::DisconnectedFromHost => {}
+            project::Event::Closed => {}
+            project::Event::CollaboratorUpdated { .. } => {}
+            project::Event::CollaboratorLeft(_) => {}
+            project::Event::CollaboratorJoined(_) => {}
+            _ => return,
         }
-        result
+        self.refresh_replica_id_map(cx);
+    }
+
+    fn handle_channel_buffer_event(
+        &mut self,
+        _: ModelHandle<ChannelBuffer>,
+        _: &channel_buffer::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.refresh_replica_id_map(cx);
+    }
+
+    /// Build a mapping of channel buffer replica ids to the corresponding
+    /// replica ids in the current project.
+    ///
+    /// Using this mapping, a given user can be displayed with the same color
+    /// in the channel buffer as in other files in the project. Users who are
+    /// in the channel buffer but not the project will not have a color.
+    fn refresh_replica_id_map(&self, cx: &mut ViewContext<Self>) {
+        let mut project_replica_ids_by_channel_buffer_replica_id = HashMap::default();
+        let project = self.project.read(cx);
+        let channel_buffer = self.channel_buffer.read(cx);
+        project_replica_ids_by_channel_buffer_replica_id
+            .insert(channel_buffer.replica_id(cx), project.replica_id());
+        project_replica_ids_by_channel_buffer_replica_id.extend(
+            channel_buffer
+                .collaborators()
+                .iter()
+                .filter_map(|channel_buffer_collaborator| {
+                    project
+                        .collaborators()
+                        .values()
+                        .find_map(|project_collaborator| {
+                            (project_collaborator.user_id == channel_buffer_collaborator.user_id)
+                                .then_some((
+                                    channel_buffer_collaborator.replica_id as ReplicaId,
+                                    project_collaborator.replica_id,
+                                ))
+                        })
+                }),
+        );
+
+        self.editor.update(cx, |editor, cx| {
+            editor.set_replica_id_map(Some(project_replica_ids_by_channel_buffer_replica_id), cx)
+        });
     }
 }
 

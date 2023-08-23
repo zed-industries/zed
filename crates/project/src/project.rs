@@ -282,6 +282,7 @@ pub enum Event {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
     },
+    CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
 }
@@ -5931,6 +5932,7 @@ impl Project {
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
             this.shared_buffers.remove(&collaborator.peer_id);
+            cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();

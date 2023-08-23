@@ -756,6 +756,7 @@ pub struct Editor {
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
+    pub absent_selection: SelectionStyle,
     pub syntax: Arc<SyntaxTheme>,
     pub hint: HighlightStyle,
     pub suggestion: HighlightStyle,

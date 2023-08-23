@@ -63,6 +63,10 @@ async fn test_core_channel_buffers(
 
     // Client B sees the correct text, and then edits it
     let buffer_b = channel_buffer_b.read_with(cx_b, |buffer, _| buffer.buffer());
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.remote_id()),
+        buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id())
+    );
     assert_eq!(buffer_text(&buffer_b, cx_b), "hello, cruel world");
     buffer_b.update(cx_b, |buffer, cx| {
         buffer.edit([(7..12, "beautiful")], None, cx)
@@ -138,6 +142,7 @@ async fn test_channel_buffer_replica_ids(
 
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
 
     // Clients A and B join a channel.
     active_call_a
@@ -190,7 +195,7 @@ async fn test_channel_buffer_replica_ids(
 
     // Client C is in a separate project.
     client_c.fs().insert_tree("/dir", json!({})).await;
-    let (project_c, _) = client_c.build_local_project("/dir", cx_c).await;
+    let (separate_project_c, _) = client_c.build_local_project("/dir", cx_c).await;
 
     // Note that each user has a different replica id in the projects vs the
     // channel buffer.
@@ -211,8 +216,14 @@ async fn test_channel_buffer_replica_ids(
         .add_window(|cx| ChannelView::new(project_a.clone(), channel_buffer_a.clone(), None, cx));
     let channel_window_b = cx_b
         .add_window(|cx| ChannelView::new(project_b.clone(), channel_buffer_b.clone(), None, cx));
-    let channel_window_c = cx_c
-        .add_window(|cx| ChannelView::new(project_c.clone(), channel_buffer_c.clone(), None, cx));
+    let channel_window_c = cx_c.add_window(|cx| {
+        ChannelView::new(
+            separate_project_c.clone(),
+            channel_buffer_c.clone(),
+            None,
+            cx,
+        )
+    });
 
     let channel_view_a = channel_window_a.root(cx_a);
     let channel_view_b = channel_window_b.root(cx_b);
@@ -222,23 +233,53 @@ async fn test_channel_buffer_replica_ids(
     // so that they match the same users' replica ids in their shared project.
     channel_view_a.read_with(cx_a, |view, cx| {
         assert_eq!(
-            view.project_replica_ids_by_channel_buffer_replica_id(cx),
-            [(1, 0), (2, 1)].into_iter().collect::<HashMap<_, _>>()
+            view.editor.read(cx).replica_id_map().unwrap(),
+            &[(1, 0), (2, 1)].into_iter().collect::<HashMap<_, _>>()
         );
     });
     channel_view_b.read_with(cx_b, |view, cx| {
         assert_eq!(
-            view.project_replica_ids_by_channel_buffer_replica_id(cx),
-            [(1, 0), (2, 1)].into_iter().collect::<HashMap<u16, u16>>(),
+            view.editor.read(cx).replica_id_map().unwrap(),
+            &[(1, 0), (2, 1)].into_iter().collect::<HashMap<u16, u16>>(),
         )
     });
 
     // Client C only sees themself, as they're not part of any shared project
     channel_view_c.read_with(cx_c, |view, cx| {
         assert_eq!(
-            view.project_replica_ids_by_channel_buffer_replica_id(cx),
-            [(0, 0)].into_iter().collect::<HashMap<u16, u16>>(),
+            view.editor.read(cx).replica_id_map().unwrap(),
+            &[(0, 0)].into_iter().collect::<HashMap<u16, u16>>(),
         );
+    });
+
+    // Client C joins the project that clients A and B are in.
+    active_call_c
+        .update(cx_c, |call, cx| call.join_channel(channel_id, cx))
+        .await
+        .unwrap();
+    let project_c = client_c.build_remote_project(shared_project_id, cx_c).await;
+    deterministic.run_until_parked();
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.replica_id(), 2);
+    });
+
+    // For clients A and B, client C's replica id in the channel buffer is
+    // now mapped to their replica id in the shared project.
+    channel_view_a.read_with(cx_a, |view, cx| {
+        assert_eq!(
+            view.editor.read(cx).replica_id_map().unwrap(),
+            &[(1, 0), (2, 1), (0, 2)]
+                .into_iter()
+                .collect::<HashMap<_, _>>()
+        );
+    });
+    channel_view_b.read_with(cx_b, |view, cx| {
+        assert_eq!(
+            view.editor.read(cx).replica_id_map().unwrap(),
+            &[(1, 0), (2, 1), (0, 2)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        )
     });
 }
 

@@ -21,8 +21,12 @@ pub struct ChannelBuffer {
     _subscription: client::Subscription,
 }
 
+pub enum Event {
+    CollaboratorsChanged,
+}
+
 impl Entity for ChannelBuffer {
-    type Event = ();
+    type Event = Event;
 
     fn release(&mut self, _: &mut AppContext) {
         self.client
@@ -54,8 +58,9 @@ impl ChannelBuffer {
 
             let collaborators = response.collaborators;
 
-            let buffer =
-                cx.add_model(|cx| language::Buffer::new(response.replica_id as u16, base_text, cx));
+            let buffer = cx.add_model(|_| {
+                language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
+            });
             buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
             let subscription = client.subscribe_to_entity(channel_id)?;
@@ -111,6 +116,7 @@ impl ChannelBuffer {
 
         this.update(&mut cx, |this, cx| {
             this.collaborators.push(collaborator);
+            cx.emit(Event::CollaboratorsChanged);
             cx.notify();
         });
 
@@ -134,6 +140,7 @@ impl ChannelBuffer {
                     true
                 }
             });
+            cx.emit(Event::CollaboratorsChanged);
             cx.notify();
         });
 

@@ -1606,12 +1606,16 @@ impl Editor {
         self.read_only = read_only;
     }
 
-    pub fn set_replica_id_mapping(
+    pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
+        self.replica_id_mapping.as_ref()
+    }
+
+    pub fn set_replica_id_map(
         &mut self,
-        mapping: HashMap<ReplicaId, ReplicaId>,
+        mapping: Option<HashMap<ReplicaId, ReplicaId>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.replica_id_mapping = Some(mapping);
+        self.replica_id_mapping = mapping;
         cx.notify();
     }
 
