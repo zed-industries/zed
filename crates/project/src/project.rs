@@ -518,13 +518,12 @@ impl FormatTrigger {
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     Unnamed {
-        buffer: ModelHandle<Buffer>
+        buffer: ModelHandle<Buffer>,
     },
     Path {
         worktree_id: WorktreeId,
-        path: Arc<Path>
+        path: Arc<Path>,
     },
-
 }
 
 impl Project {
@@ -5095,15 +5094,19 @@ impl Project {
         }
         let workers = background.num_cpus().min(path_count);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
-        let buffers = self.opened_buffers.values().filter_map(|b| {
-            let buffer = b.upgrade(cx)?;
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            if snapshot.file().is_some() {
-                None
-            } else {
-                           Some(SearchMatchCandidate::Unnamed{ buffer })
-            }
-        }).collect::<Vec<_>>();
+        let buffers = self
+            .opened_buffers
+            .values()
+            .filter_map(|b| {
+                let buffer = b.upgrade(cx)?;
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                if snapshot.file().is_some() {
+                    None
+                } else {
+                    Some(SearchMatchCandidate::Unnamed { buffer })
+                }
+            })
+            .collect::<Vec<_>>();
         cx.background()
             .spawn(Self::background_search(
                 buffers,
@@ -5117,25 +5120,15 @@ impl Project {
             ))
             .detach();
 
-        let mut buffers_rx = self.read_open_buffers_yeet(matching_paths_rx, cx);
-
+        let (buffers, mut buffers_rx) = Self::read_open_buffers_yeet(matching_paths_rx, cx);
         let background = cx.background().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
         cx.background()
             .spawn(async move {
-                let mut buffers = vec![];
-                while let Some(entry) = buffers_rx.next().await {
-                    buffers.push(entry);
-                }
-                buffers.sort_by_key(|(_, snapshot)| {
-                    snapshot.file().map(move |file| file.path()).cloned()
-                });
+                let Ok(buffers) = buffers.await else {return;};
+
                 let buffers_len = buffers.len();
                 let query = &query;
-                let paths_per_worker = (buffers.len() + workers - 1) / workers;
-                if paths_per_worker == 0 {
-                    return;
-                }
                 let (finished_tx, mut finished_rx) = smol::channel::unbounded();
                 background
                     .scoped(|scope| {
@@ -5145,20 +5138,17 @@ impl Project {
                             buffer_index: usize,
                         }
 
-                        let mut chunks = buffers.chunks(paths_per_worker);
                         for worker_id in 0..workers {
-                            let chunk_for_worker = chunks.next();
                             let finished_tx = finished_tx.clone();
-
-                            if let Some(chunk) = chunk_for_worker {
-                                scope.spawn(async move {
-                                    for (entry_id, (buffer, snapshot)) in chunk.iter().enumerate() {
-                                        let buffer_index = worker_id * paths_per_worker + entry_id;
-                                        let buffer_matches = if query.file_matches(
+                            let mut buffers_rx = buffers_rx.clone();
+                            scope.spawn(async move {
+                                while let Some((entry, buffer_index)) = buffers_rx.next().await {
+                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref() {
+                                        if query.file_matches(
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
                                             query
-                                                .search(snapshot, None)
+                                                .search(&snapshot, None)
                                                 .await
                                                 .iter()
                                                 .map(|range| {
@@ -5168,24 +5158,32 @@ impl Project {
                                                 .collect()
                                         } else {
                                             Vec::new()
-                                        };
-                                        let status = if !buffer_matches.is_empty() {
-                                            FinishedStatus {
-                                                entry: Some((buffer.clone(), buffer_matches)),
-                                                buffer_index,
-                                            }
-                                        } else {
-                                            FinishedStatus {
-                                                entry: None,
-                                                buffer_index,
-                                            }
-                                        };
-                                        if finished_tx.send(status).await.is_err() {
-                                            break;
                                         }
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    let status = if !buffer_matches.is_empty() {
+                                        let entry = if let Some((buffer, snapshot)) = entry.as_ref() {
+                                            Some((buffer.clone(), buffer_matches))
+                                        } else {
+                                            None
+                                        };
+                                        FinishedStatus {
+                                            entry,
+                                            buffer_index,
+                                        }
+                                    } else {
+                                        FinishedStatus {
+                                            entry: None,
+                                            buffer_index,
+                                        }
+                                    };
+                                    if finished_tx.send(status).await.is_err() {
+                                        break;
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
                         scope.spawn(async move {
                             let mut current_index = 0;
@@ -5234,8 +5232,7 @@ impl Project {
         let matching_paths_tx = &matching_paths_tx;
         let snapshots = &snapshots;
         let paths_per_worker = (path_count + workers - 1) / workers;
-        for buffer in unnamed_buffers
-        {
+        for buffer in unnamed_buffers {
             matching_paths_tx.send(buffer).await.log_err();
         }
 
@@ -5251,7 +5248,6 @@ impl Project {
                         for snapshot in snapshots {
                             let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
                             if worker_end_ix <= snapshot_start_ix {
-
                                 break;
                             } else if worker_start_ix > snapshot_end_ix {
                                 snapshot_start_ix = snapshot_end_ix;
@@ -5284,7 +5280,10 @@ impl Project {
                                     };
 
                                     if matches {
-                                        let project_path = SearchMatchCandidate::Path{ worktree_id: snapshot.id(), path: entry.path.clone() };
+                                        let project_path = SearchMatchCandidate::Path {
+                                            worktree_id: snapshot.id(),
+                                            path: entry.path.clone(),
+                                        };
                                         if matching_paths_tx.send(project_path).await.is_err() {
                                             break;
                                         }
@@ -5296,10 +5295,8 @@ impl Project {
                         }
                     });
                 }
-
             })
             .await;
-
     }
 
     // TODO: Wire this up to allow selecting a server?
@@ -5377,14 +5374,26 @@ impl Project {
     }
 
     fn read_open_buffers_yeet(
-        &self,
         mut matching_paths_rx: Receiver<SearchMatchCandidate>,
         cx: &mut ModelContext<Self>,
-    ) -> Receiver<(ModelHandle<Buffer>, BufferSnapshot)> {
+    ) -> (
+        futures::channel::oneshot::Receiver<Vec<SearchMatchCandidate>>,
+        Receiver<(Option<(ModelHandle<Buffer>, BufferSnapshot)>, usize)>,
+    ) {
         let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-
-        cx.spawn(|this, cx| async move {
-            while let Some(candidate) = matching_paths_rx.next().await {
+        let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
+        let task = cx.spawn(|this, cx| async move {
+            let mut buffers = vec![];
+            while let Some(entry) = matching_paths_rx.next().await {
+                buffers.push(entry);
+            }
+            buffers.sort_by_key(|candidate| match candidate {
+                SearchMatchCandidate::Unnamed { .. } => None,
+                SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
+            });
+            let matching_paths = buffers.clone();
+            sorted_buffers_tx.send(buffers);
+            for (index, candidate) in matching_paths.into_iter().enumerate() {
                 if buffers_tx.is_closed() {
                     break;
                 }
@@ -5392,33 +5401,30 @@ impl Project {
                 let buffers_tx = buffers_tx.clone();
                 cx.spawn(|mut cx| async move {
                     let buffer = match candidate {
-                        SearchMatchCandidate::Unnamed {
-                            buffer
-                        } => Some(buffer),
-                        SearchMatchCandidate::Path {
-                            worktree_id,
-                            path
-                        } => this
-                            .update(&mut cx, |this, cx| this.open_buffer((worktree_id, path), cx))
+                        SearchMatchCandidate::Unnamed { buffer } => Some(buffer),
+                        SearchMatchCandidate::Path { worktree_id, path } => this
+                            .update(&mut cx, |this, cx| {
+                                this.open_buffer((worktree_id, path), cx)
+                            })
                             .await
-                            .log_err()
+                            .log_err(),
                     };
-                    if let Some(buffer) = buffer
-                    {
-                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            buffers_tx.send((buffer, snapshot)).await.log_err();
-
+                    if let Some(buffer) = buffer {
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                        buffers_tx
+                            .send((Some((buffer, snapshot)), index))
+                            .await
+                            .log_err();
+                    } else {
+                        buffers_tx.send((None, index)).await.log_err();
                     }
 
                     Ok::<_, anyhow::Error>(())
                 })
                 .detach();
             }
-
-            Result::<_, anyhow::Error>::Ok(())
-        })
-        .detach();
-        buffers_rx
+        });
+        (sorted_buffers_rx, buffers_rx)
     }
 
     pub fn find_or_create_local_worktree(
