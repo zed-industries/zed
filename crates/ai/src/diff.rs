@@ -107,7 +107,11 @@ impl Diff {
                 let insertion_score = self.scores.get(i, j - 1) + Self::INSERTION_SCORE;
                 let deletion_score = self.scores.get(i - 1, j) + Self::DELETION_SCORE;
                 let equality_score = if self.old[i - 1] == self.new[j - 1] {
-                    self.scores.get(i - 1, j - 1) + Self::EQUALITY_SCORE
+                    if self.old[i - 1] == ' ' {
+                        self.scores.get(i - 1, j - 1)
+                    } else {
+                        self.scores.get(i - 1, j - 1) + Self::EQUALITY_SCORE
+                    }
                 } else {
                     isize::MIN
                 };
