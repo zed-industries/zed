@@ -1596,7 +1596,7 @@ mod tests {
             .map(|range| {
                 buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
             })
-            // TODO add inlay highlight tests
+            // TODO kb add inlay highlight tests
             .map(DocumentRange::Text)
             .collect::<Vec<_>>();
 

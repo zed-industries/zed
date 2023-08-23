@@ -2126,7 +2126,6 @@ impl InlayHints {
         })
     }
 
-    // TODO kb instead, store all LSP data inside the project::InlayHint?
     pub fn project_to_lsp_hint(
         hint: InlayHint,
         project: &ModelHandle<Project>,

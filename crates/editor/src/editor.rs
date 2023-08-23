@@ -7511,6 +7511,22 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn highlight_inlay_background<T: 'static>(
+        &mut self,
+        ranges: Vec<InlayRange>,
+        color_fetcher: fn(&Theme) -> Color,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.background_highlights.insert(
+            TypeId::of::<T>(),
+            (
+                color_fetcher,
+                ranges.into_iter().map(DocumentRange::Inlay).collect(),
+            ),
+        );
+        cx.notify();
+    }
+
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -7932,7 +7948,6 @@ impl Editor {
         Some(
             ranges
                 .iter()
-                // TODO kb mark inlays too
                 .filter_map(|range| range.as_text_range())
                 .map(move |range| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
@@ -8400,7 +8415,6 @@ impl View for Editor {
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-        // TODO kb mark inlays too
         let range = range.as_text_range()?;
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }

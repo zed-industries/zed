@@ -223,7 +223,6 @@ impl TabSnapshot {
         &'a self,
         range: Range<TabPoint>,
         language_aware: bool,
-        // TODO kb extract into one struct?
         text_highlights: Option<&'a TextHighlights>,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,

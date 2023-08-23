@@ -1,6 +1,8 @@
 use crate::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings,
-    EditorSnapshot, EditorStyle, RangeToAnchorExt,
+    display_map::{InlayOffset, ToDisplayPoint},
+    link_go_to_definition::{DocumentRange, InlayRange},
+    Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
+    ExcerptId, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
@@ -43,6 +45,84 @@ pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewC
         } else {
             hide_hover(editor, cx);
         }
+    }
+}
+
+pub struct InlayHover {
+    pub excerpt: ExcerptId,
+    pub triggered_from: InlayOffset,
+    pub range: InlayRange,
+    pub tooltip: HoverBlock,
+}
+
+pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
+    if settings::get::<EditorSettings>(cx).hover_popover_enabled {
+        if editor.pending_rename.is_some() {
+            return;
+        }
+
+        let Some(project) = editor.project.clone() else {
+            return;
+        };
+
+        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
+            if let DocumentRange::Inlay(range) = symbol_range {
+                if (range.highlight_start..=range.highlight_end)
+                    .contains(&inlay_hover.triggered_from)
+                {
+                    // Hover triggered from same location as last time. Don't show again.
+                    return;
+                }
+            }
+            hide_hover(editor, cx);
+        }
+
+        let snapshot = editor.snapshot(cx);
+        // Don't request again if the location is the same as the previous request
+        if let Some(triggered_from) = editor.hover_state.triggered_from {
+            if inlay_hover.triggered_from
+                == snapshot
+                    .display_snapshot
+                    .anchor_to_inlay_offset(triggered_from)
+            {
+                return;
+            }
+        }
+
+        let task = cx.spawn(|this, mut cx| {
+            async move {
+                cx.background()
+                    .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
+                    .await;
+                this.update(&mut cx, |this, _| {
+                    this.hover_state.diagnostic_popover = None;
+                })?;
+
+                let hover_popover = InfoPopover {
+                    project: project.clone(),
+                    symbol_range: DocumentRange::Inlay(inlay_hover.range),
+                    blocks: vec![inlay_hover.tooltip],
+                    language: None,
+                    rendered_content: None,
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    // Highlight the selected symbol using a background highlight
+                    this.highlight_inlay_background::<HoverState>(
+                        vec![inlay_hover.range],
+                        |theme| theme.editor.hover_popover.highlight,
+                        cx,
+                    );
+                    this.hover_state.info_popover = Some(hover_popover);
+                    cx.notify();
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
+
+        editor.hover_state.info_task = Some(task);
     }
 }
 
@@ -110,8 +190,13 @@ fn show_hover(
     if !ignore_timeout {
         if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
             if symbol_range
-                .to_offset(&snapshot.buffer_snapshot)
-                .contains(&multibuffer_offset)
+                .as_text_range()
+                .map(|range| {
+                    range
+                        .to_offset(&snapshot.buffer_snapshot)
+                        .contains(&multibuffer_offset)
+                })
+                .unwrap_or(false)
             {
                 // Hover triggered from same location as last time. Don't show again.
                 return;
@@ -219,7 +304,7 @@ fn show_hover(
 
                 Some(InfoPopover {
                     project: project.clone(),
-                    symbol_range: range,
+                    symbol_range: DocumentRange::Text(range),
                     blocks: hover_result.contents,
                     language: hover_result.language,
                     rendered_content: None,
@@ -227,10 +312,13 @@ fn show_hover(
             });
 
             this.update(&mut cx, |this, cx| {
-                if let Some(hover_popover) = hover_popover.as_ref() {
+                if let Some(symbol_range) = hover_popover
+                    .as_ref()
+                    .and_then(|hover_popover| hover_popover.symbol_range.as_text_range())
+                {
                     // Highlight the selected symbol using a background highlight
                     this.highlight_background::<HoverState>(
-                        vec![hover_popover.symbol_range.clone()],
+                        vec![symbol_range],
                         |theme| theme.editor.hover_popover.highlight,
                         cx,
                     );
@@ -497,7 +585,10 @@ impl HoverState {
             .or_else(|| {
                 self.info_popover
                     .as_ref()
-                    .map(|info_popover| &info_popover.symbol_range.start)
+                    .map(|info_popover| match &info_popover.symbol_range {
+                        DocumentRange::Text(range) => &range.start,
+                        DocumentRange::Inlay(range) => &range.inlay_position,
+                    })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
 
@@ -522,7 +613,7 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
     pub project: ModelHandle<Project>,
-    pub symbol_range: Range<Anchor>,
+    symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
     rendered_content: Option<RenderedInfo>,
