@@ -392,10 +392,6 @@ impl InlayPoint {
     pub fn row(self) -> u32 {
         self.0.row
     }
-
-    pub fn column(self) -> u32 {
-        self.0.column
-    }
 }
 
 impl InlayMap {

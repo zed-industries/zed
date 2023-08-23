@@ -7656,13 +7656,16 @@ impl Editor {
         }) {
             Ok(i) | Err(i) => i,
         };
-        let mut push_region = |start: Option<DisplayPoint>, end: Option<DisplayPoint>| {
+        let mut push_region = |start: Option<Point>, end: Option<Point>| {
             if let (Some(start_display), Some(end_display)) = (start, end) {
-                results.push(start_display..=end_display);
+                results.push(
+                    start_display.to_display_point(display_snapshot)
+                        ..=end_display.to_display_point(display_snapshot),
+                );
             }
         };
-        let mut start_row: Option<DisplayPoint> = None;
-        let mut end_row: Option<DisplayPoint> = None;
+        let mut start_row: Option<Point> = None;
+        let mut end_row: Option<Point> = None;
         if ranges.len() > count {
             return Vec::new();
         }
@@ -7671,13 +7674,17 @@ impl Editor {
             if range.start.cmp(&search_range.end).is_ge() {
                 break;
             }
-            let end = display_snapshot.inlay_offset_to_display_point(range.end, Bias::Right);
+            let end = display_snapshot
+                .inlay_offset_to_display_point(range.end, Bias::Right)
+                .to_point(display_snapshot);
             if let Some(current_row) = &end_row {
-                if end.row() == current_row.row() {
+                if end.row == current_row.row {
                     continue;
                 }
             }
-            let start = display_snapshot.inlay_offset_to_display_point(range.start, Bias::Left);
+            let start = display_snapshot
+                .inlay_offset_to_display_point(range.start, Bias::Left)
+                .to_point(display_snapshot);
 
             if start_row.is_none() {
                 assert_eq!(end_row, None);
@@ -7686,7 +7693,7 @@ impl Editor {
                 continue;
             }
             if let Some(current_end) = end_row.as_mut() {
-                if start.row() > current_end.row() + 1 {
+                if start.row > current_end.row + 1 {
                     push_region(start_row, end_row);
                     start_row = Some(start);
                     end_row = Some(end);
