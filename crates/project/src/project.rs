@@ -5143,7 +5143,8 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((entry, buffer_index)) = buffers_rx.next().await {
-                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref() {
+                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref()
+                                    {
                                         if query.file_matches(
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
@@ -5423,7 +5424,8 @@ impl Project {
                 })
                 .detach();
             }
-        }).detach();
+        })
+        .detach();
         (sorted_buffers_rx, buffers_rx)
     }
 
