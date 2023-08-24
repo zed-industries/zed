@@ -728,9 +728,9 @@ impl SemanticIndex {
                     continue;
                 }
 
+                log::trace!("File Event: {:?}, Path: {:?}", &path_change, &path);
                 match path_change {
-                    PathChange::AddedOrUpdated | PathChange::Updated => {
-                        log::trace!("File Updated: {:?}", path);
+                    PathChange::AddedOrUpdated | PathChange::Updated | PathChange::Added => {
                         if let Ok(language) = language_registry
                             .language_for_file(&relative_path, None)
                             .await
@@ -786,6 +786,7 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        log::trace!("Initializing Project for Semantic Index");
         let worktree_scans_complete = project
             .read(cx)
             .worktrees(cx)
@@ -807,7 +808,7 @@ impl SemanticIndex {
 
         let _subscription = cx.subscribe(&project, |this, project, event, cx| {
             if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
-                this.project_entries_changed(project, changes.clone(), cx, worktree_id);
+                this.project_entries_changed(project.clone(), changes.clone(), cx, worktree_id);
             };
         });
 
