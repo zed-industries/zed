@@ -65,7 +65,7 @@ pub fn init(
                 let project = workspace.read(cx).project().clone();
                 if project.read(cx).is_local() {
                     semantic_index.update(cx, |index, cx| {
-                        index.initialize_project(project, cx);
+                        index.initialize_project(project, cx).detach_and_log_err(cx)
                     });
                 }
             }
@@ -785,7 +785,7 @@ impl SemanticIndex {
         &mut self,
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let worktree_scans_complete = project
             .read(cx)
             .worktrees(cx)
@@ -931,10 +931,8 @@ impl SemanticIndex {
 
                 this.projects.insert(project.downgrade(), project_state);
             });
-
-            cx.background().spawn(async move { anyhow::Ok(()) }).await
+            Result::<(), _>::Ok(())
         })
-        .detach_and_log_err(cx)
     }
 
     pub fn index_project(
