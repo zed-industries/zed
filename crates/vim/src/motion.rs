@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 
 use editor::{
     char_kind,
@@ -404,9 +404,13 @@ fn down(
     mut goal: SelectionGoal,
     times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    for _ in 0..times {
+    let start_row = point.to_point(map).row;
+    let target = cmp::min(map.max_buffer_row(), start_row + times as u32);
+
+    while point.to_point(map).row < target {
         (point, goal) = movement::down(map, point, goal, true);
     }
+
     (point, goal)
 }
 
@@ -416,7 +420,10 @@ fn up(
     mut goal: SelectionGoal,
     times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    for _ in 0..times {
+    let start_row = point.to_point(map).row;
+    let target = start_row.saturating_sub(times as u32);
+
+    while point.to_point(map).row > target {
         (point, goal) = movement::up(map, point, goal, true);
     }
     (point, goal)
