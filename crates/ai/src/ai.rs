@@ -1,7 +1,8 @@
 pub mod assistant;
 mod assistant_settings;
-mod diff;
-mod refactor;
+mod refactoring_assistant;
+mod refactoring_modal;
+mod streaming_diff;
 
 use anyhow::{anyhow, Result};
 pub use assistant::AssistantPanel;
@@ -195,7 +196,7 @@ struct OpenAIChoice {
 
 pub fn init(cx: &mut AppContext) {
     assistant::init(cx);
-    refactor::init(cx);
+    refactoring_modal::init(cx);
 }
 
 pub async fn stream_completion(

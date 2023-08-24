@@ -71,7 +71,7 @@ pub enum Hunk {
     Keep { len: usize },
 }
 
-pub struct Diff {
+pub struct StreamingDiff {
     old: Vec<char>,
     new: Vec<char>,
     scores: Matrix,
@@ -80,10 +80,10 @@ pub struct Diff {
     equal_runs: HashMap<(usize, usize), u32>,
 }
 
-impl Diff {
+impl StreamingDiff {
     const INSERTION_SCORE: f64 = -1.;
     const DELETION_SCORE: f64 = -5.;
-    const EQUALITY_BASE: f64 = 1.618;
+    const EQUALITY_BASE: f64 = 2.;
     const MAX_EQUALITY_EXPONENT: i32 = 32;
 
     pub fn new(old: String) -> Self {
@@ -250,7 +250,7 @@ mod tests {
             .collect::<String>();
         log::info!("old text: {:?}", old);
 
-        let mut diff = Diff::new(old.clone());
+        let mut diff = StreamingDiff::new(old.clone());
         let mut hunks = Vec::new();
         let mut new_len = 0;
         let mut new = String::new();

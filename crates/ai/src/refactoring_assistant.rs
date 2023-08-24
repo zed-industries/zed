@@ -1,25 +1,16 @@
-use crate::{diff::Diff, stream_completion, OpenAIRequest, RequestMessage, Role};
 use collections::HashMap;
 use editor::{Editor, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui::{
-    actions, elements::*, platform::MouseButton, AnyViewHandle, AppContext, Entity, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
-};
+use gpui::{AppContext, Task, ViewHandle};
 use language::{Point, Rope};
-use menu::{Cancel, Confirm};
-use std::{cmp, env, sync::Arc};
+use std::{cmp, env, fmt::Write};
 use util::TryFutureExt;
-use workspace::{Modal, Workspace};
 
-actions!(assistant, [Refactor]);
-
-pub fn init(cx: &mut AppContext) {
-    cx.set_global(RefactoringAssistant::new());
-    cx.add_action(RefactoringModal::deploy);
-    cx.add_action(RefactoringModal::confirm);
-    cx.add_action(RefactoringModal::cancel);
-}
+use crate::{
+    stream_completion,
+    streaming_diff::{Hunk, StreamingDiff},
+    OpenAIRequest, RequestMessage, Role,
+};
 
 pub struct RefactoringAssistant {
     pending_edits_by_editor: HashMap<usize, Task<Option<()>>>,
@@ -32,7 +23,30 @@ impl RefactoringAssistant {
         }
     }
 
-    fn refactor(&mut self, editor: &ViewHandle<Editor>, prompt: &str, cx: &mut AppContext) {
+    pub fn update<F, T>(cx: &mut AppContext, f: F) -> T
+    where
+        F: FnOnce(&mut Self, &mut AppContext) -> T,
+    {
+        if !cx.has_global::<Self>() {
+            cx.set_global(Self::new());
+        }
+
+        cx.update_global(f)
+    }
+
+    pub fn refactor(
+        &mut self,
+        editor: &ViewHandle<Editor>,
+        user_prompt: &str,
+        cx: &mut AppContext,
+    ) {
+        let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            api_key
+        } else {
+            // TODO: ensure the API key is present by going through the assistant panel's flow.
+            return;
+        };
+
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selection = editor.read(cx).selections.newest_anchor().clone();
         let selected_text = snapshot
@@ -83,18 +97,20 @@ impl RefactoringAssistant {
             .language_at(selection.start)
             .map(|language| language.name());
         let language_name = language_name.as_deref().unwrap_or("");
+
+        let mut prompt = String::new();
+        writeln!(prompt, "Given the following {language_name} snippet:").unwrap();
+        writeln!(prompt, "{normalized_selected_text}").unwrap();
+        writeln!(prompt, "{user_prompt}.").unwrap();
+        writeln!(prompt, "Never make remarks, reply only with the new code.").unwrap();
         let request = OpenAIRequest {
             model: "gpt-4".into(),
-            messages: vec![
-                RequestMessage {
+            messages: vec![RequestMessage {
                 role: Role::User,
-                content: format!(
-                    "Given the following {language_name} snippet:\n{normalized_selected_text}\n{prompt}. Never make remarks and reply only with the new code."
-                ),
+                content: prompt,
             }],
             stream: true,
         };
-        let api_key = env::var("OPENAI_API_KEY").unwrap();
         let response = stream_completion(api_key, cx.background().clone(), request);
         let editor = editor.downgrade();
         self.pending_edits_by_editor.insert(
@@ -116,7 +132,7 @@ impl RefactoringAssistant {
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                     let diff = cx.background().spawn(async move {
                         let mut messages = response.await?.ready_chunks(4);
-                        let mut diff = Diff::new(selected_text.to_string());
+                        let mut diff = StreamingDiff::new(selected_text.to_string());
 
                         let indentation_len;
                         let indentation_text;
@@ -177,18 +193,18 @@ impl RefactoringAssistant {
                                 buffer.start_transaction(cx);
                                 buffer.edit(
                                     hunks.into_iter().filter_map(|hunk| match hunk {
-                                        crate::diff::Hunk::Insert { text } => {
+                                        Hunk::Insert { text } => {
                                             let edit_start = snapshot.anchor_after(edit_start);
                                             Some((edit_start..edit_start, text))
                                         }
-                                        crate::diff::Hunk::Remove { len } => {
+                                        Hunk::Remove { len } => {
                                             let edit_end = edit_start + len;
                                             let edit_range = snapshot.anchor_after(edit_start)
                                                 ..snapshot.anchor_before(edit_end);
                                             edit_start = edit_end;
                                             Some((edit_range, String::new()))
                                         }
-                                        crate::diff::Hunk::Keep { len } => {
+                                        Hunk::Keep { len } => {
                                             let edit_end = edit_start + len;
                                             let edit_range = snapshot.anchor_after(edit_start)
                                                 ..snapshot.anchor_before(edit_end);
@@ -232,101 +248,5 @@ impl RefactoringAssistant {
                 .log_err()
             }),
         );
-    }
-}
-
-enum Event {
-    Dismissed,
-}
-
-struct RefactoringModal {
-    active_editor: WeakViewHandle<Editor>,
-    prompt_editor: ViewHandle<Editor>,
-    has_focus: bool,
-}
-
-impl Entity for RefactoringModal {
-    type Event = Event;
-}
-
-impl View for RefactoringModal {
-    fn ui_name() -> &'static str {
-        "RefactoringModal"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = theme::current(cx);
-
-        ChildView::new(&self.prompt_editor, cx)
-            .constrained()
-            .with_width(theme.assistant.modal.width)
-            .contained()
-            .with_style(theme.assistant.modal.container)
-            .mouse::<Self>(0)
-            .on_click_out(MouseButton::Left, |_, _, cx| cx.emit(Event::Dismissed))
-            .on_click_out(MouseButton::Right, |_, _, cx| cx.emit(Event::Dismissed))
-            .aligned()
-            .right()
-            .into_any()
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
-        cx.focus(&self.prompt_editor);
-    }
-
-    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
-    }
-}
-
-impl Modal for RefactoringModal {
-    fn has_focus(&self) -> bool {
-        self.has_focus
-    }
-
-    fn dismiss_on_event(event: &Self::Event) -> bool {
-        matches!(event, Self::Event::Dismissed)
-    }
-}
-
-impl RefactoringModal {
-    fn deploy(workspace: &mut Workspace, _: &Refactor, cx: &mut ViewContext<Workspace>) {
-        if let Some(active_editor) = workspace
-            .active_item(cx)
-            .and_then(|item| Some(item.act_as::<Editor>(cx)?.downgrade()))
-        {
-            workspace.toggle_modal(cx, |_, cx| {
-                let prompt_editor = cx.add_view(|cx| {
-                    let mut editor = Editor::auto_height(
-                        theme::current(cx).assistant.modal.editor_max_lines,
-                        Some(Arc::new(|theme| theme.assistant.modal.editor.clone())),
-                        cx,
-                    );
-                    editor
-                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-                    editor
-                });
-                cx.add_view(|_| RefactoringModal {
-                    active_editor,
-                    prompt_editor,
-                    has_focus: false,
-                })
-            });
-        }
-    }
-
-    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
-    }
-
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = self.active_editor.upgrade(cx) {
-            let prompt = self.prompt_editor.read(cx).text(cx);
-            cx.update_global(|assistant: &mut RefactoringAssistant, cx| {
-                assistant.refactor(&editor, &prompt, cx);
-            });
-            cx.emit(Event::Dismissed);
-        }
     }
 }

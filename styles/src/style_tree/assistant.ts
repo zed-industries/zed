@@ -69,8 +69,7 @@ export default function assistant(): any {
             width: 500,
             editor_max_lines: 6,
             editor: {
-                background: background(theme.lowest),
-                text: text(theme.lowest, "mono", "on"),
+                text: text(theme.lowest, "mono", "on", { size: "sm" }),
                 placeholder_text: text(theme.lowest, "sans", "on", "disabled"),
                 selection: theme.players[0],
             }
