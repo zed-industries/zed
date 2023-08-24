@@ -42,7 +42,11 @@ where
     let mut handler = MouseEventHandler::above::<Tag, _>(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
-        let drag_position = if state.hovered() { drag_position } else { None };
+        let drag_position = if state.dragging() {
+            drag_position
+        } else {
+            None
+        };
         Stack::new()
             .with_child(render_child(state, cx))
             .with_children(drag_position.map(|drag_position| {

@@ -617,10 +617,11 @@ impl<'a> WindowContext<'a> {
                     }
                 }
 
-                if self
-                    .window
-                    .platform_window
-                    .is_topmost_for_position(*position)
+                if pressed_button.is_none()
+                    && self
+                        .window
+                        .platform_window
+                        .is_topmost_for_position(*position)
                 {
                     self.platform().set_cursor_style(style_to_assign);
                 }
