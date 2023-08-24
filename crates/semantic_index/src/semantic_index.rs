@@ -35,6 +35,7 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt,
 };
+use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 7;
 const EMBEDDINGS_BATCH_SIZE: usize = 80;
@@ -55,6 +56,22 @@ pub fn init(
     if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
+
+    cx.subscribe_global::<WorkspaceCreated, _>({
+        move |event, mut cx| {
+            let Some(semantic_index) = SemanticIndex::global(cx) else { return; };
+            let workspace = &event.0;
+            if let Some(workspace) = workspace.upgrade(cx) {
+                let project = workspace.read(cx).project().clone();
+                if project.read(cx).is_local() {
+                    semantic_index.update(cx, |index, cx| {
+                        index.initialize_project(project, cx);
+                    });
+                }
+            }
+        }
+    })
+    .detach();
 
     cx.spawn(move |mut cx| async move {
         let semantic_index = SemanticIndex::new(
@@ -133,7 +150,6 @@ impl ProjectState {
             async move {
                 while let Ok(operation) = job_queue_rx.recv().await {
                     Self::update_queue(&mut worktree_queue, operation);
-                    dbg!(worktree_queue.len());
                 }
             }
         });
