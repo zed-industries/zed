@@ -94,7 +94,6 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
-    worktree_file_mtimes: HashMap<WorktreeId, HashMap<PathBuf, SystemTime>>,
     subscription: gpui::Subscription,
     outstanding_job_count_rx: watch::Receiver<usize>,
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
@@ -122,7 +121,6 @@ impl ProjectState {
         cx: &mut AppContext,
         subscription: gpui::Subscription,
         worktree_db_ids: Vec<(WorktreeId, i64)>,
-        worktree_file_mtimes: HashMap<WorktreeId, HashMap<PathBuf, SystemTime>>,
         outstanding_job_count_rx: watch::Receiver<usize>,
         _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     ) -> Self {
@@ -142,7 +140,6 @@ impl ProjectState {
 
         Self {
             worktree_db_ids,
-            worktree_file_mtimes,
             outstanding_job_count_rx,
             _outstanding_job_count_tx,
             subscription,
@@ -834,7 +831,6 @@ impl SemanticIndex {
             let job_count_tx = Arc::new(Mutex::new(job_count_tx));
             let job_count_tx_longlived = job_count_tx.clone();
 
-            let worktree_file_mtimes_all = worktree_file_mtimes.clone();
             let worktree_files = cx
                 .background()
                 .spawn(async move {
@@ -896,7 +892,6 @@ impl SemanticIndex {
                     cx,
                     _subscription,
                     worktree_db_ids,
-                    worktree_file_mtimes_all,
                     job_count_rx,
                     job_count_tx_longlived,
                 );
