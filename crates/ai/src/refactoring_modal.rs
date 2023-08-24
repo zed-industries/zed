@@ -40,7 +40,12 @@ impl View for RefactoringModal {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let theme = theme::current(cx);
         ChildView::new(&self.prompt_editor, cx)
+            .aligned()
+            .left()
+            .contained()
+            .with_style(theme.assistant.modal.container)
             .mouse::<Self>(0)
             .on_click_out(MouseButton::Left, |_, _, cx| cx.emit(Event::Dismissed))
             .on_click_out(MouseButton::Right, |_, _, cx| cx.emit(Event::Dismissed))
@@ -93,8 +98,6 @@ impl RefactoringModal {
                                 ChildView::new(&refactoring, cx)
                                     .contained()
                                     .with_padding_left(cx.gutter_width)
-                                    .aligned()
-                                    .left()
                                     .into_any()
                             }
                         }),

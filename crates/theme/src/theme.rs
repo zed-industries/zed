@@ -1131,8 +1131,6 @@ pub struct AssistantStyle {
 pub struct ModalAssistantStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub width: f32,
-    pub editor_max_lines: usize,
     pub editor: FieldEditor,
 }
 
