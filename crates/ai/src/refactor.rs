@@ -91,6 +91,7 @@ impl RefactoringAssistant {
                             let mut highlights = Vec::new();
 
                             editor.buffer().update(cx, |buffer, cx| {
+                                // Avoid grouping assistant edits with user edits.
                                 buffer.finalize_last_transaction(cx);
 
                                 buffer.start_transaction(cx);
@@ -121,6 +122,7 @@ impl RefactoringAssistant {
                                 );
                                 if let Some(transaction) = buffer.end_transaction(cx) {
                                     if let Some(first_transaction) = first_transaction {
+                                        // Group all assistant edits into the first transaction.
                                         buffer.merge_transaction_into(
                                             transaction,
                                             first_transaction,
@@ -128,8 +130,8 @@ impl RefactoringAssistant {
                                         );
                                     } else {
                                         first_transaction = Some(transaction);
+                                        buffer.finalize_last_transaction(cx);
                                     }
-                                    buffer.finalize_last_transaction(cx);
                                 }
                             });
 
