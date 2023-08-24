@@ -101,6 +101,16 @@ impl RefactoringAssistant {
             editor.id(),
             cx.spawn(|mut cx| {
                 async move {
+                    let _clear_highlights = util::defer({
+                        let mut cx = cx.clone();
+                        let editor = editor.clone();
+                        move || {
+                            let _ = editor.update(&mut cx, |editor, cx| {
+                                editor.clear_text_highlights::<Self>(cx);
+                            });
+                        }
+                    });
+
                     let mut edit_start = selection.start.to_offset(&snapshot);
 
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
@@ -215,11 +225,7 @@ impl RefactoringAssistant {
                             );
                         })?;
                     }
-
                     diff.await?;
-                    editor.update(&mut cx, |editor, cx| {
-                        editor.clear_text_highlights::<Self>(cx);
-                    })?;
 
                     anyhow::Ok(())
                 }
