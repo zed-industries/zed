@@ -3299,15 +3299,15 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
         let region_id = MouseRegionId::new(tag, self.view_id, region_id);
         MouseState {
             hovered: self.window.hovered_region_ids.contains(&region_id),
-            clicked: if let Some((clicked_region_id, button)) = self.window.clicked_region {
-                if region_id == clicked_region_id {
-                    Some(button)
-                } else {
-                    None
-                }
-            } else {
-                None
-            },
+            mouse_down: !self.window.clicked_region_ids.is_empty(),
+            clicked: self
+                .window
+                .clicked_region_ids
+                .iter()
+                .find(|click_region_id| **click_region_id == region_id)
+                // If we've gotten here, there should always be a clicked region.
+                // But let's be defensive and return None if there isn't.
+                .and_then(|_| self.window.clicked_region.map(|(_, button)| button)),
             accessed_hovered: false,
             accessed_clicked: false,
         }
@@ -3823,14 +3823,20 @@ impl<'a, T> DerefMut for Reference<'a, T> {
 pub struct MouseState {
     pub(crate) hovered: bool,
     pub(crate) clicked: Option<MouseButton>,
+    pub(crate) mouse_down: bool,
     pub(crate) accessed_hovered: bool,
     pub(crate) accessed_clicked: bool,
 }
 
 impl MouseState {
+    pub fn dragging(&mut self) -> bool {
+        self.accessed_hovered = true;
+        self.hovered && self.mouse_down
+    }
+
     pub fn hovered(&mut self) -> bool {
         self.accessed_hovered = true;
-        self.hovered
+        self.hovered && (!self.mouse_down || self.clicked.is_some())
     }
 
     pub fn clicked(&mut self) -> Option<MouseButton> {
