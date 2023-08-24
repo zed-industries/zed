@@ -797,6 +797,7 @@ impl SemanticIndex {
 
         let language_registry = self.language_registry.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
+        let db_update_tx = self.db_update_tx.clone();
 
         cx.spawn(|this, mut cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
@@ -837,6 +838,7 @@ impl SemanticIndex {
                     let mut worktree_files = Vec::new();
                     for worktree in worktrees.into_iter() {
                         let mut file_mtimes = worktree_file_mtimes.remove(&worktree.id()).unwrap();
+                        let worktree_db_id = db_ids_by_worktree_id[&worktree.id()];
                         for file in worktree.files(false, 0) {
                             let absolute_path = worktree.absolutize(&file.path);
 
@@ -869,7 +871,7 @@ impl SemanticIndex {
                                     worktree_files.push(IndexOperation::IndexFile {
                                         absolute_path: absolute_path.clone(),
                                         payload: PendingFile {
-                                            worktree_db_id: db_ids_by_worktree_id[&worktree.id()],
+                                            worktree_db_id,
                                             relative_path: path_buf,
                                             absolute_path,
                                             language,
@@ -880,6 +882,17 @@ impl SemanticIndex {
                                     });
                                 }
                             }
+                        }
+                        // Clean up entries from database that are no longer in the worktree.
+                        for (path, mtime) in file_mtimes {
+                            worktree_files.push(IndexOperation::DeleteFile {
+                                absolute_path: worktree.absolutize(path.as_path()),
+                                payload: DbOperation::Delete {
+                                    worktree_id: worktree_db_id,
+                                    path,
+                                },
+                                tx: db_update_tx.clone(),
+                            });
                         }
                     }
 
