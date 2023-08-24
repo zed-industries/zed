@@ -1,4 +1,4 @@
-use crate::{Channel, ChannelId, ChannelStore};
+use crate::Channel;
 use anyhow::Result;
 use client::Client;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
@@ -13,39 +13,43 @@ pub(crate) fn init(client: &Arc<Client>) {
 }
 
 pub struct ChannelBuffer {
-    channel_id: ChannelId,
+    pub(crate) channel: Arc<Channel>,
+    connected: bool,
     collaborators: Vec<proto::Collaborator>,
     buffer: ModelHandle<language::Buffer>,
-    channel_store: ModelHandle<ChannelStore>,
     client: Arc<Client>,
-    _subscription: client::Subscription,
+    subscription: Option<client::Subscription>,
 }
 
 pub enum Event {
     CollaboratorsChanged,
+    Disconnected,
 }
 
 impl Entity for ChannelBuffer {
     type Event = Event;
 
     fn release(&mut self, _: &mut AppContext) {
-        self.client
-            .send(proto::LeaveChannelBuffer {
-                channel_id: self.channel_id,
-            })
-            .log_err();
+        if self.connected {
+            self.client
+                .send(proto::LeaveChannelBuffer {
+                    channel_id: self.channel.id,
+                })
+                .log_err();
+        }
     }
 }
 
 impl ChannelBuffer {
     pub(crate) async fn new(
-        channel_store: ModelHandle<ChannelStore>,
-        channel_id: ChannelId,
+        channel: Arc<Channel>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let response = client
-            .request(proto::JoinChannelBuffer { channel_id })
+            .request(proto::JoinChannelBuffer {
+                channel_id: channel.id,
+            })
             .await?;
 
         let base_text = response.base_text;
@@ -62,7 +66,7 @@ impl ChannelBuffer {
         });
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
-        let subscription = client.subscribe_to_entity(channel_id)?;
+        let subscription = client.subscribe_to_entity(channel.id)?;
 
         anyhow::Ok(cx.add_model(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
@@ -70,10 +74,10 @@ impl ChannelBuffer {
             Self {
                 buffer,
                 client,
-                channel_id,
-                channel_store,
+                connected: true,
                 collaborators,
-                _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
+                channel,
+                subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
             }
         }))
     }
@@ -155,7 +159,7 @@ impl ChannelBuffer {
             let operation = language::proto::serialize_operation(operation);
             self.client
                 .send(proto::UpdateChannelBuffer {
-                    channel_id: self.channel_id,
+                    channel_id: self.channel.id,
                     operations: vec![operation],
                 })
                 .log_err();
@@ -170,11 +174,21 @@ impl ChannelBuffer {
         &self.collaborators
     }
 
-    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
-        self.channel_store
-            .read(cx)
-            .channel_for_id(self.channel_id)
-            .cloned()
+    pub fn channel(&self) -> Arc<Channel> {
+        self.channel.clone()
+    }
+
+    pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
+        if self.connected {
+            self.connected = false;
+            self.subscription.take();
+            cx.emit(Event::Disconnected);
+            cx.notify()
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> u16 {

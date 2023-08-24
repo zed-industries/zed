@@ -854,10 +854,13 @@ async fn connection_lost(
         .await
         .trace_err();
 
+    leave_channel_buffers_for_session(&session)
+        .await
+        .trace_err();
+
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
             leave_room_for_session(&session).await.trace_err();
-            leave_channel_buffers_for_session(&session).await.trace_err();
 
             if !session
                 .connection_pool()

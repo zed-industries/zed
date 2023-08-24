@@ -114,10 +114,18 @@ impl ChannelView {
     fn handle_channel_buffer_event(
         &mut self,
         _: ModelHandle<ChannelBuffer>,
-        _: &channel_buffer::Event,
+        event: &channel_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        self.refresh_replica_id_map(cx);
+        match event {
+            channel_buffer::Event::CollaboratorsChanged => {
+                self.refresh_replica_id_map(cx);
+            }
+            channel_buffer::Event::Disconnected => self.editor.update(cx, |editor, cx| {
+                editor.set_read_only(true);
+                cx.notify();
+            }),
+        }
     }
 
     /// Build a mapping of channel buffer replica ids to the corresponding
@@ -183,14 +191,13 @@ impl Item for ChannelView {
         style: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> AnyElement<V> {
-        let channel_name = self
-            .channel_buffer
-            .read(cx)
-            .channel(cx)
-            .map_or("[Deleted channel]".to_string(), |channel| {
-                format!("#{}", channel.name)
-            });
-        Label::new(channel_name, style.label.to_owned()).into_any()
+        let channel_name = &self.channel_buffer.read(cx).channel().name;
+        let label = if self.channel_buffer.read(cx).is_connected() {
+            format!("#{}", channel_name)
+        } else {
+            format!("#{} (disconnected)", channel_name)
+        };
+        Label::new(label, style.label.to_owned()).into_any()
     }
 
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self> {
@@ -208,8 +215,9 @@ impl FollowableItem for ChannelView {
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        self.channel_buffer.read(cx).channel(cx).map(|channel| {
-            proto::view::Variant::ChannelView(proto::view::ChannelView {
+        let channel = self.channel_buffer.read(cx).channel();
+        Some(proto::view::Variant::ChannelView(
+            proto::view::ChannelView {
                 channel_id: channel.id,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
@@ -218,8 +226,8 @@ impl FollowableItem for ChannelView {
                 } else {
                     None
                 },
-            })
-        })
+            },
+        ))
     }
 
     fn from_state_proto(

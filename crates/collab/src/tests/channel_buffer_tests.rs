@@ -1,5 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
+use channel::Channel;
 use client::UserId;
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
@@ -331,6 +332,81 @@ async fn test_reopen_channel_buffer(deterministic: Arc<Deterministic>, cx_a: &mu
         buffer.buffer().update(cx, |buffer, _| {
             assert_eq!(buffer.text(), "hello");
         })
+    });
+}
+
+#[gpui::test]
+async fn test_channel_buffer_disconnect(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel("zed", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .await;
+
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| {
+            channel.open_channel_buffer(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |channel, cx| {
+            channel.open_channel_buffer(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
+    channel_buffer_a.update(cx_a, |buffer, _| {
+        assert_eq!(
+            buffer.channel().as_ref(),
+            &Channel {
+                id: channel_id,
+                name: "zed".to_string()
+            }
+        );
+        assert!(!buffer.is_connected());
+    });
+
+    deterministic.run_until_parked();
+
+    server.allow_connections();
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
+    deterministic.run_until_parked();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, _| {
+            channel_store.remove_channel(channel_id)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+
+    // Channel buffer observed the deletion
+    channel_buffer_b.update(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.channel().as_ref(),
+            &Channel {
+                id: channel_id,
+                name: "zed".to_string()
+            }
+        );
+        assert!(!buffer.is_connected());
     });
 }
 

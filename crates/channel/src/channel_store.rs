@@ -2,7 +2,7 @@ use crate::channel_buffer::ChannelBuffer;
 use anyhow::{anyhow, Result};
 use client::{Client, Status, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
@@ -71,16 +71,14 @@ impl ChannelStore {
         let mut connection_status = client.status();
         let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
-                if matches!(status, Status::ConnectionLost | Status::SignedOut) {
+                if !status.is_connected() {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
-                            this.channels_by_id.clear();
-                            this.channel_invitations.clear();
-                            this.channel_participants.clear();
-                            this.channels_with_admin_privileges.clear();
-                            this.channel_paths.clear();
-                            this.outgoing_invites.clear();
-                            cx.notify();
+                            if matches!(status, Status::ConnectionLost | Status::SignedOut) {
+                                this.handle_disconnect(cx);
+                            } else {
+                                this.disconnect_buffers(cx);
+                            }
                         });
                     } else {
                         break;
@@ -176,9 +174,17 @@ impl ChannelStore {
                     OpenedChannelBuffer::Loading(task) => break task.clone(),
                 },
                 hash_map::Entry::Vacant(e) => {
+                    let client = self.client.clone();
                     let task = cx
-                        .spawn(|this, cx| {
-                            ChannelBuffer::new(this, channel_id, self.client.clone(), cx)
+                        .spawn(|this, cx| async move {
+                            let channel = this.read_with(&cx, |this, _| {
+                                this.channel_for_id(channel_id).cloned().ok_or_else(|| {
+                                    Arc::new(anyhow!("no channel for id: {}", channel_id))
+                                })
+                            })?;
+
+                            ChannelBuffer::new(channel, client, cx)
+                                .await
                                 .map_err(Arc::new)
                         })
                         .shared();
@@ -187,8 +193,8 @@ impl ChannelStore {
                         let task = task.clone();
                         |this, mut cx| async move {
                             let result = task.await;
-                            this.update(&mut cx, |this, cx| {
-                                if let Ok(buffer) = result {
+                            this.update(&mut cx, |this, cx| match result {
+                                Ok(buffer) => {
                                     cx.observe_release(&buffer, move |this, _, _| {
                                         this.opened_buffers.remove(&channel_id);
                                     })
@@ -197,7 +203,9 @@ impl ChannelStore {
                                         channel_id,
                                         OpenedChannelBuffer::Open(buffer.downgrade()),
                                     );
-                                } else {
+                                }
+                                Err(error) => {
+                                    log::error!("failed to open channel buffer {error:?}");
                                     this.opened_buffers.remove(&channel_id);
                                 }
                             });
@@ -474,6 +482,27 @@ impl ChannelStore {
         Ok(())
     }
 
+    fn handle_disconnect(&mut self, cx: &mut ModelContext<'_, ChannelStore>) {
+        self.disconnect_buffers(cx);
+        self.channels_by_id.clear();
+        self.channel_invitations.clear();
+        self.channel_participants.clear();
+        self.channels_with_admin_privileges.clear();
+        self.channel_paths.clear();
+        self.outgoing_invites.clear();
+        cx.notify();
+    }
+
+    fn disconnect_buffers(&mut self, cx: &mut ModelContext<ChannelStore>) {
+        for (_, buffer) in self.opened_buffers.drain() {
+            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
+                }
+            }
+        }
+    }
+
     pub(crate) fn update_channels(
         &mut self,
         payload: proto::UpdateChannels,
@@ -508,38 +537,44 @@ impl ChannelStore {
                     .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
                 self.channels_with_admin_privileges
                     .retain(|channel_id| !payload.remove_channels.contains(channel_id));
+
+                for channel_id in &payload.remove_channels {
+                    let channel_id = *channel_id;
+                    if let Some(OpenedChannelBuffer::Open(buffer)) =
+                        self.opened_buffers.remove(&channel_id)
+                    {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, ChannelBuffer::disconnect);
+                        }
+                    }
+                }
             }
 
-            for channel in payload.channels {
-                if let Some(existing_channel) = self.channels_by_id.get_mut(&channel.id) {
-                    // FIXME: We may be missing a path for this existing channel in certain cases
-                    let existing_channel = Arc::make_mut(existing_channel);
-                    existing_channel.name = channel.name;
-                    continue;
-                }
+            for channel_proto in payload.channels {
+                if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
+                    Arc::make_mut(existing_channel).name = channel_proto.name;
+                } else {
+                    let channel = Arc::new(Channel {
+                        id: channel_proto.id,
+                        name: channel_proto.name,
+                    });
+                    self.channels_by_id.insert(channel.id, channel.clone());
 
-                self.channels_by_id.insert(
-                    channel.id,
-                    Arc::new(Channel {
-                        id: channel.id,
-                        name: channel.name,
-                    }),
-                );
-
-                if let Some(parent_id) = channel.parent_id {
-                    let mut ix = 0;
-                    while ix < self.channel_paths.len() {
-                        let path = &self.channel_paths[ix];
-                        if path.ends_with(&[parent_id]) {
-                            let mut new_path = path.clone();
-                            new_path.push(channel.id);
-                            self.channel_paths.insert(ix + 1, new_path);
+                    if let Some(parent_id) = channel_proto.parent_id {
+                        let mut ix = 0;
+                        while ix < self.channel_paths.len() {
+                            let path = &self.channel_paths[ix];
+                            if path.ends_with(&[parent_id]) {
+                                let mut new_path = path.clone();
+                                new_path.push(channel.id);
+                                self.channel_paths.insert(ix + 1, new_path);
+                                ix += 1;
+                            }
                             ix += 1;
                         }
-                        ix += 1;
+                    } else {
+                        self.channel_paths.push(vec![channel.id]);
                     }
-                } else {
-                    self.channel_paths.push(vec![channel.id]);
                 }
             }
 
