@@ -1,0 +1,7 @@
+- Style the current inline editor
+- Find a way to understand whether we want to refactor or append, or both. (function calls)
+- Add a system prompt that makes GPT an expert of language X
+- Provide context around the cursor/selection. We should try to fill the context window as much as possible (try to fill half of it so that we can spit out another half)
+- When you hit escape, the assistant should stop.
+- When you hit undo and you undo a transaction from the assistant, we should stop generating.
+- Keep the inline editor around until the assistant is done. Add a cancel button to stop, and and undo button to undo the whole thing. (Interactive<IconButton>)
