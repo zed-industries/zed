@@ -714,13 +714,21 @@ fn calculate_hint_updates(
                     probe.1.position.cmp(&new_hint.position, buffer_snapshot)
                 }) {
                     Ok(ix) => {
-                        let (cached_inlay_id, cached_hint) = &cached_excerpt_hints.hints[ix];
-                        if cached_hint == &new_hint {
-                            excerpt_hints_to_persist.insert(*cached_inlay_id, cached_hint.kind);
-                            false
-                        } else {
-                            true
+                        let mut missing_from_cache = true;
+                        for (cached_inlay_id, cached_hint) in &cached_excerpt_hints.hints[ix..] {
+                            if new_hint
+                                .position
+                                .cmp(&cached_hint.position, buffer_snapshot)
+                                .is_gt()
+                            {
+                                break;
+                            }
+                            if cached_hint == &new_hint {
+                                excerpt_hints_to_persist.insert(*cached_inlay_id, cached_hint.kind);
+                                missing_from_cache = false;
+                            }
                         }
+                        missing_from_cache
                     }
                     Err(_) => true,
                 }
@@ -820,11 +828,21 @@ fn apply_hint_update(
             .binary_search_by(|probe| probe.1.position.cmp(&new_hint.position, &buffer_snapshot))
         {
             Ok(i) => {
-                if cached_hints[i].1.text() == new_hint.text() {
-                    None
-                } else {
-                    Some(i)
+                let mut insert_position = Some(i);
+                for (_, cached_hint) in &cached_hints[i..] {
+                    if new_hint
+                        .position
+                        .cmp(&cached_hint.position, &buffer_snapshot)
+                        .is_gt()
+                    {
+                        break;
+                    }
+                    if cached_hint.text() == new_hint.text() {
+                        insert_position = None;
+                        break;
+                    }
                 }
+                insert_position
             }
             Err(i) => Some(i),
         };
