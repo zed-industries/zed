@@ -1635,6 +1635,12 @@ impl ToolbarItemView for ProjectSearchBar {
         self.subscription = None;
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
+            search.update(cx, |search, cx| {
+                if search.current_mode == SearchMode::Semantic {
+                    search.index_project(cx);
+                }
+            });
+
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {
