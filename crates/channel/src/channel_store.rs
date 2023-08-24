@@ -1,19 +1,12 @@
-use anyhow::anyhow;
-use anyhow::Result;
-use client::Status;
-use client::UserId;
-use client::{Client, Subscription, User, UserStore};
-use collections::HashMap;
-use collections::HashSet;
-use futures::channel::mpsc;
-use futures::Future;
-use futures::StreamExt;
-use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use crate::channel_buffer::ChannelBuffer;
+use anyhow::{anyhow, Result};
+use client::{Client, Status, Subscription, User, UserId, UserStore};
+use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
+use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 use util::ResultExt;
-
-use crate::channel_buffer::ChannelBuffer;
 
 pub type ChannelId = u64;
 
@@ -25,6 +18,7 @@ pub struct ChannelStore {
     channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
+    opened_buffers: HashMap<ChannelId, OpenedChannelBuffer>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -59,6 +53,11 @@ pub enum ChannelMemberStatus {
     NotMember,
 }
 
+enum OpenedChannelBuffer {
+    Open(WeakModelHandle<ChannelBuffer>),
+    Loading(Shared<Task<Result<ModelHandle<ChannelBuffer>, Arc<anyhow::Error>>>>),
+}
+
 impl ChannelStore {
     pub fn new(
         client: Arc<Client>,
@@ -89,6 +88,7 @@ impl ChannelStore {
                 }
             }
         });
+
         Self {
             channels_by_id: HashMap::default(),
             channel_invitations: Vec::default(),
@@ -96,6 +96,7 @@ impl ChannelStore {
             channel_participants: Default::default(),
             channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
+            opened_buffers: Default::default(),
             update_channels_tx,
             client,
             user_store,
@@ -154,11 +155,61 @@ impl ChannelStore {
     }
 
     pub fn open_channel_buffer(
-        &self,
+        &mut self,
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
-        ChannelBuffer::new(cx.handle(), channel_id, self.client.clone(), cx)
+        // Make sure that a given channel buffer is only opened once per
+        // app instance, even if this method is called multiple times
+        // with the same channel id while the first task is still running.
+        let task = loop {
+            match self.opened_buffers.entry(channel_id) {
+                hash_map::Entry::Occupied(e) => match e.get() {
+                    OpenedChannelBuffer::Open(buffer) => {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            break Task::ready(Ok(buffer)).shared();
+                        } else {
+                            self.opened_buffers.remove(&channel_id);
+                            continue;
+                        }
+                    }
+                    OpenedChannelBuffer::Loading(task) => break task.clone(),
+                },
+                hash_map::Entry::Vacant(e) => {
+                    let task = cx
+                        .spawn(|this, cx| {
+                            ChannelBuffer::new(this, channel_id, self.client.clone(), cx)
+                                .map_err(Arc::new)
+                        })
+                        .shared();
+                    e.insert(OpenedChannelBuffer::Loading(task.clone()));
+                    cx.spawn({
+                        let task = task.clone();
+                        |this, mut cx| async move {
+                            let result = task.await;
+                            this.update(&mut cx, |this, cx| {
+                                if let Ok(buffer) = result {
+                                    cx.observe_release(&buffer, move |this, _, _| {
+                                        this.opened_buffers.remove(&channel_id);
+                                    })
+                                    .detach();
+                                    this.opened_buffers.insert(
+                                        channel_id,
+                                        OpenedChannelBuffer::Open(buffer.downgrade()),
+                                    );
+                                } else {
+                                    this.opened_buffers.remove(&channel_id);
+                                }
+                            });
+                        }
+                    })
+                    .detach();
+                    break task;
+                }
+            }
+        };
+        cx.foreground()
+            .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
     pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {

@@ -3,6 +3,7 @@ use call::ActiveCall;
 use client::UserId;
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use futures::future;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
 use serde_json::json;
@@ -280,6 +281,61 @@ async fn test_channel_buffer_replica_ids(
                 .into_iter()
                 .collect::<HashMap<_, _>>(),
         )
+    });
+}
+
+#[gpui::test]
+async fn test_reopen_channel_buffer(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let zed_id = server.make_channel("zed", (&client_a, cx_a), &mut []).await;
+
+    let channel_buffer_1 = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| channel.open_channel_buffer(zed_id, cx));
+    let channel_buffer_2 = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| channel.open_channel_buffer(zed_id, cx));
+    let channel_buffer_3 = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| channel.open_channel_buffer(zed_id, cx));
+
+    // All concurrent tasks for opening a channel buffer return the same model handle.
+    let (channel_buffer_1, channel_buffer_2, channel_buffer_3) =
+        future::try_join3(channel_buffer_1, channel_buffer_2, channel_buffer_3)
+            .await
+            .unwrap();
+    let model_id = channel_buffer_1.id();
+    assert_eq!(channel_buffer_1, channel_buffer_2);
+    assert_eq!(channel_buffer_1, channel_buffer_3);
+
+    channel_buffer_1.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "hello")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    cx_a.update(|_| {
+        drop(channel_buffer_1);
+        drop(channel_buffer_2);
+        drop(channel_buffer_3);
+    });
+    deterministic.run_until_parked();
+
+    // The channel buffer can be reopened after dropping it.
+    let channel_buffer = client_a
+        .channel_store()
+        .update(cx_a, |channel, cx| channel.open_channel_buffer(zed_id, cx))
+        .await
+        .unwrap();
+    assert_ne!(channel_buffer.id(), model_id);
+    channel_buffer.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "hello");
+        })
     });
 }
 

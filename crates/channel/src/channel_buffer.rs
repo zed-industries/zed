@@ -1,7 +1,7 @@
 use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::Result;
 use client::Client;
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
 use rpc::{proto, TypedEnvelope};
 use std::sync::Arc;
 use util::ResultExt;
@@ -38,46 +38,44 @@ impl Entity for ChannelBuffer {
 }
 
 impl ChannelBuffer {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         channel_store: ModelHandle<ChannelStore>,
         channel_id: ChannelId,
         client: Arc<Client>,
-        cx: &mut AppContext,
-    ) -> Task<Result<ModelHandle<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let response = client
-                .request(proto::JoinChannelBuffer { channel_id })
-                .await?;
+        mut cx: AsyncAppContext,
+    ) -> Result<ModelHandle<Self>> {
+        let response = client
+            .request(proto::JoinChannelBuffer { channel_id })
+            .await?;
 
-            let base_text = response.base_text;
-            let operations = response
-                .operations
-                .into_iter()
-                .map(language::proto::deserialize_operation)
-                .collect::<Result<Vec<_>, _>>()?;
+        let base_text = response.base_text;
+        let operations = response
+            .operations
+            .into_iter()
+            .map(language::proto::deserialize_operation)
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let collaborators = response.collaborators;
+        let collaborators = response.collaborators;
 
-            let buffer = cx.add_model(|_| {
-                language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
-            });
-            buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        let buffer = cx.add_model(|_| {
+            language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
+        });
+        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
-            let subscription = client.subscribe_to_entity(channel_id)?;
+        let subscription = client.subscribe_to_entity(channel_id)?;
 
-            anyhow::Ok(cx.add_model(|cx| {
-                cx.subscribe(&buffer, Self::on_buffer_update).detach();
+        anyhow::Ok(cx.add_model(|cx| {
+            cx.subscribe(&buffer, Self::on_buffer_update).detach();
 
-                Self {
-                    buffer,
-                    client,
-                    channel_id,
-                    channel_store,
-                    collaborators,
-                    _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
-                }
-            }))
-        })
+            Self {
+                buffer,
+                client,
+                channel_id,
+                channel_store,
+                collaborators,
+                _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
+            }
+        }))
     }
 
     async fn handle_update_channel_buffer(
