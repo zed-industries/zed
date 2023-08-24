@@ -563,38 +563,41 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_line_delete(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["shift-v", "x"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
                 The quˇick brown
                 fox jumps over
                 the lazy dog"})
             .await;
+        cx.simulate_shared_keystrokes(["shift-v", "x"]).await;
+        cx.assert_state_matches().await;
+
         // Test pasting code copied on delete
         cx.simulate_shared_keystroke("p").await;
         cx.assert_state_matches().await;
 
-        cx.assert_all(indoc! {"
+        cx.set_shared_state(indoc! {"
                 The quick brown
-                fox juˇmps over
-                the laˇzy dog"})
-            .await;
-        let mut cx = cx.binding(["shift-v", "j", "x"]);
-        cx.assert(indoc! {"
-                The quˇick brown
                 fox jumps over
-                the lazy dog"})
-            .await;
-        // Test pasting code copied on delete
-        cx.simulate_shared_keystroke("p").await;
-        cx.assert_state_matches().await;
-
-        cx.assert_all(indoc! {"
-                The quick brown
-                fox juˇmps over
                 the laˇzy dog"})
             .await;
+        cx.simulate_shared_keystrokes(["shift-v", "x"]).await;
+        cx.assert_state_matches().await;
+        cx.assert_shared_clipboard("the lazy dog\n").await;
+
+        for marked_text in cx.each_marked_position(indoc! {"
+                        The quˇick brown
+                        fox jumps over
+                        the lazy dog"})
+        {
+            cx.set_shared_state(&marked_text).await;
+            cx.simulate_shared_keystrokes(["shift-v", "j", "x"]).await;
+            cx.assert_state_matches().await;
+            // Test pasting code copied on delete
+            cx.simulate_shared_keystroke("p").await;
+            cx.assert_state_matches().await;
+        }
 
         cx.set_shared_state(indoc! {"
             The ˇlong line
@@ -608,86 +611,57 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_yank(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["v", "w", "y"]);
-        cx.assert("The quick ˇbrown", "The quick ˇbrown");
-        cx.assert_clipboard_content(Some("brown"));
-        let mut cx = cx.binding(["v", "w", "j", "y"]);
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("The quick ˇbrown").await;
+        cx.simulate_shared_keystrokes(["v", "w", "y"]).await;
+        cx.assert_shared_state("The quick ˇbrown").await;
+        cx.assert_shared_clipboard("brown").await;
+
+        cx.set_shared_state(indoc! {"
                 The ˇquick brown
                 fox jumps over
-                the lazy dog"},
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            quick brown
-            fox jumps o"}));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-        );
-        cx.assert_clipboard_content(Some("lazy d"));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-                over
-                t"}));
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "j", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    The ˇquick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
+        cx.assert_shared_clipboard(indoc! {"
+                quick brown
+                fox jumps o"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                    The quick brown
+                    fox jumps over
+                    the ˇlazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "j", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    The quick brown
+                    fox jumps over
+                    the ˇlazy dog"})
+            .await;
+        cx.assert_shared_clipboard("lazy d").await;
+        cx.simulate_shared_keystrokes(["shift-v", "y"]).await;
+        cx.assert_shared_clipboard("the lazy dog\n").await;
+
         let mut cx = cx.binding(["v", "b", "k", "y"]);
-        cx.assert(
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-            indoc! {"
-                ˇThe quick brown
-                fox jumps over
-                the lazy dog"},
-        );
+        cx.set_shared_state(indoc! {"
+                    The ˇquick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "b", "k", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    ˇThe quick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
         cx.assert_clipboard_content(Some("The q"));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                ˇfox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            fox jumps over
-            the l"}));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            quick brown
-            fox jumps o"}));
     }
 
     #[gpui::test]
