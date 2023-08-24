@@ -2,6 +2,7 @@ use std::{
     cmp,
     ops::{ControlFlow, Range},
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
 };
 use anyhow::Context;
 use clock::Global;
+use futures::future;
 use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use log::error;
@@ -17,7 +19,7 @@ use project::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
-use sum_tree::Bias;
+use text::ToOffset;
 use util::post_inc;
 
 pub struct InlayHintCache {
@@ -81,7 +83,11 @@ impl InvalidationStrategy {
 }
 
 impl TasksForRanges {
-    fn new(sorted_ranges: Vec<Range<language::Anchor>>, task: Task<()>) -> Self {
+    fn new(query_ranges: QueryRanges, task: Task<()>) -> Self {
+        let mut sorted_ranges = Vec::new();
+        sorted_ranges.extend(query_ranges.before_visible);
+        sorted_ranges.extend(query_ranges.visible);
+        sorted_ranges.extend(query_ranges.after_visible);
         Self {
             tasks: vec![task],
             sorted_ranges,
@@ -91,82 +97,103 @@ impl TasksForRanges {
     fn update_cached_tasks(
         &mut self,
         buffer_snapshot: &BufferSnapshot,
-        query_range: Range<text::Anchor>,
+        query_ranges: QueryRanges,
         invalidate: InvalidationStrategy,
-        spawn_task: impl FnOnce(Vec<Range<language::Anchor>>) -> Task<()>,
+        spawn_task: impl FnOnce(QueryRanges) -> Task<()>,
     ) {
-        let ranges_to_query = match invalidate {
+        let query_ranges = match invalidate {
             InvalidationStrategy::None => {
-                let mut ranges_to_query = Vec::new();
-                let mut latest_cached_range = None::<&mut Range<language::Anchor>>;
-                for cached_range in self
-                    .sorted_ranges
-                    .iter_mut()
-                    .skip_while(|cached_range| {
-                        cached_range
-                            .end
-                            .cmp(&query_range.start, buffer_snapshot)
-                            .is_lt()
-                    })
-                    .take_while(|cached_range| {
-                        cached_range
-                            .start
-                            .cmp(&query_range.end, buffer_snapshot)
-                            .is_le()
-                    })
-                {
-                    match latest_cached_range {
-                        Some(latest_cached_range) => {
-                            if latest_cached_range.end.offset.saturating_add(1)
-                                < cached_range.start.offset
-                            {
-                                ranges_to_query.push(latest_cached_range.end..cached_range.start);
-                                cached_range.start = latest_cached_range.end;
-                            }
-                        }
-                        None => {
-                            if query_range
-                                .start
-                                .cmp(&cached_range.start, buffer_snapshot)
-                                .is_lt()
-                            {
-                                ranges_to_query.push(query_range.start..cached_range.start);
-                                cached_range.start = query_range.start;
-                            }
-                        }
-                    }
-                    latest_cached_range = Some(cached_range);
-                }
-
-                match latest_cached_range {
-                    Some(latest_cached_range) => {
-                        if latest_cached_range.end.offset.saturating_add(1) < query_range.end.offset
-                        {
-                            ranges_to_query.push(latest_cached_range.end..query_range.end);
-                            latest_cached_range.end = query_range.end;
-                        }
-                    }
-                    None => {
-                        ranges_to_query.push(query_range.clone());
-                        self.sorted_ranges.push(query_range);
-                        self.sorted_ranges.sort_by(|range_a, range_b| {
-                            range_a.start.cmp(&range_b.start, buffer_snapshot)
-                        });
-                    }
-                }
-
-                ranges_to_query
+                let mut updated_ranges = query_ranges;
+                updated_ranges.before_visible = updated_ranges
+                    .before_visible
+                    .into_iter()
+                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .collect();
+                updated_ranges.visible = updated_ranges
+                    .visible
+                    .into_iter()
+                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .collect();
+                updated_ranges.after_visible = updated_ranges
+                    .after_visible
+                    .into_iter()
+                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .collect();
+                updated_ranges
             }
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited => {
                 self.tasks.clear();
                 self.sorted_ranges.clear();
-                vec![query_range]
+                query_ranges
             }
         };
 
-        if !ranges_to_query.is_empty() {
-            self.tasks.push(spawn_task(ranges_to_query));
+        if !query_ranges.is_empty() {
+            self.tasks.push(spawn_task(query_ranges));
         }
+    }
+
+    fn remove_cached_ranges(
+        &mut self,
+        buffer_snapshot: &BufferSnapshot,
+        query_range: Range<language::Anchor>,
+    ) -> Vec<Range<language::Anchor>> {
+        let mut ranges_to_query = Vec::new();
+        let mut latest_cached_range = None::<&mut Range<language::Anchor>>;
+        for cached_range in self
+            .sorted_ranges
+            .iter_mut()
+            .skip_while(|cached_range| {
+                cached_range
+                    .end
+                    .cmp(&query_range.start, buffer_snapshot)
+                    .is_lt()
+            })
+            .take_while(|cached_range| {
+                cached_range
+                    .start
+                    .cmp(&query_range.end, buffer_snapshot)
+                    .is_le()
+            })
+        {
+            match latest_cached_range {
+                Some(latest_cached_range) => {
+                    if latest_cached_range.end.offset.saturating_add(1) < cached_range.start.offset
+                    {
+                        ranges_to_query.push(latest_cached_range.end..cached_range.start);
+                        cached_range.start = latest_cached_range.end;
+                    }
+                }
+                None => {
+                    if query_range
+                        .start
+                        .cmp(&cached_range.start, buffer_snapshot)
+                        .is_lt()
+                    {
+                        ranges_to_query.push(query_range.start..cached_range.start);
+                        cached_range.start = query_range.start;
+                    }
+                }
+            }
+            latest_cached_range = Some(cached_range);
+        }
+
+        match latest_cached_range {
+            Some(latest_cached_range) => {
+                if latest_cached_range.end.offset.saturating_add(1) < query_range.end.offset {
+                    ranges_to_query.push(latest_cached_range.end..query_range.end);
+                    latest_cached_range.end = query_range.end;
+                }
+            }
+            None => {
+                ranges_to_query.push(query_range.clone());
+                self.sorted_ranges.push(query_range);
+                self.sorted_ranges
+                    .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
+            }
+        }
+
+        ranges_to_query
     }
 }
 
@@ -515,11 +542,11 @@ fn spawn_new_update_tasks(
             }
         };
 
-        let (multi_buffer_snapshot, Some(query_range)) =
+        let (multi_buffer_snapshot, Some(query_ranges)) =
             editor.buffer.update(cx, |multi_buffer, cx| {
                 (
                     multi_buffer.snapshot(cx),
-                    determine_query_range(
+                    determine_query_ranges(
                         multi_buffer,
                         excerpt_id,
                         &excerpt_buffer,
@@ -535,10 +562,10 @@ fn spawn_new_update_tasks(
             invalidate,
         };
 
-        let new_update_task = |fetch_ranges| {
+        let new_update_task = |query_ranges| {
             new_update_task(
                 query,
-                fetch_ranges,
+                query_ranges,
                 multi_buffer_snapshot,
                 buffer_snapshot.clone(),
                 Arc::clone(&visible_hints),
@@ -551,57 +578,100 @@ fn spawn_new_update_tasks(
             hash_map::Entry::Occupied(mut o) => {
                 o.get_mut().update_cached_tasks(
                     &buffer_snapshot,
-                    query_range,
+                    query_ranges,
                     invalidate,
                     new_update_task,
                 );
             }
             hash_map::Entry::Vacant(v) => {
                 v.insert(TasksForRanges::new(
-                    vec![query_range.clone()],
-                    new_update_task(vec![query_range]),
+                    query_ranges.clone(),
+                    new_update_task(query_ranges),
                 ));
             }
         }
     }
 }
 
-fn determine_query_range(
+#[derive(Debug, Clone)]
+struct QueryRanges {
+    before_visible: Vec<Range<language::Anchor>>,
+    visible: Vec<Range<language::Anchor>>,
+    after_visible: Vec<Range<language::Anchor>>,
+}
+
+impl QueryRanges {
+    fn is_empty(&self) -> bool {
+        self.before_visible.is_empty() && self.visible.is_empty() && self.after_visible.is_empty()
+    }
+}
+
+fn determine_query_ranges(
     multi_buffer: &mut MultiBuffer,
     excerpt_id: ExcerptId,
     excerpt_buffer: &ModelHandle<Buffer>,
     excerpt_visible_range: Range<usize>,
     cx: &mut ModelContext<'_, MultiBuffer>,
-) -> Option<Range<language::Anchor>> {
+) -> Option<QueryRanges> {
     let full_excerpt_range = multi_buffer
         .excerpts_for_buffer(excerpt_buffer, cx)
         .into_iter()
         .find(|(id, _)| id == &excerpt_id)
         .map(|(_, range)| range.context)?;
-
     let buffer = excerpt_buffer.read(cx);
+    let snapshot = buffer.snapshot();
     let excerpt_visible_len = excerpt_visible_range.end - excerpt_visible_range.start;
-    let start_offset = excerpt_visible_range
-        .start
-        .saturating_sub(excerpt_visible_len)
-        .max(full_excerpt_range.start.offset);
-    let start = buffer.anchor_before(buffer.clip_offset(start_offset, Bias::Left));
-    let end_offset = excerpt_visible_range
-        .end
-        .saturating_add(excerpt_visible_len)
-        .min(full_excerpt_range.end.offset)
-        .min(buffer.len());
-    let end = buffer.anchor_after(buffer.clip_offset(end_offset, Bias::Right));
-    if start.cmp(&end, buffer).is_eq() {
-        None
+
+    let visible_range = if excerpt_visible_range.start == excerpt_visible_range.end {
+        return None;
     } else {
-        Some(start..end)
-    }
+        vec![
+            buffer.anchor_before(excerpt_visible_range.start)
+                ..buffer.anchor_after(excerpt_visible_range.end),
+        ]
+    };
+
+    let full_excerpt_range_end_offset = full_excerpt_range.end.to_offset(&snapshot);
+    let after_visible_range = if excerpt_visible_range.end == full_excerpt_range_end_offset {
+        Vec::new()
+    } else {
+        let after_range_end_offset = excerpt_visible_range
+            .end
+            .saturating_add(excerpt_visible_len)
+            .min(full_excerpt_range_end_offset)
+            .min(buffer.len());
+        vec![
+            buffer.anchor_before(excerpt_visible_range.end)
+                ..buffer.anchor_after(after_range_end_offset),
+        ]
+    };
+
+    let full_excerpt_range_start_offset = full_excerpt_range.start.to_offset(&snapshot);
+    let before_visible_range = if excerpt_visible_range.start == full_excerpt_range_start_offset {
+        Vec::new()
+    } else {
+        let before_range_start_offset = excerpt_visible_range
+            .start
+            .saturating_sub(excerpt_visible_len)
+            .max(full_excerpt_range_start_offset);
+        vec![
+            buffer.anchor_before(before_range_start_offset)
+                ..buffer.anchor_after(excerpt_visible_range.start),
+        ]
+    };
+
+    Some(QueryRanges {
+        before_visible: before_visible_range,
+        visible: visible_range,
+        after_visible: after_visible_range,
+    })
 }
+
+const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 300;
 
 fn new_update_task(
     query: ExcerptQuery,
-    hint_fetch_ranges: Vec<Range<language::Anchor>>,
+    query_ranges: QueryRanges,
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
@@ -609,24 +679,48 @@ fn new_update_task(
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
     cx.spawn(|editor, cx| async move {
-        let task_update_results =
-            futures::future::join_all(hint_fetch_ranges.into_iter().map(|range| {
-                fetch_and_update_hints(
-                    editor.clone(),
-                    multi_buffer_snapshot.clone(),
-                    buffer_snapshot.clone(),
-                    Arc::clone(&visible_hints),
-                    cached_excerpt_hints.as_ref().map(Arc::clone),
-                    query,
-                    range,
-                    cx.clone(),
-                )
-            }))
+        let fetch_and_update_hints = |range| {
+            fetch_and_update_hints(
+                editor.clone(),
+                multi_buffer_snapshot.clone(),
+                buffer_snapshot.clone(),
+                Arc::clone(&visible_hints),
+                cached_excerpt_hints.as_ref().map(Arc::clone),
+                query,
+                range,
+                cx.clone(),
+            )
+        };
+        let visible_range_update_results = future::join_all(
+            query_ranges
+                .visible
+                .into_iter()
+                .map(|visible_range| fetch_and_update_hints(visible_range)),
+        )
+        .await;
+        for result in visible_range_update_results {
+            if let Err(e) = result {
+                error!("visible range inlay hint update task failed: {e:#}");
+            }
+        }
+
+        cx.background()
+            .timer(Duration::from_millis(
+                INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
+            ))
             .await;
 
-        for result in task_update_results {
+        let invisible_range_update_results = future::join_all(
+            query_ranges
+                .before_visible
+                .into_iter()
+                .chain(query_ranges.after_visible.into_iter())
+                .map(|invisible_range| fetch_and_update_hints(invisible_range)),
+        )
+        .await;
+        for result in invisible_range_update_results {
             if let Err(e) = result {
-                error!("inlay hint update task failed: {e:#}");
+                error!("invisible range inlay hint update task failed: {e:#}");
             }
         }
     })
@@ -1816,7 +1910,7 @@ pub mod tests {
                 });
             }));
         }
-        let _ = futures::future::join_all(edits).await;
+        let _ = future::join_all(edits).await;
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
