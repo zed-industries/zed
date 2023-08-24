@@ -5033,7 +5033,7 @@ impl Project {
         buffer_handle: ModelHandle<Buffer>,
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<Option<InlayHint>>> {
+    ) -> Task<anyhow::Result<InlayHint>> {
         if self.is_local() {
             let buffer = buffer_handle.read(cx);
             let (_, lang_server) = if let Some((adapter, server)) =
@@ -5041,7 +5041,7 @@ impl Project {
             {
                 (adapter.clone(), server.clone())
             } else {
-                return Task::ready(Ok(None));
+                return Task::ready(Ok(hint));
             };
             let can_resolve = lang_server
                 .capabilities()
@@ -5050,7 +5050,7 @@ impl Project {
                 .and_then(|options| options.resolve_provider)
                 .unwrap_or(false);
             if !can_resolve {
-                return Task::ready(Ok(None));
+                return Task::ready(Ok(hint));
             }
 
             let buffer_snapshot = buffer.snapshot();
@@ -5071,7 +5071,7 @@ impl Project {
                     &mut cx,
                 )
                 .await?;
-                Ok(Some(resolved_hint))
+                Ok(resolved_hint)
             })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
@@ -5079,7 +5079,7 @@ impl Project {
                 project_id,
                 buffer_id: buffer_handle.read(cx).remote_id(),
                 language_server_id: server_id.0 as u64,
-                hint: Some(InlayHints::project_to_proto_hint(hint, cx)),
+                hint: Some(InlayHints::project_to_proto_hint(hint.clone(), cx)),
             };
             cx.spawn(|project, mut cx| async move {
                 let response = client
@@ -5090,10 +5090,9 @@ impl Project {
                     Some(resolved_hint) => {
                         InlayHints::proto_to_project_hint(resolved_hint, &project, &mut cx)
                             .await
-                            .map(Some)
                             .context("inlay hints proto resolve response conversion")
                     }
-                    None => Ok(None),
+                    None => Ok(hint),
                 }
             })
         } else {
@@ -6917,7 +6916,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        let resolved_hint = this
+        let response_hint = this
             .update(&mut cx, |project, cx| {
                 project.resolve_inlay_hint(
                     hint,
@@ -6927,11 +6926,11 @@ impl Project {
                 )
             })
             .await
-            .context("inlay hints fetch")?
-            .map(|hint| cx.read(|cx| InlayHints::project_to_proto_hint(hint, cx)));
+            .context("inlay hints fetch")?;
+        let resolved_hint = cx.read(|cx| InlayHints::project_to_proto_hint(response_hint, cx));
 
         Ok(proto::ResolveInlayHintResponse {
-            hint: resolved_hint,
+            hint: Some(resolved_hint),
         })
     }
 

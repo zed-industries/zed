@@ -449,30 +449,26 @@ impl InlayHintCache {
                                 })
                         })?;
                         if let Some(resolved_hint_task) = resolved_hint_task {
-                            if let Some(mut resolved_hint) =
-                                resolved_hint_task.await.context("hint resolve task")?
-                            {
-                                editor.update(&mut cx, |editor, _| {
-                                    if let Some(excerpt_hints) =
-                                        editor.inlay_hint_cache.hints.get(&excerpt_id)
+                            let mut resolved_hint =
+                                resolved_hint_task.await.context("hint resolve task")?;
+                            editor.update(&mut cx, |editor, _| {
+                                if let Some(excerpt_hints) =
+                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
+                                {
+                                    let mut guard = excerpt_hints.write();
+                                    if let Some(cached_hint) = guard
+                                        .hints
+                                        .iter_mut()
+                                        .find(|(hint_id, _)| hint_id == &id)
+                                        .map(|(_, hint)| hint)
                                     {
-                                        let mut guard = excerpt_hints.write();
-                                        if let Some(cached_hint) = guard
-                                            .hints
-                                            .iter_mut()
-                                            .find(|(hint_id, _)| hint_id == &id)
-                                            .map(|(_, hint)| hint)
-                                        {
-                                            if cached_hint.resolve_state == ResolveState::Resolving
-                                            {
-                                                resolved_hint.resolve_state =
-                                                    ResolveState::Resolved;
-                                                *cached_hint = resolved_hint;
-                                            }
+                                        if cached_hint.resolve_state == ResolveState::Resolving {
+                                            resolved_hint.resolve_state = ResolveState::Resolved;
+                                            *cached_hint = resolved_hint;
                                         }
                                     }
-                                })?;
-                            }
+                                }
+                            })?;
                         }
 
                         anyhow::Ok(())
