@@ -168,6 +168,13 @@ impl FollowableItem for ChannelView {
         self.channel_buffer.read(cx).channel(cx).map(|channel| {
             proto::view::Variant::ChannelView(proto::view::ChannelView {
                 channel_id: channel.id,
+                editor: if let Some(proto::view::Variant::Editor(proto)) =
+                    self.editor.read(cx).to_state_proto(cx)
+                {
+                    Some(proto)
+                } else {
+                    None
+                },
             })
         })
     }
@@ -176,11 +183,11 @@ impl FollowableItem for ChannelView {
         _: ViewHandle<workspace::Pane>,
         workspace: ViewHandle<workspace::Workspace>,
         remote_id: workspace::ViewId,
-        state_proto: &mut Option<proto::view::Variant>,
+        state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
     ) -> Option<gpui::Task<anyhow::Result<ViewHandle<Self>>>> {
-        let Some(proto::view::Variant::ChannelView(_)) = state_proto else { return None };
-        let Some(proto::view::Variant::ChannelView(state)) = state_proto.take() else { unreachable!() };
+        let Some(proto::view::Variant::ChannelView(_)) = state else { return None };
+        let Some(proto::view::Variant::ChannelView(state)) = state.take() else { unreachable!() };
 
         let channel_store = &workspace.read(cx).app_state().channel_store.clone();
         let open_channel_buffer = channel_store.update(cx, |store, cx| {
@@ -202,7 +209,29 @@ impl FollowableItem for ChannelView {
                         this
                     })
                 })
-                .ok_or_else(|| anyhow::anyhow!("workspace droppped"))?;
+                .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+
+            if let Some(state) = state.editor {
+                let task = this.update(&mut cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.apply_update_proto(
+                            &this.project,
+                            proto::update_view::Variant::Editor(proto::update_view::Editor {
+                                selections: state.selections,
+                                pending_selection: state.pending_selection,
+                                scroll_top_anchor: state.scroll_top_anchor,
+                                scroll_x: state.scroll_x,
+                                scroll_y: state.scroll_y,
+                                ..Default::default()
+                            }),
+                            cx,
+                        )
+                    })
+                });
+                if let Some(task) = task {
+                    task.await?;
+                }
+            }
 
             Ok(this)
         }))
@@ -210,20 +239,24 @@ impl FollowableItem for ChannelView {
 
     fn add_event_to_update_proto(
         &self,
-        _: &Self::Event,
-        _: &mut Option<proto::update_view::Variant>,
-        _: &AppContext,
+        event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
     ) -> bool {
-        false
+        self.editor
+            .read(cx)
+            .add_event_to_update_proto(event, update, cx)
     }
 
     fn apply_update_proto(
         &mut self,
-        _: &ModelHandle<Project>,
-        _: proto::update_view::Variant,
-        _: &mut ViewContext<Self>,
+        project: &ModelHandle<Project>,
+        message: proto::update_view::Variant,
+        cx: &mut ViewContext<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
+        self.editor.update(cx, |editor, cx| {
+            editor.apply_update_proto(project, message, cx)
+        })
     }
 
     fn set_leader_replica_id(
