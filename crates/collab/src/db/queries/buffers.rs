@@ -326,9 +326,11 @@ impl Database {
         .ok_or_else(|| anyhow!("no such buffer"))?;
 
         let (base_text, operations) = self.get_buffer_state(&buffer, tx).await?;
+        if operations.is_empty() {
+            return Ok(());
+        }
 
         let mut text_buffer = text::Buffer::new(0, 0, base_text);
-
         text_buffer
             .apply_ops(operations.into_iter().filter_map(operation_from_wire))
             .unwrap();
