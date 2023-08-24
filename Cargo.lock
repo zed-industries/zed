@@ -113,6 +113,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "ordered-float",
  "project",
  "rand 0.8.5",
  "regex",
