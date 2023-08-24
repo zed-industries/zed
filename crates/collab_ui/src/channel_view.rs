@@ -1,4 +1,8 @@
-use channel::channel_buffer::{self, ChannelBuffer};
+use anyhow::{anyhow, Result};
+use channel::{
+    channel_buffer::{self, ChannelBuffer},
+    ChannelId,
+};
 use client::proto;
 use clock::ReplicaId;
 use collections::HashMap;
@@ -6,15 +10,13 @@ use editor::Editor;
 use gpui::{
     actions,
     elements::{ChildView, Label},
-    AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Subscription, View,
+    AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
-use language::Language;
 use project::Project;
-use std::sync::Arc;
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
-    register_followable_item, ViewId,
+    register_followable_item, Pane, ViewId, Workspace, WorkspaceId,
 };
 
 actions!(channel_view, [Deploy]);
@@ -32,14 +34,47 @@ pub struct ChannelView {
 }
 
 impl ChannelView {
+    pub fn open(
+        channel_id: ChannelId,
+        pane: ViewHandle<Pane>,
+        workspace: ViewHandle<Workspace>,
+        cx: &mut AppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        let workspace = workspace.read(cx);
+        let project = workspace.project().to_owned();
+        let channel_store = workspace.app_state().channel_store.clone();
+        let markdown = workspace
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+        let channel_buffer =
+            channel_store.update(cx, |store, cx| store.open_channel_buffer(channel_id, cx));
+
+        cx.spawn(|mut cx| async move {
+            let channel_buffer = channel_buffer.await?;
+            let markdown = markdown.await?;
+            channel_buffer.update(&mut cx, |buffer, cx| {
+                buffer.buffer().update(cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx);
+                })
+            });
+
+            pane.update(&mut cx, |pane, cx| {
+                pane.items_of_type::<Self>()
+                    .find(|channel_view| channel_view.read(cx).channel_buffer == channel_buffer)
+                    .unwrap_or_else(|| cx.add_view(|cx| Self::new(project, channel_buffer, cx)))
+            })
+            .ok_or_else(|| anyhow!("pane was dropped"))
+        })
+    }
+
     pub fn new(
         project: ModelHandle<Project>,
         channel_buffer: ModelHandle<ChannelBuffer>,
-        language: Option<Arc<Language>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
+        // buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
         let editor = cx.add_view(|cx| Editor::for_buffer(buffer, None, cx));
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
 
@@ -157,6 +192,14 @@ impl Item for ChannelView {
             });
         Label::new(channel_name, style.label.to_owned()).into_any()
     }
+
+    fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self> {
+        Some(Self::new(
+            self.project.clone(),
+            self.channel_buffer.clone(),
+            cx,
+        ))
+    }
 }
 
 impl FollowableItem for ChannelView {
@@ -180,7 +223,7 @@ impl FollowableItem for ChannelView {
     }
 
     fn from_state_proto(
-        _: ViewHandle<workspace::Pane>,
+        pane: ViewHandle<workspace::Pane>,
         workspace: ViewHandle<workspace::Workspace>,
         remote_id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
@@ -189,48 +232,38 @@ impl FollowableItem for ChannelView {
         let Some(proto::view::Variant::ChannelView(_)) = state else { return None };
         let Some(proto::view::Variant::ChannelView(state)) = state.take() else { unreachable!() };
 
-        let channel_store = &workspace.read(cx).app_state().channel_store.clone();
-        let open_channel_buffer = channel_store.update(cx, |store, cx| {
-            store.open_channel_buffer(state.channel_id, cx)
-        });
-        let project = workspace.read(cx).project().to_owned();
-        let language = workspace.read(cx).app_state().languages.clone();
-        let get_markdown = language.language_for_name("Markdown");
+        let open = ChannelView::open(state.channel_id, pane, workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
-            let channel_buffer = open_channel_buffer.await?;
-            let markdown = get_markdown.await?;
+            let this = open.await?;
 
-            let this = workspace
-                .update(&mut cx, move |_, cx| {
-                    cx.add_view(|cx| {
-                        let mut this = Self::new(project, channel_buffer, Some(markdown), cx);
-                        this.remote_id = Some(remote_id);
-                        this
-                    })
+            let task = this
+                .update(&mut cx, |this, cx| {
+                    this.remote_id = Some(remote_id);
+
+                    if let Some(state) = state.editor {
+                        Some(this.editor.update(cx, |editor, cx| {
+                            editor.apply_update_proto(
+                                &this.project,
+                                proto::update_view::Variant::Editor(proto::update_view::Editor {
+                                    selections: state.selections,
+                                    pending_selection: state.pending_selection,
+                                    scroll_top_anchor: state.scroll_top_anchor,
+                                    scroll_x: state.scroll_x,
+                                    scroll_y: state.scroll_y,
+                                    ..Default::default()
+                                }),
+                                cx,
+                            )
+                        }))
+                    } else {
+                        None
+                    }
                 })
-                .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+                .ok_or_else(|| anyhow!("window was closed"))?;
 
-            if let Some(state) = state.editor {
-                let task = this.update(&mut cx, |this, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.apply_update_proto(
-                            &this.project,
-                            proto::update_view::Variant::Editor(proto::update_view::Editor {
-                                selections: state.selections,
-                                pending_selection: state.pending_selection,
-                                scroll_top_anchor: state.scroll_top_anchor,
-                                scroll_x: state.scroll_x,
-                                scroll_y: state.scroll_y,
-                                ..Default::default()
-                            }),
-                            cx,
-                        )
-                    })
-                });
-                if let Some(task) = task {
-                    task.await?;
-                }
+            if let Some(task) = task {
+                task.await?;
             }
 
             Ok(this)

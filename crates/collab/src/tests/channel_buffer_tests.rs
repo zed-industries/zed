@@ -213,17 +213,12 @@ async fn test_channel_buffer_replica_ids(
         assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 0);
     });
 
-    let channel_window_a = cx_a
-        .add_window(|cx| ChannelView::new(project_a.clone(), channel_buffer_a.clone(), None, cx));
-    let channel_window_b = cx_b
-        .add_window(|cx| ChannelView::new(project_b.clone(), channel_buffer_b.clone(), None, cx));
+    let channel_window_a =
+        cx_a.add_window(|cx| ChannelView::new(project_a.clone(), channel_buffer_a.clone(), cx));
+    let channel_window_b =
+        cx_b.add_window(|cx| ChannelView::new(project_b.clone(), channel_buffer_b.clone(), cx));
     let channel_window_c = cx_c.add_window(|cx| {
-        ChannelView::new(
-            separate_project_c.clone(),
-            channel_buffer_c.clone(),
-            None,
-            cx,
-        )
+        ChannelView::new(separate_project_c.clone(), channel_buffer_c.clone(), cx)
     });
 
     let channel_view_a = channel_window_a.root(cx_a);

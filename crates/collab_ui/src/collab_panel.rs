@@ -2220,38 +2220,18 @@ impl CollabPanel {
     }
 
     fn open_channel_buffer(&mut self, action: &OpenChannelBuffer, cx: &mut ViewContext<Self>) {
-        let workspace = self.workspace;
-        let open = self.channel_store.update(cx, |channel_store, cx| {
-            channel_store.open_channel_buffer(action.channel_id, cx)
-        });
-
-        cx.spawn(|_, mut cx| async move {
-            let channel_buffer = open.await?;
-
-            let markdown = workspace
-                .read_with(&cx, |workspace, _| {
-                    workspace
-                        .app_state()
-                        .languages
-                        .language_for_name("Markdown")
-                })?
-                .await?;
-
-            workspace.update(&mut cx, |workspace, cx| {
-                let channel_view = cx.add_view(|cx| {
-                    ChannelView::new(
-                        workspace.project().to_owned(),
-                        channel_buffer,
-                        Some(markdown),
-                        cx,
-                    )
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let pane = workspace.read(cx).active_pane().clone();
+            let channel_view = ChannelView::open(action.channel_id, pane.clone(), workspace, cx);
+            cx.spawn(|_, mut cx| async move {
+                let channel_view = channel_view.await?;
+                pane.update(&mut cx, |pane, cx| {
+                    pane.add_item(Box::new(channel_view), true, true, None, cx)
                 });
-                workspace.add_item(Box::new(channel_view), cx);
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach();
+                anyhow::Ok(())
+            })
+            .detach();
+        }
     }
 
     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
