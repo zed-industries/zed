@@ -1144,13 +1144,12 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InlayId, MultiBuffer};
+    use crate::{link_go_to_definition::InlayRange, InlayId, MultiBuffer};
     use gpui::AppContext;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
-    use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
 
@@ -1579,28 +1578,6 @@ mod tests {
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut next_inlay_id = 0;
         log::info!("buffer text: {:?}", buffer_snapshot.text());
-
-        let mut highlights = TreeMap::default();
-        let highlight_count = rng.gen_range(0_usize..10);
-        let mut highlight_ranges = (0..highlight_count)
-            .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
-            .collect::<Vec<_>>();
-        highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-        log::info!("highlighting ranges {:?}", highlight_ranges);
-        let highlight_ranges = highlight_ranges
-            .into_iter()
-            .map(|range| {
-                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
-            })
-            // TODO kb add inlay highlight tests
-            .map(DocumentRange::Text)
-            .collect::<Vec<_>>();
-
-        highlights.insert(
-            Some(TypeId::of::<()>()),
-            Arc::new((HighlightStyle::default(), highlight_ranges)),
-        );
-
         let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         for _ in 0..operations {
             let mut inlay_edits = Patch::default();
@@ -1662,6 +1639,38 @@ mod tests {
                     row_start
                 );
             }
+
+            let mut highlights = TextHighlights::default();
+            let highlight_count = rng.gen_range(0_usize..10);
+            let mut highlight_ranges = (0..highlight_count)
+                .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+                .collect::<Vec<_>>();
+            highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+            log::info!("highlighting ranges {:?}", highlight_ranges);
+            let highlight_ranges = if rng.gen_bool(0.5) {
+                highlight_ranges
+                    .into_iter()
+                    .map(|range| InlayRange {
+                        inlay_position: buffer_snapshot.anchor_before(range.start),
+                        highlight_start: inlay_snapshot.to_inlay_offset(range.start),
+                        highlight_end: inlay_snapshot.to_inlay_offset(range.end),
+                    })
+                    .map(DocumentRange::Inlay)
+                    .collect::<Vec<_>>()
+            } else {
+                highlight_ranges
+                    .into_iter()
+                    .map(|range| {
+                        buffer_snapshot.anchor_before(range.start)
+                            ..buffer_snapshot.anchor_after(range.end)
+                    })
+                    .map(DocumentRange::Text)
+                    .collect::<Vec<_>>()
+            };
+            highlights.insert(
+                Some(TypeId::of::<()>()),
+                Arc::new((HighlightStyle::default(), highlight_ranges)),
+            );
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
