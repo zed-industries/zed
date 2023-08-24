@@ -310,7 +310,7 @@ impl History {
         Some(&mut entry.transaction)
     }
 
-    fn merge_transaction_into(&mut self, transaction: TransactionId, destination: TransactionId) {
+    fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         if let Some(transaction) = self.forget(transaction) {
             if let Some(destination) = self.transaction_mut(destination) {
                 destination.edit_ids.extend(transaction.edit_ids);
@@ -1225,13 +1225,8 @@ impl Buffer {
         self.history.forget(transaction_id);
     }
 
-    pub fn merge_transaction_into(
-        &mut self,
-        transaction: TransactionId,
-        destination: TransactionId,
-    ) {
-        self.history
-            .merge_transaction_into(transaction, destination);
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.history.merge_transactions(transaction, destination);
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {

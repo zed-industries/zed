@@ -193,7 +193,7 @@ impl RefactoringAssistant {
                                 if let Some(transaction) = buffer.end_transaction(cx) {
                                     if let Some(first_transaction) = first_transaction {
                                         // Group all assistant edits into the first transaction.
-                                        buffer.merge_transaction_into(
+                                        buffer.merge_transactions(
                                             transaction,
                                             first_transaction,
                                             cx,

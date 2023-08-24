@@ -615,7 +615,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn merge_transaction_into(
+    pub fn merge_transactions(
         &mut self,
         transaction: TransactionId,
         destination: TransactionId,
@@ -623,7 +623,7 @@ impl MultiBuffer {
     ) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, _| {
-                buffer.merge_transaction_into(transaction, destination)
+                buffer.merge_transactions(transaction, destination)
             });
         } else {
             if let Some(transaction) = self.history.remove_transaction(transaction) {
@@ -634,7 +634,7 @@ impl MultiBuffer {
                         {
                             if let Some(state) = self.buffers.borrow().get(&buffer_id) {
                                 state.buffer.update(cx, |buffer, _| {
-                                    buffer.merge_transaction_into(
+                                    buffer.merge_transactions(
                                         buffer_transaction_id,
                                         *destination_buffer_transaction_id,
                                     )
