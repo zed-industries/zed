@@ -1120,6 +1120,7 @@ message View {
 
     oneof variant {
         Editor editor = 3;
+        ChannelView channel_view = 4;
     }
 
     message Editor {
@@ -1131,6 +1132,10 @@ message View {
         EditorAnchor scroll_top_anchor = 6;
         float scroll_x = 7;
         float scroll_y = 8;
+    }
+
+    message ChannelView {
+        uint64 channel_id = 1;
     }
 }
 

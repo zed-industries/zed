@@ -674,7 +674,7 @@ pub trait FollowableItem: Item {
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
         pane: ViewHandle<Pane>,
-        project: ModelHandle<Project>,
+        project: ViewHandle<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,

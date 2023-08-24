@@ -49,11 +49,12 @@ impl FollowableItem for Editor {
 
     fn from_state_proto(
         pane: ViewHandle<workspace::Pane>,
-        project: ModelHandle<Project>,
+        workspace: ViewHandle<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
+        let project = workspace.read(cx).project().to_owned();
         let Some(proto::view::Variant::Editor(_)) = state else { return None };
         let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
 
