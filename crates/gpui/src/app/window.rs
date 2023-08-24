@@ -788,6 +788,11 @@ impl<'a> WindowContext<'a> {
                                     .contains_point(self.window.mouse_position)
                                 {
                                     valid_regions.push(mouse_region.clone());
+                                } else {
+                                    // Let the view know that it hasn't been clicked anymore
+                                    if mouse_region.notify_on_click {
+                                        notified_views.insert(mouse_region.id().view_id());
+                                    }
                                 }
                             }
                         }
