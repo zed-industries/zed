@@ -19,7 +19,7 @@ export default function context_menu(): any {
                     icon_width: 14,
                     padding: { left: 6, right: 6, top: 2, bottom: 2 },
                     corner_radius: 6,
-                    label: text(theme.middle, "ui_sans", { size: "sm" }),
+                    label: text(theme.middle, "sans", { size: "sm" }),
                     keystroke: {
                         ...text(theme.middle, "sans", "variant", {
                             size: "sm",

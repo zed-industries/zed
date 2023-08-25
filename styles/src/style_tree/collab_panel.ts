@@ -14,6 +14,7 @@ import { indicator } from "../component/indicator"
 export default function contacts_panel(): any {
     const theme = useTheme()
 
+    const CHANNEL_SPACING = 4 as const
     const NAME_MARGIN = 6 as const
     const SPACING = 12 as const
     const INDENT_SIZE = 8 as const
@@ -37,7 +38,7 @@ export default function contacts_panel(): any {
             width: 14,
         },
         name: {
-            ...text(layer, "ui_sans", { size: "sm" }),
+            ...text(layer, "sans", { size: "sm" }),
             margin: {
                 left: NAME_MARGIN,
                 right: 4,
@@ -69,7 +70,7 @@ export default function contacts_panel(): any {
     const subheader_row = toggleable({
         base: interactive({
             base: {
-                ...text(layer, "ui_sans", { size: "sm" }),
+                ...text(layer, "sans", { size: "sm" }),
                 padding: {
                     left: SPACING,
                     right: SPACING,
@@ -87,7 +88,7 @@ export default function contacts_panel(): any {
         state: {
             active: {
                 default: {
-                    ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                    ...text(theme.lowest, "sans", { size: "sm" }),
                     background: background(theme.lowest),
                 },
                 clicked: {
@@ -100,8 +101,8 @@ export default function contacts_panel(): any {
     const filter_input = {
         background: background(layer, "on"),
         corner_radius: 6,
-        text: text(layer, "ui_sans", "base"),
-        placeholder_text: text(layer, "ui_sans", "base", "disabled", {
+        text: text(layer, "sans", "base"),
+        placeholder_text: text(layer, "sans", "base", "disabled", {
             size: "xs",
         }),
         selection: theme.players[0],
@@ -140,7 +141,7 @@ export default function contacts_panel(): any {
             },
             active: {
                 default: {
-                    ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                    ...text(theme.lowest, "sans", { size: "sm" }),
                     background: background(theme.lowest),
                 },
                 clicked: {
@@ -152,6 +153,10 @@ export default function contacts_panel(): any {
 
     return {
         ...collab_modals(),
+        disclosure: {
+            button: icon_button({ variant: "ghost", size: "sm" }),
+            spacing: CHANNEL_SPACING,
+        },
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),
@@ -194,10 +199,10 @@ export default function contacts_panel(): any {
         add_channel_button: header_icon_button,
         leave_call_button: header_icon_button,
         row_height: ITEM_HEIGHT,
-        channel_indent: INDENT_SIZE,
+        channel_indent: INDENT_SIZE * 2 + 2,
         section_icon_size: 14,
         header_row: {
-            ...text(layer, "ui_sans", { size: "sm", weight: "bold" }),
+            ...text(layer, "sans", { size: "sm", weight: "bold" }),
             margin: { top: SPACING },
             padding: {
                 left: SPACING,
@@ -251,7 +256,7 @@ export default function contacts_panel(): any {
                 },
                 active: {
                     default: {
-                        ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                        ...text(theme.lowest, "sans", { size: "sm" }),
                         background: background(theme.lowest),
                     },
                     clicked: {
@@ -262,9 +267,9 @@ export default function contacts_panel(): any {
         }),
         channel_row: item_row,
         channel_name: {
-            ...text(layer, "ui_sans", { size: "sm" }),
+            ...text(layer, "sans", { size: "sm" }),
             margin: {
-                left: NAME_MARGIN,
+                left: CHANNEL_SPACING,
             },
         },
         list_empty_label_container: {
@@ -279,7 +284,7 @@ export default function contacts_panel(): any {
         list_empty_state: toggleable({
             base: interactive({
                 base: {
-                    ...text(layer, "ui_sans", "variant", { size: "sm" }),
+                    ...text(layer, "sans", "variant", { size: "sm" }),
                     padding: {
                         top: SPACING / 2,
                         bottom: SPACING / 2,
@@ -301,7 +306,7 @@ export default function contacts_panel(): any {
                 },
                 active: {
                     default: {
-                        ...text(theme.lowest, "ui_sans", { size: "sm" }),
+                        ...text(theme.lowest, "sans", { size: "sm" }),
                         background: background(theme.lowest),
                     },
                     clicked: {
@@ -325,12 +330,12 @@ export default function contacts_panel(): any {
                 right: 4,
             },
             background: background(layer, "hovered"),
-            ...text(layer, "ui_sans", "hovered", { size: "xs" })
+            ...text(layer, "sans", "hovered", { size: "xs" })
         },
         contact_status_free: indicator({ layer, color: "positive" }),
         contact_status_busy: indicator({ layer, color: "negative" }),
         contact_username: {
-            ...text(layer, "ui_sans", { size: "sm" }),
+            ...text(layer, "sans", { size: "sm" }),
             margin: {
                 left: NAME_MARGIN,
             },
@@ -347,7 +352,7 @@ export default function contacts_panel(): any {
             color: foreground(layer, "on"),
         },
         calling_indicator: {
-            ...text(layer, "mono", "variant", { size: "xs" }),
+            ...text(layer, "sans", "variant", { size: "xs" }),
         },
         tree_branch: toggleable({
             base: interactive({
@@ -380,7 +385,7 @@ export default function contacts_panel(): any {
                     },
                     name: {
                         ...project_row.name,
-                        ...text(layer, "mono", { size: "sm" }),
+                        ...text(layer, "sans", { size: "sm" }),
                     },
                 },
                 state: {

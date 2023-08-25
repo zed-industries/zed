@@ -1,7 +1,6 @@
 mod neovim_backed_binding_test_context;
 mod neovim_backed_test_context;
 mod neovim_connection;
-mod vim_binding_test_context;
 mod vim_test_context;
 
 use std::sync::Arc;
@@ -10,7 +9,6 @@ use command_palette::CommandPalette;
 use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
-pub use vim_binding_test_context::*;
 pub use vim_test_context::*;
 
 use indoc::indoc;
@@ -241,7 +239,7 @@ async fn test_status_indicator(
     deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Visual { line: false })
+        Some(Mode::Visual)
     );
 
     // hides if vim mode is disabled
@@ -260,4 +258,30 @@ async fn test_status_indicator(
         let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
         assert!(mode_indicator.read(cx).mode.is_some());
     });
+}
+
+#[gpui::test]
+async fn test_word_characters(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+    cx.set_state(
+        indoc! { "
+        class A {
+            #ˇgoop = 99;
+            $ˇgoop () { return this.#gˇoop };
+        };
+        console.log(new A().$gooˇp())
+    "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes(["v", "i", "w"]);
+    cx.assert_state(
+        indoc! {"
+        class A {
+            «#goopˇ» = 99;
+            «$goopˇ» () { return this.«#goopˇ» };
+        };
+        console.log(new A().«$goopˇ»())
+    "},
+        Mode::Visual,
+    )
 }

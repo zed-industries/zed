@@ -8,16 +8,24 @@ use search::{BufferSearchBar, ProjectSearchBar};
 
 use crate::{state::Operator, *};
 
-use super::VimBindingTestContext;
-
 pub struct VimTestContext<'a> {
     cx: EditorLspTestContext<'a>,
 }
 
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
-        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        Self::new_with_lsp(lsp, enabled)
+    }
 
+    pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
+        Self::new_with_lsp(
+            EditorLspTestContext::new_typescript(Default::default(), cx).await,
+            true,
+        )
+    }
+
+    pub fn new_with_lsp(mut cx: EditorLspTestContext<'a>, enabled: bool) -> VimTestContext<'a> {
         cx.update(|cx| {
             search::init(cx);
             crate::init(cx);
@@ -76,12 +84,12 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.cx.read(|cx| cx.global::<Vim>().state.mode)
+        self.cx.read(|cx| cx.global::<Vim>().state().mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
         self.cx
-            .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
+            .read(|cx| cx.global::<Vim>().state().operator_stack.last().copied())
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
@@ -115,14 +123,6 @@ impl<'a> VimTestContext<'a> {
         self.cx.assert_editor_state(state_after);
         assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
         assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
-    }
-
-    pub fn binding<const COUNT: usize>(
-        mut self,
-        keystrokes: [&'static str; COUNT],
-    ) -> VimBindingTestContext<'a, COUNT> {
-        let mode = self.mode();
-        VimBindingTestContext::new(keystrokes, mode, mode, self)
     }
 }
 

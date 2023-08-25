@@ -1,5 +1,8 @@
 #[cfg(feature = "neovim")]
-use std::ops::{Deref, DerefMut};
+use std::{
+    cmp,
+    ops::{Deref, DerefMut},
+};
 use std::{ops::Range, path::PathBuf};
 
 #[cfg(feature = "neovim")]
@@ -37,6 +40,7 @@ pub enum NeovimData {
     Put { state: String },
     Key(String),
     Get { state: String, mode: Option<Mode> },
+    ReadRegister { name: char, value: String },
 }
 
 pub struct NeovimConnection {
@@ -135,7 +139,7 @@ impl NeovimConnection {
 
     #[cfg(feature = "neovim")]
     pub async fn set_state(&mut self, marked_text: &str) {
-        let (text, selection) = parse_state(&marked_text);
+        let (text, selections) = parse_state(&marked_text);
 
         let nvim_buffer = self
             .nvim
@@ -166,6 +170,11 @@ impl NeovimConnection {
             .get_current_win()
             .await
             .expect("Could not get neovim window");
+
+        if selections.len() != 1 {
+            panic!("must have one selection");
+        }
+        let selection = &selections[0];
 
         let cursor = selection.start;
         nvim_window
@@ -213,6 +222,36 @@ impl NeovimConnection {
         );
     }
 
+    #[cfg(not(feature = "neovim"))]
+    pub async fn read_register(&mut self, register: char) -> String {
+        if let Some(NeovimData::Get { .. }) = self.data.front() {
+            self.data.pop_front();
+        };
+        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front() {
+            if name == register {
+                return value;
+            }
+        }
+
+        panic!("operation does not match recorded script. re-record with --features=neovim")
+    }
+
+    #[cfg(feature = "neovim")]
+    pub async fn read_register(&mut self, name: char) -> String {
+        let value = self
+            .nvim
+            .command_output(format!("echo getreg('{}')", name).as_str())
+            .await
+            .unwrap();
+
+        self.data.push_back(NeovimData::ReadRegister {
+            name,
+            value: value.clone(),
+        });
+
+        value
+    }
+
     #[cfg(feature = "neovim")]
     async fn read_position(&mut self, cmd: &str) -> u32 {
         self.nvim
@@ -224,7 +263,7 @@ impl NeovimConnection {
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn state(&mut self) -> (Option<Mode>, String, Range<Point>) {
+    pub async fn state(&mut self) -> (Option<Mode>, String, Vec<Range<Point>>) {
         let nvim_buffer = self
             .nvim
             .get_current_buf()
@@ -261,16 +300,51 @@ impl NeovimConnection {
         let mode = match nvim_mode_text.as_ref() {
             "i" => Some(Mode::Insert),
             "n" => Some(Mode::Normal),
-            "v" => Some(Mode::Visual { line: false }),
-            "V" => Some(Mode::Visual { line: true }),
+            "v" => Some(Mode::Visual),
+            "V" => Some(Mode::VisualLine),
+            "\x16" => Some(Mode::VisualBlock),
             _ => None,
         };
 
+        let mut selections = Vec::new();
         // Vim uses the index of the first and last character in the selection
         // Zed uses the index of the positions between the characters, so we need
         // to add one to the end in visual mode.
         match mode {
-            Some(Mode::Visual { .. }) => {
+            Some(Mode::VisualBlock) if selection_row != cursor_row => {
+                // in zed we fake a block selecrtion by using multiple cursors (one per line)
+                // this code emulates that.
+                // to deal with casees where the selection is not perfectly rectangular we extract
+                // the content of the selection via the "a register to get the shape correctly.
+                self.nvim.input("\"aygv").await.unwrap();
+                let content = self.nvim.command_output("echo getreg('a')").await.unwrap();
+                let lines = content.split("\n").collect::<Vec<_>>();
+                let top = cmp::min(selection_row, cursor_row);
+                let left = cmp::min(selection_col, cursor_col);
+                for row in top..=cmp::max(selection_row, cursor_row) {
+                    let content = if row - top >= lines.len() as u32 {
+                        ""
+                    } else {
+                        lines[(row - top) as usize]
+                    };
+                    let line_len = self
+                        .read_position(format!("echo strlen(getline({}))", row + 1).as_str())
+                        .await;
+
+                    if left > line_len {
+                        continue;
+                    }
+
+                    let start = Point::new(row, left);
+                    let end = Point::new(row, left + content.len() as u32);
+                    if cursor_col >= selection_col {
+                        selections.push(start..end)
+                    } else {
+                        selections.push(end..start)
+                    }
+                }
+            }
+            Some(Mode::Visual) | Some(Mode::VisualLine) | Some(Mode::VisualBlock) => {
                 if selection_col > cursor_col {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
@@ -290,38 +364,37 @@ impl NeovimConnection {
                         cursor_row += 1;
                     }
                 }
+                selections.push(
+                    Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col),
+                )
             }
-            Some(Mode::Insert) | Some(Mode::Normal) | None => {}
+            Some(Mode::Insert) | Some(Mode::Normal) | None => selections
+                .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
         }
-
-        let (start, end) = (
-            Point::new(selection_row, selection_col),
-            Point::new(cursor_row, cursor_col),
-        );
 
         let state = NeovimData::Get {
             mode,
-            state: encode_range(&text, start..end),
+            state: encode_ranges(&text, &selections),
         };
 
         if self.data.back() != Some(&state) {
             self.data.push_back(state.clone());
         }
 
-        (mode, text, start..end)
+        (mode, text, selections)
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn state(&mut self) -> (Option<Mode>, String, Range<Point>) {
+    pub async fn state(&mut self) -> (Option<Mode>, String, Vec<Range<Point>>) {
         if let Some(NeovimData::Get { state: text, mode }) = self.data.front() {
-            let (text, range) = parse_state(text);
-            (*mode, text, range)
+            let (text, ranges) = parse_state(text);
+            (*mode, text, ranges)
         } else {
             panic!("operation does not match recorded script. re-record with --features=neovim");
         }
     }
 
-    pub async fn selection(&mut self) -> Range<Point> {
+    pub async fn selections(&mut self) -> Vec<Range<Point>> {
         self.state().await.2
     }
 
@@ -421,51 +494,62 @@ impl Handler for NvimHandler {
     }
 }
 
-fn parse_state(marked_text: &str) -> (String, Range<Point>) {
+fn parse_state(marked_text: &str) -> (String, Vec<Range<Point>>) {
     let (text, ranges) = util::test::marked_text_ranges(marked_text, true);
-    let byte_range = ranges[0].clone();
-    let mut point_range = Point::zero()..Point::zero();
-    let mut ix = 0;
-    let mut position = Point::zero();
-    for c in text.chars().chain(['\0']) {
-        if ix == byte_range.start {
-            point_range.start = position;
-        }
-        if ix == byte_range.end {
-            point_range.end = position;
-        }
-        let len_utf8 = c.len_utf8();
-        ix += len_utf8;
-        if c == '\n' {
-            position.row += 1;
-            position.column = 0;
-        } else {
-            position.column += len_utf8 as u32;
-        }
-    }
-    (text, point_range)
+    let point_ranges = ranges
+        .into_iter()
+        .map(|byte_range| {
+            let mut point_range = Point::zero()..Point::zero();
+            let mut ix = 0;
+            let mut position = Point::zero();
+            for c in text.chars().chain(['\0']) {
+                if ix == byte_range.start {
+                    point_range.start = position;
+                }
+                if ix == byte_range.end {
+                    point_range.end = position;
+                }
+                let len_utf8 = c.len_utf8();
+                ix += len_utf8;
+                if c == '\n' {
+                    position.row += 1;
+                    position.column = 0;
+                } else {
+                    position.column += len_utf8 as u32;
+                }
+            }
+            point_range
+        })
+        .collect::<Vec<_>>();
+    (text, point_ranges)
 }
 
 #[cfg(feature = "neovim")]
-fn encode_range(text: &str, range: Range<Point>) -> String {
-    let mut byte_range = 0..0;
-    let mut ix = 0;
-    let mut position = Point::zero();
-    for c in text.chars().chain(['\0']) {
-        if position == range.start {
-            byte_range.start = ix;
-        }
-        if position == range.end {
-            byte_range.end = ix;
-        }
-        let len_utf8 = c.len_utf8();
-        ix += len_utf8;
-        if c == '\n' {
-            position.row += 1;
-            position.column = 0;
-        } else {
-            position.column += len_utf8 as u32;
-        }
-    }
-    util::test::generate_marked_text(text, &[byte_range], true)
+fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
+    let byte_ranges = point_ranges
+        .into_iter()
+        .map(|range| {
+            let mut byte_range = 0..0;
+            let mut ix = 0;
+            let mut position = Point::zero();
+            for c in text.chars().chain(['\0']) {
+                if position == range.start {
+                    byte_range.start = ix;
+                }
+                if position == range.end {
+                    byte_range.end = ix;
+                }
+                let len_utf8 = c.len_utf8();
+                ix += len_utf8;
+                if c == '\n' {
+                    position.row += 1;
+                    position.column = 0;
+                } else {
+                    position.column += len_utf8 as u32;
+                }
+            }
+            byte_range
+        })
+        .collect::<Vec<_>>();
+    util::test::generate_marked_text(text, &byte_ranges[..], true)
 }

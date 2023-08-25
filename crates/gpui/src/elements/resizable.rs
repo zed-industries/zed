@@ -59,7 +59,7 @@ where
         .and_then(|map| map.0.get(&tag))
 }
 
-pub struct Resizable<V: View> {
+pub struct Resizable<V: 'static> {
     child: AnyElement<V>,
     tag: TypeTag,
     handle_side: HandleSide,
@@ -69,7 +69,7 @@ pub struct Resizable<V: View> {
 
 const DEFAULT_HANDLE_SIZE: f32 = 4.0;
 
-impl<V: View> Resizable<V> {
+impl<V: 'static> Resizable<V> {
     pub fn new<Tag: 'static>(
         child: AnyElement<V>,
         handle_side: HandleSide,
@@ -97,7 +97,7 @@ impl<V: View> Resizable<V> {
     }
 }
 
-impl<V: View> Element<V> for Resizable<V> {
+impl<V: 'static> Element<V> for Resizable<V> {
     type LayoutState = SizeConstraint;
     type PaintState = ();
 
@@ -219,12 +219,12 @@ impl<V: View> Element<V> for Resizable<V> {
 #[derive(Debug, Default)]
 struct ProviderMap(HashMap<TypeTag, (RectF, RectF)>);
 
-pub struct BoundsProvider<V: View, P> {
+pub struct BoundsProvider<V: 'static, P> {
     child: AnyElement<V>,
     phantom: std::marker::PhantomData<P>,
 }
 
-impl<V: View, P: 'static> BoundsProvider<V, P> {
+impl<V: 'static, P: 'static> BoundsProvider<V, P> {
     pub fn new(child: AnyElement<V>) -> Self {
         Self {
             child,

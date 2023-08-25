@@ -1,12 +1,13 @@
 mod case;
 mod change;
 mod delete;
+mod paste;
 mod scroll;
 mod search;
 pub mod substitute;
 mod yank;
 
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     motion::Motion,
@@ -14,13 +15,11 @@ use crate::{
     state::{Mode, Operator},
     Vim,
 };
-use collections::{HashMap, HashSet};
-use editor::{
-    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, Bias, ClipboardSelection,
-    DisplayPoint,
-};
+use collections::HashSet;
+use editor::scroll::autoscroll::Autoscroll;
+use editor::{Bias, DisplayPoint};
 use gpui::{actions, AppContext, ViewContext, WindowContext};
-use language::{AutoindentMode, Point, SelectionGoal};
+use language::SelectionGoal;
 use log::error;
 use workspace::Workspace;
 
@@ -44,7 +43,6 @@ actions!(
         DeleteRight,
         ChangeToEndOfLine,
         DeleteToEndOfLine,
-        Paste,
         Yank,
         Substitute,
         ChangeCase,
@@ -89,9 +87,8 @@ pub fn init(cx: &mut AppContext) {
             delete_motion(vim, Motion::EndOfLine, times, cx);
         })
     });
-    cx.add_action(paste);
-
     scroll::init(cx);
+    paste::init(cx);
 }
 
 pub fn normal_motion(
@@ -116,8 +113,8 @@ pub fn normal_motion(
 
 pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        match vim.state.operator_stack.pop() {
-            Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
+        match vim.maybe_pop_operator() {
+            Some(Operator::Object { around }) => match vim.maybe_pop_operator() {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),
@@ -245,144 +242,6 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
-            });
-        });
-    });
-}
-
-fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                if let Some(item) = cx.read_from_clipboard() {
-                    let mut clipboard_text = Cow::Borrowed(item.text());
-                    if let Some(mut clipboard_selections) =
-                        item.metadata::<Vec<ClipboardSelection>>()
-                    {
-                        let (display_map, selections) = editor.selections.all_display(cx);
-                        let all_selections_were_entire_line =
-                            clipboard_selections.iter().all(|s| s.is_entire_line);
-                        if clipboard_selections.len() != selections.len() {
-                            let mut newline_separated_text = String::new();
-                            let mut clipboard_selections =
-                                clipboard_selections.drain(..).peekable();
-                            let mut ix = 0;
-                            while let Some(clipboard_selection) = clipboard_selections.next() {
-                                newline_separated_text
-                                    .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
-                                ix += clipboard_selection.len;
-                                if clipboard_selections.peek().is_some() {
-                                    newline_separated_text.push('\n');
-                                }
-                            }
-                            clipboard_text = Cow::Owned(newline_separated_text);
-                        }
-
-                        // If the pasted text is a single line, the cursor should be placed after
-                        // the newly pasted text. This is easiest done with an anchor after the
-                        // insertion, and then with a fixup to move the selection back one position.
-                        // However if the pasted text is linewise, the cursor should be placed at the start
-                        // of the new text on the following line. This is easiest done with a manually adjusted
-                        // point.
-                        // This enum lets us represent both cases
-                        enum NewPosition {
-                            Inside(Point),
-                            After(Anchor),
-                        }
-                        let mut new_selections: HashMap<usize, NewPosition> = Default::default();
-                        editor.buffer().update(cx, |buffer, cx| {
-                            let snapshot = buffer.snapshot(cx);
-                            let mut start_offset = 0;
-                            let mut edits = Vec::new();
-                            for (ix, selection) in selections.iter().enumerate() {
-                                let to_insert;
-                                let linewise;
-                                if let Some(clipboard_selection) = clipboard_selections.get(ix) {
-                                    let end_offset = start_offset + clipboard_selection.len;
-                                    to_insert = &clipboard_text[start_offset..end_offset];
-                                    linewise = clipboard_selection.is_entire_line;
-                                    start_offset = end_offset;
-                                } else {
-                                    to_insert = clipboard_text.as_str();
-                                    linewise = all_selections_were_entire_line;
-                                }
-
-                                // If the clipboard text was copied linewise, and the current selection
-                                // is empty, then paste the text after this line and move the selection
-                                // to the start of the pasted text
-                                let insert_at = if linewise {
-                                    let (point, _) = display_map
-                                        .next_line_boundary(selection.start.to_point(&display_map));
-
-                                    if !to_insert.starts_with('\n') {
-                                        // Add newline before pasted text so that it shows up
-                                        edits.push((point..point, "\n"));
-                                    }
-                                    // Drop selection at the start of the next line
-                                    new_selections.insert(
-                                        selection.id,
-                                        NewPosition::Inside(Point::new(point.row + 1, 0)),
-                                    );
-                                    point
-                                } else {
-                                    let mut point = selection.end;
-                                    // Paste the text after the current selection
-                                    *point.column_mut() = point.column() + 1;
-                                    let point = display_map
-                                        .clip_point(point, Bias::Right)
-                                        .to_point(&display_map);
-
-                                    new_selections.insert(
-                                        selection.id,
-                                        if to_insert.contains('\n') {
-                                            NewPosition::Inside(point)
-                                        } else {
-                                            NewPosition::After(snapshot.anchor_after(point))
-                                        },
-                                    );
-                                    point
-                                };
-
-                                if linewise && to_insert.ends_with('\n') {
-                                    edits.push((
-                                        insert_at..insert_at,
-                                        &to_insert[0..to_insert.len().saturating_sub(1)],
-                                    ))
-                                } else {
-                                    edits.push((insert_at..insert_at, to_insert));
-                                }
-                            }
-                            drop(snapshot);
-                            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
-                        });
-
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.move_with(|map, selection| {
-                                if let Some(new_position) = new_selections.get(&selection.id) {
-                                    match new_position {
-                                        NewPosition::Inside(new_point) => {
-                                            selection.collapse_to(
-                                                new_point.to_display_point(map),
-                                                SelectionGoal::None,
-                                            );
-                                        }
-                                        NewPosition::After(after_point) => {
-                                            let mut new_point = after_point.to_display_point(map);
-                                            *new_point.column_mut() =
-                                                new_point.column().saturating_sub(1);
-                                            new_point = map.clip_point(new_point, Bias::Left);
-                                            selection.collapse_to(new_point, SelectionGoal::None);
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                    } else {
-                        editor.insert(&clipboard_text, cx);
-                    }
-                }
-                editor.set_clip_at_line_ends(true, cx);
             });
         });
     });
@@ -881,36 +740,6 @@ mod test {
                 ˇ
                 brown fox"})
             .await;
-    }
-
-    #[gpui::test]
-    async fn test_p(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state(indoc! {"
-                The quick brown
-                fox juˇmps over
-                the lazy dog"})
-            .await;
-
-        cx.simulate_shared_keystrokes(["d", "d"]).await;
-        cx.assert_state_matches().await;
-
-        cx.simulate_shared_keystroke("p").await;
-        cx.assert_state_matches().await;
-
-        cx.set_shared_state(indoc! {"
-                The quick brown
-                fox ˇjumps over
-                the lazy dog"})
-            .await;
-        cx.simulate_shared_keystrokes(["v", "w", "y"]).await;
-        cx.set_shared_state(indoc! {"
-                The quick brown
-                fox jumps oveˇr
-                the lazy dog"})
-            .await;
-        cx.simulate_shared_keystroke("p").await;
-        cx.assert_state_matches().await;
     }
 
     #[gpui::test]

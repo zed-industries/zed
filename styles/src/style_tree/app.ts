@@ -12,7 +12,6 @@ import simple_message_notification from "./simple_message_notification"
 import project_shared_notification from "./project_shared_notification"
 import tooltip from "./tooltip"
 import terminal from "./terminal"
-import contact_finder from "./contact_finder"
 import collab_panel from "./collab_panel"
 import toolbar_dropdown_menu from "./toolbar_dropdown_menu"
 import incoming_call_notification from "./incoming_call_notification"
@@ -22,6 +21,7 @@ import assistant from "./assistant"
 import { titlebar } from "./titlebar"
 import editor from "./editor"
 import feedback from "./feedback"
+import component_test from "./component_test"
 import { useTheme } from "../common"
 
 export default function app(): any {
@@ -54,6 +54,7 @@ export default function app(): any {
         tooltip: tooltip(),
         terminal: terminal(),
         assistant: assistant(),
-        feedback: feedback()
+        feedback: feedback(),
+        component_test: component_test(),
     }
 }

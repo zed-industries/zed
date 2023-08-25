@@ -13,6 +13,7 @@ brackets = [
     { start = "`", end = "`", close = true, newline = false, not_in = ["comment", "string"] },
     { start = "/*", end = " */", close = true, newline = false, not_in = ["comment", "string"] },
 ]
+word_characters = ["$", "#"]
 
 [overrides.element]
 line_comment = { remove = true }

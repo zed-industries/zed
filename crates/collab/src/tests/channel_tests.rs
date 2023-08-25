@@ -3,7 +3,8 @@ use crate::{
     tests::{room_participants, RoomParticipants, TestServer},
 };
 use call::ActiveCall;
-use client::{ChannelId, ChannelMembership, ChannelStore, User};
+use channel::{ChannelId, ChannelMembership, ChannelStore};
+use client::User;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{proto, RECEIVE_TIMEOUT};
 use std::sync::Arc;
@@ -798,7 +799,7 @@ async fn test_lost_channel_creation(
 
     deterministic.run_until_parked();
 
-    // Sanity check
+    // Sanity check, B has the invitation
     assert_channel_invitations(
         client_b.channel_store(),
         cx_b,
@@ -810,6 +811,7 @@ async fn test_lost_channel_creation(
         }],
     );
 
+    // A creates a subchannel while the invite is still pending.
     let subchannel_id = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -840,7 +842,7 @@ async fn test_lost_channel_creation(
         ],
     );
 
-    // Accept the invite
+    // Client B accepts the invite
     client_b
         .channel_store()
         .update(cx_b, |channel_store, _| {
@@ -851,7 +853,7 @@ async fn test_lost_channel_creation(
 
     deterministic.run_until_parked();
 
-    // B should now see the channel
+    // Client B should now see the channel
     assert_channels(
         client_b.channel_store(),
         cx_b,

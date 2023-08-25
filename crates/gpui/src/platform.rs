@@ -192,7 +192,7 @@ impl<'a> WindowOptions<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TitlebarOptions<'a> {
     pub title: Option<&'a str>,
     pub appears_transparent: bool,

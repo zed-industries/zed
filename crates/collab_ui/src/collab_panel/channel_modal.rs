@@ -1,4 +1,5 @@
-use client::{proto, ChannelId, ChannelMembership, ChannelStore, User, UserId, UserStore};
+use channel::{ChannelId, ChannelMembership, ChannelStore};
+use client::{proto, User, UserId, UserStore};
 use context_menu::{ContextMenu, ContextMenuItem};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{

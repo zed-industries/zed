@@ -559,6 +559,7 @@ pub struct Editor {
     blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     mode: EditorMode,
+    replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -577,6 +578,7 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     collapse_matches: bool,
+    autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
@@ -1393,6 +1395,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            replica_id_mapping: None,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -1412,6 +1415,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
             keymap_context_layers: Default::default(),
@@ -1590,8 +1594,29 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
+    pub fn set_autoindent(&mut self, autoindent: bool) {
+        if autoindent {
+            self.autoindent_mode = Some(AutoindentMode::EachLine);
+        } else {
+            self.autoindent_mode = None;
+        }
+    }
+
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
+        self.replica_id_mapping.as_ref()
+    }
+
+    pub fn set_replica_id_map(
+        &mut self,
+        mapping: Option<HashMap<ReplicaId, ReplicaId>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.replica_id_mapping = mapping;
+        cx.notify();
     }
 
     fn selections_did_change(
@@ -1722,7 +1747,32 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
+            buffer.edit(edits, self.autoindent_mode.clone(), cx)
+        });
+    }
+
+    pub fn edit_with_block_indent<I, S, T>(
+        &mut self,
+        edits: I,
+        original_indent_columns: Vec<u32>,
+        cx: &mut ViewContext<Self>,
+    ) where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only {
+            return;
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            )
         });
     }
 
@@ -2093,12 +2143,12 @@ impl Editor {
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
         {
-            if let Some(language) = snapshot.language_scope_at(selection.head()) {
+            if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
-                for (pair, enabled) in language.brackets() {
+                for (pair, enabled) in scope.brackets() {
                     if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
                         bracket_pair = Some(pair.clone());
                         is_bracket_pair_start = true;
@@ -2120,7 +2170,7 @@ impl Editor {
                             let following_text_allows_autoclose = snapshot
                                 .chars_at(selection.start)
                                 .next()
-                                .map_or(true, |c| language.should_autoclose_before(c));
+                                .map_or(true, |c| scope.should_autoclose_before(c));
                             let preceding_text_matches_prefix = prefix_len == 0
                                 || (selection.start.column >= (prefix_len as u32)
                                     && snapshot.contains_str_at(
@@ -2197,7 +2247,7 @@ impl Editor {
         drop(snapshot);
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+                buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
 
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
@@ -2657,7 +2707,6 @@ impl Editor {
             false
         });
     }
-
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -3037,7 +3086,7 @@ impl Editor {
                 this.buffer.update(cx, |buffer, cx| {
                     buffer.edit(
                         ranges.iter().map(|range| (range.clone(), text)),
-                        Some(AutoindentMode::EachLine),
+                        this.autoindent_mode.clone(),
                         cx,
                     );
                 });
@@ -4732,12 +4781,18 @@ impl Editor {
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
+            let mut is_first = true;
             for selection in &mut selections {
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
                     selection.goal = SelectionGoal::None;
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    text += "\n";
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(selection.start..selection.end) {
@@ -4769,6 +4824,7 @@ impl Editor {
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
+            let mut is_first = true;
             for selection in selections.iter() {
                 let mut start = selection.start;
                 let mut end = selection.end;
@@ -4776,6 +4832,11 @@ impl Editor {
                 if is_entire_line {
                     start = Point::new(start.row, 0);
                     end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    text += "\n";
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(start..end) {
@@ -4796,7 +4857,7 @@ impl Editor {
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.read_from_clipboard() {
-                let mut clipboard_text = Cow::Borrowed(item.text());
+                let clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
                     let old_selections = this.selections.all::<usize>(cx);
                     let all_selections_were_entire_line =
@@ -4804,18 +4865,7 @@ impl Editor {
                     let first_selection_indent_column =
                         clipboard_selections.first().map(|s| s.first_line_indent);
                     if clipboard_selections.len() != old_selections.len() {
-                        let mut newline_separated_text = String::new();
-                        let mut clipboard_selections = clipboard_selections.drain(..).peekable();
-                        let mut ix = 0;
-                        while let Some(clipboard_selection) = clipboard_selections.next() {
-                            newline_separated_text
-                                .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
-                            ix += clipboard_selection.len;
-                            if clipboard_selections.peek().is_some() {
-                                newline_separated_text.push('\n');
-                            }
-                        }
-                        clipboard_text = Cow::Owned(newline_separated_text);
+                        clipboard_selections.drain(..);
                     }
 
                     this.buffer.update(cx, |buffer, cx| {
@@ -4831,8 +4881,9 @@ impl Editor {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
+                                dbg!(start_offset, end_offset, &clipboard_text, &to_insert);
                                 entire_line = clipboard_selection.is_entire_line;
-                                start_offset = end_offset;
+                                start_offset = end_offset + 1;
                                 original_indent_column =
                                     Some(clipboard_selection.first_line_indent);
                             } else {
@@ -8527,6 +8578,7 @@ fn build_style(
                 font_size,
                 font_properties,
                 underline: Default::default(),
+                soft_wrap: false,
             },
             placeholder_text: None,
             line_height_scalar,

@@ -173,6 +173,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "enter": "editor::Newline",
+      "shift-enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
@@ -543,6 +544,8 @@
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
+      "cmd-n": "project_panel::NewFile",
+      "alt-cmd-n": "project_panel::NewDirectory",
       "cmd-x": "project_panel::Cut",
       "cmd-c": "project_panel::Copy",
       "cmd-v": "project_panel::Paste",

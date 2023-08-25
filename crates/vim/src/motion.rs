@@ -147,9 +147,9 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
     let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
     let operator = Vim::read(cx).active_operator();
-    match Vim::read(cx).state.mode {
+    match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, times, cx),
-        Mode::Visual { .. } => visual_motion(motion, times, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -158,7 +158,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 }
 
 fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).state.last_find.clone() {
+    let find = match Vim::read(cx).workspace_state.last_find.clone() {
         Some(Motion::FindForward { before, text }) => {
             if backwards {
                 Motion::FindBackward {
@@ -439,11 +439,12 @@ pub(crate) fn next_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
+    let language = map.buffer_snapshot.language_at(point.to_point(map));
     for _ in 0..times {
         let mut crossed_newline = false;
         point = movement::find_boundary(map, point, |left, right| {
-            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -463,11 +464,12 @@ fn next_word_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
+    let language = map.buffer_snapshot.language_at(point.to_point(map));
     for _ in 0..times {
         *point.column_mut() += 1;
         point = movement::find_boundary(map, point, |left, right| {
-            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
 
             left_kind != right_kind && left_kind != CharKind::Whitespace
         });
@@ -493,12 +495,13 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
+    let language = map.buffer_snapshot.language_at(point.to_point(map));
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
         point = movement::find_preceding_boundary(map, point, |left, right| {
-            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
 
             (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
         });
@@ -508,6 +511,7 @@ fn previous_word_start(
 
 fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoint {
     let mut last_point = DisplayPoint::new(from.row(), 0);
+    let language = map.buffer_snapshot.language_at(from.to_point(map));
     for (ch, point) in map.chars_at(last_point) {
         if ch == '\n' {
             return from;
@@ -515,7 +519,7 @@ fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoi
 
         last_point = point;
 
-        if char_kind(ch) != CharKind::Whitespace {
+        if char_kind(language, ch) != CharKind::Whitespace {
             break;
         }
     }
@@ -651,7 +655,10 @@ fn find_backward(
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let new_row = (point.row() + times as u32).min(map.max_buffer_row());
-    map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+    first_non_whitespace(
+        map,
+        map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left),
+    )
 }
 
 #[cfg(test)]
@@ -798,5 +805,13 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇone\n  two\nthree").await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("one\n  ˇtwo\nthree").await;
     }
 }

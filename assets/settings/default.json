@@ -126,7 +126,7 @@
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
     // Where to dock channels panel. Can be 'left' or 'right'.
-    "dock": "right",
+    "dock": "left",
     // Default width of the channels panel.
     "default_width": 240
   },
@@ -138,7 +138,13 @@
     // Default width when the assistant is docked to the left or right.
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
-    "default_height": 320
+    "default_height": 320,
+    // The default OpenAI model to use when starting new conversations. This
+    // setting can take two values:
+    //
+    // 1. "gpt-3.5-turbo-0613""
+    // 2. "gpt-4-0613""
+    "default_open_ai_model": "gpt-4-0613"
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

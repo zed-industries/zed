@@ -1,3 +1,4 @@
+pub mod channel_view;
 pub mod collab_panel;
 mod collab_titlebar_item;
 mod contact_notification;
@@ -49,6 +50,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                 ActiveCall::report_call_event_for_room(
                     "disable screen share",
                     room.id(),
+                    room.channel_id(),
                     &client,
                     cx,
                 );
@@ -57,6 +59,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                 ActiveCall::report_call_event_for_room(
                     "enable screen share",
                     room.id(),
+                    room.channel_id(),
                     &client,
                     cx,
                 );
@@ -73,11 +76,18 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
         let client = call.client();
         room.update(cx, |room, cx| {
             if room.is_muted(cx) {
-                ActiveCall::report_call_event_for_room("enable microphone", room.id(), &client, cx);
+                ActiveCall::report_call_event_for_room(
+                    "enable microphone",
+                    room.id(),
+                    room.channel_id(),
+                    &client,
+                    cx,
+                );
             } else {
                 ActiveCall::report_call_event_for_room(
                     "disable microphone",
                     room.id(),
+                    room.channel_id(),
                     &client,
                     cx,
                 );
