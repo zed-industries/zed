@@ -276,7 +276,9 @@ impl AssistantPanel {
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
-                    position: selection.head(),
+                    position: selection
+                        .head()
+                        .bias_left(&editor.buffer().read(cx).snapshot(cx)),
                     height: 2,
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();
@@ -506,6 +508,7 @@ impl AssistantPanel {
                     "Assume the cursor is located where the `<|>` marker is."
                 )
                 .unwrap();
+                writeln!(prompt, "Assume your answer will be inserted at the cursor.").unwrap();
                 writeln!(
                     prompt,
                     "Complete the code given the user prompt: {user_prompt}"
@@ -513,12 +516,9 @@ impl AssistantPanel {
                 .unwrap();
             }
         }
-        writeln!(
-            prompt,
-            "You MUST not return anything that isn't valid {language_name}"
-        )
-        .unwrap();
+        writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
         writeln!(prompt, "DO NOT wrap your response in Markdown blocks.").unwrap();
+        writeln!(prompt, "Never make remarks, always output code.").unwrap();
 
         let request = OpenAIRequest {
             model: "gpt-4".into(),
