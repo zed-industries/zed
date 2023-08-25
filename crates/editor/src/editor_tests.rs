@@ -19,7 +19,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point,
+    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -7609,6 +7610,99 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
     .unwrap();
     apply_additional_edits.await.unwrap();
     cx.assert_editor_state(indoc! {"fn main() { let a = Some(2)ˇ; }"});
+}
+
+#[gpui::test]
+async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new(
+        Language::new(
+            LanguageConfig {
+                path_suffixes: vec!["jsx".into()],
+                overrides: [(
+                    "element".into(),
+                    LanguageConfigOverride {
+                        word_characters: Override::Set(['-'].into_iter().collect()),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::language_tsx()),
+        )
+        .with_override_query("(jsx_self_closing_element) @element")
+        .unwrap(),
+        Default::default(),
+        cx,
+    )
+    .await;
+
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "bg-blue".into(),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "bg-red".into(),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "bg-yellow".into(),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state(r#"<p class="bgˇ" />"#);
+
+    // Trigger completion when typing a dash, because the dash is an extra
+    // word character in the 'element' scope, which contains the cursor.
+    cx.simulate_keystroke("-");
+    cx.foreground().run_until_parked();
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["bg-red", "bg-blue", "bg-yellow"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.simulate_keystroke("l");
+    cx.foreground().run_until_parked();
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["bg-blue", "bg-yellow"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    // When filtering completions, consider the character after the '-' to
+    // be the start of a subword.
+    cx.set_state(r#"<p class="yelˇ" />"#);
+    cx.simulate_keystroke("l");
+    cx.foreground().run_until_parked();
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["bg-blue", "bg-yellow"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

@@ -2175,8 +2175,8 @@ impl BufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let language = self.language_at(start);
-        let kind = |c| char_kind(language, c);
+        let scope = self.language_scope_at(start);
+        let kind = |c| char_kind(&scope, c);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(kind),
             next_chars.peek().copied().map(kind),
@@ -2988,17 +2988,21 @@ pub fn contiguous_ranges(
     })
 }
 
-pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
+pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
     if c.is_whitespace() {
         return CharKind::Whitespace;
     } else if c.is_alphanumeric() || c == '_' {
         return CharKind::Word;
     }
-    if let Some(language) = language {
-        if language.config.word_characters.contains(&c) {
-            return CharKind::Word;
+
+    if let Some(scope) = scope {
+        if let Some(characters) = scope.word_characters() {
+            if characters.contains(&c) {
+                return CharKind::Word;
+            }
         }
     }
+
     CharKind::Punctuation
 }
 

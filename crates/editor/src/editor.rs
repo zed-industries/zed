@@ -2654,6 +2654,7 @@ impl Editor {
             false
         });
     }
+
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -8878,6 +8879,7 @@ pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str
         None
     })
     .flat_map(|word| word.split_inclusive('_'))
+    .flat_map(|word| word.split_inclusive('-'))
 }
 
 trait RangeToAnchorExt {

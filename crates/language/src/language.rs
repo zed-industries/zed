@@ -370,6 +370,8 @@ pub struct LanguageConfigOverride {
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
     #[serde(skip_deserializing)]
     pub disabled_bracket_ixs: Vec<u16>,
+    #[serde(default)]
+    pub word_characters: Override<HashSet<char>>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -1555,6 +1557,13 @@ impl LanguageScope {
             self.language.config.block_comment.as_ref(),
         )
         .map(|e| (&e.0, &e.1))
+    }
+
+    pub fn word_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.word_characters),
+            Some(&self.language.config.word_characters),
+        )
     }
 
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
