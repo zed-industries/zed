@@ -77,7 +77,7 @@ impl Project {
         let program = match shell {
             terminal::Shell::System => "Figure this out",
             terminal::Shell::Program(program) => program,
-            terminal::Shell::WithArguments { program, args } => program,
+            terminal::Shell::WithArguments { program, args: _ } => program,
         };
 
         // This is so hacky - find a better way to do this
