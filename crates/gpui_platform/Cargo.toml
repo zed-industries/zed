@@ -10,6 +10,7 @@ test-support = ["gpui/test-support"]
 
 [dependencies]
 gpui = {path = "../gpui", optional = true}
+gpui_macros = { path = "../gpui_macros" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 current_platform = {path = "../gpui_mac", package = "gpui_mac"}
@@ -17,3 +18,4 @@ current_platform = {path = "../gpui_mac", package = "gpui_mac"}
 [dev-dependencies]
 gpui = {path = "../gpui", features = ["test-support"]}
 postage.workspace = true
+log.workspace = true

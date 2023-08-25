@@ -1,4 +1,5 @@
 mod app;
+mod elements;
 
 use gpui::fonts::{Properties, Weight};
 use gpui::text_layout::*;

@@ -2,18 +2,26 @@ use gpui::{
     actions,
     elements::*,
     impl_actions,
+    keymap_matcher::{Binding, KeymapContext, Keystroke},
     platform::{MouseButton, MouseButtonEvent},
+    serde_json,
     text_layout::*,
     util::post_inc,
     window::ChildView,
+    AnyViewHandle, AnyWindowHandle, AppContext, Entity, ModelContext, ModelHandle, TestAppContext,
+    View, ViewContext, ViewHandle,
 };
 use itertools::Itertools;
 use postage::{sink::Sink, stream::Stream};
 use serde::Deserialize;
 use smol::future::poll_once;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    mem,
+    ops::Range,
+    rc::Rc,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+    sync::{Arc, Mutex},
 };
 
 #[crate::test(self)]
@@ -110,7 +118,7 @@ fn test_model_events(cx: &mut AppContext) {
     assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
     #[derive(Default)]
     struct Model;
@@ -141,7 +149,7 @@ fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
     assert_eq!(*events.borrow(), ["before emit"]);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_observe_and_notify_from_model(cx: &mut AppContext) {
     #[derive(Default)]
     struct Model {
@@ -180,7 +188,7 @@ fn test_observe_and_notify_from_model(cx: &mut AppContext) {
     assert_eq!(handle_1.read(cx).events, vec![7, 5, 10])
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
     #[derive(Default)]
     struct Model;
@@ -211,7 +219,7 @@ fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
     assert_eq!(*events.borrow(), ["before notify"]);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_defer_and_after_window_update(cx: &mut TestAppContext) {
     struct View {
         render_count: usize,
@@ -221,7 +229,7 @@ fn test_defer_and_after_window_update(cx: &mut TestAppContext) {
         type Event = usize;
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
             post_inc(&mut self.render_count);
             Empty::new().into_any()
@@ -263,7 +271,7 @@ fn test_defer_and_after_window_update(cx: &mut TestAppContext) {
     assert_eq!(window.read_root_with(cx, |view, _| view.render_count), 3);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_view_handles(cx: &mut TestAppContext) {
     struct View {
         other: Option<ViewHandle<View>>,
@@ -274,7 +282,7 @@ fn test_view_handles(cx: &mut TestAppContext) {
         type Event = usize;
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
             Empty::new().into_any()
         }
@@ -334,7 +342,7 @@ fn test_view_handles(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_add_window(cx: &mut AppContext) {
     struct View {
         mouse_down_count: Arc<AtomicUsize>,
@@ -344,7 +352,7 @@ fn test_add_window(cx: &mut AppContext) {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             enum Handler {}
             let mouse_down_count = self.mouse_down_count.clone();
@@ -380,7 +388,7 @@ fn test_add_window(cx: &mut AppContext) {
     });
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_entity_release_hooks(cx: &mut TestAppContext) {
     struct Model {
         released: Rc<Cell<bool>>,
@@ -406,7 +414,7 @@ fn test_entity_release_hooks(cx: &mut TestAppContext) {
         }
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn ui_name() -> &'static str {
             "View"
         }
@@ -457,7 +465,7 @@ fn test_entity_release_hooks(cx: &mut TestAppContext) {
     assert!(view_release_observed.get());
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_view_events(cx: &mut TestAppContext) {
     struct Model;
 
@@ -501,7 +509,7 @@ fn test_view_events(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_global_events(cx: &mut AppContext) {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct GlobalEvent(u64);
@@ -553,7 +561,7 @@ fn test_global_events(cx: &mut AppContext) {
     );
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_global_events_emitted_before_subscription_in_same_update_cycle(cx: &mut AppContext) {
     let events = Rc::new(RefCell::new(Vec::new()));
     cx.update(|cx| {
@@ -586,7 +594,7 @@ fn test_global_events_emitted_before_subscription_in_same_update_cycle(cx: &mut 
     assert_eq!(*events.borrow(), ["before emit"]);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_global_nested_events(cx: &mut AppContext) {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct GlobalEvent(u64);
@@ -630,7 +638,7 @@ fn test_global_nested_events(cx: &mut AppContext) {
     );
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_global(cx: &mut AppContext) {
     type Global = usize;
 
@@ -685,7 +693,7 @@ fn test_global(cx: &mut AppContext) {
     assert_eq!(*observation_count.borrow(), 1);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_dropping_subscribers(cx: &mut TestAppContext) {
     struct Model;
 
@@ -716,7 +724,7 @@ fn test_dropping_subscribers(cx: &mut TestAppContext) {
     observed_model.update(cx, |_, cx| cx.emit(()));
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
     let window = cx.add_window::<TestView, _>(Default::default(), |cx| {
         drop(cx.subscribe(&cx.handle(), {
@@ -737,7 +745,7 @@ fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
     window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before emit"]));
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_observe_and_notify_from_view(cx: &mut TestAppContext) {
     #[derive(Default)]
     struct Model {
@@ -768,7 +776,7 @@ fn test_observe_and_notify_from_view(cx: &mut TestAppContext) {
     view.read_with(cx, |view, _| assert_eq!(view.events, ["new-state"]));
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
     let window = cx.add_window::<TestView, _>(Default::default(), |cx| {
         drop(cx.observe(&cx.handle(), {
@@ -789,7 +797,7 @@ fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
     window.read_root_with(cx, |view, _| assert_eq!(view.events, ["before notify"]));
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut TestAppContext) {
     struct Model;
     impl Entity for Model {
@@ -814,7 +822,7 @@ fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut TestA
     view.read_with(cx, |view, _| assert_eq!(view.events, Vec::<&str>::new()));
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_dropping_observers(cx: &mut TestAppContext) {
     struct Model;
 
@@ -842,7 +850,7 @@ fn test_dropping_observers(cx: &mut TestAppContext) {
     observed_model.update(cx, |_, cx| cx.notify());
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_dropping_subscriptions_during_callback(cx: &mut TestAppContext) {
     struct Model;
 
@@ -935,7 +943,7 @@ fn test_dropping_subscriptions_during_callback(cx: &mut TestAppContext) {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
             Empty::new().into_any()
         }
@@ -991,7 +999,7 @@ fn test_dropping_subscriptions_during_callback(cx: &mut TestAppContext) {
     assert_eq!(*observation_count.borrow(), 1);
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_focus(cx: &mut TestAppContext) {
     struct View {
         name: String,
@@ -1003,7 +1011,7 @@ fn test_focus(cx: &mut TestAppContext) {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             self.child
                 .as_ref()
@@ -1136,7 +1144,7 @@ fn test_focus(cx: &mut TestAppContext) {
     assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_deserialize_actions(cx: &mut AppContext) {
     #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
     pub struct ComplexAction {
@@ -1172,7 +1180,7 @@ fn test_deserialize_actions(cx: &mut AppContext) {
     );
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_dispatch_action(cx: &mut TestAppContext) {
     struct ViewA {
         id: usize,
@@ -1183,7 +1191,7 @@ fn test_dispatch_action(cx: &mut TestAppContext) {
         type Event = ();
     }
 
-    impl View for ViewA {
+    impl gpui::View for ViewA {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             self.child
                 .as_ref()
@@ -1205,7 +1213,7 @@ fn test_dispatch_action(cx: &mut TestAppContext) {
         type Event = ();
     }
 
-    impl View for ViewB {
+    impl gpui::View for ViewB {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             self.child
                 .as_ref()
@@ -1379,7 +1387,7 @@ fn test_dispatch_action(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_dispatch_keystroke(cx: &mut AppContext) {
     #[derive(Clone, Deserialize, PartialEq)]
     pub struct Action(String);
@@ -1396,7 +1404,7 @@ fn test_dispatch_keystroke(cx: &mut AppContext) {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             self.child
                 .as_ref()
@@ -1519,7 +1527,7 @@ fn test_dispatch_keystroke(cx: &mut AppContext) {
     actions.borrow_mut().clear();
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_keystrokes_for_action(cx: &mut TestAppContext) {
     actions!(test, [Action1, Action2, GlobalAction]);
 
@@ -1535,7 +1543,7 @@ fn test_keystrokes_for_action(cx: &mut TestAppContext) {
         type Event = ();
     }
 
-    impl super::View for View1 {
+    impl gpui::View for View1 {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
             ChildView::new(&self.child, cx).into_any()
         }
@@ -1543,7 +1551,7 @@ fn test_keystrokes_for_action(cx: &mut TestAppContext) {
             "View1"
         }
     }
-    impl super::View for View2 {
+    impl gpui::View for View2 {
         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
             Empty::new().into_any()
         }
@@ -1662,7 +1670,7 @@ fn test_keystrokes_for_action(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 fn test_keystrokes_for_action_with_data(cx: &mut TestAppContext) {
     #[derive(Clone, Debug, Deserialize, PartialEq)]
     struct ActionWithArg {
@@ -1671,10 +1679,10 @@ fn test_keystrokes_for_action_with_data(cx: &mut TestAppContext) {
     }
 
     struct View;
-    impl super::Entity for View {
+    impl Entity for View {
         type Event = ();
     }
-    impl super::View for View {
+    impl gpui::View for View {
         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
             Empty::new().into_any()
         }
@@ -1710,11 +1718,11 @@ fn test_keystrokes_for_action_with_data(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 async fn test_model_condition(cx: &mut TestAppContext) {
     struct Counter(usize);
 
-    impl super::Entity for Counter {
+    impl Entity for Counter {
         type Event = ();
     }
 
@@ -1745,12 +1753,12 @@ async fn test_model_condition(cx: &mut TestAppContext) {
     model.update(cx, |_, cx| cx.notify());
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 #[should_panic]
 async fn test_model_condition_timeout(cx: &mut TestAppContext) {
     struct Model;
 
-    impl super::Entity for Model {
+    impl Entity for Model {
         type Event = ();
     }
 
@@ -1758,12 +1766,12 @@ async fn test_model_condition_timeout(cx: &mut TestAppContext) {
     model.condition(cx, |_, _| false).await;
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 #[should_panic(expected = "model dropped with pending condition")]
 async fn test_model_condition_panic_on_drop(cx: &mut TestAppContext) {
     struct Model;
 
-    impl super::Entity for Model {
+    impl Entity for Model {
         type Event = ();
     }
 
@@ -1773,15 +1781,15 @@ async fn test_model_condition_panic_on_drop(cx: &mut TestAppContext) {
     condition.await;
 }
 
-#[gpui::test(self)]
+#[crate::test(self)]
 async fn test_view_condition(cx: &mut TestAppContext) {
     struct Counter(usize);
 
-    impl super::Entity for Counter {
+    impl Entity for Counter {
         type Event = ();
     }
 
-    impl super::View for Counter {
+    impl View for Counter {
         fn ui_name() -> &'static str {
             "test view"
         }
@@ -1840,11 +1848,11 @@ async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
 fn test_refresh_windows(cx: &mut TestAppContext) {
     struct View(usize);
 
-    impl super::Entity for View {
+    impl Entity for View {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn ui_name() -> &'static str {
             "test view"
         }
@@ -1930,11 +1938,11 @@ async fn test_labeled_tasks(cx: &mut TestAppContext) {
 async fn test_window_activation(cx: &mut TestAppContext) {
     struct View(&'static str);
 
-    impl super::Entity for View {
+    impl Entity for View {
         type Event = ();
     }
 
-    impl super::View for View {
+    impl gpui::View for View {
         fn ui_name() -> &'static str {
             "test view"
         }
@@ -2010,11 +2018,11 @@ fn test_child_view(cx: &mut TestAppContext) {
         dropped: Rc<Cell<bool>>,
     }
 
-    impl super::Entity for Child {
+    impl Entity for Child {
         type Event = ();
     }
 
-    impl super::View for Child {
+    impl View for Child {
         fn ui_name() -> &'static str {
             "child view"
         }
@@ -2035,11 +2043,11 @@ fn test_child_view(cx: &mut TestAppContext) {
         child: Option<ViewHandle<Child>>,
     }
 
-    impl super::Entity for Parent {
+    impl Entity for Parent {
         type Event = ();
     }
 
-    impl super::View for Parent {
+    impl View for Parent {
         fn ui_name() -> &'static str {
             "parent view"
         }

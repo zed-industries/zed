@@ -9,8 +9,8 @@ use syn::{
 
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
-    let mut namespace = format_ident!("gpui");
-
+    let namespace = format_ident!("gpui");
+    let mut platform_namespace = format_ident!("gpui");
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
     let mut num_iterations = 1;
@@ -23,7 +23,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             NestedMeta::Meta(Meta::Path(name))
                 if name.get_ident().map_or(false, |n| n == "self") =>
             {
-                namespace = format_ident!("crate");
+                platform_namespace = format_ident!("crate");
             }
             NestedMeta::Meta(Meta::NameValue(meta)) => {
                 let key_name = meta.path.get_ident().map(|i| i.to_string());
@@ -158,7 +158,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
                 #namespace::test::run_test(
-                    gpui_platform::font_system,
+                    #platform_namespace::font_system,
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
@@ -235,7 +235,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
                 #namespace::test::run_test(
-                    gpui_platform::font_system,
+                    #platform_namespace::font_system,
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
