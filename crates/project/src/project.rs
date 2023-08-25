@@ -5165,6 +5165,34 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
+        // Local search is split into several phases.
+        // TL;DR is that we do 2 passes; initial pass to pick files which contain at least one match
+        // and the second phase that finds positions of all the matches found in the candidate files.
+        // The Receiver obtained from this function returns matches sorted by buffer path. Files without a buffer path are reported first.
+        //
+        // It gets a bit hairy though, because we must account for files that do not have a persistent representation
+        // on FS. Namely, if you have an untitled buffer or unsaved changes in a buffer, we want to scan that too.
+        //
+        // 1. We initialize a queue of match candidates and feed all opened buffers into it (== unsaved files / untitled buffers).
+        //    Then, we go through a worktree and check for files that do match a predicate. If the file had an opened version, we skip the scan
+        //    of FS version for that file altogether - after all, what we have in memory is more up-to-date than what's in FS.
+        // 2. At this point, we have a list of all potentially matching buffers/files.
+        //    We sort that list by buffer path - this list is retained for later use.
+        //    We ensure that all buffers are now opened and available in project.
+        // 3. We run a scan over all the candidate buffers on multiple background threads.
+        //    We cannot assume that there will even be a match - while at least one match
+        //    is guaranteed for files obtained from FS, the buffers we got from memory (unsaved files/unnamed buffers) might not have a match at all.
+        //    There is also an auxilliary background thread responsible for result gathering.
+        //    This is where the sorted list of buffers comes into play to maintain sorted order; Whenever this background thread receives a notification (buffer has/doesn't have matches),
+        //    it keeps it around. It reports matches in sorted order, though it accepts them in unsorted order as well.
+        //    As soon as the match info on next position in sorted order becomes available, it reports it (if it's a match) or skips to the next
+        //    entry - which might already be available thanks to out-of-order processing.
+        //
+        // We could also report matches fully out-of-order, without maintaining a sorted list of matching paths.
+        // This however would mean that project search (that is the main user of this function) would have to do the sorting itself, on the go.
+        // This isn't as straightforward as running an insertion sort sadly, and would also mean that it would have to care about maintaining match index
+        // in face of constantly updating list of sorted matches.
+        // Meanwhile, this implementation offers index stability, since the matches are already reported in a sorted order.
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
@@ -5183,7 +5211,7 @@ impl Project {
         let workers = background.num_cpus().min(path_count);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
         let mut unnamed_files = vec![];
-        let buffers = self
+        let opened_buffers = self
             .opened_buffers
             .iter()
             .filter_map(|(_, b)| {
@@ -5200,7 +5228,7 @@ impl Project {
         cx.background()
             .spawn(Self::background_search(
                 unnamed_files,
-                buffers,
+                opened_buffers,
                 cx.background().clone(),
                 self.fs.clone(),
                 workers,
