@@ -142,6 +142,13 @@ message Envelope {
         GetChannelMembersResponse get_channel_members_response = 128;
         SetChannelMemberAdmin set_channel_member_admin = 129;
         RenameChannel rename_channel = 130;
+
+        JoinChannelBuffer join_channel_buffer = 131;
+        JoinChannelBufferResponse join_channel_buffer_response = 132;
+        UpdateChannelBuffer update_channel_buffer = 133;
+        LeaveChannelBuffer leave_channel_buffer = 134;
+        AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
+        RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
     }
 }
 
@@ -411,6 +418,16 @@ message RemoveProjectCollaborator {
     PeerId peer_id = 2;
 }
 
+message AddChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    Collaborator collaborator = 2;
+}
+
+message RemoveChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId peer_id = 2;
+}
+
 message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
@@ -538,6 +555,11 @@ message UpdateBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated Operation operations = 3;
+}
+
+message UpdateChannelBuffer {
+    uint64 channel_id = 1;
+    repeated Operation operations = 2;
 }
 
 message UpdateBufferFile {
@@ -948,6 +970,22 @@ message RenameChannel {
     string name = 2;
 }
 
+message JoinChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelBufferResponse {
+    uint64 buffer_id = 1;
+    uint32 replica_id = 2;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated Collaborator collaborators = 5;
+}
+
+message LeaveChannelBuffer {
+    uint64 channel_id = 1;
+}
+
 message RespondToChannelInvite {
     uint64 channel_id = 1;
     bool accept = 2;
@@ -1082,6 +1120,7 @@ message View {
 
     oneof variant {
         Editor editor = 3;
+        ChannelView channel_view = 4;
     }
 
     message Editor {
@@ -1093,6 +1132,11 @@ message View {
         EditorAnchor scroll_top_anchor = 6;
         float scroll_x = 7;
         float scroll_y = 8;
+    }
+
+    message ChannelView {
+        uint64 channel_id = 1;
+        Editor editor = 2;
     }
 }
 
@@ -1143,7 +1187,6 @@ enum GitStatus {
     Modified = 1;
     Conflict = 2;
 }
-
 
 message BufferState {
     uint64 id = 1;

@@ -2,18 +2,18 @@ use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
     ViewContext,
 };
 use serde_json::json;
 
-pub struct Expanded<V: View> {
+pub struct Expanded<V> {
     child: AnyElement<V>,
     full_width: bool,
     full_height: bool,
 }
 
-impl<V: View> Expanded<V> {
+impl<V: 'static> Expanded<V> {
     pub fn new(child: impl Element<V>) -> Self {
         Self {
             child: child.into_any(),
@@ -35,7 +35,7 @@ impl<V: View> Expanded<V> {
     }
 }
 
-impl<V: View> Element<V> for Expanded<V> {
+impl<V: 'static> Element<V> for Expanded<V> {
     type LayoutState = ();
     type PaintState = ();
 

@@ -1,3 +1,6 @@
+mod buffer_tests;
+mod db_tests;
+
 use super::*;
 use gpui::executor::Background;
 use parking_lot::Mutex;
@@ -89,6 +92,26 @@ impl TestDb {
     pub fn db(&self) -> &Arc<Database> {
         self.db.as_ref().unwrap()
     }
+}
+
+#[macro_export]
+macro_rules! test_both_dbs {
+    ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
+        #[gpui::test]
+        async fn $postgres_test_name() {
+            let test_db = crate::db::TestDb::postgres(
+                gpui::executor::Deterministic::new(0).build_background(),
+            );
+            $test_name(test_db.db()).await;
+        }
+
+        #[gpui::test]
+        async fn $sqlite_test_name() {
+            let test_db =
+                crate::db::TestDb::sqlite(gpui::executor::Deterministic::new(0).build_background());
+            $test_name(test_db.db()).await;
+        }
+    };
 }
 
 impl Drop for TestDb {

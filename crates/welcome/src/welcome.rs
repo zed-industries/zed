@@ -232,7 +232,7 @@ impl Item for WelcomePage {
         Some("Welcome to Zed!".into())
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         style: &theme::Tab,

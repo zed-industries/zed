@@ -15,35 +15,75 @@ use serde_json::json;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 #[repr(transparent)]
-pub struct Color(#[schemars(with = "String")] ColorU);
+pub struct Color(#[schemars(with = "String")] pub ColorU);
+
+pub fn color(rgba: u32) -> Color {
+    Color::from_u32(rgba)
+}
+
+pub fn rgb(r: f32, g: f32, b: f32) -> Color {
+    Color(ColorF::new(r, g, b, 1.).to_u8())
+}
+
+pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
+    Color(ColorF::new(r, g, b, a).to_u8())
+}
+
+pub fn transparent_black() -> Color {
+    Color(ColorU::transparent_black())
+}
+
+pub fn black() -> Color {
+    Color(ColorU::black())
+}
+
+pub fn white() -> Color {
+    Color(ColorU::white())
+}
+
+pub fn red() -> Color {
+    color(0xff0000ff)
+}
+
+pub fn green() -> Color {
+    color(0x00ff00ff)
+}
+
+pub fn blue() -> Color {
+    color(0x0000ffff)
+}
+
+pub fn yellow() -> Color {
+    color(0xffff00ff)
+}
 
 impl Color {
     pub fn transparent_black() -> Self {
-        Self(ColorU::transparent_black())
+        transparent_black()
     }
 
     pub fn black() -> Self {
-        Self(ColorU::black())
+        black()
     }
 
     pub fn white() -> Self {
-        Self(ColorU::white())
+        white()
     }
 
     pub fn red() -> Self {
-        Self(ColorU::from_u32(0xff0000ff))
+        Color::from_u32(0xff0000ff)
     }
 
     pub fn green() -> Self {
-        Self(ColorU::from_u32(0x00ff00ff))
+        Color::from_u32(0x00ff00ff)
     }
 
     pub fn blue() -> Self {
-        Self(ColorU::from_u32(0x0000ffff))
+        Color::from_u32(0x0000ffff)
     }
 
     pub fn yellow() -> Self {
-        Self(ColorU::from_u32(0xffff00ff))
+        Color::from_u32(0xffff00ff)
     }
 
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
@@ -98,6 +138,12 @@ impl<'de> Deserialize<'de> for Color {
             Unexpected::Str(literal.as_ref()),
             &"#RRGGBB[AA]",
         ))
+    }
+}
+
+impl From<u32> for Color {
+    fn from(value: u32) -> Self {
+        Self(ColorU::from_u32(value))
     }
 }
 

@@ -903,15 +903,35 @@ impl Database {
                         ),
                 )
                 .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("not a participant in any room"))?;
+                .await?;
 
-            room_participant::Entity::update(room_participant::ActiveModel {
-                answering_connection_lost: ActiveValue::set(true),
-                ..participant.into_active_model()
-            })
-            .exec(&*tx)
-            .await?;
+            if let Some(participant) = participant {
+                room_participant::Entity::update(room_participant::ActiveModel {
+                    answering_connection_lost: ActiveValue::set(true),
+                    ..participant.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+            }
+
+            channel_buffer_collaborator::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(
+                            channel_buffer_collaborator::Column::ConnectionId
+                                .eq(connection.id as i32),
+                        )
+                        .add(
+                            channel_buffer_collaborator::Column::ConnectionServerId
+                                .eq(connection.owner_id as i32),
+                        ),
+                )
+                .set(channel_buffer_collaborator::ActiveModel {
+                    connection_lost: ActiveValue::set(true),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
 
             Ok(())
         })

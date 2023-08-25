@@ -11,12 +11,12 @@ use crate::{
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
     AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SceneBuilder, SizeConstraint, TypeTag, View, ViewContext,
+    SceneBuilder, SizeConstraint, TypeTag, ViewContext,
 };
 use serde_json::json;
 use std::ops::Range;
 
-pub struct MouseEventHandler<V: View> {
+pub struct MouseEventHandler<V: 'static> {
     child: AnyElement<V>,
     region_id: usize,
     cursor_style: Option<CursorStyle>,
@@ -31,7 +31,7 @@ pub struct MouseEventHandler<V: View> {
 
 /// Element which provides a render_child callback with a MouseState and paints a mouse
 /// region under (or above) it for easy mouse event handling.
-impl<V: View> MouseEventHandler<V> {
+impl<V: 'static> MouseEventHandler<V> {
     pub fn for_child<Tag: 'static>(child: impl Element<V>, region_id: usize) -> Self {
         Self {
             child: child.into_any(),
@@ -267,7 +267,7 @@ impl<V: View> MouseEventHandler<V> {
     }
 }
 
-impl<V: View> Element<V> for MouseEventHandler<V> {
+impl<V: 'static> Element<V> for MouseEventHandler<V> {
     type LayoutState = ();
     type PaintState = ();
 

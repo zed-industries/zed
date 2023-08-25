@@ -6384,7 +6384,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .update(|cx| {
             Editor::from_state_proto(
                 pane.clone(),
-                project.clone(),
+                workspace.clone(),
                 ViewId {
                     creator: Default::default(),
                     id: 0,
@@ -6479,7 +6479,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .update(|cx| {
             Editor::from_state_proto(
                 pane.clone(),
-                project.clone(),
+                workspace.clone(),
                 ViewId {
                     creator: Default::default(),
                     id: 0,

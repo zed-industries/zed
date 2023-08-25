@@ -62,6 +62,7 @@ struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
+    is_local: bool,
     range: Range<DisplayPoint>,
     active_rows: Range<u32>,
 }
@@ -73,6 +74,7 @@ impl SelectionLayout {
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
+        is_local: bool,
     ) -> Self {
         let point_selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
@@ -109,6 +111,7 @@ impl SelectionLayout {
             head,
             cursor_shape,
             is_newest,
+            is_local,
             range,
             active_rows,
         }
@@ -605,7 +608,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
 
@@ -760,10 +763,9 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let style = &self.style;
-        let local_replica_id = editor.replica_id(cx);
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
         let scroll_top = scroll_position.y() * layout.position_map.line_height;
@@ -852,15 +854,13 @@ impl EditorElement {
 
         for (replica_id, selections) in &layout.selections {
             let replica_id = *replica_id;
-            let selection_style = style.replica_selection_style(replica_id);
+            let selection_style = if let Some(replica_id) = replica_id {
+                style.replica_selection_style(replica_id)
+            } else {
+                &style.absent_selection
+            };
 
             for selection in selections {
-                if !selection.range.is_empty()
-                    && (replica_id == local_replica_id
-                        || Some(replica_id) == editor.leader_replica_id)
-                {
-                    invisible_display_ranges.push(selection.range.clone());
-                }
                 self.paint_highlighted_range(
                     scene,
                     selection.range.clone(),
@@ -874,7 +874,10 @@ impl EditorElement {
                     bounds,
                 );
 
-                if editor.show_local_cursors(cx) || replica_id != local_replica_id {
+                if selection.is_local && !selection.range.is_empty() {
+                    invisible_display_ranges.push(selection.range.clone());
+                }
+                if !selection.is_local || editor.show_local_cursors(cx) {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -1337,7 +1340,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut PaintContext<Editor>,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_left = scroll_position.x() * layout.position_map.em_width;
@@ -2124,7 +2127,7 @@ impl Element<Editor> for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections: Vec<(ReplicaId, Vec<SelectionLayout>)> = Vec::new();
+        let mut selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut fold_ranges = Vec::new();
         let is_singleton = editor.is_singleton(cx);
@@ -2155,8 +2158,14 @@ impl Element<Editor> for EditorElement {
             .buffer_snapshot
             .remote_selections_in_range(&(start_anchor..end_anchor))
         {
+            let replica_id = if let Some(mapping) = &editor.replica_id_mapping {
+                mapping.get(&replica_id).copied()
+            } else {
+                None
+            };
+
             // The local selections match the leader's selections.
-            if Some(replica_id) == editor.leader_replica_id {
+            if replica_id.is_some() && replica_id == editor.leader_replica_id {
                 continue;
             }
             remote_selections
@@ -2167,6 +2176,7 @@ impl Element<Editor> for EditorElement {
                     line_mode,
                     cursor_shape,
                     &snapshot.display_snapshot,
+                    false,
                     false,
                 ));
         }
@@ -2191,6 +2201,7 @@ impl Element<Editor> for EditorElement {
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     is_newest,
+                    true,
                 );
                 if is_newest {
                     newest_selection_head = Some(layout.head);
@@ -2206,11 +2217,18 @@ impl Element<Editor> for EditorElement {
             }
 
             // Render the local selections in the leader's color when following.
-            let local_replica_id = editor
-                .leader_replica_id
-                .unwrap_or_else(|| editor.replica_id(cx));
+            let local_replica_id = if let Some(leader_replica_id) = editor.leader_replica_id {
+                leader_replica_id
+            } else {
+                let replica_id = editor.replica_id(cx);
+                if let Some(mapping) = &editor.replica_id_mapping {
+                    mapping.get(&replica_id).copied().unwrap_or(replica_id)
+                } else {
+                    replica_id
+                }
+            };
 
-            selections.push((local_replica_id, layouts));
+            selections.push((Some(local_replica_id), layouts));
         }
 
         let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
@@ -2591,7 +2609,7 @@ pub struct LayoutState {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
-    selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     is_singleton: bool,

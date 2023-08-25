@@ -40,6 +40,7 @@ pub enum NeovimData {
     Put { state: String },
     Key(String),
     Get { state: String, mode: Option<Mode> },
+    ReadRegister { name: char, value: String },
 }
 
 pub struct NeovimConnection {
@@ -219,6 +220,36 @@ impl NeovimConnection {
             }),
             "operation does not match recorded script. re-record with --features=neovim"
         );
+    }
+
+    #[cfg(not(feature = "neovim"))]
+    pub async fn read_register(&mut self, register: char) -> String {
+        if let Some(NeovimData::Get { .. }) = self.data.front() {
+            self.data.pop_front();
+        };
+        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front() {
+            if name == register {
+                return value;
+            }
+        }
+
+        panic!("operation does not match recorded script. re-record with --features=neovim")
+    }
+
+    #[cfg(feature = "neovim")]
+    pub async fn read_register(&mut self, name: char) -> String {
+        let value = self
+            .nvim
+            .command_output(format!("echo getreg('{}')", name).as_str())
+            .await
+            .unwrap();
+
+        self.data.push_back(NeovimData::ReadRegister {
+            name,
+            value: value.clone(),
+        });
+
+        value
     }
 
     #[cfg(feature = "neovim")]

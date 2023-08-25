@@ -3,16 +3,15 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
-    ViewContext,
+    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
 };
 
-pub struct Hook<V: View> {
+pub struct Hook<V> {
     child: AnyElement<V>,
     after_layout: Option<Box<dyn FnMut(Vector2F, &mut ViewContext<V>)>>,
 }
 
-impl<V: View> Hook<V> {
+impl<V: 'static> Hook<V> {
     pub fn new(child: impl Element<V>) -> Self {
         Self {
             child: child.into_any(),
@@ -29,7 +28,7 @@ impl<V: View> Hook<V> {
     }
 }
 
-impl<V: View> Element<V> for Hook<V> {
+impl<V: 'static> Element<V> for Hook<V> {
     type LayoutState = ();
     type PaintState = ();
 

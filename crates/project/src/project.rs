@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, UserId, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -250,6 +250,7 @@ enum ProjectClientState {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -281,6 +282,7 @@ pub enum Event {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
     },
+    CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
 }
@@ -5180,7 +5182,7 @@ impl Project {
                                         snapshot.file().map(|file| file.path().as_ref()),
                                     ) {
                                         query
-                                            .search(snapshot.as_rope())
+                                            .search(&snapshot, None)
                                             .await
                                             .iter()
                                             .map(|range| {
@@ -5930,6 +5932,7 @@ impl Project {
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
             this.shared_buffers.remove(&collaborator.peer_id);
+            cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();
@@ -7756,6 +7759,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

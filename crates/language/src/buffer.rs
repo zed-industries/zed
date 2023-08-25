@@ -359,6 +359,14 @@ impl Buffer {
         )
     }
 
+    pub fn remote(remote_id: u64, replica_id: ReplicaId, base_text: String) -> Self {
+        Self::build(
+            TextBuffer::new(replica_id, remote_id, base_text),
+            None,
+            None,
+        )
+    }
+
     pub fn from_proto(
         replica_id: ReplicaId,
         message: proto::BufferState,
@@ -2192,13 +2200,16 @@ impl BufferSnapshot {
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
+
+        let language = self.language_at(start);
+        let kind = |c| char_kind(language, c);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(char_kind),
-            next_chars.peek().copied().map(char_kind),
+            prev_chars.peek().copied().map(kind),
+            next_chars.peek().copied().map(kind),
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2206,7 +2217,7 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -3003,14 +3014,18 @@ pub fn contiguous_ranges(
     })
 }
 
-pub fn char_kind(c: char) -> CharKind {
+pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
     if c.is_whitespace() {
-        CharKind::Whitespace
+        return CharKind::Whitespace;
     } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
+        return CharKind::Word;
     }
+    if let Some(language) = language {
+        if language.config.word_characters.contains(&c) {
+            return CharKind::Word;
+        }
+    }
+    CharKind::Punctuation
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines

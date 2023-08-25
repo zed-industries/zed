@@ -184,6 +184,7 @@ export default function editor(): any {
             theme.players[6],
             theme.players[7],
         ],
+        absent_selection: theme.players[7],
         autocomplete: {
             background: background(theme.middle),
             corner_radius: 8,
