@@ -60,13 +60,14 @@ export default function assistant(): any {
             padding: { left: 12 },
         },
         inline: {
+            margin: { top: 3, bottom: 3 },
             border: border(theme.lowest, "on", {
                 top: true,
                 bottom: true,
                 overlay: true,
             }),
             editor: {
-                text: text(theme.lowest, "mono", "on", { size: "sm" }),
+                text: text(theme.highest, "mono", "default", { size: "sm" }),
                 placeholder_text: text(theme.lowest, "sans", "on", "disabled"),
                 selection: theme.players[0],
             },
