@@ -679,7 +679,7 @@ fn new_update_task(
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
     cx.spawn(|editor, cx| async move {
-        let fetch_and_update_hints = |range| {
+        let fetch_and_update_hints = |invalidate, range| {
             fetch_and_update_hints(
                 editor.clone(),
                 multi_buffer_snapshot.clone(),
@@ -687,17 +687,16 @@ fn new_update_task(
                 Arc::clone(&visible_hints),
                 cached_excerpt_hints.as_ref().map(Arc::clone),
                 query,
+                invalidate,
                 range,
                 cx.clone(),
             )
         };
-        let visible_range_update_results = future::join_all(
-            query_ranges
-                .visible
-                .into_iter()
-                .map(|visible_range| fetch_and_update_hints(visible_range)),
-        )
-        .await;
+        let visible_range_update_results =
+            future::join_all(query_ranges.visible.into_iter().map(|visible_range| {
+                fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
+            }))
+            .await;
         for result in visible_range_update_results {
             if let Err(e) = result {
                 error!("visible range inlay hint update task failed: {e:#}");
@@ -715,7 +714,7 @@ fn new_update_task(
                 .before_visible
                 .into_iter()
                 .chain(query_ranges.after_visible.into_iter())
-                .map(|invisible_range| fetch_and_update_hints(invisible_range)),
+                .map(|invisible_range| fetch_and_update_hints(false, invisible_range)),
         )
         .await;
         for result in invisible_range_update_results {
@@ -733,6 +732,7 @@ async fn fetch_and_update_hints(
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     query: ExcerptQuery,
+    invalidate: bool,
     fetch_range: Range<language::Anchor>,
     mut cx: gpui::AsyncAppContext,
 ) -> anyhow::Result<()> {
@@ -761,7 +761,8 @@ async fn fetch_and_update_hints(
         .background()
         .spawn(async move {
             calculate_hint_updates(
-                query,
+                query.excerpt_id,
+                invalidate,
                 backround_fetch_range,
                 new_hints,
                 &background_task_buffer_snapshot,
@@ -788,7 +789,8 @@ async fn fetch_and_update_hints(
 }
 
 fn calculate_hint_updates(
-    query: ExcerptQuery,
+    excerpt_id: ExcerptId,
+    invalidate: bool,
     fetch_range: Range<language::Anchor>,
     new_excerpt_hints: Vec<InlayHint>,
     buffer_snapshot: &BufferSnapshot,
@@ -836,11 +838,11 @@ fn calculate_hint_updates(
 
     let mut remove_from_visible = Vec::new();
     let mut remove_from_cache = HashSet::default();
-    if query.invalidate.should_invalidate() {
+    if invalidate {
         remove_from_visible.extend(
             visible_hints
                 .iter()
-                .filter(|hint| hint.position.excerpt_id == query.excerpt_id)
+                .filter(|hint| hint.position.excerpt_id == excerpt_id)
                 .map(|inlay_hint| inlay_hint.id)
                 .filter(|hint_id| !excerpt_hints_to_persist.contains_key(hint_id)),
         );
@@ -863,7 +865,7 @@ fn calculate_hint_updates(
         None
     } else {
         Some(ExcerptHintsUpdate {
-            excerpt_id: query.excerpt_id,
+            excerpt_id,
             remove_from_visible,
             remove_from_cache,
             add_to_cache,
