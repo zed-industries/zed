@@ -1493,7 +1493,7 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
-        newest_selection_head: Option<DisplayPoint>,
+        newest_selection_head: DisplayPoint,
         is_singleton: bool,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
@@ -1508,7 +1508,7 @@ impl EditorElement {
         let mut line_number = String::new();
         let is_relative = settings::get::<EditorSettings>(cx).relative_line_numbers;
         let relative_to = if is_relative {
-            newest_selection_head.map(|head| head.row())
+            Some(newest_selection_head.row())
         } else {
             None
         };
@@ -2357,10 +2357,22 @@ impl Element<Editor> for EditorElement {
             })
             .collect();
 
+        let head_for_relative = newest_selection_head.unwrap_or_else(|| {
+            let newest = editor.selections.newest::<Point>(cx);
+            SelectionLayout::new(
+                newest,
+                editor.selections.line_mode,
+                editor.cursor_shape,
+                &snapshot.display_snapshot,
+                true,
+            )
+            .head
+        });
+
         let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
             start_row..end_row,
             &active_rows,
-            newest_selection_head.or_else(|| Some(editor.selections.newest_display(cx).head())),
+            head_for_relative,
             is_singleton,
             &snapshot,
             cx,
@@ -3130,14 +3142,21 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             element
-                .layout_line_numbers(0..6, &Default::default(), None, false, &snapshot, cx)
+                .layout_line_numbers(
+                    0..6,
+                    &Default::default(),
+                    DisplayPoint::new(0, 0),
+                    false,
+                    &snapshot,
+                    cx,
+                )
                 .0
         });
         assert_eq!(layouts.len(), 6);
 
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+            element.calculate_relative_line_numbers(&snapshot, &(0..6), 3)
         });
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
@@ -3150,7 +3169,7 @@ mod tests {
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+            element.calculate_relative_line_numbers(&snapshot, &(3..6), 1)
         });
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
@@ -3161,7 +3180,7 @@ mod tests {
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+            element.calculate_relative_line_numbers(&snapshot, &(0..3), 6)
         });
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
