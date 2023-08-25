@@ -1111,6 +1111,7 @@ message GetPrivateUserInfo {}
 message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
+    repeated string flags = 3;
 }
 
 // Entities

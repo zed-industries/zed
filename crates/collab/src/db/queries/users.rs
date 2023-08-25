@@ -240,4 +240,58 @@ impl Database {
         result.push('%');
         result
     }
+
+    #[cfg(debug_assertions)]
+    pub async fn create_user_flag(&self, flag: &str) -> Result<FlagId> {
+        self.transaction(|tx| async move {
+            let flag = feature_flag::Entity::insert(feature_flag::ActiveModel {
+                flag: ActiveValue::set(flag.to_string()),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?
+            .last_insert_id;
+
+            Ok(flag)
+        })
+        .await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn add_user_flag(&self, user: UserId, flag: FlagId) -> Result<()> {
+        self.transaction(|tx| async move {
+            user_feature::Entity::insert(user_feature::ActiveModel {
+                user_id: ActiveValue::set(user),
+                feature_id: ActiveValue::set(flag),
+            })
+            .exec(&*tx)
+            .await?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_user_flags(&self, user: UserId) -> Result<Vec<String>> {
+        self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryAs {
+                Flag,
+            }
+
+            let flags = user::Model {
+                id: user,
+                ..Default::default()
+            }
+            .find_linked(user::UserFlags)
+            .select_only()
+            .column(feature_flag::Column::Flag)
+            .into_values::<_, QueryAs>()
+            .all(&*tx)
+            .await?;
+
+            Ok(flags)
+        })
+        .await
+    }
 }
