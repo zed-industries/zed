@@ -4030,7 +4030,7 @@ struct UpdateIgnoreStatusJob {
     scan_queue: Sender<ScanJob>,
 }
 
-pub trait WorktreeHandle {
+pub trait WorktreeModelHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
@@ -4038,7 +4038,7 @@ pub trait WorktreeHandle {
     ) -> futures::future::LocalBoxFuture<'a, ()>;
 }
 
-impl WorktreeHandle for ModelHandle<Worktree> {
+impl WorktreeModelHandle for ModelHandle<Worktree> {
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
     // occurred before the worktree was constructed. These events can cause the worktree to perform
     // extra directory scans, and emit extra scan-state notifications.

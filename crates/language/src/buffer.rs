@@ -14,7 +14,7 @@ use crate::{
     CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
+pub use clock::ReplicaId;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
