@@ -344,7 +344,7 @@ impl AssistantPanel {
         let assist_id = inline_assistant.read(cx).id;
         match event {
             InlineAssistantEvent::Confirmed { prompt } => {
-                self.generate(assist_id, prompt, cx);
+                self.confirm_inline_assist(assist_id, prompt, cx);
             }
             InlineAssistantEvent::Canceled => {
                 self.complete_inline_assist(assist_id, true, cx);
@@ -398,7 +398,12 @@ impl AssistantPanel {
         }
     }
 
-    fn generate(&mut self, inline_assist_id: usize, user_prompt: &str, cx: &mut ViewContext<Self>) {
+    fn confirm_inline_assist(
+        &mut self,
+        inline_assist_id: usize,
+        user_prompt: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
         let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
             api_key
         } else {
@@ -473,26 +478,51 @@ impl AssistantPanel {
             .language_at(range.start)
             .map(|language| language.name());
         let language_name = language_name.as_deref().unwrap_or("");
+        let model = settings::get::<AssistantSettings>(cx)
+            .default_open_ai_model
+            .clone();
 
         let mut prompt = String::new();
         writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
-        writeln!(
-            prompt,
-            "You're currently working inside an editor on this code:"
-        )
-        .unwrap();
         match pending_assist.kind {
             InlineAssistKind::Refactor => {
+                writeln!(
+                    prompt,
+                    "You're currently working inside an editor on this code:"
+                )
+                .unwrap();
+                writeln!(prompt, "```{language_name}").unwrap();
+                for chunk in snapshot.text_for_range(Anchor::min()..Anchor::max()) {
+                    write!(prompt, "{chunk}").unwrap();
+                }
+                writeln!(prompt, "```").unwrap();
+
+                writeln!(
+                    prompt,
+                    "In particular, the user has selected the following code:"
+                )
+                .unwrap();
                 writeln!(prompt, "```{language_name}").unwrap();
                 writeln!(prompt, "{normalized_selected_text}").unwrap();
                 writeln!(prompt, "```").unwrap();
+                writeln!(prompt).unwrap();
                 writeln!(
                     prompt,
-                    "Modify the code given the user prompt: {user_prompt}"
+                    "Modify the selected code given the user prompt: {user_prompt}"
+                )
+                .unwrap();
+                writeln!(
+                    prompt,
+                    "You MUST reply only with the edited selected code, not the entire file."
                 )
                 .unwrap();
             }
             InlineAssistKind::Insert => {
+                writeln!(
+                    prompt,
+                    "You're currently working inside an editor on this code:"
+                )
+                .unwrap();
                 writeln!(prompt, "```{language_name}").unwrap();
                 for chunk in snapshot.text_for_range(Anchor::min()..range.start) {
                     write!(prompt, "{chunk}").unwrap();
@@ -517,11 +547,11 @@ impl AssistantPanel {
             }
         }
         writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
-        writeln!(prompt, "DO NOT wrap your response in Markdown blocks.").unwrap();
+        writeln!(prompt, "Always wrap your response in a Markdown codeblock.").unwrap();
         writeln!(prompt, "Never make remarks, always output code.").unwrap();
 
         let request = OpenAIRequest {
-            model: "gpt-4".into(),
+            model: model.full_name().into(),
             messages: vec![RequestMessage {
                 role: Role::User,
                 content: prompt,
@@ -563,23 +593,92 @@ impl AssistantPanel {
                         indentation_text = "";
                     };
 
-                    let mut new_text = indentation_text
-                        .repeat(indentation_len.saturating_sub(selection_start.column) as usize);
+                    let mut inside_first_line = true;
+                    let mut starts_with_fenced_code_block = None;
+                    let mut has_pending_newline = false;
+                    let mut new_text = String::new();
+
                     while let Some(message) = messages.next().await {
                         let mut message = message?;
-                        if let Some(choice) = message.choices.pop() {
+                        if let Some(mut choice) = message.choices.pop() {
+                            if has_pending_newline {
+                                has_pending_newline = false;
+                                choice
+                                    .delta
+                                    .content
+                                    .get_or_insert(String::new())
+                                    .insert(0, '\n');
+                            }
+
+                            // Buffer a trailing codeblock fence. Note that we don't stop
+                            // right away because this may be an inner fence that we need
+                            // to insert into the editor.
+                            if starts_with_fenced_code_block.is_some()
+                                && choice.delta.content.as_deref() == Some("\n```")
+                            {
+                                new_text.push_str("\n```");
+                                continue;
+                            }
+
+                            // If this was the last completion and we started with a codeblock
+                            // fence and we ended with another codeblock fence, then we can
+                            // stop right away. Otherwise, whatever text we buffered will be
+                            // processed normally.
+                            if choice.finish_reason.is_some()
+                                && starts_with_fenced_code_block.unwrap_or(false)
+                                && new_text == "\n```"
+                            {
+                                break;
+                            }
+
                             if let Some(text) = choice.delta.content {
+                                // Never push a newline if there's nothing after it. This is
+                                // useful to detect if the newline was pushed because of a
+                                // trailing codeblock fence.
+                                let text = if let Some(prefix) = text.strip_suffix('\n') {
+                                    has_pending_newline = true;
+                                    prefix
+                                } else {
+                                    text.as_str()
+                                };
+
+                                if text.is_empty() {
+                                    continue;
+                                }
+
                                 let mut lines = text.split('\n');
-                                if let Some(first_line) = lines.next() {
-                                    new_text.push_str(&first_line);
+                                if let Some(line) = lines.next() {
+                                    if starts_with_fenced_code_block.is_none() {
+                                        starts_with_fenced_code_block =
+                                            Some(line.starts_with("```"));
+                                    }
+
+                                    // Avoid pushing the first line if it's the start of a fenced code block.
+                                    if !inside_first_line || !starts_with_fenced_code_block.unwrap()
+                                    {
+                                        new_text.push_str(&line);
+                                    }
                                 }
 
                                 for line in lines {
-                                    new_text.push('\n');
-                                    new_text.push_str(
-                                        &indentation_text.repeat(indentation_len as usize),
-                                    );
+                                    if inside_first_line && starts_with_fenced_code_block.unwrap() {
+                                        // If we were inside the first line and that line was the
+                                        // start of a fenced code block, we just need to push the
+                                        // leading indentation of the original selection.
+                                        new_text.push_str(&indentation_text.repeat(
+                                            indentation_len.saturating_sub(selection_start.column)
+                                                as usize,
+                                        ));
+                                    } else {
+                                        // Otherwise, we need to push a newline and the base indentation.
+                                        new_text.push('\n');
+                                        new_text.push_str(
+                                            &indentation_text.repeat(indentation_len as usize),
+                                        );
+                                    }
+
                                     new_text.push_str(line);
+                                    inside_first_line = false;
                                 }
                             }
                         }
