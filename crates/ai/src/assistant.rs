@@ -271,7 +271,6 @@ impl AssistantPanel {
                 prompt_editor,
                 confirmed: false,
                 has_focus: false,
-                assist_kind,
             };
             cx.focus_self();
             assistant
@@ -2789,7 +2788,6 @@ struct InlineAssistant {
     id: usize,
     prompt_editor: ViewHandle<Editor>,
     confirmed: bool,
-    assist_kind: InlineAssistKind,
     has_focus: bool,
 }
 
