@@ -1923,47 +1923,52 @@ impl CollabPanel {
         channel_id: u64,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.channel_store.read(cx).is_user_admin(channel_id) {
-            self.context_menu_on_selected = position.is_none();
+        self.context_menu_on_selected = position.is_none();
 
-            self.context_menu.update(cx, |context_menu, cx| {
-                context_menu.set_position_mode(if self.context_menu_on_selected {
-                    OverlayPositionMode::Local
-                } else {
-                    OverlayPositionMode::Window
-                });
-
-                let expand_action_name = if self.is_channel_collapsed(channel_id) {
-                    "Expand Subchannels"
-                } else {
-                    "Collapse Subchannels"
-                };
-
-                context_menu.show(
-                    position.unwrap_or_default(),
-                    if self.context_menu_on_selected {
-                        gpui::elements::AnchorCorner::TopRight
-                    } else {
-                        gpui::elements::AnchorCorner::BottomLeft
-                    },
-                    vec![
-                        ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
-                        ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
-                        ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id }),
-                        ContextMenuItem::Separator,
-                        ContextMenuItem::action("Invite to Channel", InviteMembers { channel_id }),
-                        ContextMenuItem::Separator,
-                        ContextMenuItem::action("Rename", RenameChannel { channel_id }),
-                        ContextMenuItem::action("Manage", ManageMembers { channel_id }),
-                        ContextMenuItem::Separator,
-                        ContextMenuItem::action("Delete", RemoveChannel { channel_id }),
-                    ],
-                    cx,
-                );
+        self.context_menu.update(cx, |context_menu, cx| {
+            context_menu.set_position_mode(if self.context_menu_on_selected {
+                OverlayPositionMode::Local
+            } else {
+                OverlayPositionMode::Window
             });
 
-            cx.notify();
-        }
+            let expand_action_name = if self.is_channel_collapsed(channel_id) {
+                "Expand Subchannels"
+            } else {
+                "Collapse Subchannels"
+            };
+
+            let mut items = vec![
+                ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
+                ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id }),
+            ];
+
+            if self.channel_store.read(cx).is_user_admin(channel_id) {
+                items.extend([
+                    ContextMenuItem::Separator,
+                    ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
+                    ContextMenuItem::action("Rename", RenameChannel { channel_id }),
+                    ContextMenuItem::Separator,
+                    ContextMenuItem::action("Invite Members", InviteMembers { channel_id }),
+                    ContextMenuItem::action("Manage Members", ManageMembers { channel_id }),
+                    ContextMenuItem::Separator,
+                    ContextMenuItem::action("Delete", RemoveChannel { channel_id }),
+                ]);
+            }
+
+            context_menu.show(
+                position.unwrap_or_default(),
+                if self.context_menu_on_selected {
+                    gpui::elements::AnchorCorner::TopRight
+                } else {
+                    gpui::elements::AnchorCorner::BottomLeft
+                },
+                items,
+                cx,
+            );
+        });
+
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
