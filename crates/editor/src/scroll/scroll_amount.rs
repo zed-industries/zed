@@ -1,8 +1,5 @@
-use gpui::ViewContext;
-use serde::Deserialize;
-use util::iife;
-
 use crate::Editor;
+use serde::Deserialize;
 
 #[derive(Clone, PartialEq, Deserialize)]
 pub enum ScrollAmount {
@@ -13,25 +10,6 @@ pub enum ScrollAmount {
 }
 
 impl ScrollAmount {
-    pub fn move_context_menu_selection(
-        &self,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        iife!({
-            let context_menu = editor.context_menu.as_mut()?;
-
-            match self {
-                Self::Line(c) if *c > 0. => context_menu.select_next(cx),
-                Self::Line(_) => context_menu.select_prev(cx),
-                Self::Page(c) if *c > 0. => context_menu.select_last(cx),
-                Self::Page(_) => context_menu.select_first(cx),
-            }
-            .then_some(())
-        })
-        .is_some()
-    }
-
     pub fn lines(&self, editor: &mut Editor) -> f32 {
         match self {
             Self::Line(count) => *count,
