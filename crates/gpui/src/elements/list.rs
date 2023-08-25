@@ -5,16 +5,16 @@ use crate::{
     },
     json::json,
     AnyElement, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder, SizeConstraint,
-    View, ViewContext,
+    ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
-pub struct List<V: View> {
+pub struct List<V> {
     state: ListState<V>,
 }
 
-pub struct ListState<V: View>(Rc<RefCell<StateInner<V>>>);
+pub struct ListState<V>(Rc<RefCell<StateInner<V>>>);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Orientation {
@@ -22,7 +22,7 @@ pub enum Orientation {
     Bottom,
 }
 
-struct StateInner<V: View> {
+struct StateInner<V> {
     last_layout_width: Option<f32>,
     render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> AnyElement<V>>,
     rendered_range: Range<usize>,
@@ -40,13 +40,13 @@ pub struct ListOffset {
     pub offset_in_item: f32,
 }
 
-enum ListItem<V: View> {
+enum ListItem<V> {
     Unrendered,
     Rendered(Rc<RefCell<AnyElement<V>>>),
     Removed(f32),
 }
 
-impl<V: View> Clone for ListItem<V> {
+impl<V> Clone for ListItem<V> {
     fn clone(&self) -> Self {
         match self {
             Self::Unrendered => Self::Unrendered,
@@ -56,7 +56,7 @@ impl<V: View> Clone for ListItem<V> {
     }
 }
 
-impl<V: View> Debug for ListItem<V> {
+impl<V> Debug for ListItem<V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unrendered => write!(f, "Unrendered"),
@@ -86,13 +86,13 @@ struct UnrenderedCount(usize);
 #[derive(Clone, Debug, Default)]
 struct Height(f32);
 
-impl<V: View> List<V> {
+impl<V> List<V> {
     pub fn new(state: ListState<V>) -> Self {
         Self { state }
     }
 }
 
-impl<V: View> Element<V> for List<V> {
+impl<V: 'static> Element<V> for List<V> {
     type LayoutState = ListOffset;
     type PaintState = ();
 
@@ -347,7 +347,7 @@ impl<V: View> Element<V> for List<V> {
     }
 }
 
-impl<V: View> ListState<V> {
+impl<V: 'static> ListState<V> {
     pub fn new<D, F>(
         element_count: usize,
         orientation: Orientation,
@@ -440,13 +440,13 @@ impl<V: View> ListState<V> {
     }
 }
 
-impl<V: View> Clone for ListState<V> {
+impl<V> Clone for ListState<V> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<V: View> StateInner<V> {
+impl<V: 'static> StateInner<V> {
     fn render_item(
         &mut self,
         ix: usize,
@@ -560,7 +560,7 @@ impl<V: View> StateInner<V> {
     }
 }
 
-impl<V: View> ListItem<V> {
+impl<V> ListItem<V> {
     fn remove(&self) -> Self {
         match self {
             ListItem::Unrendered => ListItem::Unrendered,
@@ -570,7 +570,7 @@ impl<V: View> ListItem<V> {
     }
 }
 
-impl<V: View> sum_tree::Item for ListItem<V> {
+impl<V> sum_tree::Item for ListItem<V> {
     type Summary = ListItemSummary;
 
     fn summary(&self) -> Self::Summary {
@@ -944,7 +944,7 @@ mod tests {
         type Event = ();
     }
 
-    impl View for TestView {
+    impl crate::View for TestView {
         fn ui_name() -> &'static str {
             "TestView"
         }
@@ -968,7 +968,7 @@ mod tests {
         }
     }
 
-    impl<V: View> Element<V> for TestElement {
+    impl<V: 'static> Element<V> for TestElement {
         type LayoutState = ();
         type PaintState = ();
 

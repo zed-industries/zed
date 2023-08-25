@@ -1,18 +1,18 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
     ViewContext,
 };
 use json::ToJson;
 
 use serde_json::json;
 
-pub struct Align<V: View> {
+pub struct Align<V> {
     child: AnyElement<V>,
     alignment: Vector2F,
 }
 
-impl<V: View> Align<V> {
+impl<V> Align<V> {
     pub fn new(child: AnyElement<V>) -> Self {
         Self {
             child,
@@ -41,7 +41,7 @@ impl<V: View> Align<V> {
     }
 }
 
-impl<V: View> Element<V> for Align<V> {
+impl<V: 'static> Element<V> for Align<V> {
     type LayoutState = ();
     type PaintState = ();
 

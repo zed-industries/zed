@@ -373,6 +373,7 @@ impl View for SyntaxTreeView {
             font_size,
             font_properties: Default::default(),
             underline: Default::default(),
+            soft_wrap: false,
         };
 
         let line_height = cx.font_cache().line_height(font_size);
@@ -451,7 +452,7 @@ impl View for SyntaxTreeView {
 }
 
 impl Item for SyntaxTreeView {
-    fn tab_content<V: View>(
+    fn tab_content<V: 'static>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,

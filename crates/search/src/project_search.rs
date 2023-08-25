@@ -483,7 +483,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,

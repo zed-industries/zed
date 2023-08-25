@@ -3,7 +3,7 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 use crate::{
     json::{self, ToJson, Value},
     AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder,
-    SizeConstraint, Vector2FExt, View, ViewContext,
+    SizeConstraint, Vector2FExt, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -17,20 +17,22 @@ struct ScrollState {
     scroll_position: Cell<f32>,
 }
 
-pub struct Flex<V: View> {
+pub struct Flex<V> {
     axis: Axis,
     children: Vec<AnyElement<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
     child_alignment: f32,
+    spacing: f32,
 }
 
-impl<V: View> Flex<V> {
+impl<V: 'static> Flex<V> {
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
             children: Default::default(),
             scroll_state: None,
             child_alignment: -1.,
+            spacing: 0.,
         }
     }
 
@@ -48,6 +50,11 @@ impl<V: View> Flex<V> {
     /// flex column, children will be centered horizontally.
     pub fn align_children_center(mut self) -> Self {
         self.child_alignment = 0.;
+        self
+    }
+
+    pub fn with_spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing;
         self
     }
 
@@ -81,7 +88,8 @@ impl<V: View> Flex<V> {
         cx: &mut LayoutContext<V>,
     ) {
         let cross_axis = self.axis.invert();
-        for child in &mut self.children {
+        let last = self.children.len() - 1;
+        for (ix, child) in &mut self.children.iter_mut().enumerate() {
             if let Some(metadata) = child.metadata::<FlexParentData>() {
                 if let Some((flex, expanded)) = metadata.flex {
                     if expanded != layout_expanded {
@@ -93,6 +101,10 @@ impl<V: View> Flex<V> {
                     } else {
                         let space_per_flex = *remaining_space / *remaining_flex;
                         space_per_flex * flex
+                    } - if ix == 0 || ix == last {
+                        self.spacing / 2.
+                    } else {
+                        self.spacing
                     };
                     let child_min = if expanded { child_max } else { 0. };
                     let child_constraint = match self.axis {
@@ -115,13 +127,13 @@ impl<V: View> Flex<V> {
     }
 }
 
-impl<V: View> Extend<AnyElement<V>> for Flex<V> {
+impl<V> Extend<AnyElement<V>> for Flex<V> {
     fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
         self.children.extend(children);
     }
 }
 
-impl<V: View> Element<V> for Flex<V> {
+impl<V: 'static> Element<V> for Flex<V> {
     type LayoutState = f32;
     type PaintState = ();
 
@@ -137,7 +149,8 @@ impl<V: View> Element<V> for Flex<V> {
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
-        for child in &mut self.children {
+        let last = self.children.len().saturating_sub(1);
+        for (ix, child) in &mut self.children.iter_mut().enumerate() {
             let metadata = child.metadata::<FlexParentData>();
             contains_float |= metadata.map_or(false, |metadata| metadata.float);
 
@@ -155,7 +168,12 @@ impl<V: View> Element<V> for Flex<V> {
                     ),
                 };
                 let size = child.layout(child_constraint, view, cx);
-                fixed_space += size.along(self.axis);
+                fixed_space += size.along(self.axis)
+                    + if ix == 0 || ix == last {
+                        self.spacing / 2.
+                    } else {
+                        self.spacing
+                    };
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
             }
         }
@@ -315,7 +333,8 @@ impl<V: View> Element<V> for Flex<V> {
             }
         }
 
-        for child in &mut self.children {
+        let last = self.children.len().saturating_sub(1);
+        for (ix, child) in &mut self.children.iter_mut().enumerate() {
             if remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
                     if metadata.float {
@@ -353,9 +372,11 @@ impl<V: View> Element<V> for Flex<V> {
 
             child.paint(scene, aligned_child_origin, visible_bounds, view, cx);
 
+            let spacing = if ix == last { 0. } else { self.spacing };
+
             match self.axis {
-                Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
-                Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
+                Axis::Horizontal => child_origin += vec2f(child.size().x() + spacing, 0.0),
+                Axis::Vertical => child_origin += vec2f(0.0, child.size().y() + spacing),
             }
         }
 
@@ -401,12 +422,12 @@ struct FlexParentData {
     float: bool,
 }
 
-pub struct FlexItem<V: View> {
+pub struct FlexItem<V> {
     metadata: FlexParentData,
     child: AnyElement<V>,
 }
 
-impl<V: View> FlexItem<V> {
+impl<V: 'static> FlexItem<V> {
     pub fn new(child: impl Element<V>) -> Self {
         FlexItem {
             metadata: FlexParentData {
@@ -428,7 +449,7 @@ impl<V: View> FlexItem<V> {
     }
 }
 
-impl<V: View> Element<V> for FlexItem<V> {
+impl<V: 'static> Element<V> for FlexItem<V> {
     type LayoutState = ();
     type PaintState = ();
 

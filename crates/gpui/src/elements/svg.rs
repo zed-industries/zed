@@ -7,7 +7,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    scene, Element, LayoutContext, SceneBuilder, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde_derive::Deserialize;
@@ -27,7 +27,7 @@ impl Svg {
         }
     }
 
-    pub fn for_style<V: View>(style: SvgStyle) -> impl Element<V> {
+    pub fn for_style<V: 'static>(style: SvgStyle) -> impl Element<V> {
         Self::new(style.asset)
             .with_color(style.color)
             .constrained()
@@ -41,7 +41,7 @@ impl Svg {
     }
 }
 
-impl<V: View> Element<V> for Svg {
+impl<V: 'static> Element<V> for Svg {
     type LayoutState = Option<usvg::Tree>;
     type PaintState = ();
 

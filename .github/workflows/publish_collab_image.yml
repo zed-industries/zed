@@ -11,7 +11,7 @@ env:
 
 jobs:
   publish:
-    name: Publish collab server image 
+    name: Publish collab server image
     runs-on:
       - self-hosted
       - deploy
@@ -21,6 +21,9 @@ jobs:
 
       - name: Sign into DigitalOcean docker registry
         run: doctl registry login
+
+      - name: Prune Docker system
+        run: docker system prune
 
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -41,6 +44,6 @@ jobs:
 
       - name: Build docker image
         run: docker build . --tag registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
-    
+
       - name: Publish docker image
         run: docker push registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
