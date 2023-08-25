@@ -1,4 +1,3 @@
-
 use gpui::{
     actions,
     elements::*,
