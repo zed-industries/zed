@@ -1,23 +1,143 @@
-use gpui::elements::StyleableComponent;
+use gpui::{elements::SafeStylable, Action};
 
 use crate::{Interactive, Toggleable};
 
-use self::{action_button::ButtonStyle, svg::SvgStyle, toggle::Toggle};
+use self::{action_button::ButtonStyle, disclosure::Disclosable, svg::SvgStyle, toggle::Toggle};
 
-pub type ToggleIconButtonStyle = Toggleable<Interactive<ButtonStyle<SvgStyle>>>;
+pub type IconButtonStyle = Interactive<ButtonStyle<SvgStyle>>;
+pub type ToggleIconButtonStyle = Toggleable<IconButtonStyle>;
 
-pub trait ComponentExt<C: StyleableComponent> {
+pub trait ComponentExt<C: SafeStylable> {
     fn toggleable(self, active: bool) -> Toggle<C, ()>;
+    fn disclosable(self, disclosed: Option<bool>, action: Box<dyn Action>) -> Disclosable<C, ()>;
 }
 
-impl<C: StyleableComponent> ComponentExt<C> for C {
+impl<C: SafeStylable> ComponentExt<C> for C {
     fn toggleable(self, active: bool) -> Toggle<C, ()> {
         Toggle::new(self, active)
+    }
+
+    /// Some(True) => disclosed => content is visible
+    /// Some(false) => closed => content is hidden
+    /// None => No disclosure button, but reserve disclosure spacing
+    fn disclosable(self, disclosed: Option<bool>, action: Box<dyn Action>) -> Disclosable<C, ()> {
+        Disclosable::new(disclosed, self, action)
+    }
+}
+
+pub mod disclosure {
+
+    use gpui::{
+        elements::{Component, ContainerStyle, Empty, Flex, ParentElement, SafeStylable},
+        Action, Element,
+    };
+    use schemars::JsonSchema;
+    use serde_derive::Deserialize;
+
+    use super::{action_button::Button, svg::Svg, IconButtonStyle};
+
+    #[derive(Clone, Default, Deserialize, JsonSchema)]
+    pub struct DisclosureStyle<S> {
+        pub button: IconButtonStyle,
+        #[serde(flatten)]
+        pub container: ContainerStyle,
+        pub spacing: f32,
+        #[serde(flatten)]
+        content: S,
+    }
+
+    impl<S> DisclosureStyle<S> {
+        pub fn button_space(&self) -> f32 {
+            self.spacing + self.button.button_width.unwrap()
+        }
+    }
+
+    pub struct Disclosable<C, S> {
+        disclosed: Option<bool>,
+        action: Box<dyn Action>,
+        id: usize,
+        content: C,
+        style: S,
+    }
+
+    impl Disclosable<(), ()> {
+        pub fn new<C>(
+            disclosed: Option<bool>,
+            content: C,
+            action: Box<dyn Action>,
+        ) -> Disclosable<C, ()> {
+            Disclosable {
+                disclosed,
+                content,
+                action,
+                id: 0,
+                style: (),
+            }
+        }
+    }
+
+    impl<C> Disclosable<C, ()> {
+        pub fn with_id(mut self, id: usize) -> Disclosable<C, ()> {
+            self.id = id;
+            self
+        }
+    }
+
+    impl<C: SafeStylable> SafeStylable for Disclosable<C, ()> {
+        type Style = DisclosureStyle<C::Style>;
+
+        type Output = Disclosable<C, Self::Style>;
+
+        fn with_style(self, style: Self::Style) -> Self::Output {
+            Disclosable {
+                disclosed: self.disclosed,
+                action: self.action,
+                content: self.content,
+                id: self.id,
+                style,
+            }
+        }
+    }
+
+    impl<C: SafeStylable> Component for Disclosable<C, DisclosureStyle<C::Style>> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+            Flex::row()
+                .with_spacing(self.style.spacing)
+                .with_child(if let Some(disclosed) = self.disclosed {
+                    Button::dynamic_action(self.action)
+                        .with_id(self.id)
+                        .with_contents(Svg::new(if disclosed {
+                            "icons/file_icons/chevron_down.svg"
+                        } else {
+                            "icons/file_icons/chevron_right.svg"
+                        }))
+                        .with_style(self.style.button)
+                        .element()
+                        .into_any()
+                } else {
+                    Empty::new()
+                        .into_any()
+                        .constrained()
+                        // TODO: Why is this optional at all?
+                        .with_width(self.style.button.button_width.unwrap())
+                        .into_any()
+                })
+                .with_child(
+                    self.content
+                        .with_style(self.style.content)
+                        .render(cx)
+                        .flex(1., true),
+                )
+                .align_children_center()
+                .contained()
+                .with_style(self.style.container)
+                .into_any()
+        }
     }
 }
 
 pub mod toggle {
-    use gpui::elements::{GeneralComponent, StyleableComponent};
+    use gpui::elements::{Component, SafeStylable};
 
     use crate::Toggleable;
 
@@ -27,7 +147,7 @@ pub mod toggle {
         component: C,
     }
 
-    impl<C: StyleableComponent> Toggle<C, ()> {
+    impl<C: SafeStylable> Toggle<C, ()> {
         pub fn new(component: C, active: bool) -> Self {
             Toggle {
                 active,
@@ -37,7 +157,7 @@ pub mod toggle {
         }
     }
 
-    impl<C: StyleableComponent> StyleableComponent for Toggle<C, ()> {
+    impl<C: SafeStylable> SafeStylable for Toggle<C, ()> {
         type Style = Toggleable<C::Style>;
 
         type Output = Toggle<C, Self::Style>;
@@ -51,15 +171,11 @@ pub mod toggle {
         }
     }
 
-    impl<C: StyleableComponent> GeneralComponent for Toggle<C, Toggleable<C::Style>> {
-        fn render<V: gpui::View>(
-            self,
-            v: &mut V,
-            cx: &mut gpui::ViewContext<V>,
-        ) -> gpui::AnyElement<V> {
+    impl<C: SafeStylable> Component for Toggle<C, Toggleable<C::Style>> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             self.component
                 .with_style(self.style.in_state(self.active).clone())
-                .render(v, cx)
+                .render(cx)
         }
     }
 }
@@ -68,96 +184,103 @@ pub mod action_button {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{
-            ContainerStyle, GeneralComponent, MouseEventHandler, StyleableComponent, TooltipStyle,
-        },
+        elements::{Component, ContainerStyle, MouseEventHandler, SafeStylable, TooltipStyle},
         platform::{CursorStyle, MouseButton},
-        Action, Element, TypeTag, View,
+        Action, Element, TypeTag,
     };
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
 
     use crate::Interactive;
 
-    pub struct ActionButton<C, S> {
+    #[derive(Clone, Deserialize, Default, JsonSchema)]
+    pub struct ButtonStyle<C> {
+        #[serde(flatten)]
+        pub container: ContainerStyle,
+        // TODO: These are incorrect for the intended usage of the buttons.
+        // The size should be constant, but putting them here duplicates them
+        // across the states the buttons can be in
+        pub button_width: Option<f32>,
+        pub button_height: Option<f32>,
+        #[serde(flatten)]
+        contents: C,
+    }
+
+    pub struct Button<C, S> {
         action: Box<dyn Action>,
-        tooltip: Cow<'static, str>,
-        tooltip_style: TooltipStyle,
+        tooltip: Option<(Cow<'static, str>, TooltipStyle)>,
         tag: TypeTag,
+        id: usize,
         contents: C,
         style: Interactive<S>,
     }
 
-    #[derive(Clone, Deserialize, Default, JsonSchema)]
-    pub struct ButtonStyle<C> {
-        #[serde(flatten)]
-        container: ContainerStyle,
-        button_width: Option<f32>,
-        button_height: Option<f32>,
-        #[serde(flatten)]
-        contents: C,
-    }
-
-    impl ActionButton<(), ()> {
-        pub fn new_dynamic(
-            action: Box<dyn Action>,
-            tooltip: impl Into<Cow<'static, str>>,
-            tooltip_style: TooltipStyle,
-        ) -> Self {
+    impl Button<(), ()> {
+        pub fn dynamic_action(action: Box<dyn Action>) -> Button<(), ()> {
             Self {
                 contents: (),
                 tag: action.type_tag(),
-                style: Interactive::new_blank(),
-                tooltip: tooltip.into(),
-                tooltip_style,
                 action,
+                style: Interactive::new_blank(),
+                tooltip: None,
+                id: 0,
             }
         }
 
-        pub fn new<A: Action + Clone>(
-            action: A,
+        pub fn action<A: Action + Clone>(action: A) -> Self {
+            Self::dynamic_action(Box::new(action))
+        }
+
+        pub fn with_tooltip(
+            mut self,
             tooltip: impl Into<Cow<'static, str>>,
             tooltip_style: TooltipStyle,
         ) -> Self {
-            Self::new_dynamic(Box::new(action), tooltip, tooltip_style)
+            self.tooltip = Some((tooltip.into(), tooltip_style));
+            self
         }
 
-        pub fn with_contents<C: StyleableComponent>(self, contents: C) -> ActionButton<C, ()> {
-            ActionButton {
+        pub fn with_id(mut self, id: usize) -> Self {
+            self.id = id;
+            self
+        }
+
+        pub fn with_contents<C: SafeStylable>(self, contents: C) -> Button<C, ()> {
+            Button {
                 action: self.action,
                 tag: self.tag,
                 style: self.style,
                 tooltip: self.tooltip,
-                tooltip_style: self.tooltip_style,
+                id: self.id,
                 contents,
             }
         }
     }
 
-    impl<C: StyleableComponent> StyleableComponent for ActionButton<C, ()> {
+    impl<C: SafeStylable> SafeStylable for Button<C, ()> {
         type Style = Interactive<ButtonStyle<C::Style>>;
-        type Output = ActionButton<C, ButtonStyle<C::Style>>;
+        type Output = Button<C, ButtonStyle<C::Style>>;
 
         fn with_style(self, style: Self::Style) -> Self::Output {
-            ActionButton {
+            Button {
                 action: self.action,
                 tag: self.tag,
                 contents: self.contents,
                 tooltip: self.tooltip,
-                tooltip_style: self.tooltip_style,
+                id: self.id,
                 style,
             }
         }
     }
 
-    impl<C: StyleableComponent> GeneralComponent for ActionButton<C, ButtonStyle<C::Style>> {
-        fn render<V: View>(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
-            MouseEventHandler::new_dynamic(self.tag, 0, cx, |state, cx| {
+    impl<C: SafeStylable> Component for Button<C, ButtonStyle<C::Style>> {
+        fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+            let mut button = MouseEventHandler::new_dynamic(self.tag, self.id, cx, |state, cx| {
                 let style = self.style.style_for(state);
                 let mut contents = self
                     .contents
                     .with_style(style.contents.to_owned())
-                    .render(v, cx)
+                    .render(cx)
                     .contained()
                     .with_style(style.container)
                     .constrained();
@@ -185,15 +308,15 @@ pub mod action_button {
                 }
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .with_dynamic_tooltip(
-                self.tag,
-                0,
-                self.tooltip,
-                Some(self.action),
-                self.tooltip_style,
-                cx,
-            )
-            .into_any()
+            .into_any();
+
+            if let Some((tooltip, style)) = self.tooltip {
+                button = button
+                    .with_dynamic_tooltip(self.tag, 0, tooltip, Some(self.action), style, cx)
+                    .into_any()
+            }
+
+            button
         }
     }
 }
@@ -202,7 +325,7 @@ pub mod svg {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{GeneralComponent, StyleableComponent},
+        elements::{Component, Empty, SafeStylable},
         Element,
     };
     use schemars::JsonSchema;
@@ -225,6 +348,7 @@ pub mod svg {
             pub enum IconSize {
                 IconSize { icon_size: f32 },
                 Dimensions { width: f32, height: f32 },
+                IconDimensions { icon_width: f32, icon_height: f32 },
             }
 
             #[derive(Deserialize)]
@@ -248,6 +372,14 @@ pub mod svg {
                     icon_height: height,
                     color,
                 },
+                IconSize::IconDimensions {
+                    icon_width,
+                    icon_height,
+                } => SvgStyle {
+                    icon_width,
+                    icon_height,
+                    color,
+                },
             };
 
             Ok(result)
@@ -255,20 +387,27 @@ pub mod svg {
     }
 
     pub struct Svg<S> {
-        path: Cow<'static, str>,
+        path: Option<Cow<'static, str>>,
         style: S,
     }
 
     impl Svg<()> {
         pub fn new(path: impl Into<Cow<'static, str>>) -> Self {
             Self {
-                path: path.into(),
+                path: Some(path.into()),
+                style: (),
+            }
+        }
+
+        pub fn optional(path: Option<impl Into<Cow<'static, str>>>) -> Self {
+            Self {
+                path: path.map(Into::into),
                 style: (),
             }
         }
     }
 
-    impl StyleableComponent for Svg<()> {
+    impl SafeStylable for Svg<()> {
         type Style = SvgStyle;
 
         type Output = Svg<SvgStyle>;
@@ -281,18 +420,19 @@ pub mod svg {
         }
     }
 
-    impl GeneralComponent for Svg<SvgStyle> {
-        fn render<V: gpui::View>(
-            self,
-            _: &mut V,
-            _: &mut gpui::ViewContext<V>,
-        ) -> gpui::AnyElement<V> {
-            gpui::elements::Svg::new(self.path)
-                .with_color(self.style.color)
-                .constrained()
-                .with_width(self.style.icon_width)
-                .with_height(self.style.icon_height)
-                .into_any()
+    impl Component for Svg<SvgStyle> {
+        fn render<V: 'static>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+            if let Some(path) = self.path {
+                gpui::elements::Svg::new(path)
+                    .with_color(self.style.color)
+                    .constrained()
+            } else {
+                Empty::new().constrained()
+            }
+            .constrained()
+            .with_width(self.style.icon_width)
+            .with_height(self.style.icon_height)
+            .into_any()
         }
     }
 }
@@ -301,7 +441,8 @@ pub mod label {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{GeneralComponent, LabelStyle, StyleableComponent},
+        elements::{Component, LabelStyle, SafeStylable},
+        fonts::TextStyle,
         Element,
     };
 
@@ -319,25 +460,21 @@ pub mod label {
         }
     }
 
-    impl StyleableComponent for Label<()> {
-        type Style = LabelStyle;
+    impl SafeStylable for Label<()> {
+        type Style = TextStyle;
 
         type Output = Label<LabelStyle>;
 
         fn with_style(self, style: Self::Style) -> Self::Output {
             Label {
                 text: self.text,
-                style,
+                style: style.into(),
             }
         }
     }
 
-    impl GeneralComponent for Label<LabelStyle> {
-        fn render<V: gpui::View>(
-            self,
-            _: &mut V,
-            _: &mut gpui::ViewContext<V>,
-        ) -> gpui::AnyElement<V> {
+    impl Component for Label<LabelStyle> {
+        fn render<V: 'static>(self, _: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             gpui::elements::Label::new(self.text, self.style).into_any()
         }
     }

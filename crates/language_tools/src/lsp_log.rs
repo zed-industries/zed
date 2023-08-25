@@ -450,7 +450,7 @@ impl View for LspLogView {
 }
 
 impl Item for LspLogView {
-    fn tab_content<V: View>(
+    fn tab_content<V: 'static>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,
@@ -549,7 +549,9 @@ impl View for LspLogToolbarItemView {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx).clone();
-        let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
+        let Some(log_view) = self.log_view.as_ref() else {
+            return Empty::new().into_any();
+        };
         let log_view = log_view.read(cx);
         let menu_rows = log_view.menu_items(cx).unwrap_or_default();
 

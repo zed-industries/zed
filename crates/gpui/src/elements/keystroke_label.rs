@@ -31,7 +31,7 @@ impl KeystrokeLabel {
     }
 }
 
-impl<V: View> Element<V> for KeystrokeLabel {
+impl<V: 'static> Element<V> for KeystrokeLabel {
     type LayoutState = AnyElement<V>;
     type PaintState = ();
 

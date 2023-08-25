@@ -18,6 +18,7 @@ gpui = { path = "../gpui" }
 gpui_platform = {path = "../gpui_platform", optional = true}
 util = { path = "../util" }
 rpc = { path = "../rpc" }
+text = { path = "../text" }
 settings = { path = "../settings" }
 staff_mode = { path = "../staff_mode" }
 sum_tree = { path = "../sum_tree" }

@@ -1,7 +1,8 @@
 #[cfg(test)]
-mod db_tests;
+pub mod tests;
+
 #[cfg(test)]
-pub mod test_db;
+pub use tests::TestDb;
 
 mod ids;
 mod queries;
@@ -52,6 +53,8 @@ pub struct Database {
     runtime: Option<tokio::runtime::Runtime>,
 }
 
+// The `Database` type has so many methods that its impl blocks are split into
+// separate files in the `queries` folder.
 impl Database {
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
         Ok(Self {
@@ -246,7 +249,9 @@ impl Database {
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
         let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!("couldn't complete transaction because it's still in use"))?;
+            return Err(anyhow!(
+                "couldn't complete transaction because it's still in use"
+            ))?;
         };
 
         Ok((tx, result))

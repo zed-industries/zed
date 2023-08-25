@@ -11,14 +11,14 @@ mod buffer_tests;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     channel::oneshot,
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
 use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
-use highlight_map::HighlightMap;
+pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
@@ -344,6 +344,8 @@ pub struct LanguageConfig {
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
+    #[serde(default)]
+    pub word_characters: HashSet<char>,
 }
 
 #[derive(Debug, Default)]
@@ -411,6 +413,7 @@ impl Default for LanguageConfig {
             block_comment: Default::default(),
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
+            word_characters: Default::default(),
         }
     }
 }

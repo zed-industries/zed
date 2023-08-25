@@ -1,0 +1,26 @@
+[package]
+name = "playground"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "playground"
+path = "src/playground.rs"
+
+[dependencies]
+anyhow.workspace = true
+derive_more.workspace = true
+gpui = { path = ".." }
+log.workspace = true
+playground_macros = { path = "../playground_macros" }
+parking_lot.workspace = true
+refineable.workspace = true
+serde.workspace = true
+simplelog = "0.9"
+smallvec.workspace = true
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "dab541d6104d58e2e10ce90c4a1dad0b703160cd", features = ["flexbox"] }
+util = { path = "../../util" }
+
+[dev-dependencies]
+gpui = { path = "..", features = ["test-support"] }

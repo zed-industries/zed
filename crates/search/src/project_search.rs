@@ -482,7 +482,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
@@ -640,6 +640,7 @@ impl ProjectSearchView {
             self.search_options = SearchOptions::none();
 
             let project = self.model.read(cx).project.clone();
+
             let index_task = semantic_index.update(cx, |semantic_index, cx| {
                 semantic_index.index_project(project, cx)
             });
@@ -884,7 +885,9 @@ impl ProjectSearchView {
         if !dir_entry.is_dir() {
             return;
         }
-        let Some(filter_str) = dir_entry.path.to_str() else { return; };
+        let Some(filter_str) = dir_entry.path.to_str() else {
+            return;
+        };
 
         let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
@@ -893,6 +896,7 @@ impl ProjectSearchView {
             search
                 .included_files_editor
                 .update(cx, |editor, cx| editor.set_text(filter_str, cx));
+            search.filters_enabled = true;
             search.focus_query_editor(cx)
         });
     }
@@ -1634,6 +1638,12 @@ impl ToolbarItemView for ProjectSearchBar {
         self.subscription = None;
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
+            search.update(cx, |search, cx| {
+                if search.current_mode == SearchMode::Semantic {
+                    search.index_project(cx);
+                }
+            });
+
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {

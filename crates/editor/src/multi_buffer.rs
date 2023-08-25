@@ -1346,10 +1346,7 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool
-    where
-        T: ToOffset,
-    {
+    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -1360,7 +1357,9 @@ impl MultiBuffer {
             return false;
         }
 
-        if char.is_alphanumeric() || char == '_' {
+        let language = self.language_at(position.clone(), cx);
+
+        if char_kind(language.as_ref(), char) == CharKind::Word {
             return true;
         }
 
@@ -1865,13 +1864,16 @@ impl MultiBufferSnapshot {
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
+
+        let language = self.language_at(start);
+        let kind = |c| char_kind(language, c);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(char_kind),
-            next_chars.peek().copied().map(char_kind),
+            prev_chars.peek().copied().map(kind),
+            next_chars.peek().copied().map(kind),
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -1879,7 +1881,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+            if Some(kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -2754,7 +2756,9 @@ impl MultiBufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        let Some(enclosing_bracket_ranges) = self.enclosing_bracket_ranges(range.clone()) else { return None; };
+        let Some(enclosing_bracket_ranges) = self.enclosing_bracket_ranges(range.clone()) else {
+            return None;
+        };
 
         for (open, close) in enclosing_bracket_ranges {
             let len = close.end - open.start;

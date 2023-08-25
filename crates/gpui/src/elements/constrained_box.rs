@@ -5,21 +5,21 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, View,
+    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
     ViewContext,
 };
 
-pub struct ConstrainedBox<V: View> {
+pub struct ConstrainedBox<V> {
     child: AnyElement<V>,
     constraint: Constraint<V>,
 }
 
-pub enum Constraint<V: View> {
+pub enum Constraint<V> {
     Static(SizeConstraint),
     Dynamic(Box<dyn FnMut(SizeConstraint, &mut V, &mut LayoutContext<V>) -> SizeConstraint>),
 }
 
-impl<V: View> ToJson for Constraint<V> {
+impl<V> ToJson for Constraint<V> {
     fn to_json(&self) -> serde_json::Value {
         match self {
             Constraint::Static(constraint) => constraint.to_json(),
@@ -28,7 +28,7 @@ impl<V: View> ToJson for Constraint<V> {
     }
 }
 
-impl<V: View> ConstrainedBox<V> {
+impl<V: 'static> ConstrainedBox<V> {
     pub fn new(child: impl Element<V>) -> Self {
         Self {
             child: child.into_any(),
@@ -132,7 +132,7 @@ impl<V: View> ConstrainedBox<V> {
     }
 }
 
-impl<V: View> Element<V> for ConstrainedBox<V> {
+impl<V: 'static> Element<V> for ConstrainedBox<V> {
     type LayoutState = ();
     type PaintState = ();
 

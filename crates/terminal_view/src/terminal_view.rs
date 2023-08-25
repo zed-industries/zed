@@ -33,7 +33,8 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, MaybeNavigationTarget, Terminal, TerminalBlink, WorkingDirectory,
+    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    Event, MaybeNavigationTarget, Terminal,
 };
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -43,8 +44,6 @@ use workspace::{
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
-
-pub use terminal::TerminalSettings;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -661,7 +660,7 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,

@@ -207,6 +207,7 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     }
 }
 
+// This behavior is currently copied in the collab database, for snapshotting channel notes
 pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operation> {
     Ok(
         match message

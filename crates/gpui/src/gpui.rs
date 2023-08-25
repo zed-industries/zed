@@ -25,7 +25,10 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
-pub use window::{Axis, RectFExt, SizeConstraint, Vector2FExt, WindowContext};
+pub use window::{
+    Axis, EngineLayout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt,
+    WindowContext,
+};
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;

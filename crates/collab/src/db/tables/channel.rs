@@ -15,8 +15,12 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum Relation {
     #[sea_orm(has_one = "super::room::Entity")]
     Room,
+    #[sea_orm(has_one = "super::buffer::Entity")]
+    Buffer,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     Member,
+    #[sea_orm(has_many = "super::channel_buffer_collaborator::Entity")]
+    BufferCollaborators,
 }
 
 impl Related<super::channel_member::Entity> for Entity {
@@ -28,5 +32,17 @@ impl Related<super::channel_member::Entity> for Entity {
 impl Related<super::room::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Room.def()
+    }
+}
+
+impl Related<super::buffer::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Buffer.def()
+    }
+}
+
+impl Related<super::channel_buffer_collaborator::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::BufferCollaborators.def()
     }
 }

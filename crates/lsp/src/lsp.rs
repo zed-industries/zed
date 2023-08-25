@@ -77,7 +77,7 @@ pub enum Subscription {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Request<'a, T> {
+pub struct Request<'a, T> {
     jsonrpc: &'static str,
     id: usize,
     method: &'a str,

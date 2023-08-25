@@ -27,6 +27,7 @@ auto_update = { path = "../auto_update" }
 db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
+channel = { path = "../channel" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
@@ -35,6 +36,7 @@ feedback = { path = "../feedback" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 gpui_platform = {path = "../gpui_platform", optional = true}
+language = { path = "../language" }
 menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }

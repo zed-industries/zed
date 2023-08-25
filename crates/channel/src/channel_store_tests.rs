@@ -1,4 +1,7 @@
 use super::*;
+use client::{Client, UserStore};
+use gpui::{AppContext, ModelHandle};
+use rpc::proto;
 use util::http::FakeHttpClient;
 
 #[gpui::test]

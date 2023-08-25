@@ -49,13 +49,18 @@ impl FollowableItem for Editor {
 
     fn from_state_proto(
         pane: ViewHandle<workspace::Pane>,
-        project: ModelHandle<Project>,
+        workspace: ViewHandle<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
-        let Some(proto::view::Variant::Editor(_)) = state else { return None };
-        let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
+        let project = workspace.read(cx).project().to_owned();
+        let Some(proto::view::Variant::Editor(_)) = state else {
+            return None;
+        };
+        let Some(proto::view::Variant::Editor(state)) = state.take() else {
+            unreachable!()
+        };
 
         let client = project.read(cx).client();
         let replica_id = project.read(cx).replica_id();
@@ -340,10 +345,16 @@ async fn update_editor_from_message(
 
             let mut insertions = message.inserted_excerpts.into_iter().peekable();
             while let Some(insertion) = insertions.next() {
-                let Some(excerpt) = insertion.excerpt else { continue };
-                let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
+                let Some(excerpt) = insertion.excerpt else {
+                    continue;
+                };
+                let Some(previous_excerpt_id) = insertion.previous_excerpt_id else {
+                    continue;
+                };
                 let buffer_id = excerpt.buffer_id;
-                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+                    continue;
+                };
 
                 let adjacent_excerpts = iter::from_fn(|| {
                     let insertion = insertions.peek()?;
@@ -561,7 +572,7 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
@@ -614,7 +625,7 @@ impl Item for Editor {
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
         hide_link_definition(self, cx);
-        self.link_go_to_definition_state.last_mouse_location = None;
+        self.link_go_to_definition_state.last_trigger_point = None;
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -753,7 +764,7 @@ impl Item for Editor {
         Some(Box::new(handle.clone()))
     }
 
-    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
         self.pixel_position_of_newest_cursor
     }
 
@@ -1028,7 +1039,7 @@ impl SearchableItem for Editor {
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
                 ranges.extend(
                     query
-                        .search(excerpt_buffer.as_rope())
+                        .search(excerpt_buffer, None)
                         .await
                         .into_iter()
                         .map(|range| {
@@ -1038,17 +1049,22 @@ impl SearchableItem for Editor {
             } else {
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
                     let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                    let rope = excerpt.buffer.as_rope().slice(excerpt_range.clone());
-                    ranges.extend(query.search(&rope).await.into_iter().map(|range| {
-                        let start = excerpt
-                            .buffer
-                            .anchor_after(excerpt_range.start + range.start);
-                        let end = excerpt
-                            .buffer
-                            .anchor_before(excerpt_range.start + range.end);
-                        buffer.anchor_in_excerpt(excerpt.id.clone(), start)
-                            ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
-                    }));
+                    ranges.extend(
+                        query
+                            .search(&excerpt.buffer, Some(excerpt_range.clone()))
+                            .await
+                            .into_iter()
+                            .map(|range| {
+                                let start = excerpt
+                                    .buffer
+                                    .anchor_after(excerpt_range.start + range.start);
+                                let end = excerpt
+                                    .buffer
+                                    .anchor_before(excerpt_range.start + range.end);
+                                buffer.anchor_in_excerpt(excerpt.id.clone(), start)
+                                    ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
+                            }),
+                    );
                 }
             }
             ranges

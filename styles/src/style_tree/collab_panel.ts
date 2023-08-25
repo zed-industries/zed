@@ -14,6 +14,7 @@ import { indicator } from "../component/indicator"
 export default function contacts_panel(): any {
     const theme = useTheme()
 
+    const CHANNEL_SPACING = 4 as const
     const NAME_MARGIN = 6 as const
     const SPACING = 12 as const
     const INDENT_SIZE = 8 as const
@@ -152,6 +153,10 @@ export default function contacts_panel(): any {
 
     return {
         ...collab_modals(),
+        disclosure: {
+            button: icon_button({ variant: "ghost", size: "sm" }),
+            spacing: CHANNEL_SPACING,
+        },
         log_in_button: interactive({
             base: {
                 background: background(theme.middle),
@@ -194,7 +199,7 @@ export default function contacts_panel(): any {
         add_channel_button: header_icon_button,
         leave_call_button: header_icon_button,
         row_height: ITEM_HEIGHT,
-        channel_indent: INDENT_SIZE * 2,
+        channel_indent: INDENT_SIZE * 2 + 2,
         section_icon_size: 14,
         header_row: {
             ...text(layer, "sans", { size: "sm", weight: "bold" }),
@@ -264,7 +269,7 @@ export default function contacts_panel(): any {
         channel_name: {
             ...text(layer, "sans", { size: "sm" }),
             margin: {
-                left: NAME_MARGIN,
+                left: CHANNEL_SPACING,
             },
         },
         list_empty_label_container: {

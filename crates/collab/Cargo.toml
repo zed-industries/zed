@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.17.0"
+version = "0.18.0"
 publish = false
 
 [[bin]]
@@ -14,8 +14,10 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
+clock = { path = "../clock" }
 collections = { path = "../collections" }
 live_kit_server = { path = "../live_kit_server" }
+text = { path = "../text" }
 rpc = { path = "../rpc" }
 util = { path = "../util" }
 
@@ -35,6 +37,7 @@ log.workspace = true
 nanoid = "0.4"
 parking_lot.workspace = true
 prometheus = "0.13"
+prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
@@ -62,6 +65,7 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 call = { path = "../call", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
+channel = { path = "../channel" }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
@@ -74,6 +78,7 @@ rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
+collab_ui = { path = "../collab_ui", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true

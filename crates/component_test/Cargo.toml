@@ -1,0 +1,18 @@
+[package]
+name = "component_test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/component_test.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+util = { path = "../util" }
+theme = { path = "../theme" }
+workspace = { path = "../workspace" }
+project = { path = "../project" }

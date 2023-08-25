@@ -25,7 +25,8 @@ use terminal::{
         term::{cell::Flags, TermMode},
     },
     mappings::colors::convert_color,
-    IndexedCell, Terminal, TerminalContent, TerminalSettings, TerminalSize,
+    terminal_settings::TerminalSettings,
+    IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 use theme::{TerminalStyle, ThemeSettings};
 use util::ResultExt;
@@ -567,6 +568,7 @@ impl Element<TerminalView> for TerminalElement {
             font_size,
             font_properties: Default::default(),
             underline: Default::default(),
+            soft_wrap: false,
         };
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;

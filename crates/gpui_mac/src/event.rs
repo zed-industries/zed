@@ -135,6 +135,7 @@ impl EventFromNative for Event {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        is_down: true,
                     })
                 })
             }
@@ -161,6 +162,7 @@ impl EventFromNative for Event {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        is_down: false,
                     })
                 })
             }
