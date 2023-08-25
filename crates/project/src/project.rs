@@ -517,13 +517,24 @@ impl FormatTrigger {
 }
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
-    Unnamed {
+    OpenBuffer {
         buffer: ModelHandle<Buffer>,
+        // This might be an unnamed file without representation on filesystem
+        path: Option<Arc<Path>>,
     },
     Path {
         worktree_id: WorktreeId,
         path: Arc<Path>,
     },
+}
+
+impl SearchMatchCandidate {
+    fn path(&self) -> Option<Arc<Path>> {
+        match self {
+            SearchMatchCandidate::OpenBuffer { buffer, path } => path.clone(),
+            SearchMatchCandidate::Path { worktree_id, path } => Some(path.clone()),
+        }
+    }
 }
 
 impl Project {
@@ -5094,21 +5105,24 @@ impl Project {
         }
         let workers = background.num_cpus().min(path_count);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let mut unnamed_files = vec![];
         let buffers = self
             .opened_buffers
-            .values()
-            .filter_map(|b| {
+            .iter()
+            .filter_map(|(_, b)| {
                 let buffer = b.upgrade(cx)?;
                 let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                if snapshot.file().is_some() {
-                    None
+                if let Some(path) = snapshot.file().map(|file| file.path()) {
+                    Some((path.clone(), (buffer, snapshot)))
                 } else {
-                    Some(SearchMatchCandidate::Unnamed { buffer })
+                    unnamed_files.push(buffer);
+                    None
                 }
             })
-            .collect::<Vec<_>>();
+            .collect();
         cx.background()
             .spawn(Self::background_search(
+                unnamed_files,
                 buffers,
                 cx.background().clone(),
                 self.fs.clone(),
@@ -5222,7 +5236,8 @@ impl Project {
     }
 
     async fn background_search(
-        unnamed_buffers: Vec<SearchMatchCandidate>,
+        unnamed_buffers: Vec<ModelHandle<Buffer>>,
+        opened_buffers: HashMap<Arc<Path>, (ModelHandle<Buffer>, BufferSnapshot)>,
         background: Arc<Background>,
         fs: Arc<dyn Fs>,
         workers: usize,
@@ -5237,15 +5252,29 @@ impl Project {
         let snapshots = &snapshots;
         let paths_per_worker = (path_count + workers - 1) / workers;
         for buffer in unnamed_buffers {
-            matching_paths_tx.send(buffer).await.log_err();
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: None,
+                })
+                .await
+                .log_err();
         }
-
+        for (path, (buffer, _)) in opened_buffers.iter() {
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: Some(path.clone()),
+                })
+                .await
+                .log_err();
+        }
         background
             .scoped(|scope| {
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;
-
+                    let unnamed_buffers = opened_buffers.clone();
                     scope.spawn(async move {
                         let mut snapshot_start_ix = 0;
                         let mut abs_path = PathBuf::new();
@@ -5268,6 +5297,9 @@ impl Project {
                                 {
                                     if matching_paths_tx.is_closed() {
                                         break;
+                                    }
+                                    if unnamed_buffers.contains_key(&entry.path) {
+                                        continue;
                                     }
                                     let matches = if query.file_matches(Some(&entry.path)) {
                                         abs_path.clear();
@@ -5391,10 +5423,7 @@ impl Project {
             while let Some(entry) = matching_paths_rx.next().await {
                 buffers.push(entry);
             }
-            buffers.sort_by_key(|candidate| match candidate {
-                SearchMatchCandidate::Unnamed { .. } => None,
-                SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
-            });
+            buffers.sort_by_key(|candidate| candidate.path());
             let matching_paths = buffers.clone();
             let _ = sorted_buffers_tx.send(buffers);
             for (index, candidate) in matching_paths.into_iter().enumerate() {
@@ -5405,7 +5434,7 @@ impl Project {
                 let buffers_tx = buffers_tx.clone();
                 cx.spawn(|mut cx| async move {
                     let buffer = match candidate {
-                        SearchMatchCandidate::Unnamed { buffer } => Some(buffer),
+                        SearchMatchCandidate::OpenBuffer { buffer, .. } => Some(buffer),
                         SearchMatchCandidate::Path { worktree_id, path } => this
                             .update(&mut cx, |this, cx| {
                                 this.open_buffer((worktree_id, path), cx)
