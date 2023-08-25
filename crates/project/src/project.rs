@@ -5139,7 +5139,9 @@ impl Project {
         let (result_tx, result_rx) = smol::channel::bounded(1024);
         cx.background()
             .spawn(async move {
-                let Ok(buffers) = buffers.await else {return;};
+                let Ok(buffers) = buffers.await else {
+                    return;
+                };
 
                 let buffers_len = buffers.len();
                 if buffers_len == 0 {
