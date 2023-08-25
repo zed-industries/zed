@@ -2365,6 +2365,7 @@ impl Element<Editor> for EditorElement {
                 editor.cursor_shape,
                 &snapshot.display_snapshot,
                 true,
+                true,
             )
             .head
         });
@@ -3156,7 +3157,7 @@ mod tests {
 
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            element.calculate_relative_line_numbers(&snapshot, &(0..6), 3)
+            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
         });
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
@@ -3169,7 +3170,7 @@ mod tests {
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(3..6), 1)
+            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
         });
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
@@ -3180,7 +3181,7 @@ mod tests {
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(0..3), 6)
+            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
         });
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
