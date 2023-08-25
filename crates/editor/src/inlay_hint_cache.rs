@@ -632,31 +632,38 @@ fn determine_query_ranges(
     };
 
     let full_excerpt_range_end_offset = full_excerpt_range.end.to_offset(&snapshot);
-    let after_visible_range = if excerpt_visible_range.end == full_excerpt_range_end_offset {
+    let after_visible_range_start = excerpt_visible_range
+        .end
+        .saturating_add(1)
+        .min(full_excerpt_range_end_offset)
+        .min(buffer.len());
+    let after_visible_range = if after_visible_range_start == full_excerpt_range_end_offset {
         Vec::new()
     } else {
-        let after_range_end_offset = excerpt_visible_range
-            .end
+        let after_range_end_offset = after_visible_range_start
             .saturating_add(excerpt_visible_len)
             .min(full_excerpt_range_end_offset)
             .min(buffer.len());
         vec![
-            buffer.anchor_before(excerpt_visible_range.end)
+            buffer.anchor_before(after_visible_range_start)
                 ..buffer.anchor_after(after_range_end_offset),
         ]
     };
 
     let full_excerpt_range_start_offset = full_excerpt_range.start.to_offset(&snapshot);
-    let before_visible_range = if excerpt_visible_range.start == full_excerpt_range_start_offset {
+    let before_visible_range_end = excerpt_visible_range
+        .start
+        .saturating_sub(1)
+        .max(full_excerpt_range_start_offset);
+    let before_visible_range = if before_visible_range_end == full_excerpt_range_start_offset {
         Vec::new()
     } else {
-        let before_range_start_offset = excerpt_visible_range
-            .start
+        let before_range_start_offset = before_visible_range_end
             .saturating_sub(excerpt_visible_len)
             .max(full_excerpt_range_start_offset);
         vec![
             buffer.anchor_before(before_range_start_offset)
-                ..buffer.anchor_after(excerpt_visible_range.start),
+                ..buffer.anchor_after(before_visible_range_end),
         ]
     };
 
@@ -667,7 +674,7 @@ fn determine_query_ranges(
     })
 }
 
-const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 300;
+const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 fn new_update_task(
     query: ExcerptQuery,
@@ -1001,7 +1008,7 @@ fn apply_hint_update(
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
     use crate::{
         scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
@@ -1079,13 +1086,13 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should get its first hints when opening the editor"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(
                 inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1104,13 +1111,13 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string(), "1".to_string()];
+            let expected_hints = vec!["0".to_string(), "1".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should get new hints after an edit"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(
                 inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1129,13 +1136,13 @@ pub mod tests {
         edits_made += 1;
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string(), "1".to_string(), "2".to_string()];
+            let expected_hints = vec!["0".to_string(), "1".to_string(), "2".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should get new hints after hint refresh/ request"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(
                 inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1189,13 +1196,13 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should get its first hints when opening the editor"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 edits_made,
@@ -1220,13 +1227,13 @@ pub mod tests {
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should not update hints while the work task is running"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 edits_made,
@@ -1244,13 +1251,13 @@ pub mod tests {
 
         edits_made += 1;
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["1".to_string()];
+            let expected_hints = vec!["1".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "New hints should be queried after the work task is done"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 edits_made,
@@ -1363,13 +1370,13 @@ pub mod tests {
             .await;
         cx.foreground().run_until_parked();
         rs_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should get its first hints when opening the editor"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 1,
@@ -1421,13 +1428,13 @@ pub mod tests {
             .await;
         cx.foreground().run_until_parked();
         md_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Markdown editor should have a separate verison, repeating Rust editor rules"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 1);
         });
 
@@ -1437,13 +1444,13 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         rs_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["1".to_string()];
+            let expected_hints = vec!["1".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Rust inlay cache should change after the edit"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 2,
@@ -1451,13 +1458,13 @@ pub mod tests {
             );
         });
         md_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["0".to_string()];
+            let expected_hints = vec!["0".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Markdown editor should not be affected by Rust editor changes"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 1);
         });
 
@@ -1467,23 +1474,23 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         md_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["1".to_string()];
+            let expected_hints = vec!["1".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Rust editor should not be affected by Markdown editor changes"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 2);
         });
         rs_editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["1".to_string()];
+            let expected_hints = vec!["1".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Markdown editor should also change independently"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 2);
         });
     }
@@ -2009,7 +2016,7 @@ pub mod tests {
             .downcast::<Editor>()
             .unwrap();
         let lsp_request_ranges = Arc::new(Mutex::new(Vec::new()));
-        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let lsp_request_count = Arc::new(AtomicUsize::new(0));
         let closure_lsp_request_ranges = Arc::clone(&lsp_request_ranges);
         let closure_lsp_request_count = Arc::clone(&lsp_request_count);
         fake_server
@@ -2023,10 +2030,9 @@ pub mod tests {
                     );
 
                     task_lsp_request_ranges.lock().push(params.range);
-                    let query_start = params.range.start;
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::Release) + 1;
                     Ok(Some(vec![lsp::InlayHint {
-                        position: query_start,
+                        position: params.range.end,
                         label: lsp::InlayHintLabel::String(i.to_string()),
                         kind: None,
                         text_edits: None,
@@ -2063,28 +2069,51 @@ pub mod tests {
             })
         }
 
-        let initial_visible_range = editor_visible_range(&editor, cx);
-        let expected_initial_query_range_end =
-            lsp::Position::new(initial_visible_range.end.row * 2, 1);
+        // in large buffers, requests are made for more than visible range of a buffer.
+        // invisible parts are queried later, to avoid excessive requests on quick typing.
+        // wait the timeout needed to get all requests.
+        cx.foreground().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.foreground().run_until_parked();
+        let initial_visible_range = editor_visible_range(&editor, cx);
+        let lsp_initial_visible_range = lsp::Range::new(
+            lsp::Position::new(
+                initial_visible_range.start.row,
+                initial_visible_range.start.column,
+            ),
+            lsp::Position::new(
+                initial_visible_range.end.row,
+                initial_visible_range.end.column,
+            ),
+        );
+        let expected_initial_query_range_end =
+            lsp::Position::new(initial_visible_range.end.row * 2, 2);
+        let mut expected_invisible_query_start = lsp_initial_visible_range.end;
+        expected_invisible_query_start.character += 1;
         editor.update(cx, |editor, cx| {
             let ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
-            assert_eq!(ranges.len(), 1,
-                "When scroll is at the edge of a big document, double of its visible part range should be queried for hints in one single big request, but got: {ranges:?}");
-            let query_range = &ranges[0];
-            assert_eq!(query_range.start, lsp::Position::new(0, 0), "Should query initially from the beginning of the document");
-            assert_eq!(query_range.end, expected_initial_query_range_end, "Should query initially for double lines of the visible part of the document");
+            assert_eq!(ranges.len(), 2,
+                "When scroll is at the edge of a big document, its visible part and the same range further should be queried in order, but got: {ranges:?}");
+            let visible_query_range = &ranges[0];
+            assert_eq!(visible_query_range.start, lsp_initial_visible_range.start);
+            assert_eq!(visible_query_range.end, lsp_initial_visible_range.end);
+            let invisible_query_range = &ranges[1];
 
-            assert_eq!(lsp_request_count.load(Ordering::Acquire), 1);
-            let expected_layers = vec!["1".to_string()];
+            assert_eq!(invisible_query_range.start, expected_invisible_query_start, "Should initially query visible edge of the document");
+            assert_eq!(invisible_query_range.end, expected_initial_query_range_end, "Should initially query visible edge of the document");
+
+            let requests_count = lsp_request_count.load(Ordering::Acquire);
+            assert_eq!(requests_count, 2, "Visible + invisible request");
+            let expected_hints = vec!["1".to_string(), "2".to_string()];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should have hints from both LSP requests made for a big file"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx), "Should display only hints from the visible range");
             assert_eq!(
-                editor.inlay_hint_cache().version, 1,
+                editor.inlay_hint_cache().version, requests_count,
                 "LSP queries should've bumped the cache version"
             );
         });
@@ -2093,11 +2122,13 @@ pub mod tests {
             editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
             editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
         });
-
+        cx.foreground().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
+        cx.foreground().run_until_parked();
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
         let visible_line_count =
             editor.update(cx, |editor, _| editor.visible_line_count().unwrap());
-        cx.foreground().run_until_parked();
         let selection_in_cached_range = editor.update(cx, |editor, cx| {
             let ranges = lsp_request_ranges
                 .lock()
@@ -2124,26 +2155,28 @@ pub mod tests {
                 lsp::Position::new(
                     visible_range_after_scrolls.end.row
                         + visible_line_count.ceil() as u32,
-                    0
+                    1,
                 ),
                 "Second scroll should query one more screen down after the end of the visible range"
             );
 
+            let lsp_requests = lsp_request_count.load(Ordering::Acquire);
+            assert_eq!(lsp_requests, 4, "Should query for hints after every scroll");
+            let expected_hints = vec![
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "4".to_string(),
+            ];
             assert_eq!(
-                lsp_request_count.load(Ordering::Acquire),
-                3,
-                "Should query for hints after every scroll"
-            );
-            let expected_layers = vec!["1".to_string(), "2".to_string(), "3".to_string()];
-            assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                3,
+                lsp_requests,
                 "Should update the cache for every LSP response with hints added"
             );
 
@@ -2157,6 +2190,9 @@ pub mod tests {
                 s.select_ranges([selection_in_cached_range..selection_in_cached_range])
             });
         });
+        cx.foreground().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.foreground().run_until_parked();
         editor.update(cx, |_, _| {
             let ranges = lsp_request_ranges
@@ -2165,33 +2201,43 @@ pub mod tests {
                 .sorted_by_key(|r| r.start)
                 .collect::<Vec<_>>();
             assert!(ranges.is_empty(), "No new ranges or LSP queries should be made after returning to the selection with cached hints");
-            assert_eq!(lsp_request_count.load(Ordering::Acquire), 3);
+            assert_eq!(lsp_request_count.load(Ordering::Acquire), 4);
         });
 
         editor.update(cx, |editor, cx| {
             editor.handle_input("++++more text++++", cx);
         });
+        cx.foreground().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
             let ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
-            assert_eq!(ranges.len(), 1,
-                "On edit, should scroll to selection and query a range around it. Instead, got query ranges {ranges:?}");
-            let query_range = &ranges[0];
-            assert!(query_range.start.line < selection_in_cached_range.row,
+            assert_eq!(ranges.len(), 3,
+                "On edit, should scroll to selection and query a range around it: visible + same range above and below. Instead, got query ranges {ranges:?}");
+            let visible_query_range = &ranges[0];
+            let above_query_range = &ranges[1];
+            let below_query_range = &ranges[2];
+            assert!(above_query_range.end.character < visible_query_range.start.character || above_query_range.end.line + 1 == visible_query_range.start.line,
+                "Above range {above_query_range:?} should be before visible range {visible_query_range:?}");
+            assert!(visible_query_range.end.character < below_query_range.start.character || visible_query_range.end.line  + 1 == below_query_range.start.line,
+                "Visible range {visible_query_range:?} should be before below range {below_query_range:?}");
+            assert!(above_query_range.start.line < selection_in_cached_range.row,
                 "Hints should be queried with the selected range after the query range start");
-            assert!(query_range.end.line > selection_in_cached_range.row,
+            assert!(below_query_range.end.line > selection_in_cached_range.row,
                 "Hints should be queried with the selected range before the query range end");
-            assert!(query_range.start.line <= selection_in_cached_range.row - (visible_line_count * 3.0 / 2.0) as u32,
+            assert!(above_query_range.start.line <= selection_in_cached_range.row - (visible_line_count * 3.0 / 2.0) as u32,
                 "Hints query range should contain one more screen before");
-            assert!(query_range.end.line >= selection_in_cached_range.row + (visible_line_count * 3.0 / 2.0) as u32,
+            assert!(below_query_range.end.line >= selection_in_cached_range.row + (visible_line_count * 3.0 / 2.0) as u32,
                 "Hints query range should contain one more screen after");
 
-            assert_eq!(lsp_request_count.load(Ordering::Acquire), 4, "Should query for hints once after the edit");
-            let expected_layers = vec!["4".to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor),
+            let lsp_requests = lsp_request_count.load(Ordering::Acquire);
+            assert_eq!(lsp_requests, 7, "There should be a visible range and two ranges above and below it queried");
+            let expected_hints = vec!["5".to_string(), "6".to_string(), "7".to_string()];
+            assert_eq!(expected_hints, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit");
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, 4, "Should update the cache for every LSP response with hints added");
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, lsp_requests, "Should update the cache for every LSP response with hints added");
         });
     }
 
@@ -2402,19 +2448,19 @@ pub mod tests {
         cx.foreground().run_until_parked();
 
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec![
+            let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
                 "main hint #3".to_string(),
             ];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_layers.len(), "Every visible excerpt hints should bump the verison");
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the verison");
         });
 
         editor.update(cx, |editor, cx| {
@@ -2430,7 +2476,7 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec![
+            let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
@@ -2441,10 +2487,10 @@ pub mod tests {
                 "other hint #1".to_string(),
                 "other hint #2".to_string(),
             ];
-            assert_eq!(expected_layers, cached_hint_labels(editor),
+            assert_eq!(expected_hints, cached_hint_labels(editor),
                 "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_layers.len(),
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(),
                 "Due to every excerpt having one hint, we update cache per new excerpt scrolled");
         });
 
@@ -2453,9 +2499,12 @@ pub mod tests {
                 s.select_ranges([Point::new(100, 0)..Point::new(100, 0)])
             });
         });
+        cx.foreground().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.foreground().run_until_parked();
         let last_scroll_update_version = editor.update(cx, |editor, cx| {
-            let expected_layers = vec![
+            let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
@@ -2469,11 +2518,11 @@ pub mod tests {
                 "other hint #4".to_string(),
                 "other hint #5".to_string(),
             ];
-            assert_eq!(expected_layers, cached_hint_labels(editor),
+            assert_eq!(expected_hints, cached_hint_labels(editor),
                 "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_layers.len());
-            expected_layers.len()
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len());
+            expected_hints.len()
         });
 
         editor.update(cx, |editor, cx| {
@@ -2483,7 +2532,7 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec![
+            let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
                 "main hint #2".to_string(),
@@ -2497,9 +2546,9 @@ pub mod tests {
                 "other hint #4".to_string(),
                 "other hint #5".to_string(),
             ];
-            assert_eq!(expected_layers, cached_hint_labels(editor),
+            assert_eq!(expected_hints, cached_hint_labels(editor),
                 "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scolled buffer");
         });
 
@@ -2512,7 +2561,7 @@ pub mod tests {
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec![
+            let expected_hints = vec![
                 "main hint(edited) #0".to_string(),
                 "main hint(edited) #1".to_string(),
                 "main hint(edited) #2".to_string(),
@@ -2523,15 +2572,15 @@ pub mod tests {
                 "other hint(edited) #1".to_string(),
             ];
             assert_eq!(
-                expected_layers,
+                expected_hints,
                 cached_hint_labels(editor),
                 "After multibuffer edit, editor gets scolled back to the last selection; \
 all hints should be invalidated and requeried for all of its visible excerpts"
             );
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
-            let minimum_expected_version = last_scroll_update_version + expected_layers.len();
+            let minimum_expected_version = last_scroll_update_version + expected_hints.len();
             assert!(
                 current_cache_version == minimum_expected_version || current_cache_version == minimum_expected_version + 1,
                 "Due to every excerpt having one hint, cache should update per new excerpt received + 1 potential sporadic update"
@@ -2872,9 +2921,9 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         });
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_layers = vec!["1".to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            let expected_hints = vec!["1".to_string()];
+            assert_eq!(expected_hints, cached_hint_labels(editor));
+            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 1);
         });
     }
