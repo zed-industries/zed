@@ -78,13 +78,27 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
-            change_motion(vim, Motion::EndOfLine, times, cx);
+            change_motion(
+                vim,
+                Motion::EndOfLine {
+                    display_lines: false,
+                },
+                times,
+                cx,
+            );
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             let times = vim.pop_number_operator(cx);
-            delete_motion(vim, Motion::EndOfLine, times, cx);
+            delete_motion(
+                vim,
+                Motion::EndOfLine {
+                    display_lines: false,
+                },
+                times,
+                cx,
+            );
         })
     });
     scroll::init(cx);
@@ -165,7 +179,10 @@ fn insert_first_non_whitespace(
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, None)
+                    Motion::FirstNonWhitespace {
+                        display_lines: false,
+                    }
+                    .move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -178,7 +195,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::EndOfLine.move_point(map, cursor, goal, None)
+                    Motion::CurrentLine.move_point(map, cursor, goal, None)
                 });
             });
         });
@@ -238,7 +255,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
-                        Motion::EndOfLine.move_point(map, cursor, goal, None)
+                        Motion::CurrentLine.move_point(map, cursor, goal, None)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);

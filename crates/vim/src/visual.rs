@@ -51,8 +51,15 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            if vim.state().mode == Mode::VisualBlock && !matches!(motion, Motion::EndOfLine) {
-                let is_up_or_down = matches!(motion, Motion::Up | Motion::Down);
+            if vim.state().mode == Mode::VisualBlock
+                && !matches!(
+                    motion,
+                    Motion::EndOfLine {
+                        display_lines: false
+                    }
+                )
+            {
+                let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
                     motion.move_point(map, point, goal, times)
                 })

@@ -1,9 +1,14 @@
+use editor::EditorSettings;
 use indoc::indoc;
+use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
-use language::OffsetRangeExt;
+use language::{
+    language_settings::{AllLanguageSettings, LanguageSettings, SoftWrap},
+    OffsetRangeExt,
+};
 use util::test::{generate_marked_text, marked_text_offsets};
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
@@ -125,6 +130,27 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
         context_handle
+    }
+
+    pub async fn set_shared_wrap(&mut self, columns: u32) {
+        if columns < 12 {
+            panic!("nvim doesn't support columns < 12")
+        }
+        self.neovim.set_option("wrap").await;
+        self.neovim.set_option("columns=12").await;
+
+        self.update(|cx| {
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.soft_wrap = Some(SoftWrap::PreferredLineLength);
+                    settings.defaults.preferred_line_length = Some(columns);
+                });
+            })
+        })
+    }
+
+    pub async fn set_neovim_option(&mut self, option: &str) {
+        self.neovim.set_option(option).await;
     }
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {

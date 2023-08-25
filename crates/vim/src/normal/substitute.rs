@@ -15,7 +15,10 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
                     }
                     if line_mode {
                         Motion::CurrentLine.expand_selection(map, selection, None, false);
-                        if let Some((point, _)) = Motion::FirstNonWhitespace.move_point(
+                        if let Some((point, _)) = (Motion::FirstNonWhitespace {
+                            display_lines: false,
+                        })
+                        .move_point(
                             map,
                             selection.start,
                             selection.goal,

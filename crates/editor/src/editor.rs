@@ -7198,7 +7198,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let selections = self.selections.all::<Point>(cx);
+        let selections = self.selections.all_adjusted(cx);
         for selection in selections {
             let range = selection.range().sorted();
             let buffer_start_row = range.start.row;
@@ -7274,7 +7274,17 @@ impl Editor {
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<Point>(cx);
-        let ranges = selections.into_iter().map(|s| s.start..s.end);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let line_mode = self.selections.line_mode;
+        let ranges = selections.into_iter().map(|s| {
+            if line_mode {
+                let start = Point::new(s.start.row, 0);
+                let end = Point::new(s.end.row, display_map.buffer_snapshot.line_len(s.end.row));
+                start..end
+            } else {
+                s.start..s.end
+            }
+        });
         self.fold_ranges(ranges, true, cx);
     }
 
