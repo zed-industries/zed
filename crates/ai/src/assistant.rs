@@ -249,15 +249,21 @@ impl AssistantPanel {
         let selection = editor.read(cx).selections.newest_anchor().clone();
         let range = selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot);
         let assist_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
-            InlineAssistKind::Insert
+            InlineAssistKind::Generate
         } else {
-            InlineAssistKind::Refactor
+            InlineAssistKind::Transform
         };
         let prompt_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
                 cx,
-            )
+            );
+            let placeholder = match assist_kind {
+                InlineAssistKind::Transform => "Enter transformation prompt…",
+                InlineAssistKind::Generate => "Enter generation prompt…",
+            };
+            editor.set_placeholder_text(placeholder, cx);
+            editor
         });
         let inline_assistant = cx.add_view(|cx| {
             let assistant = InlineAssistant {
@@ -284,12 +290,12 @@ impl AssistantPanel {
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
+                            let theme = theme::current(cx);
                             ChildView::new(&inline_assistant, cx)
                                 .contained()
-                                .with_padding_left(match assist_kind {
-                                    InlineAssistKind::Refactor => cx.gutter_width,
-                                    InlineAssistKind::Insert => cx.anchor_x,
-                                })
+                                .with_padding_left(cx.anchor_x)
+                                .contained()
+                                .with_style(theme.assistant.inline.container)
                                 .into_any()
                         }
                     }),
@@ -525,7 +531,7 @@ impl AssistantPanel {
         let mut prompt = String::new();
         writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
         match pending_assist.kind {
-            InlineAssistKind::Refactor => {
+            InlineAssistKind::Transform => {
                 writeln!(
                     prompt,
                     "You're currently working inside an editor on this code:"
@@ -557,7 +563,7 @@ impl AssistantPanel {
                 )
                 .unwrap();
             }
-            InlineAssistKind::Insert => {
+            InlineAssistKind::Generate => {
                 writeln!(
                     prompt,
                     "You're currently working inside an editor on this code:"
@@ -2775,8 +2781,8 @@ enum InlineAssistantEvent {
 
 #[derive(Copy, Clone)]
 enum InlineAssistKind {
-    Refactor,
-    Insert,
+    Transform,
+    Generate,
 }
 
 struct InlineAssistant {
@@ -2797,15 +2803,10 @@ impl View for InlineAssistant {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = theme::current(cx);
-        let prompt_editor = ChildView::new(&self.prompt_editor, cx).aligned().left();
-        match self.assist_kind {
-            InlineAssistKind::Refactor => prompt_editor
-                .contained()
-                .with_style(theme.assistant.inline.container)
-                .into_any(),
-            InlineAssistKind::Insert => prompt_editor.into_any(),
-        }
+        ChildView::new(&self.prompt_editor, cx)
+            .aligned()
+            .left()
+            .into_any()
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
