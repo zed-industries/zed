@@ -6,7 +6,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 pub use language::Completion;
 use language::{
     char_kind,
@@ -788,59 +788,59 @@ impl MultiBuffer {
 
     pub fn stream_excerpts_with_context_lines(
         &mut self,
-        excerpts: Vec<(ModelHandle<Buffer>, Vec<Range<text::Anchor>>)>,
+        buffer: ModelHandle<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
-    ) -> (Task<()>, mpsc::Receiver<Range<Anchor>>) {
+    ) -> mpsc::Receiver<Range<Anchor>> {
         let (mut tx, rx) = mpsc::channel(256);
-        let task = cx.spawn(|this, mut cx| async move {
-            for (buffer, ranges) in excerpts {
-                let (buffer_id, buffer_snapshot) =
-                    buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+        cx.spawn(|this, mut cx| async move {
+            let (buffer_id, buffer_snapshot) =
+                buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
 
-                let mut excerpt_ranges = Vec::new();
-                let mut range_counts = Vec::new();
-                cx.background()
-                    .scoped(|scope| {
-                        scope.spawn(async {
-                            let (ranges, counts) =
-                                build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                            excerpt_ranges = ranges;
-                            range_counts = counts;
-                        });
-                    })
-                    .await;
-
-                let mut ranges = ranges.into_iter();
-                let mut range_counts = range_counts.into_iter();
-                for excerpt_ranges in excerpt_ranges.chunks(100) {
-                    let excerpt_ids = this.update(&mut cx, |this, cx| {
-                        this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+            let mut excerpt_ranges = Vec::new();
+            let mut range_counts = Vec::new();
+            cx.background()
+                .scoped(|scope| {
+                    scope.spawn(async {
+                        let (ranges, counts) =
+                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                        excerpt_ranges = ranges;
+                        range_counts = counts;
                     });
+                })
+                .await;
 
-                    for (excerpt_id, range_count) in
-                        excerpt_ids.into_iter().zip(range_counts.by_ref())
-                    {
-                        for range in ranges.by_ref().take(range_count) {
-                            let start = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: range.start,
-                            };
-                            let end = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: range.end,
-                            };
-                            if tx.send(start..end).await.is_err() {
-                                break;
-                            }
+            let mut ranges = ranges.into_iter();
+            let mut range_counts = range_counts.into_iter();
+            for excerpt_ranges in excerpt_ranges.chunks(100) {
+                let excerpt_ids = this.update(&mut cx, |this, cx| {
+                    this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+                });
+
+                for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
+                {
+                    for range in ranges.by_ref().take(range_count) {
+                        let start = Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: range.start,
+                        };
+                        let end = Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: range.end,
+                        };
+                        if tx.send(start..end).await.is_err() {
+                            break;
                         }
                     }
                 }
             }
-        });
-        (task, rx)
+        })
+        .detach();
+
+        rx
     }
 
     pub fn push_excerpts<O>(
@@ -4438,7 +4438,7 @@ mod tests {
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
-        let (task, anchor_ranges) = multibuffer.update(cx, |multibuffer, cx| {
+        let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
             let ranges = vec![
                 snapshot.anchor_before(Point::new(3, 2))..snapshot.anchor_before(Point::new(4, 2)),
@@ -4446,12 +4446,10 @@ mod tests {
                 snapshot.anchor_before(Point::new(15, 0))
                     ..snapshot.anchor_before(Point::new(15, 0)),
             ];
-            multibuffer.stream_excerpts_with_context_lines(vec![(buffer.clone(), ranges)], 2, cx)
+            multibuffer.stream_excerpts_with_context_lines(buffer.clone(), ranges, 2, cx)
         });
 
         let anchor_ranges = anchor_ranges.collect::<Vec<_>>().await;
-        // Ensure task is finished when stream completes.
-        task.await;
 
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
