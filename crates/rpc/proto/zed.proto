@@ -128,8 +128,8 @@ message Envelope {
 
         InlayHints inlay_hints = 116;
         InlayHintsResponse inlay_hints_response = 117;
-        ResolveInlayHint resolve_inlay_hint = 131;
-        ResolveInlayHintResponse resolve_inlay_hint_response = 132;
+        ResolveInlayHint resolve_inlay_hint = 137;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 138;
         RefreshInlayHints refresh_inlay_hints = 118;
 
         CreateChannel create_channel = 119;
