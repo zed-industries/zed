@@ -26,7 +26,7 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, Buffer, LanguageRegistry, Point, Rope, Selection, ToOffset as _,
+    language_settings::SoftWrap, Buffer, LanguageRegistry, Point, Rope, ToOffset as _,
     TransactionId,
 };
 use search::BufferSearchBar;
@@ -244,7 +244,9 @@ impl AssistantPanel {
 
     fn new_inline_assist(&mut self, editor: &ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let id = post_inc(&mut self.next_inline_assist_id);
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selection = editor.read(cx).selections.newest_anchor().clone();
+        let range = selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot);
         let assist_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
             InlineAssistKind::Insert
         } else {
@@ -269,16 +271,14 @@ impl AssistantPanel {
         });
         let block_id = editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
-                vec![selection.start..selection.end],
+                vec![range.clone()],
                 |theme| theme.assistant.inline.pending_edit_background,
                 cx,
             );
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
-                    position: selection
-                        .head()
-                        .bias_left(&editor.buffer().read(cx).snapshot(cx)),
+                    position: selection.head().bias_left(&snapshot),
                     height: 2,
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();
@@ -308,7 +308,7 @@ impl AssistantPanel {
             PendingInlineAssist {
                 kind: assist_kind,
                 editor: editor.downgrade(),
-                selection,
+                range,
                 inline_assistant_block_id: Some(block_id),
                 code_generation: Task::ready(None),
                 transaction_id: None,
@@ -418,15 +418,15 @@ impl AssistantPanel {
             return;
         };
 
-        let selection = pending_assist.selection.clone();
+        let range = pending_assist.range.clone();
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selected_text = snapshot
-            .text_for_range(selection.start..selection.end)
+            .text_for_range(range.start..range.end)
             .collect::<Rope>();
 
         let mut base_indentation: Option<language::IndentSize> = None;
-        let selection_start = selection.start.to_point(&snapshot);
-        let selection_end = selection.end.to_point(&snapshot);
+        let selection_start = range.start.to_point(&snapshot);
+        let selection_end = range.end.to_point(&snapshot);
         let mut start_row = selection_start.row;
         if snapshot.is_line_blank(start_row) {
             if let Some(prev_non_blank_row) = snapshot.prev_non_blank_row(start_row) {
@@ -470,7 +470,7 @@ impl AssistantPanel {
         }
 
         let language_name = snapshot
-            .language_at(selection.start)
+            .language_at(range.start)
             .map(|language| language.name());
         let language_name = language_name.as_deref().unwrap_or("");
 
@@ -494,11 +494,11 @@ impl AssistantPanel {
             }
             InlineAssistKind::Insert => {
                 writeln!(prompt, "```{language_name}").unwrap();
-                for chunk in snapshot.text_for_range(Anchor::min()..selection.head()) {
+                for chunk in snapshot.text_for_range(Anchor::min()..range.start) {
                     write!(prompt, "{chunk}").unwrap();
                 }
                 write!(prompt, "<|>").unwrap();
-                for chunk in snapshot.text_for_range(selection.head()..Anchor::max()) {
+                for chunk in snapshot.text_for_range(range.start..Anchor::max()) {
                     write!(prompt, "{chunk}").unwrap();
                 }
                 writeln!(prompt).unwrap();
@@ -543,7 +543,7 @@ impl AssistantPanel {
                     }
                 });
 
-                let mut edit_start = selection.start.to_offset(&snapshot);
+                let mut edit_start = range.start.to_offset(&snapshot);
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                 let diff = cx.background().spawn(async move {
@@ -2697,7 +2697,7 @@ impl InlineAssistant {
 struct PendingInlineAssist {
     kind: InlineAssistKind,
     editor: WeakViewHandle<Editor>,
-    selection: Selection<Anchor>,
+    range: Range<Anchor>,
     inline_assistant_block_id: Option<BlockId>,
     code_generation: Task<Option<()>>,
     transaction_id: Option<TransactionId>,
