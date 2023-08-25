@@ -33,7 +33,8 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, MaybeNavigationTarget, Terminal, TerminalBlink, WorkingDirectory,
+    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    Event, MaybeNavigationTarget, Terminal,
 };
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -43,8 +44,6 @@ use workspace::{
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
-
-pub use terminal::TerminalSettings;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
