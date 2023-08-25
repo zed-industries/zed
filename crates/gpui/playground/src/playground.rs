@@ -26,8 +26,11 @@ mod view;
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
-
-    gpui::App::new(()).unwrap().run(|cx| {
+    let platform = gpui_platform::platform();
+    let foreground =
+        std::rc::Rc::new(gpui::executor::Foreground::platform(platform.dispatcher()).unwrap());
+    let foreground = gpui_platform::foreground_platform(foreground);
+    gpui::App::new((), platform, foreground).unwrap().run(|cx| {
         cx.add_window(
             WindowOptions {
                 bounds: gpui::platform::WindowBounds::Fixed(RectF::new(

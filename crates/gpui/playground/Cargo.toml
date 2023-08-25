@@ -12,6 +12,7 @@ path = "src/playground.rs"
 anyhow.workspace = true
 derive_more.workspace = true
 gpui = { path = ".." }
+gpui_platform = { path = "../../gpui_platform" }
 log.workspace = true
 playground_macros = { path = "../playground_macros" }
 parking_lot.workspace = true

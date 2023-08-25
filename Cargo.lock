@@ -5204,6 +5204,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "gpui",
+ "gpui_platform",
  "log",
  "parking_lot 0.11.2",
  "playground_macros",
