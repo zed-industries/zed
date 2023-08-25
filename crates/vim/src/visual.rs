@@ -126,10 +126,15 @@ pub fn visual_block_motion(
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
-        let mut goal = s.newest_anchor().goal;
+
+        let (start, end) = match s.newest_anchor().goal {
+            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
+            _ => (tail.column(), head.column()),
+        };
+        let goal = SelectionGoal::ColumnRange { start, end };
 
         let was_reversed = tail.column() > head.column();
-
         if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
@@ -148,13 +153,6 @@ pub fn visual_block_motion(
         if !is_reversed && !preserve_goal {
             head = movement::saturating_right(map, head)
         }
-
-        let (start, end) = match goal {
-            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
-            _ => (tail.column(), head.column()),
-        };
-        goal = SelectionGoal::ColumnRange { start, end };
 
         let columns = if is_reversed {
             head.column()..tail.column()
@@ -788,6 +786,26 @@ mod test {
             jumo over the
 
             lazy dog
+            "
+        })
+        .await;
+
+        //https://github.com/zed-industries/community/issues/1950
+        cx.set_shared_state(indoc! {
+            "Theˇ quick brown
+
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["l", "ctrl-v", "j", "j"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "The «qˇ»uick brown
+
+            fox «jˇ»umps over
+            the lazy dog
             "
         })
         .await;
