@@ -785,6 +785,7 @@ async fn fetch_and_update_hints(
                     editor,
                     new_update,
                     query,
+                    invalidate,
                     buffer_snapshot,
                     multi_buffer_snapshot,
                     cx,
@@ -893,6 +894,7 @@ fn apply_hint_update(
     editor: &mut Editor,
     new_update: ExcerptHintsUpdate,
     query: ExcerptQuery,
+    invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
     cx: &mut ViewContext<'_, '_, Editor>,
@@ -970,7 +972,7 @@ fn apply_hint_update(
     cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
     drop(cached_excerpt_hints);
 
-    if query.invalidate.should_invalidate() {
+    if invalidate {
         let mut outdated_excerpt_caches = HashSet::default();
         for (excerpt_id, excerpt_hints) in &editor.inlay_hint_cache().hints {
             let excerpt_hints = excerpt_hints.read();
