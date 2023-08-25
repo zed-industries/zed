@@ -19,6 +19,7 @@ use project::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
+use sum_tree::Bias;
 use text::ToOffset;
 use util::post_inc;
 
@@ -632,8 +633,8 @@ fn determine_query_ranges(
         return None;
     } else {
         vec![
-            buffer.anchor_before(excerpt_visible_range.start)
-                ..buffer.anchor_after(excerpt_visible_range.end),
+            buffer.anchor_before(snapshot.clip_offset(excerpt_visible_range.start, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(excerpt_visible_range.end, Bias::Right)),
         ]
     };
 
@@ -651,8 +652,8 @@ fn determine_query_ranges(
             .min(full_excerpt_range_end_offset)
             .min(buffer.len());
         vec![
-            buffer.anchor_before(after_visible_range_start)
-                ..buffer.anchor_after(after_range_end_offset),
+            buffer.anchor_before(snapshot.clip_offset(after_visible_range_start, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(after_range_end_offset, Bias::Right)),
         ]
     };
 
@@ -668,8 +669,8 @@ fn determine_query_ranges(
             .saturating_sub(excerpt_visible_len)
             .max(full_excerpt_range_start_offset);
         vec![
-            buffer.anchor_before(before_range_start_offset)
-                ..buffer.anchor_after(before_visible_range_end),
+            buffer.anchor_before(snapshot.clip_offset(before_range_start_offset, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(before_visible_range_end, Bias::Right)),
         ]
     };
 
