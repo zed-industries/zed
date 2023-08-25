@@ -98,6 +98,7 @@
     // Whether to show selections in the scrollbar.
     "selections": true
   },
+  "relative_line_numbers": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.

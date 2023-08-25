@@ -1439,10 +1439,61 @@ impl EditorElement {
             .collect()
     }
 
+    fn calculate_relative_line_numbers(
+        &self,
+        snapshot: &EditorSnapshot,
+        rows: &Range<u32>,
+        relative_to: Option<u32>,
+    ) -> HashMap<u32, u32> {
+        let mut relative_rows: HashMap<u32, u32> = Default::default();
+        let Some(relative_to) = relative_to else {
+            return relative_rows;
+        };
+
+        let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
+
+        let head_idx = relative_to - start;
+        let mut delta = 1;
+        let mut i = head_idx + 1;
+        while i < buffer_rows.len() as u32 {
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+            i += 1;
+        }
+        delta = 1;
+        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        while i > 0 && buffer_rows[i as usize].is_none() {
+            i -= 1;
+        }
+
+        while i > 0 {
+            i -= 1;
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+        }
+
+        relative_rows
+    }
+
     fn layout_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
+        newest_selection_head: DisplayPoint,
         is_singleton: bool,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
@@ -1455,6 +1506,15 @@ impl EditorElement {
         let mut line_number_layouts = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
+        let is_relative = settings::get::<EditorSettings>(cx).relative_line_numbers;
+        let relative_to = if is_relative {
+            Some(newest_selection_head.row())
+        } else {
+            None
+        };
+
+        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+
         for (ix, row) in snapshot
             .buffer_rows(rows.start)
             .take((rows.end - rows.start) as usize)
@@ -1469,7 +1529,11 @@ impl EditorElement {
             if let Some(buffer_row) = row {
                 if include_line_numbers {
                     line_number.clear();
-                    write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+                    let default_number = buffer_row + 1;
+                    let number = relative_rows
+                        .get(&(ix as u32 + rows.start))
+                        .unwrap_or(&default_number);
+                    write!(&mut line_number, "{}", number).unwrap();
                     line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
                         &line_number,
                         style.text.font_size,
@@ -2293,9 +2357,23 @@ impl Element<Editor> for EditorElement {
             })
             .collect();
 
+        let head_for_relative = newest_selection_head.unwrap_or_else(|| {
+            let newest = editor.selections.newest::<Point>(cx);
+            SelectionLayout::new(
+                newest,
+                editor.selections.line_mode,
+                editor.cursor_shape,
+                &snapshot.display_snapshot,
+                true,
+                true,
+            )
+            .head
+        });
+
         let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
             start_row..end_row,
             &active_rows,
+            head_for_relative,
             is_singleton,
             &snapshot,
             cx,
@@ -3054,7 +3132,6 @@ mod tests {
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-
         let editor = cx
             .add_window(|cx| {
                 let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -3066,10 +3143,50 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             element
-                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, cx)
+                .layout_line_numbers(
+                    0..6,
+                    &Default::default(),
+                    DisplayPoint::new(0, 0),
+                    false,
+                    &snapshot,
+                    cx,
+                )
                 .0
         });
         assert_eq!(layouts.len(), 6);
+
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+        });
+        assert_eq!(relative_rows[&0], 3);
+        assert_eq!(relative_rows[&1], 2);
+        assert_eq!(relative_rows[&2], 1);
+        // current line has no relative number
+        assert_eq!(relative_rows[&4], 1);
+        assert_eq!(relative_rows[&5], 2);
+
+        // works if cursor is before screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&3], 2);
+        assert_eq!(relative_rows[&4], 3);
+        assert_eq!(relative_rows[&5], 4);
+
+        // works if cursor is after screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&0], 5);
+        assert_eq!(relative_rows[&1], 4);
+        assert_eq!(relative_rows[&2], 3);
     }
 
     #[gpui::test]
