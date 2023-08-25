@@ -9778,7 +9778,7 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
- "gpui_mac",
+ "gpui_platform",
  "ignore",
  "image",
  "indexmap 1.9.3",

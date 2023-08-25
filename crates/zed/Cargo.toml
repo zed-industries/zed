@@ -72,7 +72,7 @@ vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
 zed-actions = {path = "../zed-actions"}
-gpui_mac = {path = "../gpui_mac"}
+gpui_platform = {path = "../gpui_platform"}
 anyhow.workspace = true
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"
