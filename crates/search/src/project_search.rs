@@ -893,6 +893,7 @@ impl ProjectSearchView {
             search
                 .included_files_editor
                 .update(cx, |editor, cx| editor.set_text(filter_str, cx));
+            search.filters_enabled = true;
             search.focus_query_editor(cx)
         });
     }
