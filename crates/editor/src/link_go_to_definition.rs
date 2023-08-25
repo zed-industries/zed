@@ -218,6 +218,15 @@ pub fn update_inlay_link_and_hover_points(
                     ResolveState::Resolved => {
                         match cached_hint.label {
                             project::InlayHintLabel::String(_) => {
+                                let mut highlight_start = hint_start_offset;
+                                let mut highlight_end = hint_end_offset;
+                                if cached_hint.padding_left {
+                                    highlight_start.0 += 1;
+                                    highlight_end.0 += 1;
+                                }
+                                if cached_hint.padding_right {
+                                    highlight_end.0 -= 1;
+                                }
                                 if let Some(tooltip) = cached_hint.tooltip {
                                     hover_popover::hover_at_inlay(
                                         editor,
@@ -238,8 +247,8 @@ pub fn update_inlay_link_and_hover_points(
                                             triggered_from: hovered_offset,
                                             range: InlayRange {
                                                 inlay_position: hovered_hint.position,
-                                                highlight_start: hint_start_offset,
-                                                highlight_end: hint_end_offset,
+                                                highlight_start,
+                                                highlight_end,
                                             },
                                         },
                                         cx,
@@ -251,6 +260,8 @@ pub fn update_inlay_link_and_hover_points(
                                 if let Some((hovered_hint_part, part_range)) =
                                     hover_popover::find_hovered_hint_part(
                                         label_parts,
+                                        cached_hint.padding_left,
+                                        cached_hint.padding_right,
                                         hint_start_offset..hint_end_offset,
                                         hovered_offset,
                                     )
