@@ -1441,34 +1441,48 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
+        snapshot: &EditorSnapshot,
         rows: &Range<u32>,
-        buffer_rows: &Vec<Option<u32>>,
         relative_to: Option<u32>,
-    ) -> HashMap<usize, u32> {
-        let mut relative_rows: HashMap<usize, u32> = Default::default();
-        if let Some(relative_to) = relative_to {
-            let head_idx = (relative_to - rows.start) as usize;
-            let mut delta = 1;
-            let mut i = head_idx + 1;
-            while i < buffer_rows.len() {
-                if buffer_rows[i].is_some() {
-                    relative_rows.insert(i, delta);
-                    delta += 1;
-                }
-                i += 1;
-            }
-            delta = 1;
-            i = head_idx;
-            while i > 0 && buffer_rows[i].is_none() {
-                i -= 1;
-            }
+    ) -> HashMap<u32, u32> {
+        let mut relative_rows: HashMap<u32, u32> = Default::default();
+        let Some(relative_to) = relative_to else {
+            return relative_rows;
+        };
 
-            while i > 0 {
-                i -= 1;
-                if buffer_rows[i].is_some() {
-                    relative_rows.insert(i, delta);
-                    delta += 1;
+        let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
+
+        let head_idx = relative_to - start;
+        let mut delta = 1;
+        let mut i = head_idx + 1;
+        while i < buffer_rows.len() as u32 {
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
                 }
+                delta += 1;
+            }
+            i += 1;
+        }
+        delta = 1;
+        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        while i > 0 && buffer_rows[i as usize].is_none() {
+            i -= 1;
+        }
+
+        while i > 0 {
+            i -= 1;
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
             }
         }
 
@@ -1499,25 +1513,26 @@ impl EditorElement {
             None
         };
 
-        let buffer_rows = snapshot
+        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+
+        for (ix, row) in snapshot
             .buffer_rows(rows.start)
             .take((rows.end - rows.start) as usize)
-            .collect::<Vec<_>>();
-
-        let relative_rows = self.calculate_relative_line_numbers(&rows, &buffer_rows, relative_to);
-
-        for (ix, row) in buffer_rows.iter().enumerate() {
+            .enumerate()
+        {
             let display_row = rows.start + ix as u32;
             let (active, color) = if active_rows.contains_key(&display_row) {
                 (true, style.line_number_active)
             } else {
                 (false, style.line_number)
             };
-            if let Some(buffer_row) = *row {
+            if let Some(buffer_row) = row {
                 if include_line_numbers {
                     line_number.clear();
                     let default_number = buffer_row + 1;
-                    let number = relative_rows.get(&ix).unwrap_or(&default_number);
+                    let number = relative_rows
+                        .get(&(ix as u32 + rows.start))
+                        .unwrap_or(&default_number);
                     write!(&mut line_number, "{}", number).unwrap();
                     line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
                         &line_number,
@@ -2345,7 +2360,7 @@ impl Element<Editor> for EditorElement {
         let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
             start_row..end_row,
             &active_rows,
-            newest_selection_head,
+            newest_selection_head.or_else(|| Some(editor.selections.newest_display(cx).head())),
             is_singleton,
             &snapshot,
             cx,
@@ -3122,14 +3137,7 @@ mod tests {
 
         let relative_rows = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-
-            let rows = 0..6;
-            let buffer_rows = snapshot
-                .buffer_rows(rows.start)
-                .take((rows.end - rows.start) as usize)
-                .collect::<Vec<_>>();
-
-            element.calculate_relative_line_numbers(&rows, &buffer_rows, Some(3))
+            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
         });
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
@@ -3137,6 +3145,28 @@ mod tests {
         // current line has no relative number
         assert_eq!(relative_rows[&4], 1);
         assert_eq!(relative_rows[&5], 2);
+
+        // works if cursor is before screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&3], 2);
+        assert_eq!(relative_rows[&4], 3);
+        assert_eq!(relative_rows[&5], 4);
+
+        // works if cursor is after screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&0], 5);
+        assert_eq!(relative_rows[&1], 4);
+        assert_eq!(relative_rows[&2], 3);
     }
 
     #[gpui::test]
