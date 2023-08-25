@@ -128,6 +128,8 @@ message Envelope {
 
         InlayHints inlay_hints = 116;
         InlayHintsResponse inlay_hints_response = 117;
+        ResolveInlayHint resolve_inlay_hint = 137;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 138;
         RefreshInlayHints refresh_inlay_hints = 118;
 
         CreateChannel create_channel = 119;
@@ -754,6 +756,7 @@ message InlayHint {
     bool padding_left = 4;
     bool padding_right = 5;
     InlayHintTooltip tooltip = 6;
+    ResolveState resolve_state = 7;
 }
 
 message InlayHintLabel {
@@ -787,12 +790,39 @@ message InlayHintLabelPartTooltip {
     }
 }
 
+message ResolveState {
+    State state = 1;
+    LspResolveState lsp_resolve_state = 2;
+
+    enum State {
+        Resolved = 0;
+        CanResolve = 1;
+        Resolving = 2;
+    }
+
+    message LspResolveState {
+        string value = 1;
+        uint64 server_id = 2;
+    }
+}
+
+message ResolveInlayHint {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
+    InlayHint hint = 4;
+}
+
+message ResolveInlayHintResponse {
+    InlayHint hint = 1;
+}
+
 message RefreshInlayHints {
     uint64 project_id = 1;
 }
 
 message MarkupContent {
-    string kind = 1;
+    bool is_markdown = 1;
     string value = 2;
 }
 

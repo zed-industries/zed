@@ -13,6 +13,7 @@ use crate::{
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
+        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -287,13 +288,13 @@ impl EditorElement {
             return false;
         }
 
-        let (position, target_position) = position_map.point_for_position(text_bounds, position);
-
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        let position = point_for_position.previous_valid;
         if shift && alt {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    goal_column: target_position.column(),
+                    goal_column: point_for_position.exact_unclipped.column(),
                 },
                 cx,
             );
@@ -329,9 +330,13 @@ impl EditorElement {
         if !text_bounds.contains_point(position) {
             return false;
         }
-
-        let (point, _) = position_map.point_for_position(text_bounds, position);
-        mouse_context_menu::deploy_context_menu(editor, position, point, cx);
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        mouse_context_menu::deploy_context_menu(
+            editor,
+            position,
+            point_for_position.previous_valid,
+            cx,
+        );
         true
     }
 
@@ -353,17 +358,15 @@ impl EditorElement {
         }
 
         if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-
-            if point == target_point {
-                if shift {
-                    go_to_fetched_type_definition(editor, point, alt, cx);
-                } else {
-                    go_to_fetched_definition(editor, point, alt, cx);
-                }
-
-                return true;
+            let point = position_map.point_for_position(text_bounds, position);
+            let could_be_inlay = point.as_valid().is_none();
+            if shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, alt, cx);
+            } else {
+                go_to_fetched_definition(editor, point, alt, cx);
             }
+
+            return true;
         }
 
         end_selection
@@ -383,17 +386,22 @@ impl EditorElement {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = if text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-            if point == target_point {
-                Some(point)
-            } else {
-                None
-            }
+            position_map
+                .point_for_position(text_bounds, position)
+                .as_valid()
         } else {
             None
         };
 
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
+        update_go_to_definition_link(
+            editor,
+            point
+                .map(GoToDefinitionTrigger::Text)
+                .unwrap_or(GoToDefinitionTrigger::None),
+            cmd,
+            shift,
+            cx,
+        );
 
         if editor.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
@@ -422,13 +430,12 @@ impl EditorElement {
                 ))
             }
 
-            let (position, target_position) =
-                position_map.point_for_position(text_bounds, position);
+            let point_for_position = position_map.point_for_position(text_bounds, position);
 
             editor.select(
                 SelectPhase::Update {
-                    position,
-                    goal_column: target_position.column(),
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
                     scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
                         .clamp(Vector2F::zero(), position_map.scroll_max),
                 },
@@ -455,10 +462,34 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = position_to_display_point(position, text_bounds, position_map);
-
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
-        hover_at(editor, point, cx);
+        if text_bounds.contains_point(position) {
+            let point_for_position = position_map.point_for_position(text_bounds, position);
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(
+                        editor,
+                        GoToDefinitionTrigger::Text(point),
+                        cmd,
+                        shift,
+                        cx,
+                    );
+                    hover_at(editor, Some(point), cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        &position_map.snapshot,
+                        point_for_position,
+                        editor,
+                        cmd,
+                        shift,
+                        cx,
+                    );
+                }
+            }
+        } else {
+            update_go_to_definition_link(editor, GoToDefinitionTrigger::None, cmd, shift, cx);
+            hover_at(editor, None, cx);
+        }
 
         true
     }
@@ -909,7 +940,7 @@ impl EditorElement {
                                         &text,
                                         cursor_row_layout.font_size(),
                                         &[(
-                                            text.len(),
+                                            text.chars().count(),
                                             RunStyle {
                                                 font_id,
                                                 color: style.background,
@@ -2632,22 +2663,42 @@ struct PositionMap {
     snapshot: EditorSnapshot,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct PointForPosition {
+    pub previous_valid: DisplayPoint,
+    pub next_valid: DisplayPoint,
+    pub exact_unclipped: DisplayPoint,
+    pub column_overshoot_after_line_end: u32,
+}
+
+impl PointForPosition {
+    #[cfg(test)]
+    pub fn valid(valid: DisplayPoint) -> Self {
+        Self {
+            previous_valid: valid,
+            next_valid: valid,
+            exact_unclipped: valid,
+            column_overshoot_after_line_end: 0,
+        }
+    }
+
+    fn as_valid(&self) -> Option<DisplayPoint> {
+        if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
+            Some(self.previous_valid)
+        } else {
+            None
+        }
+    }
+}
+
 impl PositionMap {
-    /// Returns two display points:
-    /// 1. The nearest *valid* position in the editor
-    /// 2. An unclipped, potentially *invalid* position that maps directly to
-    ///    the given pixel position.
-    fn point_for_position(
-        &self,
-        text_bounds: RectF,
-        position: Vector2F,
-    ) -> (DisplayPoint, DisplayPoint) {
+    fn point_for_position(&self, text_bounds: RectF, position: Vector2F) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin();
         let y = position.y().max(0.0).min(self.size.y());
         let x = position.x() + (scroll_position.x() * self.em_width);
         let row = (y / self.line_height + scroll_position.y()) as u32;
-        let (column, x_overshoot) = if let Some(line) = self
+        let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y() as usize)
             .map(|line_with_spaces| &line_with_spaces.line)
@@ -2661,11 +2712,18 @@ impl PositionMap {
             (0, x)
         };
 
-        let mut target_point = DisplayPoint::new(row, column);
-        let point = self.snapshot.clip_point(target_point, Bias::Left);
-        *target_point.column_mut() += (x_overshoot / self.em_advance) as u32;
+        let mut exact_unclipped = DisplayPoint::new(row, column);
+        let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
+        let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
-        (point, target_point)
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
+        *exact_unclipped.column_mut() += column_overshoot_after_line_end;
+        PointForPosition {
+            previous_valid,
+            next_valid,
+            exact_unclipped,
+            column_overshoot_after_line_end,
+        }
     }
 }
 
@@ -2916,23 +2974,6 @@ impl HighlightedRange {
         path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(self.color, Some(bounds)));
-    }
-}
-
-fn position_to_display_point(
-    position: Vector2F,
-    text_bounds: RectF,
-    position_map: &PositionMap,
-) -> Option<DisplayPoint> {
-    if text_bounds.contains_point(position) {
-        let (point, target_point) = position_map.point_for_position(text_bounds, position);
-        if point == target_point {
-            Some(point)
-        } else {
-            None
-        }
-    } else {
-        None
     }
 }
 
