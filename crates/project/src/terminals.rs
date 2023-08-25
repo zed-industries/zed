@@ -1,7 +1,10 @@
 use crate::Project;
 use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
-use std::path::PathBuf;
-use terminal::{Shell, Terminal, TerminalBuilder, TerminalSettings};
+use std::path::{Path, PathBuf};
+use terminal::{
+    terminal_settings::{self, TerminalSettings, VenvSettingsContent},
+    Terminal, TerminalBuilder,
+};
 
 #[cfg(target_os = "macos")]
 use std::os::unix::ffi::OsStrExt;
@@ -23,8 +26,7 @@ impl Project {
             ));
         } else {
             let settings = settings::get::<TerminalSettings>(cx);
-            let activate_python_virtual_environment =
-                settings.activate_python_virtual_environment.clone();
+            let python_settings = settings.detect_venv.clone();
             let shell = settings.shell.clone();
 
             let terminal = TerminalBuilder::new(
@@ -53,15 +55,15 @@ impl Project {
                 })
                 .detach();
 
-                if activate_python_virtual_environment {
-                    let activate_script_path = self.find_activate_script_path(&shell, cx);
+                if let Some(python_settings) = &python_settings.as_option() {
+                    let activate_script_path =
+                        self.find_activate_script_path(&python_settings, working_directory);
                     self.activate_python_virtual_environment(
                         activate_script_path,
                         &terminal_handle,
                         cx,
                     );
                 }
-
                 terminal_handle
             });
 
@@ -71,37 +73,26 @@ impl Project {
 
     pub fn find_activate_script_path(
         &mut self,
-        shell: &Shell,
-        cx: &mut ModelContext<Project>,
+        settings: &VenvSettingsContent,
+        working_directory: Option<PathBuf>,
     ) -> Option<PathBuf> {
-        let program = match shell {
-            terminal::Shell::System => "Figure this out",
-            terminal::Shell::Program(program) => program,
-            terminal::Shell::WithArguments { program, args: _ } => program,
+        // When we are unable to resolve the working directory, the terminal builder
+        // defaults to '/'. We should probably encode this directly somewhere, but for
+        // now, let's just hard code it here.
+        let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
+        let activate_script_name = match settings.activate_script {
+            terminal_settings::ActivateScript::Default => "activate",
+            terminal_settings::ActivateScript::Csh => "activate.csh",
+            terminal_settings::ActivateScript::Fish => "activate.fish",
         };
 
-        // This is so hacky - find a better way to do this
-        let script_name = if program.contains("fish") {
-            "activate.fish"
-        } else {
-            "activate"
-        };
+        for virtual_environment_name in settings.directories {
+            let mut path = working_directory.join(virtual_environment_name);
+            path.push("bin/");
+            path.push(activate_script_name);
 
-        let worktree_paths = self
-            .worktrees(cx)
-            .map(|worktree| worktree.read(cx).abs_path());
-
-        const VIRTUAL_ENVIRONMENT_NAMES: [&str; 4] = [".env", "env", ".venv", "venv"];
-
-        for worktree_path in worktree_paths {
-            for virtual_environment_name in VIRTUAL_ENVIRONMENT_NAMES {
-                let mut path = worktree_path.join(virtual_environment_name);
-                path.push("bin/");
-                path.push(script_name);
-
-                if path.exists() {
-                    return Some(path);
-                }
+            if path.exists() {
+                return Some(path);
             }
         }
 

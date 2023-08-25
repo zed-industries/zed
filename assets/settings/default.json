@@ -333,6 +333,24 @@
     //           "custom": 2
     //         },
     "line_height": "comfortable",
+    // Activate the python virtual environment, if one is found, in the
+    // terminal's working directory (as resolved by the working_directory
+    // setting). Set this to "off" to disable this behavior.
+    "detect_venv": {
+      "on": {
+        // Default directories to search for virtual environments, relative
+        // to the current working directory. We recommend overriding this
+        // in your project's settings, rather than globally.
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
+        // Can also be 'csh' and 'fish'
+        "activate_script": "default"
+      }
+    }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": "15",
@@ -340,15 +358,6 @@
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono",
     // ---
-    // Whether or not to automatically search for, and activate, Python virtual
-    //  environments.
-    // Current limitations:
-    //     - Only ".env", "env", ".venv", and "venv" are searched for at the
-    //       root of the project
-    //     - Only works with Posix-complaint shells
-    //     - Only activates the first virtual environment it finds, regardless
-    //       of the nunber of projects in the workspace.
-    "activate_python_virtual_environment": false
   },
   // Difference settings for semantic_index
   "semantic_index": {
