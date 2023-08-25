@@ -760,7 +760,7 @@ impl ProjectSearchView {
     }
 
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
-        let mut project;
+        let project;
         let excerpts;
         let mut query_text = String::new();
         let mut options = SearchOptions::NONE;

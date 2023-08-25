@@ -12,11 +12,9 @@ use db::VectorDatabase;
 use embedding::{EmbeddingProvider, OpenAIEmbeddings};
 use futures::{channel::oneshot, Future};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
-use isahc::http::header::OccupiedEntry;
 use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
-use postage::stream::Stream;
 use postage::watch;
 use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, WorktreeId};
 use smol::channel;
@@ -58,7 +56,7 @@ pub fn init(
     }
 
     cx.subscribe_global::<WorkspaceCreated, _>({
-        move |event, mut cx| {
+        move |event, cx| {
             let Some(semantic_index) = SemanticIndex::global(cx) else { return; };
             let workspace = &event.0;
             if let Some(workspace) = workspace.upgrade(cx) {
@@ -111,7 +109,7 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
-    subscription: gpui::Subscription,
+    _subscription: gpui::Subscription,
     outstanding_job_count_rx: watch::Receiver<usize>,
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     job_queue_tx: channel::Sender<IndexOperation>,
@@ -141,9 +139,6 @@ impl ProjectState {
         outstanding_job_count_rx: watch::Receiver<usize>,
         _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     ) -> Self {
-        let (job_count_tx, job_count_rx) = watch::channel_with(0);
-        let job_count_tx = Arc::new(Mutex::new(job_count_tx));
-
         let (job_queue_tx, job_queue_rx) = channel::unbounded();
         let _queue_update_task = cx.background().spawn({
             let mut worktree_queue = HashMap::new();
@@ -158,7 +153,7 @@ impl ProjectState {
             worktree_db_ids,
             outstanding_job_count_rx,
             _outstanding_job_count_tx,
-            subscription,
+            _subscription: subscription,
             _queue_update_task,
             job_queue_tx,
         }
@@ -175,18 +170,18 @@ impl ProjectState {
                 for (_, op) in queue {
                     match op {
                         IndexOperation::IndexFile {
-                            absolute_path,
+                            absolute_path: _,
                             payload,
                             tx,
                         } => {
-                            tx.try_send(payload);
+                            let _ = tx.try_send(payload);
                         }
                         IndexOperation::DeleteFile {
-                            absolute_path,
+                            absolute_path: _,
                             payload,
                             tx,
                         } => {
-                            tx.try_send(payload);
+                            let _ = tx.try_send(payload);
                         }
                         _ => {}
                     }
@@ -715,7 +710,7 @@ impl SemanticIndex {
             .ok_or(anyhow!("Worktree not available"))?
             .read(cx)
             .snapshot();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, _| async move {
             let worktree = worktree.clone();
             for (path, entry_id, path_change) in changes.iter() {
                 let relative_path = path.to_path_buf();
@@ -758,7 +753,7 @@ impl SemanticIndex {
                                 },
                                 tx: parsing_files_tx.clone(),
                             };
-                            job_queue_tx.try_send(new_operation);
+                            let _ = job_queue_tx.try_send(new_operation);
                         }
                     }
                     PathChange::Removed => {
@@ -770,7 +765,7 @@ impl SemanticIndex {
                             },
                             tx: db_update_tx.clone(),
                         };
-                        job_queue_tx.try_send(new_operation);
+                        let _ = job_queue_tx.try_send(new_operation);
                     }
                     _ => {}
                 }
@@ -808,7 +803,8 @@ impl SemanticIndex {
 
         let _subscription = cx.subscribe(&project, |this, project, event, cx| {
             if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
-                this.project_entries_changed(project.clone(), changes.clone(), cx, worktree_id);
+                let _ =
+                    this.project_entries_changed(project.clone(), changes.clone(), cx, worktree_id);
             };
         });
 
@@ -901,7 +897,7 @@ impl SemanticIndex {
                             }
                         }
                         // Clean up entries from database that are no longer in the worktree.
-                        for (path, mtime) in file_mtimes {
+                        for (path, _) in file_mtimes {
                             worktree_files.push(IndexOperation::DeleteFile {
                                 absolute_path: worktree.absolutize(path.as_path()),
                                 payload: DbOperation::Delete {
@@ -927,7 +923,7 @@ impl SemanticIndex {
                 );
 
                 for op in worktree_files {
-                    project_state.job_queue_tx.try_send(op);
+                    let _ = project_state.job_queue_tx.try_send(op);
                 }
 
                 this.projects.insert(project.downgrade(), project_state);
@@ -948,17 +944,17 @@ impl SemanticIndex {
             state.unwrap()
         };
 
-        let parsing_files_tx = self.parsing_files_tx.clone();
-        let db_update_tx = self.db_update_tx.clone();
+        // let parsing_files_tx = self.parsing_files_tx.clone();
+        // let db_update_tx = self.db_update_tx.clone();
         let job_count_rx = state.outstanding_job_count_rx.clone();
         let count = state.get_outstanding_count();
 
         cx.spawn(|this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, _| {
                 let Some(state) = this.projects.get_mut(&project.downgrade()) else {
                     return;
                 };
-                state.job_queue_tx.try_send(IndexOperation::FlushQueue);
+                let _ = state.job_queue_tx.try_send(IndexOperation::FlushQueue);
             });
 
             Ok((count, job_count_rx))
