@@ -1,14 +1,14 @@
 use crate::{
-    db::{test_db::TestDb, NewUserParams, UserId},
+    db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
 use call::{ActiveCall, Room};
+use channel::ChannelStore;
 use client::{
-    self, proto::PeerId, ChannelStore, Client, Connection, Credentials, EstablishConnectionError,
-    UserStore,
+    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -31,6 +31,7 @@ use std::{
 use util::http::FakeHttpClient;
 use workspace::Workspace;
 
+mod channel_buffer_tests;
 mod channel_tests;
 mod integration_tests;
 mod randomized_integration_tests;
@@ -210,6 +211,7 @@ impl TestServer {
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
+            channel::init(&client);
         });
 
         client

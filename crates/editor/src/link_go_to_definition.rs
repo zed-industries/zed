@@ -1,22 +1,101 @@
-use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase};
+use crate::{
+    display_map::{DisplaySnapshot, InlayOffset},
+    element::PointForPosition,
+    hover_popover::{self, InlayHover},
+    Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase,
+};
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
-use project::LocationLink;
+use project::{
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, ResolveState,
+};
 use std::ops::Range;
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
 pub struct LinkGoToDefinitionState {
-    pub last_mouse_location: Option<Anchor>,
-    pub symbol_range: Option<Range<Anchor>>,
+    pub last_trigger_point: Option<TriggerPoint>,
+    pub symbol_range: Option<DocumentRange>,
     pub kind: Option<LinkDefinitionKind>,
     pub definitions: Vec<LocationLink>,
     pub task: Option<Task<Option<()>>>,
 }
 
+pub enum GoToDefinitionTrigger {
+    Text(DisplayPoint),
+    InlayHint(InlayRange, LocationLink),
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InlayRange {
+    pub inlay_position: Anchor,
+    pub highlight_start: InlayOffset,
+    pub highlight_end: InlayOffset,
+}
+
+#[derive(Debug, Clone)]
+pub enum TriggerPoint {
+    Text(Anchor),
+    InlayHint(InlayRange, LocationLink),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentRange {
+    Text(Range<Anchor>),
+    Inlay(InlayRange),
+}
+
+impl DocumentRange {
+    pub fn as_text_range(&self) -> Option<Range<Anchor>> {
+        match self {
+            Self::Text(range) => Some(range.clone()),
+            Self::Inlay(_) => None,
+        }
+    }
+
+    fn point_within_range(&self, trigger_point: &TriggerPoint, snapshot: &EditorSnapshot) -> bool {
+        match (self, trigger_point) {
+            (DocumentRange::Text(range), TriggerPoint::Text(point)) => {
+                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
+                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
+            }
+            (DocumentRange::Inlay(range), TriggerPoint::InlayHint(point, _)) => {
+                range.highlight_start.cmp(&point.highlight_end).is_le()
+                    && range.highlight_end.cmp(&point.highlight_end).is_ge()
+            }
+            (DocumentRange::Inlay(_), TriggerPoint::Text(_))
+            | (DocumentRange::Text(_), TriggerPoint::InlayHint(_, _)) => false,
+        }
+    }
+}
+
+impl TriggerPoint {
+    fn anchor(&self) -> &Anchor {
+        match self {
+            TriggerPoint::Text(anchor) => anchor,
+            TriggerPoint::InlayHint(coordinates, _) => &coordinates.inlay_position,
+        }
+    }
+
+    pub fn definition_kind(&self, shift: bool) -> LinkDefinitionKind {
+        match self {
+            TriggerPoint::Text(_) => {
+                if shift {
+                    LinkDefinitionKind::Type
+                } else {
+                    LinkDefinitionKind::Symbol
+                }
+            }
+            TriggerPoint::InlayHint(_, _) => LinkDefinitionKind::Type,
+        }
+    }
+}
+
 pub fn update_go_to_definition_link(
     editor: &mut Editor,
-    point: Option<DisplayPoint>,
+    origin: GoToDefinitionTrigger,
     cmd_held: bool,
     shift_held: bool,
     cx: &mut ViewContext<Editor>,
@@ -25,23 +104,30 @@ pub fn update_go_to_definition_link(
 
     // Store new mouse point as an anchor
     let snapshot = editor.snapshot(cx);
-    let point = point.map(|point| {
-        snapshot
-            .buffer_snapshot
-            .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left))
-    });
+    let trigger_point = match origin {
+        GoToDefinitionTrigger::Text(p) => {
+            Some(TriggerPoint::Text(snapshot.buffer_snapshot.anchor_before(
+                p.to_offset(&snapshot.display_snapshot, Bias::Left),
+            )))
+        }
+        GoToDefinitionTrigger::InlayHint(p, target) => Some(TriggerPoint::InlayHint(p, target)),
+        GoToDefinitionTrigger::None => None,
+    };
 
     // If the new point is the same as the previously stored one, return early
     if let (Some(a), Some(b)) = (
-        &point,
-        &editor.link_go_to_definition_state.last_mouse_location,
+        &trigger_point,
+        &editor.link_go_to_definition_state.last_trigger_point,
     ) {
-        if a.cmp(b, &snapshot.buffer_snapshot).is_eq() {
+        if a.anchor()
+            .cmp(b.anchor(), &snapshot.buffer_snapshot)
+            .is_eq()
+        {
             return;
         }
     }
 
-    editor.link_go_to_definition_state.last_mouse_location = point.clone();
+    editor.link_go_to_definition_state.last_trigger_point = trigger_point.clone();
 
     if pending_nonempty_selection {
         hide_link_definition(editor, cx);
@@ -49,19 +135,200 @@ pub fn update_go_to_definition_link(
     }
 
     if cmd_held {
-        if let Some(point) = point {
-            let kind = if shift_held {
-                LinkDefinitionKind::Type
-            } else {
-                LinkDefinitionKind::Symbol
-            };
-
-            show_link_definition(kind, editor, point, snapshot, cx);
+        if let Some(trigger_point) = trigger_point {
+            let kind = trigger_point.definition_kind(shift_held);
+            show_link_definition(kind, editor, trigger_point, snapshot, cx);
             return;
         }
     }
 
     hide_link_definition(editor, cx);
+}
+
+pub fn update_inlay_link_and_hover_points(
+    snapshot: &DisplaySnapshot,
+    point_for_position: PointForPosition,
+    editor: &mut Editor,
+    cmd_held: bool,
+    shift_held: bool,
+    cx: &mut ViewContext<'_, '_, Editor>,
+) {
+    let hint_start_offset =
+        snapshot.display_point_to_inlay_offset(point_for_position.previous_valid, Bias::Left);
+    let hint_end_offset =
+        snapshot.display_point_to_inlay_offset(point_for_position.next_valid, Bias::Right);
+    let offset_overshoot = point_for_position.column_overshoot_after_line_end as usize;
+    let hovered_offset = if offset_overshoot == 0 {
+        Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
+    } else if (hint_end_offset - hint_start_offset).0 >= offset_overshoot {
+        Some(InlayOffset(hint_start_offset.0 + offset_overshoot))
+    } else {
+        None
+    };
+    if let Some(hovered_offset) = hovered_offset {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let previous_valid_anchor = buffer_snapshot.anchor_at(
+            point_for_position.previous_valid.to_point(snapshot),
+            Bias::Left,
+        );
+        let next_valid_anchor = buffer_snapshot.anchor_at(
+            point_for_position.next_valid.to_point(snapshot),
+            Bias::Right,
+        );
+
+        let mut go_to_definition_updated = false;
+        let mut hover_updated = false;
+        if let Some(hovered_hint) = editor
+            .visible_inlay_hints(cx)
+            .into_iter()
+            .skip_while(|hint| {
+                hint.position
+                    .cmp(&previous_valid_anchor, &buffer_snapshot)
+                    .is_lt()
+            })
+            .take_while(|hint| {
+                hint.position
+                    .cmp(&next_valid_anchor, &buffer_snapshot)
+                    .is_le()
+            })
+            .max_by_key(|hint| hint.id)
+        {
+            let inlay_hint_cache = editor.inlay_hint_cache();
+            let excerpt_id = previous_valid_anchor.excerpt_id;
+            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
+                match cached_hint.resolve_state {
+                    ResolveState::CanResolve(_, _) => {
+                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
+                            inlay_hint_cache.spawn_hint_resolve(
+                                buffer_id,
+                                excerpt_id,
+                                hovered_hint.id,
+                                cx,
+                            );
+                        }
+                    }
+                    ResolveState::Resolved => {
+                        match cached_hint.label {
+                            project::InlayHintLabel::String(_) => {
+                                if let Some(tooltip) = cached_hint.tooltip {
+                                    hover_popover::hover_at_inlay(
+                                        editor,
+                                        InlayHover {
+                                            excerpt: excerpt_id,
+                                            tooltip: match tooltip {
+                                                InlayHintTooltip::String(text) => HoverBlock {
+                                                    text,
+                                                    kind: HoverBlockKind::PlainText,
+                                                },
+                                                InlayHintTooltip::MarkupContent(content) => {
+                                                    HoverBlock {
+                                                        text: content.value,
+                                                        kind: content.kind,
+                                                    }
+                                                }
+                                            },
+                                            triggered_from: hovered_offset,
+                                            range: InlayRange {
+                                                inlay_position: hovered_hint.position,
+                                                highlight_start: hint_start_offset,
+                                                highlight_end: hint_end_offset,
+                                            },
+                                        },
+                                        cx,
+                                    );
+                                    hover_updated = true;
+                                }
+                            }
+                            project::InlayHintLabel::LabelParts(label_parts) => {
+                                if let Some((hovered_hint_part, part_range)) =
+                                    hover_popover::find_hovered_hint_part(
+                                        label_parts,
+                                        hint_start_offset..hint_end_offset,
+                                        hovered_offset,
+                                    )
+                                {
+                                    if let Some(tooltip) = hovered_hint_part.tooltip {
+                                        hover_popover::hover_at_inlay(
+                                            editor,
+                                            InlayHover {
+                                                excerpt: excerpt_id,
+                                                tooltip: match tooltip {
+                                                    InlayHintLabelPartTooltip::String(text) => {
+                                                        HoverBlock {
+                                                            text,
+                                                            kind: HoverBlockKind::PlainText,
+                                                        }
+                                                    }
+                                                    InlayHintLabelPartTooltip::MarkupContent(
+                                                        content,
+                                                    ) => HoverBlock {
+                                                        text: content.value,
+                                                        kind: content.kind,
+                                                    },
+                                                },
+                                                triggered_from: hovered_offset,
+                                                range: InlayRange {
+                                                    inlay_position: hovered_hint.position,
+                                                    highlight_start: part_range.start,
+                                                    highlight_end: part_range.end,
+                                                },
+                                            },
+                                            cx,
+                                        );
+                                        hover_updated = true;
+                                    }
+                                    if let Some(location) = hovered_hint_part.location {
+                                        if let Some(buffer) =
+                                            cached_hint.position.buffer_id.and_then(|buffer_id| {
+                                                editor.buffer().read(cx).buffer(buffer_id)
+                                            })
+                                        {
+                                            go_to_definition_updated = true;
+                                            update_go_to_definition_link(
+                                                editor,
+                                                GoToDefinitionTrigger::InlayHint(
+                                                    InlayRange {
+                                                        inlay_position: hovered_hint.position,
+                                                        highlight_start: part_range.start,
+                                                        highlight_end: part_range.end,
+                                                    },
+                                                    LocationLink {
+                                                        origin: Some(Location {
+                                                            buffer,
+                                                            range: cached_hint.position
+                                                                ..cached_hint.position,
+                                                        }),
+                                                        target: location,
+                                                    },
+                                                ),
+                                                cmd_held,
+                                                shift_held,
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                    }
+                    ResolveState::Resolving => {}
+                }
+            }
+        }
+
+        if !go_to_definition_updated {
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::None,
+                cmd_held,
+                shift_held,
+                cx,
+            );
+        }
+        if !hover_updated {
+            hover_popover::hover_at(editor, None, cx);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -73,7 +340,7 @@ pub enum LinkDefinitionKind {
 pub fn show_link_definition(
     definition_kind: LinkDefinitionKind,
     editor: &mut Editor,
-    trigger_point: Anchor,
+    trigger_point: TriggerPoint,
     snapshot: EditorSnapshot,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -86,10 +353,11 @@ pub fn show_link_definition(
         return;
     }
 
+    let trigger_anchor = trigger_point.anchor();
     let (buffer, buffer_position) = if let Some(output) = editor
         .buffer
         .read(cx)
-        .text_anchor_for_position(trigger_point.clone(), cx)
+        .text_anchor_for_position(trigger_anchor.clone(), cx)
     {
         output
     } else {
@@ -99,7 +367,7 @@ pub fn show_link_definition(
     let excerpt_id = if let Some((excerpt_id, _, _)) = editor
         .buffer()
         .read(cx)
-        .excerpt_containing(trigger_point.clone(), cx)
+        .excerpt_containing(trigger_anchor.clone(), cx)
     {
         excerpt_id
     } else {
@@ -114,52 +382,52 @@ pub fn show_link_definition(
 
     // Don't request again if the location is within the symbol region of a previous request with the same kind
     if let Some(symbol_range) = &editor.link_go_to_definition_state.symbol_range {
-        let point_after_start = symbol_range
-            .start
-            .cmp(&trigger_point, &snapshot.buffer_snapshot)
-            .is_le();
-
-        let point_before_end = symbol_range
-            .end
-            .cmp(&trigger_point, &snapshot.buffer_snapshot)
-            .is_ge();
-
-        let point_within_range = point_after_start && point_before_end;
-        if point_within_range && same_kind {
+        if same_kind && symbol_range.point_within_range(&trigger_point, &snapshot) {
             return;
         }
     }
 
     let task = cx.spawn(|this, mut cx| {
         async move {
-            // query the LSP for definition info
-            let definition_request = cx.update(|cx| {
-                project.update(cx, |project, cx| match definition_kind {
-                    LinkDefinitionKind::Symbol => project.definition(&buffer, buffer_position, cx),
+            let result = match &trigger_point {
+                TriggerPoint::Text(_) => {
+                    // query the LSP for definition info
+                    cx.update(|cx| {
+                        project.update(cx, |project, cx| match definition_kind {
+                            LinkDefinitionKind::Symbol => {
+                                project.definition(&buffer, buffer_position, cx)
+                            }
 
-                    LinkDefinitionKind::Type => {
-                        project.type_definition(&buffer, buffer_position, cx)
-                    }
-                })
-            });
-
-            let result = definition_request.await.ok().map(|definition_result| {
-                (
-                    definition_result.iter().find_map(|link| {
-                        link.origin.as_ref().map(|origin| {
-                            let start = snapshot
-                                .buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id.clone(), origin.range.start);
-                            let end = snapshot
-                                .buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
-
-                            start..end
+                            LinkDefinitionKind::Type => {
+                                project.type_definition(&buffer, buffer_position, cx)
+                            }
                         })
-                    }),
-                    definition_result,
-                )
-            });
+                    })
+                    .await
+                    .ok()
+                    .map(|definition_result| {
+                        (
+                            definition_result.iter().find_map(|link| {
+                                link.origin.as_ref().map(|origin| {
+                                    let start = snapshot
+                                        .buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id.clone(), origin.range.start);
+                                    let end = snapshot
+                                        .buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
+
+                                    DocumentRange::Text(start..end)
+                                })
+                            }),
+                            definition_result,
+                        )
+                    })
+                }
+                TriggerPoint::InlayHint(trigger_source, trigger_target) => Some((
+                    Some(DocumentRange::Inlay(trigger_source.clone())),
+                    vec![trigger_target.clone()],
+                )),
+            };
 
             this.update(&mut cx, |this, cx| {
                 // Clear any existing highlights
@@ -199,22 +467,37 @@ pub fn show_link_definition(
                         });
 
                     if any_definition_does_not_contain_current_location {
-                        // If no symbol range returned from language server, use the surrounding word.
-                        let highlight_range = symbol_range.unwrap_or_else(|| {
-                            let snapshot = &snapshot.buffer_snapshot;
-                            let (offset_range, _) = snapshot.surrounding_word(trigger_point);
-
-                            snapshot.anchor_before(offset_range.start)
-                                ..snapshot.anchor_after(offset_range.end)
-                        });
-
                         // Highlight symbol using theme link definition highlight style
                         let style = theme::current(cx).editor.link_definition;
-                        this.highlight_text::<LinkGoToDefinitionState>(
-                            vec![highlight_range],
-                            style,
-                            cx,
-                        );
+                        let highlight_range = symbol_range.unwrap_or_else(|| match trigger_point {
+                            TriggerPoint::Text(trigger_anchor) => {
+                                let snapshot = &snapshot.buffer_snapshot;
+                                // If no symbol range returned from language server, use the surrounding word.
+                                let (offset_range, _) = snapshot.surrounding_word(trigger_anchor);
+                                DocumentRange::Text(
+                                    snapshot.anchor_before(offset_range.start)
+                                        ..snapshot.anchor_after(offset_range.end),
+                                )
+                            }
+                            TriggerPoint::InlayHint(inlay_coordinates, _) => {
+                                DocumentRange::Inlay(inlay_coordinates)
+                            }
+                        });
+
+                        match highlight_range {
+                            DocumentRange::Text(text_range) => this
+                                .highlight_text::<LinkGoToDefinitionState>(
+                                    vec![text_range],
+                                    style,
+                                    cx,
+                                ),
+                            DocumentRange::Inlay(inlay_coordinates) => this
+                                .highlight_inlays::<LinkGoToDefinitionState>(
+                                    vec![inlay_coordinates],
+                                    style,
+                                    cx,
+                                ),
+                        }
                     } else {
                         hide_link_definition(this, cx);
                     }
@@ -245,7 +528,7 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
 pub fn go_to_fetched_definition(
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -254,7 +537,7 @@ pub fn go_to_fetched_definition(
 
 pub fn go_to_fetched_type_definition(
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -264,7 +547,7 @@ pub fn go_to_fetched_type_definition(
 fn go_to_fetched_definition_of_kind(
     kind: LinkDefinitionKind,
     editor: &mut Editor,
-    point: DisplayPoint,
+    point: PointForPosition,
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -282,7 +565,7 @@ fn go_to_fetched_definition_of_kind(
     } else {
         editor.select(
             SelectPhase::Begin {
-                position: point,
+                position: point.next_valid,
                 add: false,
                 click_count: 1,
             },
@@ -299,14 +582,21 @@ fn go_to_fetched_definition_of_kind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use crate::{
+        display_map::ToDisplayPoint,
+        editor_tests::init_test,
+        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        test::editor_lsp_test_context::EditorLspTestContext,
+    };
     use futures::StreamExt;
     use gpui::{
         platform::{self, Modifiers, ModifiersChangedEvent},
         View,
     };
     use indoc::indoc;
+    use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use util::assert_set_eq;
 
     #[gpui::test]
     async fn test_link_go_to_type_definition(cx: &mut gpui::TestAppContext) {
@@ -355,7 +645,13 @@ mod tests {
 
         // Press cmd+shift to trigger highlight
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, true, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                true,
+                cx,
+            );
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -406,7 +702,7 @@ mod tests {
             });
 
         cx.update_editor(|editor, cx| {
-            go_to_fetched_type_definition(editor, hover_point, false, cx);
+            go_to_fetched_type_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -461,7 +757,13 @@ mod tests {
         });
 
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -482,7 +784,7 @@ mod tests {
         "});
 
         // Response without source range still highlights word
-        cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_mouse_location = None);
+        cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_trigger_point = None);
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
@@ -495,7 +797,13 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -517,7 +825,13 @@ mod tests {
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -534,7 +848,13 @@ mod tests {
             fn do_work() { teˇst(); }
         "});
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), false, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                false,
+                false,
+                cx,
+            );
         });
         cx.foreground().run_until_parked();
 
@@ -593,7 +913,13 @@ mod tests {
 
         // Moving the mouse restores the highlights.
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
@@ -607,7 +933,13 @@ mod tests {
             fn do_work() { tesˇt(); }
         "});
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
@@ -617,7 +949,7 @@ mod tests {
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, false, cx);
+            go_to_fetched_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         // Assert selection moved to to definition
         cx.lsp
@@ -658,7 +990,7 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            go_to_fetched_definition(editor, hover_point, false, cx);
+            go_to_fetched_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -703,7 +1035,13 @@ mod tests {
             });
         });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
+            update_go_to_definition_link(
+                editor,
+                GoToDefinitionTrigger::Text(hover_point),
+                true,
+                false,
+                cx,
+            );
         });
         cx.foreground().run_until_parked();
         assert!(requests.try_next().is_err());
@@ -712,5 +1050,210 @@ mod tests {
             fn do_work() { test(); }
         "});
         cx.foreground().run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_link_go_to_inlay(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(indoc! {"
+            struct TestStruct;
+
+            fn main() {
+                let variableˇ = TestStruct;
+            }
+        "});
+        let hint_start_offset = cx.ranges(indoc! {"
+            struct TestStruct;
+
+            fn main() {
+                let variableˇ = TestStruct;
+            }
+        "})[0]
+            .start;
+        let hint_position = cx.to_lsp(hint_start_offset);
+        let target_range = cx.lsp_range(indoc! {"
+            struct «TestStruct»;
+
+            fn main() {
+                let variable = TestStruct;
+            }
+        "});
+
+        let expected_uri = cx.buffer_lsp_url.clone();
+        let hint_label = ": TestStruct";
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let expected_uri = expected_uri.clone();
+                async move {
+                    assert_eq!(params.text_document.uri, expected_uri);
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: hint_position,
+                        label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                            value: hint_label.to_string(),
+                            location: Some(lsp::Location {
+                                uri: params.text_document.uri,
+                                range: target_range,
+                            }),
+                            ..Default::default()
+                        }]),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let expected_layers = vec![hint_label.to_string()];
+            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+        });
+
+        let inlay_range = cx
+            .ranges(indoc! {"
+            struct TestStruct;
+
+            fn main() {
+                let variable« »= TestStruct;
+            }
+        "})
+            .get(0)
+            .cloned()
+            .unwrap();
+        let hint_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            PointForPosition {
+                previous_valid: inlay_range.start.to_display_point(&snapshot),
+                next_valid: inlay_range.end.to_display_point(&snapshot),
+                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
+                column_overshoot_after_line_end: (hint_label.len() / 2) as u32,
+            }
+        });
+        // Press cmd to trigger highlight
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                hint_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let actual_ranges = snapshot
+                .highlight_ranges::<LinkGoToDefinitionState>()
+                .map(|ranges| ranges.as_ref().clone().1)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|range| match range {
+                    DocumentRange::Text(range) => {
+                        panic!("Unexpected regular text selection range {range:?}")
+                    }
+                    DocumentRange::Inlay(inlay_range) => inlay_range,
+                })
+                .collect::<Vec<_>>();
+
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let expected_highlight_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+            let expected_ranges = vec![InlayRange {
+                inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                highlight_start: expected_highlight_start,
+                highlight_end: InlayOffset(expected_highlight_start.0 + hint_label.len()),
+            }];
+            assert_set_eq!(actual_ranges, expected_ranges);
+        });
+
+        // Unpress cmd causes highlight to go away
+        cx.update_editor(|editor, cx| {
+            editor.modifiers_changed(
+                &platform::ModifiersChangedEvent {
+                    modifiers: Modifiers {
+                        cmd: false,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        // Assert no link highlights
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let actual_ranges = snapshot
+                .highlight_ranges::<LinkGoToDefinitionState>()
+                .map(|ranges| ranges.as_ref().clone().1)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|range| match range {
+                    DocumentRange::Text(range) => {
+                        panic!("Unexpected regular text selection range {range:?}")
+                    }
+                    DocumentRange::Inlay(inlay_range) => inlay_range,
+                })
+                .collect::<Vec<_>>();
+
+            assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
+        });
+
+        // Cmd+click without existing definition requests and jumps
+        cx.update_editor(|editor, cx| {
+            editor.modifiers_changed(
+                &platform::ModifiersChangedEvent {
+                    modifiers: Modifiers {
+                        cmd: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            );
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                hint_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            go_to_fetched_type_definition(editor, hint_hover_position, false, cx);
+        });
+        cx.foreground().run_until_parked();
+        cx.assert_editor_state(indoc! {"
+            struct «TestStructˇ»;
+
+            fn main() {
+                let variable = TestStruct;
+            }
+        "});
     }
 }

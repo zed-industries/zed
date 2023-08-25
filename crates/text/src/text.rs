@@ -12,7 +12,7 @@ mod undo_map;
 
 pub use anchor::*;
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
+pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::LineEnding;
 use locator::Locator;

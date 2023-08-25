@@ -8,8 +8,6 @@ use search::{BufferSearchBar, ProjectSearchBar};
 
 use crate::{state::Operator, *};
 
-use super::VimBindingTestContext;
-
 pub struct VimTestContext<'a> {
     cx: EditorLspTestContext<'a>,
 }
@@ -125,14 +123,6 @@ impl<'a> VimTestContext<'a> {
         self.cx.assert_editor_state(state_after);
         assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
         assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
-    }
-
-    pub fn binding<const COUNT: usize>(
-        mut self,
-        keystrokes: [&'static str; COUNT],
-    ) -> VimBindingTestContext<'a, COUNT> {
-        let mode = self.mode();
-        VimBindingTestContext::new(keystrokes, mode, mode, self)
     }
 }
 

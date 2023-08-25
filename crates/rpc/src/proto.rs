@@ -197,6 +197,8 @@ messages!(
     (OnTypeFormattingResponse, Background),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
+    (ResolveInlayHint, Background),
+    (ResolveInlayHintResponse, Background),
     (RefreshInlayHints, Foreground),
     (Ping, Foreground),
     (PrepareRename, Background),
@@ -248,7 +250,13 @@ messages!(
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
     (GetChannelMembers, Foreground),
-    (GetChannelMembersResponse, Foreground)
+    (GetChannelMembersResponse, Foreground),
+    (JoinChannelBuffer, Foreground),
+    (JoinChannelBufferResponse, Foreground),
+    (LeaveChannelBuffer, Background),
+    (UpdateChannelBuffer, Foreground),
+    (RemoveChannelBufferCollaborator, Foreground),
+    (AddChannelBufferCollaborator, Foreground),
 );
 
 request_messages!(
@@ -293,6 +301,7 @@ request_messages!(
     (PrepareRename, PrepareRenameResponse),
     (OnTypeFormatting, OnTypeFormattingResponse),
     (InlayHints, InlayHintsResponse),
+    (ResolveInlayHint, ResolveInlayHintResponse),
     (RefreshInlayHints, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
     (RequestContact, Ack),
@@ -315,6 +324,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (JoinChannelBuffer, JoinChannelBufferResponse),
+    (LeaveChannelBuffer, Ack)
 );
 
 entity_messages!(
@@ -347,6 +358,7 @@ entity_messages!(
     PerformRename,
     OnTypeFormatting,
     InlayHints,
+    ResolveInlayHint,
     RefreshInlayHints,
     PrepareRename,
     ReloadBuffers,
@@ -368,6 +380,13 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     UpdateDiffBase
+);
+
+entity_messages!(
+    channel_id,
+    UpdateChannelBuffer,
+    RemoveChannelBufferCollaborator,
+    AddChannelBufferCollaborator
 );
 
 const KIB: usize = 1024;

@@ -1,4 +1,4 @@
-use crate::{search::PathMatcher, worktree::WorktreeHandle, Event, *};
+use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
 use fs::{FakeFs, LineEnding, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe, AppContext};

@@ -63,20 +63,23 @@ impl KeymapFile {
                     // string. But `RawValue` currently does not work inside of an untagged enum.
                     match action {
                         Value::Array(items) => {
-                            let Ok([name, data]): Result<[serde_json::Value; 2], _> = items.try_into() else {
+                            let Ok([name, data]): Result<[serde_json::Value; 2], _> =
+                                items.try_into()
+                            else {
                                 return Some(Err(anyhow!("Expected array of length 2")));
                             };
                             let serde_json::Value::String(name) = name else {
-                                return Some(Err(anyhow!("Expected first item in array to be a string.")))
+                                return Some(Err(anyhow!(
+                                    "Expected first item in array to be a string."
+                                )));
                             };
-                            cx.deserialize_action(
-                                &name,
-                                Some(data),
-                            )
-                        },
+                            cx.deserialize_action(&name, Some(data))
+                        }
                         Value::String(name) => cx.deserialize_action(&name, None),
                         Value::Null => Ok(no_action()),
-                        _ => return Some(Err(anyhow!("Expected two-element array, got {action:?}"))),
+                        _ => {
+                            return Some(Err(anyhow!("Expected two-element array, got {action:?}")))
+                        }
                     }
                     .with_context(|| {
                         format!(

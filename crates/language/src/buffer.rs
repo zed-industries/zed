@@ -14,7 +14,7 @@ use crate::{
     CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
+pub use clock::ReplicaId;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
@@ -354,6 +354,14 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            None,
+            None,
+        )
+    }
+
+    pub fn remote(remote_id: u64, replica_id: ReplicaId, base_text: String) -> Self {
+        Self::build(
+            TextBuffer::new(replica_id, remote_id, base_text),
             None,
             None,
         )
@@ -2476,7 +2484,9 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else { continue };
+                let Some((open, close)) = open.zip(close) else {
+                    continue;
+                };
 
                 let bracket_range = open.start..=close.end;
                 if !bracket_range.overlaps(&range) {

@@ -1128,7 +1128,9 @@ impl Conversation {
                     stream: true,
                 };
 
-                let Some(api_key) = self.api_key.borrow().clone() else { continue };
+                let Some(api_key) = self.api_key.borrow().clone() else {
+                    continue;
+                };
                 let stream = stream_completion(api_key, cx.background().clone(), request);
                 let assistant_message = self
                     .insert_message_after(
@@ -1484,7 +1486,9 @@ impl Conversation {
             }) {
                 current_message = messages.next();
             }
-            let Some(message) = current_message.as_ref() else { break };
+            let Some(message) = current_message.as_ref() else {
+                break;
+            };
 
             // Skip offsets that are in the same message.
             while offsets.peek().map_or(false, |offset| {
@@ -1921,7 +1925,10 @@ impl ConversationEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(editor) = workspace.active_item(cx).and_then(|item| item.act_as::<Editor>(cx)) else {
+        let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
             return;
         };
 

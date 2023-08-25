@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, UserId, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -249,6 +249,7 @@ enum ProjectClientState {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -280,6 +281,7 @@ pub enum Event {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
     },
+    CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
 }
@@ -330,15 +332,22 @@ pub struct Location {
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
-    pub buffer_id: u64,
     pub position: language::Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<InlayHintKind>,
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+    pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveState {
+    Resolved,
+    CanResolve(LanguageServerId, Option<lsp::LSPAny>),
+    Resolving,
 }
 
 impl InlayHint {
@@ -350,34 +359,34 @@ impl InlayHint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
     pub location: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabelPartTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkupContent {
-    pub kind: String,
+    pub kind: HoverBlockKind,
     pub value: String,
 }
 
@@ -411,7 +420,7 @@ pub struct HoverBlock {
     pub kind: HoverBlockKind,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HoverBlockKind {
     PlainText,
     Markdown,
@@ -569,6 +578,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_resolve_inlay_hint);
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
@@ -4987,7 +4997,7 @@ impl Project {
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<InlayHint>>> {
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         let range_start = range.start;
@@ -5031,6 +5041,73 @@ impl Project {
                 .await;
 
                 hints_request_result.context("inlay hints proto response conversion")
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
+    pub fn resolve_inlay_hint(
+        &self,
+        hint: InlayHint,
+        buffer_handle: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<InlayHint>> {
+        if self.is_local() {
+            let buffer = buffer_handle.read(cx);
+            let (_, lang_server) = if let Some((adapter, server)) =
+                self.language_server_for_buffer(buffer, server_id, cx)
+            {
+                (adapter.clone(), server.clone())
+            } else {
+                return Task::ready(Ok(hint));
+            };
+            if !InlayHints::can_resolve_inlays(lang_server.capabilities()) {
+                return Task::ready(Ok(hint));
+            }
+
+            let buffer_snapshot = buffer.snapshot();
+            cx.spawn(|project, mut cx| async move {
+                let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
+                    InlayHints::project_to_lsp_hint(hint, &project, &buffer_snapshot, &cx),
+                );
+                let resolved_hint = resolve_task
+                    .await
+                    .context("inlay hint resolve LSP request")?;
+                let resolved_hint = InlayHints::lsp_to_project_hint(
+                    resolved_hint,
+                    &project,
+                    &buffer_handle,
+                    server_id,
+                    ResolveState::Resolved,
+                    false,
+                    &mut cx,
+                )
+                .await?;
+                Ok(resolved_hint)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::ResolveInlayHint {
+                project_id,
+                buffer_id: buffer_handle.read(cx).remote_id(),
+                language_server_id: server_id.0 as u64,
+                hint: Some(InlayHints::project_to_proto_hint(hint.clone(), cx)),
+            };
+            cx.spawn(|project, mut cx| async move {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("inlay hints proto request")?;
+                match response.hint {
+                    Some(resolved_hint) => {
+                        InlayHints::proto_to_project_hint(resolved_hint, &project, &mut cx)
+                            .await
+                            .context("inlay hints proto resolve response conversion")
+                    }
+                    None => Ok(hint),
+                }
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -6086,6 +6163,7 @@ impl Project {
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
             this.shared_buffers.remove(&collaborator.peer_id);
+            cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();
@@ -6967,6 +7045,43 @@ impl Project {
         Ok(this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
         }))
+    }
+
+    async fn handle_resolve_inlay_hint(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ResolveInlayHint>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveInlayHintResponse> {
+        let proto_hint = envelope
+            .payload
+            .hint
+            .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
+        let hint = InlayHints::proto_to_project_hint(proto_hint, &this, &mut cx)
+            .await
+            .context("resolved proto inlay hint conversion")?;
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let response_hint = this
+            .update(&mut cx, |project, cx| {
+                project.resolve_inlay_hint(
+                    hint,
+                    buffer,
+                    LanguageServerId(envelope.payload.language_server_id as usize),
+                    cx,
+                )
+            })
+            .await
+            .context("inlay hints fetch")?;
+        let resolved_hint = cx.read(|cx| InlayHints::project_to_proto_hint(response_hint, cx));
+
+        Ok(proto::ResolveInlayHintResponse {
+            hint: Some(resolved_hint),
+        })
     }
 
     async fn handle_refresh_inlay_hints(
@@ -7913,6 +8028,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

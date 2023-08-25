@@ -1,4 +1,5 @@
-use client::{proto, ChannelId, ChannelMembership, ChannelStore, User, UserId, UserStore};
+use channel::{ChannelId, ChannelMembership, ChannelStore};
+use client::{proto, User, UserId, UserStore};
 use context_menu::{ContextMenu, ContextMenuItem};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -151,12 +152,9 @@ impl View for ChannelModal {
         let theme = &theme::current(cx).collab_panel.tabbed_modal;
 
         let mode = self.picker.read(cx).delegate().mode;
-        let Some(channel) = self
-            .channel_store
-            .read(cx)
-            .channel_for_id(self.channel_id) else {
-                return Empty::new().into_any()
-            };
+        let Some(channel) = self.channel_store.read(cx).channel_for_id(self.channel_id) else {
+            return Empty::new().into_any();
+        };
 
         enum InviteMembers {}
         enum ManageMembers {}

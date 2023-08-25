@@ -2756,7 +2756,9 @@ impl MultiBufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        let Some(enclosing_bracket_ranges) = self.enclosing_bracket_ranges(range.clone()) else { return None; };
+        let Some(enclosing_bracket_ranges) = self.enclosing_bracket_ranges(range.clone()) else {
+            return None;
+        };
 
         for (open, close) in enclosing_bracket_ranges {
             let len = close.end - open.start;

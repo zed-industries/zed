@@ -742,8 +742,8 @@ mod element {
 
                 while proposed_current_pixel_change.abs() > 0. {
                     let Some(current_ix) = successors.next() else {
-                            break;
-                        };
+                        break;
+                    };
 
                     let next_target_size = f32::max(
                         size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
