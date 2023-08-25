@@ -244,40 +244,47 @@ impl AssistantPanel {
 
     fn new_inline_assist(&mut self, editor: &ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let id = post_inc(&mut self.next_inline_assist_id);
-        let (block_id, inline_assistant, selection) = editor.update(cx, |editor, cx| {
-            let selection = editor.selections.newest_anchor().clone();
-            let prompt_editor = cx.add_view(|cx| {
-                Editor::single_line(
-                    Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
-                    cx,
-                )
-            });
-            let assist_kind = if editor.selections.newest::<usize>(cx).is_empty() {
-                InlineAssistKind::Insert
-            } else {
-                InlineAssistKind::Edit
-            };
-            let assistant = cx.add_view(|_| InlineAssistant {
+        let selection = editor.read(cx).selections.newest_anchor().clone();
+        let assist_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
+            InlineAssistKind::Insert
+        } else {
+            InlineAssistKind::Refactor
+        };
+        let prompt_editor = cx.add_view(|cx| {
+            Editor::single_line(
+                Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
+                cx,
+            )
+        });
+        let inline_assistant = cx.add_view(|cx| {
+            let assistant = InlineAssistant {
                 id,
                 prompt_editor,
                 confirmed: false,
                 has_focus: false,
                 assist_kind,
-            });
-            cx.focus(&assistant);
-
-            let block_id = editor.insert_blocks(
+            };
+            cx.focus_self();
+            assistant
+        });
+        let block_id = editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                vec![selection.start..selection.end],
+                |theme| theme.assistant.inline.pending_edit_background,
+                cx,
+            );
+            editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
                     position: selection.head(),
                     height: 2,
                     render: Arc::new({
-                        let assistant = assistant.clone();
+                        let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
-                            ChildView::new(&assistant, cx)
+                            ChildView::new(&inline_assistant, cx)
                                 .contained()
                                 .with_padding_left(match assist_kind {
-                                    InlineAssistKind::Edit => cx.gutter_width,
+                                    InlineAssistKind::Refactor => cx.gutter_width,
                                     InlineAssistKind::Insert => cx.anchor_x,
                                 })
                                 .into_any()
@@ -291,19 +298,13 @@ impl AssistantPanel {
                 }],
                 Some(Autoscroll::Strategy(AutoscrollStrategy::Newest)),
                 cx,
-            )[0];
-            editor.highlight_background::<Self>(
-                vec![selection.start..selection.end],
-                |theme| theme.assistant.inline.pending_edit_background,
-                cx,
-            );
-
-            (block_id, assistant, selection)
+            )[0]
         });
 
         self.pending_inline_assists.insert(
             id,
             PendingInlineAssist {
+                kind: assist_kind,
                 editor: editor.downgrade(),
                 selection,
                 inline_assistant_block_id: Some(block_id),
@@ -341,7 +342,7 @@ impl AssistantPanel {
         let assist_id = inline_assistant.read(cx).id;
         match event {
             InlineAssistantEvent::Confirmed { prompt } => {
-                self.generate_code(assist_id, prompt, cx);
+                self.generate(assist_id, prompt, cx);
             }
             InlineAssistantEvent::Canceled => {
                 self.complete_inline_assist(assist_id, true, cx);
@@ -395,12 +396,7 @@ impl AssistantPanel {
         }
     }
 
-    pub fn generate_code(
-        &mut self,
-        inline_assist_id: usize,
-        user_prompt: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn generate(&mut self, inline_assist_id: usize, user_prompt: &str, cx: &mut ViewContext<Self>) {
         let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
             api_key
         } else {
@@ -426,27 +422,32 @@ impl AssistantPanel {
             .text_for_range(selection.start..selection.end)
             .collect::<Rope>();
 
-        let mut normalized_selected_text = selected_text.clone();
         let mut base_indentation: Option<language::IndentSize> = None;
         let selection_start = selection.start.to_point(&snapshot);
         let selection_end = selection.end.to_point(&snapshot);
-        if selection_start.row < selection_end.row {
-            for row in selection_start.row..=selection_end.row {
-                if snapshot.is_line_blank(row) {
-                    continue;
-                }
-
-                let line_indentation = snapshot.indent_size_for_line(row);
-                if let Some(base_indentation) = base_indentation.as_mut() {
-                    if line_indentation.len < base_indentation.len {
-                        *base_indentation = line_indentation;
-                    }
-                } else {
-                    base_indentation = Some(line_indentation);
-                }
+        let mut start_row = selection_start.row;
+        if snapshot.is_line_blank(start_row) {
+            if let Some(prev_non_blank_row) = snapshot.prev_non_blank_row(start_row) {
+                start_row = prev_non_blank_row;
             }
         }
 
+        for row in start_row..=selection_end.row {
+            if snapshot.is_line_blank(row) {
+                continue;
+            }
+
+            let line_indentation = snapshot.indent_size_for_line(row);
+            if let Some(base_indentation) = base_indentation.as_mut() {
+                if line_indentation.len < base_indentation.len {
+                    *base_indentation = line_indentation;
+                }
+            } else {
+                base_indentation = Some(line_indentation);
+            }
+        }
+
+        let mut normalized_selected_text = selected_text.clone();
         if let Some(base_indentation) = base_indentation {
             for row in selection_start.row..=selection_end.row {
                 let selection_row = row - selection_start.row;
@@ -472,10 +473,53 @@ impl AssistantPanel {
         let language_name = language_name.as_deref().unwrap_or("");
 
         let mut prompt = String::new();
-        writeln!(prompt, "Given the following {language_name} snippet:").unwrap();
-        writeln!(prompt, "{normalized_selected_text}").unwrap();
-        writeln!(prompt, "{user_prompt}.").unwrap();
-        writeln!(prompt, "Never make remarks, reply only with the new code.").unwrap();
+        writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
+        writeln!(
+            prompt,
+            "You're currently working inside an editor on this code:"
+        )
+        .unwrap();
+        match pending_assist.kind {
+            InlineAssistKind::Refactor => {
+                writeln!(prompt, "```{language_name}").unwrap();
+                writeln!(prompt, "{normalized_selected_text}").unwrap();
+                writeln!(prompt, "```").unwrap();
+                writeln!(
+                    prompt,
+                    "Modify the code given the user prompt: {user_prompt}"
+                )
+                .unwrap();
+            }
+            InlineAssistKind::Insert => {
+                writeln!(prompt, "```{language_name}").unwrap();
+                for chunk in snapshot.text_for_range(Anchor::min()..selection.head()) {
+                    write!(prompt, "{chunk}").unwrap();
+                }
+                write!(prompt, "<|>").unwrap();
+                for chunk in snapshot.text_for_range(selection.head()..Anchor::max()) {
+                    write!(prompt, "{chunk}").unwrap();
+                }
+                writeln!(prompt).unwrap();
+                writeln!(prompt, "```").unwrap();
+                writeln!(
+                    prompt,
+                    "Assume the cursor is located where the `<|>` marker is."
+                )
+                .unwrap();
+                writeln!(
+                    prompt,
+                    "Complete the code given the user prompt: {user_prompt}"
+                )
+                .unwrap();
+            }
+        }
+        writeln!(
+            prompt,
+            "You MUST not return anything that isn't valid {language_name}"
+        )
+        .unwrap();
+        writeln!(prompt, "DO NOT wrap your response in Markdown blocks.").unwrap();
+
         let request = OpenAIRequest {
             model: "gpt-4".into(),
             messages: vec![RequestMessage {
@@ -2589,7 +2633,7 @@ enum InlineAssistantEvent {
 
 #[derive(Copy, Clone)]
 enum InlineAssistKind {
-    Edit,
+    Refactor,
     Insert,
 }
 
@@ -2614,7 +2658,7 @@ impl View for InlineAssistant {
         let theme = theme::current(cx);
         let prompt_editor = ChildView::new(&self.prompt_editor, cx).aligned().left();
         match self.assist_kind {
-            InlineAssistKind::Edit => prompt_editor
+            InlineAssistKind::Refactor => prompt_editor
                 .contained()
                 .with_style(theme.assistant.inline.container)
                 .into_any(),
@@ -2651,6 +2695,7 @@ impl InlineAssistant {
 }
 
 struct PendingInlineAssist {
+    kind: InlineAssistKind,
     editor: WeakViewHandle<Editor>,
     selection: Selection<Anchor>,
     inline_assistant_block_id: Option<BlockId>,

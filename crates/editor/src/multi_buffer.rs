@@ -2352,6 +2352,16 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
+    }
+
     pub fn line_len(&self, row: u32) -> u32 {
         if let Some((_, range)) = self.buffer_line_for_row(row) {
             range.end.column - range.start.column
