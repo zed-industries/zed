@@ -537,6 +537,7 @@ enum SearchMatchCandidate {
     },
 }
 
+type SearchMatchCandidateIndex = usize;
 impl SearchMatchCandidate {
     fn path(&self) -> Option<Arc<Path>> {
         match self {
@@ -5204,7 +5205,6 @@ impl Project {
         let background = cx.background().clone();
         let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
         if path_count == 0 {
-            // HACK
             let (_, rx) = smol::channel::bounded(1024);
             return rx;
         }
@@ -5239,7 +5239,7 @@ impl Project {
             ))
             .detach();
 
-        let (buffers, buffers_rx) = Self::read_open_buffers_yeet(matching_paths_rx, cx);
+        let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
         let background = cx.background().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
         cx.background()
@@ -5259,7 +5259,7 @@ impl Project {
                         #[derive(Clone)]
                         struct FinishedStatus {
                             entry: Option<(ModelHandle<Buffer>, Vec<Range<Anchor>>)>,
-                            buffer_index: usize,
+                            buffer_index: SearchMatchCandidateIndex,
                         }
 
                         for _ in 0..workers {
@@ -5310,11 +5310,16 @@ impl Project {
                                 }
                             });
                         }
+                        // Report sorted matches
                         scope.spawn(async move {
                             let mut current_index = 0;
                             let mut scratch = vec![None; buffers_len];
                             while let Some(status) = finished_rx.next().await {
-                                debug_assert!(scratch[status.buffer_index].is_none());
+                                debug_assert!(
+                                    scratch[status.buffer_index].is_none(),
+                                    "Got match status of position {} twice",
+                                    status.buffer_index
+                                );
                                 let index = status.buffer_index;
                                 scratch[index] = Some(status);
                                 while current_index < buffers_len {
@@ -5336,12 +5341,11 @@ impl Project {
                         });
                     })
                     .await;
-                // Ok(matched_buffers.into_iter().flatten().collect())
             })
             .detach();
         result_rx
     }
-
+    /// Pick paths that might potentially contain a match of a given search query.
     async fn background_search(
         unnamed_buffers: Vec<ModelHandle<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (ModelHandle<Buffer>, BufferSnapshot)>,
@@ -5516,12 +5520,15 @@ impl Project {
         Task::ready(Ok(Default::default()))
     }
 
-    fn read_open_buffers_yeet(
+    fn sort_candidates_and_open_buffers(
         mut matching_paths_rx: Receiver<SearchMatchCandidate>,
         cx: &mut ModelContext<Self>,
     ) -> (
         futures::channel::oneshot::Receiver<Vec<SearchMatchCandidate>>,
-        Receiver<(Option<(ModelHandle<Buffer>, BufferSnapshot)>, usize)>,
+        Receiver<(
+            Option<(ModelHandle<Buffer>, BufferSnapshot)>,
+            SearchMatchCandidateIndex,
+        )>,
     ) {
         let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
         let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
