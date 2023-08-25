@@ -904,7 +904,7 @@ fn apply_hint_update(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use crate::{
@@ -2989,15 +2989,11 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         ("/a/main.rs", editor, fake_server)
     }
 
-    fn cached_hint_labels(editor: &Editor) -> Vec<String> {
+    pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
         let mut labels = Vec::new();
         for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
-            let excerpt_hints = excerpt_hints.read();
-            for (_, inlay) in excerpt_hints.hints.iter() {
-                match &inlay.label {
-                    project::InlayHintLabel::String(s) => labels.push(s.to_string()),
-                    _ => unreachable!(),
-                }
+            for (_, inlay) in &excerpt_hints.read().hints {
+                labels.push(inlay.text());
             }
         }
 
@@ -3005,7 +3001,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         labels
     }
 
-    fn visible_hint_labels(editor: &Editor, cx: &ViewContext<'_, '_, Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<'_, '_, Editor>) -> Vec<String> {
         let mut hints = editor
             .visible_inlay_hints(cx)
             .into_iter()

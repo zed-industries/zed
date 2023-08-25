@@ -4,16 +4,16 @@ use super::{
     MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, InlayOffset, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
-        hide_hover, hover_at, hover_at_inlay, InlayHover, HOVER_POPOVER_GAP,
-        MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
+        MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        GoToDefinitionTrigger, InlayRange,
+        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -43,8 +43,7 @@ use language::{
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
-    HoverBlock, HoverBlockKind, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip,
-    Location, LocationLink, ProjectPath, ResolveState,
+    ProjectPath,
 };
 use smallvec::SmallVec;
 use std::{
@@ -478,10 +477,11 @@ impl EditorElement {
                 }
                 None => {
                     update_inlay_link_and_hover_points(
-                        position_map,
+                        &position_map.snapshot,
                         point_for_position,
                         editor,
-                        (cmd, shift),
+                        cmd,
+                        shift,
                         cx,
                     );
                 }
@@ -1835,214 +1835,6 @@ impl EditorElement {
     }
 }
 
-fn update_inlay_link_and_hover_points(
-    position_map: &PositionMap,
-    point_for_position: PointForPosition,
-    editor: &mut Editor,
-    (cmd_held, shift_held): (bool, bool),
-    cx: &mut ViewContext<'_, '_, Editor>,
-) {
-    let hint_start_offset = position_map
-        .snapshot
-        .display_point_to_inlay_offset(point_for_position.previous_valid, Bias::Left);
-    let hint_end_offset = position_map
-        .snapshot
-        .display_point_to_inlay_offset(point_for_position.next_valid, Bias::Right);
-    let offset_overshoot = point_for_position.column_overshoot_after_line_end as usize;
-    let hovered_offset = if offset_overshoot == 0 {
-        Some(
-            position_map
-                .snapshot
-                .display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left),
-        )
-    } else if (hint_end_offset - hint_start_offset).0 >= offset_overshoot {
-        Some(InlayOffset(hint_start_offset.0 + offset_overshoot))
-    } else {
-        None
-    };
-    if let Some(hovered_offset) = hovered_offset {
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let previous_valid_anchor = snapshot.anchor_at(
-            point_for_position
-                .previous_valid
-                .to_point(&position_map.snapshot.display_snapshot),
-            Bias::Left,
-        );
-        let next_valid_anchor = snapshot.anchor_at(
-            point_for_position
-                .next_valid
-                .to_point(&position_map.snapshot.display_snapshot),
-            Bias::Right,
-        );
-
-        let mut go_to_definition_updated = false;
-        let mut hover_updated = false;
-        if let Some(hovered_hint) = editor
-            .visible_inlay_hints(cx)
-            .into_iter()
-            .skip_while(|hint| hint.position.cmp(&previous_valid_anchor, &snapshot).is_lt())
-            .take_while(|hint| hint.position.cmp(&next_valid_anchor, &snapshot).is_le())
-            .max_by_key(|hint| hint.id)
-        {
-            let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = previous_valid_anchor.excerpt_id;
-            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
-                match cached_hint.resolve_state {
-                    ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
-                            inlay_hint_cache.spawn_hint_resolve(
-                                buffer_id,
-                                excerpt_id,
-                                hovered_hint.id,
-                                cx,
-                            );
-                        }
-                    }
-                    ResolveState::Resolved => {
-                        match cached_hint.label {
-                            project::InlayHintLabel::String(_) => {
-                                if let Some(tooltip) = cached_hint.tooltip {
-                                    hover_at_inlay(
-                                        editor,
-                                        InlayHover {
-                                            excerpt: excerpt_id,
-                                            tooltip: match tooltip {
-                                                InlayHintTooltip::String(text) => HoverBlock {
-                                                    text,
-                                                    kind: HoverBlockKind::PlainText,
-                                                },
-                                                InlayHintTooltip::MarkupContent(content) => {
-                                                    HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    }
-                                                }
-                                            },
-                                            triggered_from: hovered_offset,
-                                            range: InlayRange {
-                                                inlay_position: hovered_hint.position,
-                                                highlight_start: hint_start_offset,
-                                                highlight_end: hint_end_offset,
-                                            },
-                                        },
-                                        cx,
-                                    );
-                                    hover_updated = true;
-                                }
-                            }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
-                                if let Some((hovered_hint_part, part_range)) =
-                                    find_hovered_hint_part(
-                                        label_parts,
-                                        hint_start_offset..hint_end_offset,
-                                        hovered_offset,
-                                    )
-                                {
-                                    if let Some(tooltip) = hovered_hint_part.tooltip {
-                                        hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                excerpt: excerpt_id,
-                                                tooltip: match tooltip {
-                                                    InlayHintLabelPartTooltip::String(text) => {
-                                                        HoverBlock {
-                                                            text,
-                                                            kind: HoverBlockKind::PlainText,
-                                                        }
-                                                    }
-                                                    InlayHintLabelPartTooltip::MarkupContent(
-                                                        content,
-                                                    ) => HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    },
-                                                },
-                                                triggered_from: hovered_offset,
-                                                range: InlayRange {
-                                                    inlay_position: hovered_hint.position,
-                                                    highlight_start: part_range.start,
-                                                    highlight_end: part_range.end,
-                                                },
-                                            },
-                                            cx,
-                                        );
-                                        hover_updated = true;
-                                    }
-                                    if let Some(location) = hovered_hint_part.location {
-                                        if let Some(buffer) =
-                                            cached_hint.position.buffer_id.and_then(|buffer_id| {
-                                                editor.buffer().read(cx).buffer(buffer_id)
-                                            })
-                                        {
-                                            go_to_definition_updated = true;
-                                            update_go_to_definition_link(
-                                                editor,
-                                                GoToDefinitionTrigger::InlayHint(
-                                                    InlayRange {
-                                                        inlay_position: hovered_hint.position,
-                                                        highlight_start: part_range.start,
-                                                        highlight_end: part_range.end,
-                                                    },
-                                                    LocationLink {
-                                                        origin: Some(Location {
-                                                            buffer,
-                                                            range: cached_hint.position
-                                                                ..cached_hint.position,
-                                                        }),
-                                                        target: location,
-                                                    },
-                                                ),
-                                                cmd_held,
-                                                shift_held,
-                                                cx,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                    }
-                    ResolveState::Resolving => {}
-                }
-            }
-        }
-
-        if !go_to_definition_updated {
-            update_go_to_definition_link(
-                editor,
-                GoToDefinitionTrigger::None,
-                cmd_held,
-                shift_held,
-                cx,
-            );
-        }
-        if !hover_updated {
-            hover_at(editor, None, cx);
-        }
-    }
-}
-
-fn find_hovered_hint_part(
-    label_parts: Vec<InlayHintLabelPart>,
-    hint_range: Range<InlayOffset>,
-    hovered_offset: InlayOffset,
-) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
-    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
-        let mut hovered_character = (hovered_offset - hint_range.start).0;
-        let mut part_start = hint_range.start;
-        for part in label_parts {
-            let part_len = part.value.chars().count();
-            if hovered_character >= part_len {
-                hovered_character -= part_len;
-                part_start.0 += part_len;
-            } else {
-                return Some((part, part_start..InlayOffset(part_start.0 + part_len)));
-            }
-        }
-    }
-    None
-}
-
 struct HighlightedChunk<'a> {
     chunk: &'a str,
     style: Option<HighlightStyle>,
@@ -2871,12 +2663,12 @@ struct PositionMap {
     snapshot: EditorSnapshot,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct PointForPosition {
-    previous_valid: DisplayPoint,
+    pub previous_valid: DisplayPoint,
     pub next_valid: DisplayPoint,
-    exact_unclipped: DisplayPoint,
-    column_overshoot_after_line_end: u32,
+    pub exact_unclipped: DisplayPoint,
+    pub column_overshoot_after_line_end: u32,
 }
 
 impl PointForPosition {

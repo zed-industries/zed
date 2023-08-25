@@ -13,7 +13,7 @@ use gpui::{
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
-use project::{HoverBlock, HoverBlockKind, Project};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
@@ -53,6 +53,27 @@ pub struct InlayHover {
     pub triggered_from: InlayOffset,
     pub range: InlayRange,
     pub tooltip: HoverBlock,
+}
+
+pub fn find_hovered_hint_part(
+    label_parts: Vec<InlayHintLabelPart>,
+    hint_range: Range<InlayOffset>,
+    hovered_offset: InlayOffset,
+) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
+    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
+        let mut hovered_character = (hovered_offset - hint_range.start).0;
+        let mut part_start = hint_range.start;
+        for part in label_parts {
+            let part_len = part.value.chars().count();
+            if hovered_character >= part_len {
+                hovered_character -= part_len;
+                part_start.0 += part_len;
+            } else {
+                return Some((part, part_start..InlayOffset(part_start.0 + part_len)));
+            }
+        }
+    }
+    None
 }
 
 pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
