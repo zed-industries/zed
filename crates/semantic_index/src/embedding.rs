@@ -106,8 +106,8 @@ impl OpenAIEmbeddings {
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
-        const BACKOFF_SECONDS: [usize; 3] = [45, 75, 125];
-        const MAX_RETRIES: usize = 3;
+        const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
+        const MAX_RETRIES: usize = 4;
 
         let api_key = OPENAI_API_KEY
             .as_ref()
