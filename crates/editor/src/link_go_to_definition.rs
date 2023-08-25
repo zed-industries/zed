@@ -4,15 +4,14 @@ use crate::{
     hover_popover::{self, InlayHover},
     Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase,
 };
-use anyhow::Context;
 use gpui::{Task, ViewContext};
-use language::{point_from_lsp, Bias, LanguageServerName, ToOffset};
+use language::{Bias, ToOffset};
 use lsp::LanguageServerId;
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, ResolveState,
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
+    ResolveState,
 };
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
@@ -20,14 +19,19 @@ pub struct LinkGoToDefinitionState {
     pub last_trigger_point: Option<TriggerPoint>,
     pub symbol_range: Option<DocumentRange>,
     pub kind: Option<LinkDefinitionKind>,
-    pub definitions: Vec<LocationLink>,
+    pub definitions: Vec<GoToDefinitionLink>,
     pub task: Option<Task<Option<()>>>,
 }
 
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
     InlayHint(InlayRange, lsp::Location, LanguageServerId),
-    None,
+}
+
+#[derive(Debug, Clone)]
+pub enum GoToDefinitionLink {
+    Text(LocationLink),
+    InlayHint(lsp::Location, LanguageServerId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +101,7 @@ impl TriggerPoint {
 
 pub fn update_go_to_definition_link(
     editor: &mut Editor,
-    origin: GoToDefinitionTrigger,
+    origin: Option<GoToDefinitionTrigger>,
     cmd_held: bool,
     shift_held: bool,
     cx: &mut ViewContext<Editor>,
@@ -107,15 +111,15 @@ pub fn update_go_to_definition_link(
     // Store new mouse point as an anchor
     let snapshot = editor.snapshot(cx);
     let trigger_point = match origin {
-        GoToDefinitionTrigger::Text(p) => {
+        Some(GoToDefinitionTrigger::Text(p)) => {
             Some(TriggerPoint::Text(snapshot.buffer_snapshot.anchor_before(
                 p.to_offset(&snapshot.display_snapshot, Bias::Left),
             )))
         }
-        GoToDefinitionTrigger::InlayHint(p, lsp_location, language_server_id) => {
+        Some(GoToDefinitionTrigger::InlayHint(p, lsp_location, language_server_id)) => {
             Some(TriggerPoint::InlayHint(p, lsp_location, language_server_id))
         }
-        GoToDefinitionTrigger::None => None,
+        None => None,
     };
 
     // If the new point is the same as the previously stored one, return early
@@ -287,7 +291,7 @@ pub fn update_inlay_link_and_hover_points(
                                         go_to_definition_updated = true;
                                         update_go_to_definition_link(
                                             editor,
-                                            GoToDefinitionTrigger::InlayHint(
+                                            Some(GoToDefinitionTrigger::InlayHint(
                                                 InlayRange {
                                                     inlay_position: hovered_hint.position,
                                                     highlight_start: part_range.start,
@@ -295,7 +299,7 @@ pub fn update_inlay_link_and_hover_points(
                                                 },
                                                 location,
                                                 language_server_id,
-                                            ),
+                                            )),
                                             cmd_held,
                                             shift_held,
                                             cx,
@@ -311,13 +315,7 @@ pub fn update_inlay_link_and_hover_points(
         }
 
         if !go_to_definition_updated {
-            update_go_to_definition_link(
-                editor,
-                GoToDefinitionTrigger::None,
-                cmd_held,
-                shift_held,
-                cx,
-            );
+            update_go_to_definition_link(editor, None, cmd_held, shift_held, cx);
         }
         if !hover_updated {
             hover_popover::hover_at(editor, None, cx);
@@ -412,63 +410,20 @@ pub fn show_link_definition(
                                     DocumentRange::Text(start..end)
                                 })
                             }),
-                            definition_result,
+                            definition_result
+                                .into_iter()
+                                .map(GoToDefinitionLink::Text)
+                                .collect(),
                         )
                     })
                 }
-                TriggerPoint::InlayHint(trigger_source, lsp_location, server_id) => {
-                    let target = match project.update(&mut cx, |project, cx| {
-                        let language_server_name = project
-                            .language_server_for_buffer(buffer.read(cx), *server_id, cx)
-                            .map(|(_, lsp_adapter)| {
-                                LanguageServerName(Arc::from(lsp_adapter.name()))
-                            });
-                        language_server_name.map(|language_server_name| {
-                            project.open_local_buffer_via_lsp(
-                                lsp_location.uri.clone(),
-                                *server_id,
-                                language_server_name,
-                                cx,
-                            )
-                        })
-                    }) {
-                        Some(task) => Some({
-                            let target_buffer_handle = task.await.context("open local buffer")?;
-                            let range = cx.read(|cx| {
-                                let target_buffer = target_buffer_handle.read(cx);
-                                let target_start = target_buffer.clip_point_utf16(
-                                    point_from_lsp(lsp_location.range.start),
-                                    Bias::Left,
-                                );
-                                let target_end = target_buffer.clip_point_utf16(
-                                    point_from_lsp(lsp_location.range.end),
-                                    Bias::Left,
-                                );
-                                target_buffer.anchor_after(target_start)
-                                    ..target_buffer.anchor_before(target_end)
-                            });
-                            Location {
-                                buffer: target_buffer_handle,
-                                range,
-                            }
-                        }),
-                        None => None,
-                    };
-
-                    target.map(|target| {
-                        (
-                            Some(DocumentRange::Inlay(trigger_source.clone())),
-                            vec![LocationLink {
-                                origin: Some(Location {
-                                    buffer: buffer.clone(),
-                                    range: trigger_source.inlay_position.text_anchor
-                                        ..trigger_source.inlay_position.text_anchor,
-                                }),
-                                target,
-                            }],
-                        )
-                    })
-                }
+                TriggerPoint::InlayHint(trigger_source, lsp_location, server_id) => Some((
+                    Some(DocumentRange::Inlay(*trigger_source)),
+                    vec![GoToDefinitionLink::InlayHint(
+                        lsp_location.clone(),
+                        *server_id,
+                    )],
+                )),
             };
 
             this.update(&mut cx, |this, cx| {
@@ -488,43 +443,52 @@ pub fn show_link_definition(
                     // the current location.
                     let any_definition_does_not_contain_current_location =
                         definitions.iter().any(|definition| {
-                            let target = &definition.target;
-                            if target.buffer == buffer {
-                                let range = &target.range;
-                                // Expand range by one character as lsp definition ranges include positions adjacent
-                                // but not contained by the symbol range
-                                let start = buffer_snapshot.clip_offset(
-                                    range.start.to_offset(&buffer_snapshot).saturating_sub(1),
-                                    Bias::Left,
-                                );
-                                let end = buffer_snapshot.clip_offset(
-                                    range.end.to_offset(&buffer_snapshot) + 1,
-                                    Bias::Right,
-                                );
-                                let offset = buffer_position.to_offset(&buffer_snapshot);
-                                !(start <= offset && end >= offset)
-                            } else {
-                                true
+                            match &definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    if link.target.buffer == buffer {
+                                        let range = &link.target.range;
+                                        // Expand range by one character as lsp definition ranges include positions adjacent
+                                        // but not contained by the symbol range
+                                        let start = buffer_snapshot.clip_offset(
+                                            range
+                                                .start
+                                                .to_offset(&buffer_snapshot)
+                                                .saturating_sub(1),
+                                            Bias::Left,
+                                        );
+                                        let end = buffer_snapshot.clip_offset(
+                                            range.end.to_offset(&buffer_snapshot) + 1,
+                                            Bias::Right,
+                                        );
+                                        let offset = buffer_position.to_offset(&buffer_snapshot);
+                                        !(start <= offset && end >= offset)
+                                    } else {
+                                        true
+                                    }
+                                }
+                                GoToDefinitionLink::InlayHint(_, _) => true,
                             }
                         });
 
                     if any_definition_does_not_contain_current_location {
                         // Highlight symbol using theme link definition highlight style
                         let style = theme::current(cx).editor.link_definition;
-                        let highlight_range = symbol_range.unwrap_or_else(|| match trigger_point {
-                            TriggerPoint::Text(trigger_anchor) => {
-                                let snapshot = &snapshot.buffer_snapshot;
-                                // If no symbol range returned from language server, use the surrounding word.
-                                let (offset_range, _) = snapshot.surrounding_word(trigger_anchor);
-                                DocumentRange::Text(
-                                    snapshot.anchor_before(offset_range.start)
-                                        ..snapshot.anchor_after(offset_range.end),
-                                )
-                            }
-                            TriggerPoint::InlayHint(inlay_coordinates, _, _) => {
-                                DocumentRange::Inlay(inlay_coordinates)
-                            }
-                        });
+                        let highlight_range =
+                            symbol_range.unwrap_or_else(|| match &trigger_point {
+                                TriggerPoint::Text(trigger_anchor) => {
+                                    let snapshot = &snapshot.buffer_snapshot;
+                                    // If no symbol range returned from language server, use the surrounding word.
+                                    let (offset_range, _) =
+                                        snapshot.surrounding_word(*trigger_anchor);
+                                    DocumentRange::Text(
+                                        snapshot.anchor_before(offset_range.start)
+                                            ..snapshot.anchor_after(offset_range.end),
+                                    )
+                                }
+                                TriggerPoint::InlayHint(inlay_coordinates, _, _) => {
+                                    DocumentRange::Inlay(*inlay_coordinates)
+                                }
+                            });
 
                         match highlight_range {
                             DocumentRange::Text(text_range) => this
@@ -689,7 +653,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 true,
                 cx,
@@ -801,7 +765,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,
@@ -841,7 +805,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,
@@ -869,7 +833,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,
@@ -892,7 +856,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 false,
                 false,
                 cx,
@@ -957,7 +921,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,
@@ -977,7 +941,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,
@@ -1079,7 +1043,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
-                GoToDefinitionTrigger::Text(hover_point),
+                Some(GoToDefinitionTrigger::Text(hover_point)),
                 true,
                 false,
                 cx,

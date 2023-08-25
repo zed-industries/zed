@@ -395,9 +395,7 @@ impl EditorElement {
 
         update_go_to_definition_link(
             editor,
-            point
-                .map(GoToDefinitionTrigger::Text)
-                .unwrap_or(GoToDefinitionTrigger::None),
+            point.map(GoToDefinitionTrigger::Text),
             cmd,
             shift,
             cx,
@@ -468,7 +466,7 @@ impl EditorElement {
                 Some(point) => {
                     update_go_to_definition_link(
                         editor,
-                        GoToDefinitionTrigger::Text(point),
+                        Some(GoToDefinitionTrigger::Text(point)),
                         cmd,
                         shift,
                         cx,
@@ -487,7 +485,7 @@ impl EditorElement {
                 }
             }
         } else {
-            update_go_to_definition_link(editor, GoToDefinitionTrigger::None, cmd, shift, cx);
+            update_go_to_definition_link(editor, None, cmd, shift, cx);
             hover_at(editor, None, cx);
         }
 
