@@ -12,9 +12,10 @@ mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
+use channel::ChannelStore;
 use client::{
     proto::{self, PeerId},
-    ChannelStore, Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -344,7 +345,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
 
 type FollowableItemBuilder = fn(
     ViewHandle<Pane>,
-    ModelHandle<Project>,
+    ViewHandle<Workspace>,
     ViewId,
     &mut Option<proto::view::Variant>,
     &mut AppContext,
@@ -361,8 +362,8 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
         builders.insert(
             TypeId::of::<I>(),
             (
-                |pane, project, id, state, cx| {
-                    I::from_state_proto(pane, project, id, state, cx).map(|task| {
+                |pane, workspace, id, state, cx| {
+                    I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
                         cx.foreground()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -2847,7 +2848,13 @@ impl Workspace {
         views: Vec<proto::View>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let project = this.read_with(cx, |this, _| this.project.clone())?;
+        let this = this
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("workspace dropped"))?;
+        let project = this
+            .read_with(cx, |this, _| this.project.clone())
+            .ok_or_else(|| anyhow!("window dropped"))?;
+
         let replica_id = project
             .read_with(cx, |project, _| {
                 project
@@ -2873,12 +2880,11 @@ impl Workspace {
                 let id = ViewId::from_proto(id.clone())?;
                 let mut variant = view.variant.clone();
                 if variant.is_none() {
-                    Err(anyhow!("missing variant"))?;
+                    Err(anyhow!("missing view variant"))?;
                 }
                 for build_item in &item_builders {
-                    let task = cx.update(|cx| {
-                        build_item(pane.clone(), project.clone(), id, &mut variant, cx)
-                    });
+                    let task = cx
+                        .update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx));
                     if let Some(task) = task {
                         item_tasks.push(task);
                         leader_view_ids.push(id);
@@ -2906,7 +2912,7 @@ impl Workspace {
                 }
 
                 Some(())
-            })?;
+            });
         }
         Ok(())
     }

@@ -10,9 +10,11 @@ use std::sync::{Arc, Weak};
 use util::http::HttpClient;
 use util::TryFutureExt as _;
 
+pub type UserId = u64;
+
 #[derive(Default, Debug)]
 pub struct User {
-    pub id: u64,
+    pub id: UserId,
     pub github_login: String,
     pub avatar: Option<Arc<ImageData>>,
 }

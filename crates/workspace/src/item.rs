@@ -158,9 +158,7 @@ pub trait Item: View {
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
-    fn is_edit_event(_: &Self::Event) -> bool {
-        false
-    }
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -205,7 +203,7 @@ pub trait Item: View {
     fn show_toolbar(&self) -> bool {
         true
     }
-    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
         None
     }
 }
@@ -623,7 +621,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     }
 
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
-        self.read(cx).pixel_position_of_cursor()
+        self.read(cx).pixel_position_of_cursor(cx)
     }
 }
 
@@ -674,7 +672,7 @@ pub trait FollowableItem: Item {
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
         pane: ViewHandle<Pane>,
-        project: ModelHandle<Project>,
+        project: ViewHandle<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,

@@ -3,13 +3,12 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
+use channel::ChannelStore;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{
-    self, ChannelStore, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
-};
+use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
@@ -159,6 +158,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
+        channel::init(&client);
         diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);

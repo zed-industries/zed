@@ -359,6 +359,14 @@ impl Buffer {
         )
     }
 
+    pub fn remote(remote_id: u64, replica_id: ReplicaId, base_text: String) -> Self {
+        Self::build(
+            TextBuffer::new(replica_id, remote_id, base_text),
+            None,
+            None,
+        )
+    }
+
     pub fn from_proto(
         replica_id: ReplicaId,
         message: proto::BufferState,
