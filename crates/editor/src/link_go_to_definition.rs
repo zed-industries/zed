@@ -41,7 +41,7 @@ pub enum TriggerPoint {
     InlayHint(InlayRange, LocationLink),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentRange {
     Text(Range<Anchor>),
     Inlay(InlayRange),
@@ -1096,7 +1096,7 @@ mod tests {
         "});
 
         let expected_uri = cx.buffer_lsp_url.clone();
-        let inlay_label = ": TestStruct";
+        let hint_label = ": TestStruct";
         cx.lsp
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let expected_uri = expected_uri.clone();
@@ -1105,7 +1105,7 @@ mod tests {
                     Ok(Some(vec![lsp::InlayHint {
                         position: hint_position,
                         label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
-                            value: inlay_label.to_string(),
+                            value: hint_label.to_string(),
                             location: Some(lsp::Location {
                                 uri: params.text_document.uri,
                                 range: target_range,
@@ -1125,7 +1125,7 @@ mod tests {
             .await;
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
-            let expected_layers = vec![inlay_label.to_string()];
+            let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
@@ -1147,7 +1147,7 @@ mod tests {
                 previous_valid: inlay_range.start.to_display_point(&snapshot),
                 next_valid: inlay_range.end.to_display_point(&snapshot),
                 exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (inlay_label.len() / 2) as u32,
+                column_overshoot_after_line_end: (hint_label.len() / 2) as u32,
             }
         });
         // Press cmd to trigger highlight
@@ -1185,7 +1185,7 @@ mod tests {
             let expected_ranges = vec![InlayRange {
                 inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
                 highlight_start: expected_highlight_start,
-                highlight_end: InlayOffset(expected_highlight_start.0 + inlay_label.len()),
+                highlight_end: InlayOffset(expected_highlight_start.0 + hint_label.len()),
             }];
             assert_set_eq!(actual_ranges, expected_ranges);
         });

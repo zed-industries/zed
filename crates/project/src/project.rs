@@ -5043,13 +5043,7 @@ impl Project {
             } else {
                 return Task::ready(Ok(hint));
             };
-            let can_resolve = lang_server
-                .capabilities()
-                .completion_provider
-                .as_ref()
-                .and_then(|options| options.resolve_provider)
-                .unwrap_or(false);
-            if !can_resolve {
+            if !InlayHints::can_resolve_inlays(lang_server.capabilities()) {
                 return Task::ready(Ok(hint));
             }
 

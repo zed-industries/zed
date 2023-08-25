@@ -804,10 +804,17 @@ impl DiagnosticPopover {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use crate::{
+        editor_tests::init_test,
+        element::PointForPosition,
+        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        link_go_to_definition::update_inlay_link_and_hover_points,
+        test::editor_lsp_test_context::EditorLspTestContext,
+    };
+    use collections::BTreeSet;
     use gpui::fonts::Weight;
     use indoc::indoc;
-    use language::{Diagnostic, DiagnosticSet};
+    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
@@ -1241,6 +1248,313 @@ mod tests {
             }
 
             editor
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Right(
+                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                        resolve_provider: Some(true),
+                        ..Default::default()
+                    }),
+                )),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "});
+
+        let hint_start_offset = cx.ranges(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "})[0]
+            .start;
+        let hint_position = cx.to_lsp(hint_start_offset);
+        let new_type_target_range = cx.lsp_range(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct «TestNewType»<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+        let struct_target_range = cx.lsp_range(indoc! {"
+            struct «TestStruct»;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+
+        let uri = cx.buffer_lsp_url.clone();
+        let new_type_label = "TestNewType";
+        let struct_label = "TestStruct";
+        let entire_hint_label = ": TestNewType<TestStruct>";
+        let closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_uri = closure_uri.clone();
+                async move {
+                    assert_eq!(params.text_document.uri, task_uri);
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: hint_position,
+                        label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                            value: entire_hint_label.to_string(),
+                            ..Default::default()
+                        }]),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let expected_layers = vec![entire_hint_label.to_string()];
+            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+        });
+
+        let inlay_range = cx
+            .ranges(indoc! {"
+                struct TestStruct;
+
+                // ==================
+
+                struct TestNewType<T>(T);
+
+                fn main() {
+                    let variable« »= TestNewType(TestStruct);
+                }
+        "})
+            .get(0)
+            .cloned()
+            .unwrap();
+        let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            PointForPosition {
+                previous_valid: inlay_range.start.to_display_point(&snapshot),
+                next_valid: inlay_range.end.to_display_point(&snapshot),
+                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
+                column_overshoot_after_line_end: (entire_hint_label.find(new_type_label).unwrap()
+                    + new_type_label.len() / 2)
+                    as u32,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+
+        let resolve_closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
+                move |mut hint_to_resolve, _| {
+                    let mut resolved_hint_positions = BTreeSet::new();
+                    let task_uri = resolve_closure_uri.clone();
+                    async move {
+                        let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
+                        assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
+
+                        // `: TestNewType<TestStruct>`
+                        hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
+                            lsp::InlayHintLabelPart {
+                                value: ": ".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: new_type_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri.clone(),
+                                    range: new_type_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
+                                    "A tooltip for `{new_type_label}`"
+                                ))),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: "<".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: struct_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri,
+                                    range: struct_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                    lsp::MarkupContent {
+                                        kind: lsp::MarkupKind::Markdown,
+                                        value: format!("A tooltip for `{struct_label}`"),
+                                    },
+                                )),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: ">".to_string(),
+                                ..Default::default()
+                            },
+                        ]);
+
+                        Ok(hint_to_resolve)
+                    }
+                },
+            )
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+
+            let expected_new_type_label_start = InlayOffset(entire_inlay_start.0 + ": ".len());
+            assert_eq!(
+                popover.symbol_range,
+                DocumentRange::Inlay(InlayRange {
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    highlight_start: expected_new_type_label_start,
+                    highlight_end: InlayOffset(
+                        expected_new_type_label_start.0 + new_type_label.len()
+                    ),
+                }),
+                "Popover range should match the new type label part"
+            );
+            assert_eq!(
+                popover
+                    .rendered_content
+                    .as_ref()
+                    .expect("should have label text for new type hint")
+                    .text,
+                format!("A tooltip for `{new_type_label}`"),
+                "Rendered text should not anyhow alter backticks"
+            );
+        });
+
+        let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            PointForPosition {
+                previous_valid: inlay_range.start.to_display_point(&snapshot),
+                next_valid: inlay_range.end.to_display_point(&snapshot),
+                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
+                column_overshoot_after_line_end: (entire_hint_label.find(struct_label).unwrap()
+                    + struct_label.len() / 2)
+                    as u32,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                struct_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+            let expected_struct_label_start =
+                InlayOffset(entire_inlay_start.0 + ": ".len() + new_type_label.len() + "<".len());
+            assert_eq!(
+                popover.symbol_range,
+                DocumentRange::Inlay(InlayRange {
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    highlight_start: expected_struct_label_start,
+                    highlight_end: InlayOffset(expected_struct_label_start.0 + struct_label.len()),
+                }),
+                "Popover range should match the struct label part"
+            );
+            assert_eq!(
+                popover
+                    .rendered_content
+                    .as_ref()
+                    .expect("should have label text for struct hint")
+                    .text,
+                format!("A tooltip for {struct_label}"),
+                "Rendered markdown element should remove backticks from text"
+            );
         });
     }
 }

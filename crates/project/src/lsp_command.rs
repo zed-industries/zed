@@ -17,7 +17,7 @@ use language::{
     CodeAction, Completion, LanguageServerName, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
 };
-use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
+use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, OneOf, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
@@ -2213,6 +2213,22 @@ impl InlayHints {
             },
         }
     }
+
+    pub fn can_resolve_inlays(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .and_then(|options| match options {
+                OneOf::Left(_is_supported) => None,
+                OneOf::Right(capabilities) => match capabilities {
+                    lsp::InlayHintServerCapabilities::Options(o) => o.resolve_provider,
+                    lsp::InlayHintServerCapabilities::RegistrationOptions(o) => {
+                        o.inlay_hint_options.resolve_provider
+                    }
+                },
+            })
+            .unwrap_or(false)
+    }
 }
 
 #[async_trait(?Send)]
@@ -2269,14 +2285,10 @@ impl LspCommand for InlayHints {
             lsp_adapter.name.0.as_ref() == "typescript-language-server";
 
         let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = match lsp_server.capabilities().inlay_hint_provider {
-                Some(lsp::OneOf::Right(lsp::InlayHintServerCapabilities::Options(
-                    lsp::InlayHintOptions {
-                        resolve_provider: Some(true),
-                        ..
-                    },
-                ))) => ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone()),
-                _ => ResolveState::Resolved,
+            let resolve_state = if InlayHints::can_resolve_inlays(lsp_server.capabilities()) {
+                ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
+            } else {
+                ResolveState::Resolved
             };
 
             let project = project.clone();
