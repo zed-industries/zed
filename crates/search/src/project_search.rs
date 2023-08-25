@@ -243,12 +243,11 @@ impl ProjectSearch {
             this.update(&mut cx, |this, cx| {
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
-                    this.no_results = Some(false);
                 })
             });
             for (buffer, ranges) in matches {
                 let mut match_ranges = this.update(&mut cx, |this, cx| {
-                    this.no_results = Some(true);
+                    this.no_results = Some(false);
                     this.excerpts.update(cx, |excerpts, cx| {
                         excerpts.stream_excerpts_with_context_lines(buffer, ranges, 3, cx)
                     })
