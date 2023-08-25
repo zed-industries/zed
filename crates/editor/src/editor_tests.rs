@@ -1435,6 +1435,74 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, cx| {
+        editor.set_vertical_scroll_margin(2, cx);
+        editor.style(cx).text.line_height(cx.font_cache())
+    });
+
+    let window = cx.window;
+    window.simulate_resize(vec2f(1000., 6.0 * line_height), &mut cx);
+
+    cx.set_state(
+        &r#"ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+        "#,
+    );
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.0));
+    });
+
+    // Add a cursor below the visible area. Since both cursors cannot fit
+    // on screen, the editor autoscrolls to reveal the newest cursor, and
+    // allows the vertical scroll margin below that cursor.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(0, 0)..Point::new(0, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.0));
+    });
+
+    // Move down. The editor cursor scrolls down to track the newest cursor.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 4.0));
+    });
+
+    // Add a cursor above the visible area. Since both cursors fit on screen,
+    // the editor scrolls to show both.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(1, 0)..Point::new(1, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 1.0));
+    });
+}
+
+#[gpui::test]
 async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
