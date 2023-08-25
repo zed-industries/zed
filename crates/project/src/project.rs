@@ -540,8 +540,8 @@ enum SearchMatchCandidate {
 impl SearchMatchCandidate {
     fn path(&self) -> Option<Arc<Path>> {
         match self {
-            SearchMatchCandidate::OpenBuffer { buffer, path } => path.clone(),
-            SearchMatchCandidate::Path { worktree_id, path } => Some(path.clone()),
+            SearchMatchCandidate::OpenBuffer { path, .. } => path.clone(),
+            SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
         }
     }
 }
