@@ -88,7 +88,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 
         if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
             if let DocumentRange::Inlay(range) = symbol_range {
-                if (range.highlight_start..=range.highlight_end)
+                if (range.highlight_start..range.highlight_end)
                     .contains(&inlay_hover.triggered_from)
                 {
                     // Hover triggered from same location as last time. Don't show again.
