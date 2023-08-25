@@ -369,7 +369,7 @@ pub enum InlayHintLabel {
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
-    pub location: Option<Location>,
+    pub location: Option<(LanguageServerId, lsp::Location)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1708,7 +1708,7 @@ impl Project {
     }
 
     /// LanguageServerName is owned, because it is inserted into a map
-    fn open_local_buffer_via_lsp(
+    pub fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
@@ -5069,16 +5069,15 @@ impl Project {
             }
 
             let buffer_snapshot = buffer.snapshot();
-            cx.spawn(|project, mut cx| async move {
+            cx.spawn(|_, mut cx| async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
-                    InlayHints::project_to_lsp_hint(hint, &project, &buffer_snapshot, &cx),
+                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
                 );
                 let resolved_hint = resolve_task
                     .await
                     .context("inlay hint resolve LSP request")?;
                 let resolved_hint = InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &project,
                     &buffer_handle,
                     server_id,
                     ResolveState::Resolved,
@@ -5094,19 +5093,16 @@ impl Project {
                 project_id,
                 buffer_id: buffer_handle.read(cx).remote_id(),
                 language_server_id: server_id.0 as u64,
-                hint: Some(InlayHints::project_to_proto_hint(hint.clone(), cx)),
+                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
             };
-            cx.spawn(|project, mut cx| async move {
+            cx.spawn(|_, _| async move {
                 let response = client
                     .request(request)
                     .await
                     .context("inlay hints proto request")?;
                 match response.hint {
-                    Some(resolved_hint) => {
-                        InlayHints::proto_to_project_hint(resolved_hint, &project, &mut cx)
-                            .await
-                            .context("inlay hints proto resolve response conversion")
-                    }
+                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
+                        .context("inlay hints proto resolve response conversion"),
                     None => Ok(hint),
                 }
             })
@@ -7091,8 +7087,7 @@ impl Project {
             .payload
             .hint
             .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
-        let hint = InlayHints::proto_to_project_hint(proto_hint, &this, &mut cx)
-            .await
+        let hint = InlayHints::proto_to_project_hint(proto_hint)
             .context("resolved proto inlay hint conversion")?;
         let buffer = this.update(&mut cx, |this, cx| {
             this.opened_buffers
@@ -7111,10 +7106,8 @@ impl Project {
             })
             .await
             .context("inlay hints fetch")?;
-        let resolved_hint = cx.read(|cx| InlayHints::project_to_proto_hint(response_hint, cx));
-
         Ok(proto::ResolveInlayHintResponse {
-            hint: Some(resolved_hint),
+            hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
     }
 
@@ -7882,7 +7875,7 @@ impl Project {
         self.language_servers_for_buffer(buffer, cx).next()
     }
 
-    fn language_server_for_buffer(
+    pub fn language_server_for_buffer(
         &self,
         buffer: &Buffer,
         server_id: LanguageServerId,

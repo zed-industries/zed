@@ -773,7 +773,10 @@ message InlayHintLabelParts {
 message InlayHintLabelPart {
     string value = 1;
     InlayHintLabelPartTooltip tooltip = 2;
-    Location location = 3;
+    optional string location_url = 3;
+    PointUtf16 location_range_start = 4;
+    PointUtf16 location_range_end = 5;
+    optional uint64 language_server_id = 6;
 }
 
 message InlayHintTooltip {

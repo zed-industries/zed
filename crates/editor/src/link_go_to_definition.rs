@@ -4,13 +4,15 @@ use crate::{
     hover_popover::{self, InlayHover},
     Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase,
 };
+use anyhow::Context;
 use gpui::{Task, ViewContext};
-use language::{Bias, ToOffset};
+use language::{point_from_lsp, Bias, LanguageServerName, ToOffset};
+use lsp::LanguageServerId;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, ResolveState,
 };
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
@@ -24,7 +26,7 @@ pub struct LinkGoToDefinitionState {
 
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
-    InlayHint(InlayRange, LocationLink),
+    InlayHint(InlayRange, lsp::Location, LanguageServerId),
     None,
 }
 
@@ -38,7 +40,7 @@ pub struct InlayRange {
 #[derive(Debug, Clone)]
 pub enum TriggerPoint {
     Text(Anchor),
-    InlayHint(InlayRange, LocationLink),
+    InlayHint(InlayRange, lsp::Location, LanguageServerId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,12 +63,12 @@ impl DocumentRange {
                 let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
                 point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
             }
-            (DocumentRange::Inlay(range), TriggerPoint::InlayHint(point, _)) => {
+            (DocumentRange::Inlay(range), TriggerPoint::InlayHint(point, _, _)) => {
                 range.highlight_start.cmp(&point.highlight_end).is_le()
                     && range.highlight_end.cmp(&point.highlight_end).is_ge()
             }
             (DocumentRange::Inlay(_), TriggerPoint::Text(_))
-            | (DocumentRange::Text(_), TriggerPoint::InlayHint(_, _)) => false,
+            | (DocumentRange::Text(_), TriggerPoint::InlayHint(_, _, _)) => false,
         }
     }
 }
@@ -75,7 +77,7 @@ impl TriggerPoint {
     fn anchor(&self) -> &Anchor {
         match self {
             TriggerPoint::Text(anchor) => anchor,
-            TriggerPoint::InlayHint(coordinates, _) => &coordinates.inlay_position,
+            TriggerPoint::InlayHint(coordinates, _, _) => &coordinates.inlay_position,
         }
     }
 
@@ -88,7 +90,7 @@ impl TriggerPoint {
                     LinkDefinitionKind::Symbol
                 }
             }
-            TriggerPoint::InlayHint(_, _) => LinkDefinitionKind::Type,
+            TriggerPoint::InlayHint(_, _, _) => LinkDefinitionKind::Type,
         }
     }
 }
@@ -110,7 +112,9 @@ pub fn update_go_to_definition_link(
                 p.to_offset(&snapshot.display_snapshot, Bias::Left),
             )))
         }
-        GoToDefinitionTrigger::InlayHint(p, target) => Some(TriggerPoint::InlayHint(p, target)),
+        GoToDefinitionTrigger::InlayHint(p, lsp_location, language_server_id) => {
+            Some(TriggerPoint::InlayHint(p, lsp_location, language_server_id))
+        }
         GoToDefinitionTrigger::None => None,
     };
 
@@ -277,35 +281,25 @@ pub fn update_inlay_link_and_hover_points(
                                         );
                                         hover_updated = true;
                                     }
-                                    if let Some(location) = hovered_hint_part.location {
-                                        if let Some(buffer) =
-                                            cached_hint.position.buffer_id.and_then(|buffer_id| {
-                                                editor.buffer().read(cx).buffer(buffer_id)
-                                            })
-                                        {
-                                            go_to_definition_updated = true;
-                                            update_go_to_definition_link(
-                                                editor,
-                                                GoToDefinitionTrigger::InlayHint(
-                                                    InlayRange {
-                                                        inlay_position: hovered_hint.position,
-                                                        highlight_start: part_range.start,
-                                                        highlight_end: part_range.end,
-                                                    },
-                                                    LocationLink {
-                                                        origin: Some(Location {
-                                                            buffer,
-                                                            range: cached_hint.position
-                                                                ..cached_hint.position,
-                                                        }),
-                                                        target: location,
-                                                    },
-                                                ),
-                                                cmd_held,
-                                                shift_held,
-                                                cx,
-                                            );
-                                        }
+                                    if let Some((language_server_id, location)) =
+                                        hovered_hint_part.location
+                                    {
+                                        go_to_definition_updated = true;
+                                        update_go_to_definition_link(
+                                            editor,
+                                            GoToDefinitionTrigger::InlayHint(
+                                                InlayRange {
+                                                    inlay_position: hovered_hint.position,
+                                                    highlight_start: part_range.start,
+                                                    highlight_end: part_range.end,
+                                                },
+                                                location,
+                                                language_server_id,
+                                            ),
+                                            cmd_held,
+                                            shift_held,
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -415,7 +409,6 @@ pub fn show_link_definition(
                                     let end = snapshot
                                         .buffer_snapshot
                                         .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
-
                                     DocumentRange::Text(start..end)
                                 })
                             }),
@@ -423,10 +416,59 @@ pub fn show_link_definition(
                         )
                     })
                 }
-                TriggerPoint::InlayHint(trigger_source, trigger_target) => Some((
-                    Some(DocumentRange::Inlay(trigger_source.clone())),
-                    vec![trigger_target.clone()],
-                )),
+                TriggerPoint::InlayHint(trigger_source, lsp_location, server_id) => {
+                    let target = match project.update(&mut cx, |project, cx| {
+                        let language_server_name = project
+                            .language_server_for_buffer(buffer.read(cx), *server_id, cx)
+                            .map(|(_, lsp_adapter)| {
+                                LanguageServerName(Arc::from(lsp_adapter.name()))
+                            });
+                        language_server_name.map(|language_server_name| {
+                            project.open_local_buffer_via_lsp(
+                                lsp_location.uri.clone(),
+                                *server_id,
+                                language_server_name,
+                                cx,
+                            )
+                        })
+                    }) {
+                        Some(task) => Some({
+                            let target_buffer_handle = task.await.context("open local buffer")?;
+                            let range = cx.read(|cx| {
+                                let target_buffer = target_buffer_handle.read(cx);
+                                let target_start = target_buffer.clip_point_utf16(
+                                    point_from_lsp(lsp_location.range.start),
+                                    Bias::Left,
+                                );
+                                let target_end = target_buffer.clip_point_utf16(
+                                    point_from_lsp(lsp_location.range.end),
+                                    Bias::Left,
+                                );
+                                target_buffer.anchor_after(target_start)
+                                    ..target_buffer.anchor_before(target_end)
+                            });
+                            Location {
+                                buffer: target_buffer_handle,
+                                range,
+                            }
+                        }),
+                        None => None,
+                    };
+
+                    target.map(|target| {
+                        (
+                            Some(DocumentRange::Inlay(trigger_source.clone())),
+                            vec![LocationLink {
+                                origin: Some(Location {
+                                    buffer: buffer.clone(),
+                                    range: trigger_source.inlay_position.text_anchor
+                                        ..trigger_source.inlay_position.text_anchor,
+                                }),
+                                target,
+                            }],
+                        )
+                    })
+                }
             };
 
             this.update(&mut cx, |this, cx| {
@@ -479,7 +521,7 @@ pub fn show_link_definition(
                                         ..snapshot.anchor_after(offset_range.end),
                                 )
                             }
-                            TriggerPoint::InlayHint(inlay_coordinates, _) => {
+                            TriggerPoint::InlayHint(inlay_coordinates, _, _) => {
                                 DocumentRange::Inlay(inlay_coordinates)
                             }
                         });
