@@ -754,7 +754,7 @@ impl Item for Editor {
         Some(Box::new(handle.clone()))
     }
 
-    fn pixel_position_of_cursor(&self) -> Option<Vector2F> {
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
         self.pixel_position_of_newest_cursor
     }
 

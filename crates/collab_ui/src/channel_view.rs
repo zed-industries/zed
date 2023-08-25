@@ -10,13 +10,17 @@ use editor::Editor;
 use gpui::{
     actions,
     elements::{ChildView, Label},
+    geometry::vector::Vector2F,
     AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
 use project::Project;
+use std::any::Any;
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
-    register_followable_item, Pane, ViewId, Workspace, WorkspaceId,
+    register_followable_item,
+    searchable::SearchableItemHandle,
+    ItemNavHistory, Pane, ViewId, Workspace, WorkspaceId,
 };
 
 actions!(channel_view, [Deploy]);
@@ -206,6 +210,37 @@ impl Item for ChannelView {
             self.channel_buffer.clone(),
             cx,
         ))
+    }
+
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        true
+    }
+
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
+        self.editor
+            .update(cx, |editor, cx| editor.navigate(data, cx))
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+    }
+
+    fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| Item::set_nav_history(editor, history, cx))
+    }
+
+    fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn show_toolbar(&self) -> bool {
+        true
+    }
+
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
+        self.editor.read(cx).pixel_position_of_cursor(cx)
     }
 }
 

@@ -391,7 +391,7 @@ mod test {
             the lazy dog"
         })
         .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
 
         // entering visual mode should select the character
         // under cursor
@@ -400,7 +400,7 @@ mod test {
             fox jumps over
             the lazy dog"})
             .await;
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
 
         // forwards motions should extend the selection
         cx.simulate_shared_keystrokes(["w", "j"]).await;
@@ -430,7 +430,7 @@ mod test {
             b
             "})
             .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
         cx.simulate_shared_keystrokes(["v"]).await;
         cx.assert_shared_state(indoc! {"
             a
@@ -438,7 +438,7 @@ mod test {
             ˇ»b
         "})
             .await;
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
 
         // toggles off again
         cx.simulate_shared_keystrokes(["v"]).await;
@@ -510,7 +510,7 @@ mod test {
             b
             ˇ"})
             .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
         cx.simulate_shared_keystrokes(["shift-v"]).await;
         cx.assert_shared_state(indoc! {"
             a
@@ -518,7 +518,7 @@ mod test {
             ˇ"})
             .await;
         assert_eq!(cx.mode(), cx.neovim_mode().await);
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
         cx.simulate_shared_keystrokes(["x"]).await;
         cx.assert_shared_state(indoc! {"
             a
