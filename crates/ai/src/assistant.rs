@@ -214,12 +214,12 @@ impl AssistantPanel {
     }
 
     fn inline_assist(workspace: &mut Workspace, _: &InlineAssist, cx: &mut ViewContext<Workspace>) {
-        let assistant = if let Some(assistant) = workspace.panel::<AssistantPanel>(cx) {
-            if assistant
+        let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
+            if this
                 .update(cx, |assistant, cx| assistant.load_api_key(cx))
                 .is_some()
             {
-                assistant
+                this
             } else {
                 workspace.focus_panel::<AssistantPanel>(cx);
                 return;
@@ -237,7 +237,7 @@ impl AssistantPanel {
             return;
         };
 
-        assistant.update(cx, |assistant, cx| {
+        this.update(cx, |assistant, cx| {
             assistant.new_inline_assist(&active_editor, cx)
         });
     }
@@ -1046,7 +1046,7 @@ impl AssistantPanel {
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
 
-    pub fn load_api_key(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
+    fn load_api_key(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
         if self.api_key.borrow().is_none() && !self.has_read_credentials {
             self.has_read_credentials = true;
             let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
