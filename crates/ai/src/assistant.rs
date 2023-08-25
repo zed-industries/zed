@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
@@ -93,6 +93,7 @@ pub fn init(cx: &mut AppContext) {
         },
     );
     cx.add_action(AssistantPanel::inline_assist);
+    cx.add_action(AssistantPanel::cancel_last_inline_assist);
     cx.add_action(InlineAssistant::confirm);
     cx.add_action(InlineAssistant::cancel);
 }
@@ -347,25 +348,64 @@ impl AssistantPanel {
                 self.confirm_inline_assist(assist_id, prompt, cx);
             }
             InlineAssistantEvent::Canceled => {
-                self.complete_inline_assist(assist_id, true, cx);
+                self.close_inline_assist(assist_id, true, cx);
             }
             InlineAssistantEvent::Dismissed => {
-                self.dismiss_inline_assist(assist_id, cx);
+                self.hide_inline_assist(assist_id, cx);
             }
         }
     }
 
-    fn complete_inline_assist(
-        &mut self,
-        assist_id: usize,
-        cancel: bool,
-        cx: &mut ViewContext<Self>,
+    fn cancel_last_inline_assist(
+        workspace: &mut Workspace,
+        _: &editor::Cancel,
+        cx: &mut ViewContext<Workspace>,
     ) {
-        self.dismiss_inline_assist(assist_id, cx);
+        let panel = if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            panel
+        } else {
+            return;
+        };
+        let editor = if let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<Editor>())
+        {
+            editor
+        } else {
+            return;
+        };
+
+        let handled = panel.update(cx, |panel, cx| {
+            if let Some(assist_id) = panel
+                .pending_inline_assist_ids_by_editor
+                .get(&editor.downgrade())
+                .and_then(|assist_ids| assist_ids.last().copied())
+            {
+                panel.close_inline_assist(assist_id, true, cx);
+                true
+            } else {
+                false
+            }
+        });
+
+        if !handled {
+            cx.propagate_action();
+        }
+    }
+
+    fn close_inline_assist(&mut self, assist_id: usize, cancel: bool, cx: &mut ViewContext<Self>) {
+        self.hide_inline_assist(assist_id, cx);
 
         if let Some(pending_assist) = self.pending_inline_assists.remove(&assist_id) {
-            self.pending_inline_assist_ids_by_editor
-                .remove(&pending_assist.editor);
+            if let hash_map::Entry::Occupied(mut entry) = self
+                .pending_inline_assist_ids_by_editor
+                .entry(pending_assist.editor)
+            {
+                entry.get_mut().retain(|id| *id != assist_id);
+                if entry.get().is_empty() {
+                    entry.remove();
+                }
+            }
 
             if let Some(editor) = pending_assist.editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
@@ -386,7 +426,7 @@ impl AssistantPanel {
         }
     }
 
-    fn dismiss_inline_assist(&mut self, assist_id: usize, cx: &mut ViewContext<Self>) {
+    fn hide_inline_assist(&mut self, assist_id: usize, cx: &mut ViewContext<Self>) {
         if let Some(pending_assist) = self.pending_inline_assists.get_mut(&assist_id) {
             if let Some(editor) = pending_assist.editor.upgrade(cx) {
                 if let Some(block_id) = pending_assist.inline_assistant_block_id.take() {
@@ -568,7 +608,7 @@ impl AssistantPanel {
                     let this = this.clone();
                     move || {
                         let _ = this.update(&mut cx, |this, cx| {
-                            this.complete_inline_assist(inline_assist_id, false, cx)
+                            this.close_inline_assist(inline_assist_id, false, cx)
                         });
                     }
                 });
