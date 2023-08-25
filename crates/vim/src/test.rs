@@ -358,6 +358,79 @@ async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
         twelve char
     "})
         .await;
+
+    cx.set_shared_state(indoc! { "
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["enter"]).await;
+    cx.assert_shared_state(indoc! { "
+            twelve char twelve char
+            ˇtwelve char
+        "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["o", "o", "escape"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        twelve char twelve char
+        ˇo
+        twelve char
+    "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-a", "a", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        twelve char twelve charˇa
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-i", "i", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇitwelve char twelve chara
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-d"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇ
+        twelve char
+    "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        twelve char tˇwelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-o", "o", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇo
+        twelve char twelve char
+        twelve char
+    "})
+        .await;
 }
 
 #[gpui::test]

@@ -10,7 +10,7 @@ mod yank;
 use std::sync::Arc;
 
 use crate::{
-    motion::Motion,
+    motion::{self, Motion},
     object::Object,
     state::{Mode, Operator},
     Vim,
@@ -214,19 +214,19 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                     .collect();
                 let edits = selection_start_rows.into_iter().map(|row| {
                     let (indent, _) = map.line_indent(row);
-                    let start_of_line = map
-                        .clip_point(DisplayPoint::new(row, 0), Bias::Left)
-                        .to_point(&map);
+                    let start_of_line =
+                        motion::start_of_line(&map, false, DisplayPoint::new(row, 0))
+                            .to_point(&map);
                     let mut new_text = " ".repeat(indent as usize);
                     new_text.push('\n');
                     (start_of_line..start_of_line, new_text)
                 });
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.move_cursors_with(|map, mut cursor, _| {
-                        *cursor.row_mut() -= 1;
-                        *cursor.column_mut() = map.line_len(cursor.row());
-                        (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                    s.move_cursors_with(|map, cursor, _| {
+                        let previous_line = motion::up(map, cursor, SelectionGoal::None, 1).0;
+                        let insert_point = motion::end_of_line(map, false, previous_line);
+                        (insert_point, SelectionGoal::None)
                     });
                 });
             });
@@ -240,15 +240,16 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
+
                 let selection_end_rows: HashSet<u32> = old_selections
                     .into_iter()
                     .map(|selection| selection.end.row())
                     .collect();
                 let edits = selection_end_rows.into_iter().map(|row| {
                     let (indent, _) = map.line_indent(row);
-                    let end_of_line = map
-                        .clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left)
-                        .to_point(&map);
+                    let end_of_line =
+                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0)).to_point(&map);
+
                     let mut new_text = "\n".to_string();
                     new_text.push_str(&" ".repeat(indent as usize));
                     (end_of_line..end_of_line, new_text)

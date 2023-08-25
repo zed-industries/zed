@@ -535,7 +535,7 @@ fn down_display(
     (point, goal)
 }
 
-fn up(
+pub(crate) fn up(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     mut goal: SelectionGoal,
@@ -681,7 +681,11 @@ fn first_non_whitespace(
     map.clip_point(last_point, Bias::Left)
 }
 
-fn start_of_line(map: &DisplaySnapshot, display_lines: bool, point: DisplayPoint) -> DisplayPoint {
+pub(crate) fn start_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+) -> DisplayPoint {
     if display_lines {
         map.clip_point(DisplayPoint::new(point.row(), 0), Bias::Right)
     } else {
@@ -689,7 +693,11 @@ fn start_of_line(map: &DisplaySnapshot, display_lines: bool, point: DisplayPoint
     }
 }
 
-fn end_of_line(map: &DisplaySnapshot, display_lines: bool, point: DisplayPoint) -> DisplayPoint {
+pub(crate) fn end_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+) -> DisplayPoint {
     if display_lines {
         map.clip_point(
             DisplayPoint::new(point.row(), map.line_len(point.row())),
@@ -819,12 +827,8 @@ fn find_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let new_row = (point.row() + times as u32).min(map.max_buffer_row());
-    first_non_whitespace(
-        map,
-        false,
-        map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left),
-    )
+    let correct_line = down(map, point, SelectionGoal::None, times).0;
+    first_non_whitespace(map, false, correct_line)
 }
 
 #[cfg(test)]

@@ -1,4 +1,3 @@
-use editor::EditorSettings;
 use indoc::indoc;
 use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
@@ -6,7 +5,7 @@ use std::ops::{Deref, DerefMut, Range};
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
 use language::{
-    language_settings::{AllLanguageSettings, LanguageSettings, SoftWrap},
+    language_settings::{AllLanguageSettings, SoftWrap},
     OffsetRangeExt,
 };
 use util::test::{generate_marked_text, marked_text_offsets};
