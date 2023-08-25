@@ -107,20 +107,15 @@ impl PickerDelegate for BranchListDelegate {
                     let delegate = view.delegate();
                     let project = delegate.workspace.read(cx).project().read(&cx);
 
-                    let Some(worktree) = project
-                        .visible_worktrees(cx)
-                        .next()
-                    else {
+                    let Some(worktree) = project.visible_worktrees(cx).next() else {
                         bail!("Cannot update branch list as there are no visible worktrees")
                     };
-                    let mut cwd = worktree .read(cx)
-                        .abs_path()
-                        .to_path_buf();
+                    let mut cwd = worktree.read(cx).abs_path().to_path_buf();
                     cwd.push(".git");
-                    let Some(repo) = project.fs().open_repo(&cwd) else {bail!("Project does not have associated git repository.")};
-                    let mut branches = repo
-                        .lock()
-                        .branches()?;
+                    let Some(repo) = project.fs().open_repo(&cwd) else {
+                        bail!("Project does not have associated git repository.")
+                    };
+                    let mut branches = repo.lock().branches()?;
                     const RECENT_BRANCHES_COUNT: usize = 10;
                     if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
                         // Truncate list of recent branches
@@ -142,8 +137,13 @@ impl PickerDelegate for BranchListDelegate {
                         })
                         .collect::<Vec<_>>())
                 })
-                .log_err() else { return; };
-            let Some(candidates) = candidates.log_err() else {return;};
+                .log_err()
+            else {
+                return;
+            };
+            let Some(candidates) = candidates.log_err() else {
+                return;
+            };
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -184,7 +184,11 @@ impl PickerDelegate for BranchListDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         let current_pick = self.selected_index();
-        let Some(current_pick) = self.matches.get(current_pick).map(|pick| pick.string.clone()) else {
+        let Some(current_pick) = self
+            .matches
+            .get(current_pick)
+            .map(|pick| pick.string.clone())
+        else {
             return;
         };
         cx.spawn(|picker, mut cx| async move {

@@ -885,7 +885,9 @@ impl ProjectSearchView {
         if !dir_entry.is_dir() {
             return;
         }
-        let Some(filter_str) = dir_entry.path.to_str() else { return; };
+        let Some(filter_str) = dir_entry.path.to_str() else {
+            return;
+        };
 
         let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));

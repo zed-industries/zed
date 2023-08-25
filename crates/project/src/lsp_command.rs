@@ -1655,7 +1655,11 @@ impl LspCommand for OnTypeFormatting {
     type ProtoRequest = proto::OnTypeFormatting;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) = &server_capabilities.document_on_type_formatting_provider else { return false };
+        let Some(on_type_formatting_options) =
+            &server_capabilities.document_on_type_formatting_provider
+        else {
+            return false;
+        };
         on_type_formatting_options
             .first_trigger_character
             .contains(&self.trigger)
@@ -1769,7 +1773,9 @@ impl LspCommand for OnTypeFormatting {
         _: ModelHandle<Buffer>,
         _: AsyncAppContext,
     ) -> Result<Option<Transaction>> {
-        let Some(transaction) = message.transaction else { return Ok(None) };
+        let Some(transaction) = message.transaction else {
+            return Ok(None);
+        };
         Ok(Some(language::proto::deserialize_transaction(transaction)?))
     }
 
@@ -2238,7 +2244,9 @@ impl LspCommand for InlayHints {
     type ProtoRequest = proto::InlayHints;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else { return false };
+        let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else {
+            return false;
+        };
         match inlay_hint_provider {
             lsp::OneOf::Left(enabled) => *enabled,
             lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {

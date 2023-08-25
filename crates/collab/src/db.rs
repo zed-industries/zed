@@ -249,7 +249,9 @@ impl Database {
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
         let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!("couldn't complete transaction because it's still in use"))?;
+            return Err(anyhow!(
+                "couldn't complete transaction because it's still in use"
+            ))?;
         };
 
         Ok((tx, result))

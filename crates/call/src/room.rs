@@ -644,7 +644,9 @@ impl Room {
 
                 if let Some(participants) = remote_participants.log_err() {
                     for (participant, user) in room.participants.into_iter().zip(participants) {
-                        let Some(peer_id) = participant.peer_id else { continue };
+                        let Some(peer_id) = participant.peer_id else {
+                            continue;
+                        };
                         this.participant_user_ids.insert(participant.user_id);
 
                         let old_projects = this

@@ -2484,7 +2484,9 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else { continue };
+                let Some((open, close)) = open.zip(close) else {
+                    continue;
+                };
 
                 let bracket_range = open.start..=close.end;
                 if !bracket_range.overlaps(&range) {

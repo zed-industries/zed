@@ -465,9 +465,9 @@ impl Database {
             let mut rejoined_projects = Vec::new();
             for rejoined_project in &rejoin_room.rejoined_projects {
                 let project_id = ProjectId::from_proto(rejoined_project.id);
-                let Some(project) = project::Entity::find_by_id(project_id)
-                    .one(&*tx)
-                    .await? else { continue };
+                let Some(project) = project::Entity::find_by_id(project_id).one(&*tx).await? else {
+                    continue;
+                };
 
                 let mut worktrees = Vec::new();
                 let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;

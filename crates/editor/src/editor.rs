@@ -6243,7 +6243,9 @@ impl Editor {
     ) {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_offsets_with(|snapshot, selection| {
-                let Some(enclosing_bracket_ranges) = snapshot.enclosing_bracket_ranges(selection.start..selection.end) else {
+                let Some(enclosing_bracket_ranges) =
+                    snapshot.enclosing_bracket_ranges(selection.start..selection.end)
+                else {
                     return;
                 };
 
@@ -6255,7 +6257,8 @@ impl Editor {
                     let close = close.to_inclusive();
                     let length = close.end() - open.start;
                     let inside = selection.start >= open.end && selection.end <= *close.start();
-                    let in_bracket_range = open.to_inclusive().contains(&selection.head()) || close.contains(&selection.head());
+                    let in_bracket_range = open.to_inclusive().contains(&selection.head())
+                        || close.contains(&selection.head());
 
                     // If best is next to a bracket and current isn't, skip
                     if !in_bracket_range && best_in_bracket_range {
@@ -6270,19 +6273,21 @@ impl Editor {
                     best_length = length;
                     best_inside = inside;
                     best_in_bracket_range = in_bracket_range;
-                    best_destination = Some(if close.contains(&selection.start) && close.contains(&selection.end) {
-                        if inside {
-                            open.end
+                    best_destination = Some(
+                        if close.contains(&selection.start) && close.contains(&selection.end) {
+                            if inside {
+                                open.end
+                            } else {
+                                open.start
+                            }
                         } else {
-                            open.start
-                        }
-                    } else {
-                        if inside {
-                            *close.start()
-                        } else {
-                            *close.end()
-                        }
-                    });
+                            if inside {
+                                *close.start()
+                            } else {
+                                *close.end()
+                            }
+                        },
+                    );
                 }
 
                 if let Some(destination) = best_destination {
@@ -6526,7 +6531,9 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(workspace) = self.workspace(cx) else { return };
+        let Some(workspace) = self.workspace(cx) else {
+            return;
+        };
         let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
@@ -6557,7 +6564,9 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace(cx) else { return };
+        let Some(workspace) = self.workspace(cx) else {
+            return;
+        };
         let pane = workspace.read(cx).active_pane().clone();
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
@@ -7639,10 +7648,9 @@ impl Editor {
         let search_range = display_snapshot.anchor_to_inlay_offset(search_range.start)
             ..display_snapshot.anchor_to_inlay_offset(search_range.end);
         let mut results = Vec::new();
-        let Some((_, ranges)) = self.background_highlights
-            .get(&TypeId::of::<T>()) else {
-                return vec![];
-            };
+        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
+            return vec![];
+        };
 
         let start_ix = match ranges.binary_search_by(|probe| {
             let cmp = document_to_inlay_range(probe, display_snapshot)
@@ -7993,9 +8001,7 @@ impl Editor {
         suggestion_accepted: bool,
         cx: &AppContext,
     ) {
-        let Some(project) = &self.project else {
-            return
-        };
+        let Some(project) = &self.project else { return };
 
         // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
         let file_extension = self
@@ -8024,9 +8030,7 @@ impl Editor {
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
-        let Some(project) = &self.project else {
-            return
-        };
+        let Some(project) = &self.project else { return };
 
         // If None, we are in a file without an extension
         let file = self
@@ -8127,7 +8131,9 @@ impl Editor {
             }
         }
 
-        let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else { return; };
+        let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else {
+            return;
+        };
         cx.write_to_clipboard(ClipboardItem::new(lines));
     }
 

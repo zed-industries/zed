@@ -2317,9 +2317,10 @@ impl BackgroundScannerState {
         for changed_path in changed_paths {
             let Some(dot_git_dir) = changed_path
                 .ancestors()
-                .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT)) else {
-                    continue;
-                };
+                .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))
+            else {
+                continue;
+            };
 
             // Avoid processing the same repository multiple times, if multiple paths
             // within it have changed.
@@ -2348,7 +2349,10 @@ impl BackgroundScannerState {
                     let Some(work_dir) = self
                         .snapshot
                         .entry_for_id(entry_id)
-                        .map(|entry| RepositoryWorkDirectory(entry.path.clone())) else { continue };
+                        .map(|entry| RepositoryWorkDirectory(entry.path.clone()))
+                    else {
+                        continue;
+                    };
 
                     log::info!("reload git repository {:?}", dot_git_dir);
                     let repository = repository.repo_ptr.lock();

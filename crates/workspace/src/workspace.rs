@@ -2314,8 +2314,12 @@ impl Workspace {
         item_id_to_move: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
-        let Some(from) = from.upgrade(cx) else { return; };
+        let Some(pane_to_split) = pane_to_split.upgrade(cx) else {
+            return;
+        };
+        let Some(from) = from.upgrade(cx) else {
+            return;
+        };
 
         let new_pane = self.add_pane(cx);
         self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);

@@ -77,7 +77,10 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                         }
 
                         let Some((new_head, goal)) =
-                        motion.move_point(map, current_head, selection.goal, times) else { return };
+                            motion.move_point(map, current_head, selection.goal, times)
+                        else {
+                            return;
+                        };
 
                         selection.set_head(new_head, goal);
 
@@ -132,7 +135,7 @@ pub fn visual_block_motion(
         }
 
         let Some((new_head, _)) = move_selection(&map, head, goal) else {
-            return
+            return;
         };
         head = new_head;
 

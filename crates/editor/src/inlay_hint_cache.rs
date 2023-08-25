@@ -341,7 +341,10 @@ impl InlayHintCache {
             shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
                 let Some(buffer) = shown_anchor
                     .buffer_id
-                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id)) else { return false };
+                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
+                else {
+                    return false;
+                };
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 loop {
                     match excerpt_cache.peek() {
@@ -554,7 +557,10 @@ fn spawn_new_update_tasks(
                         cx,
                     ),
                 )
-            }) else { return; };
+            })
+        else {
+            return;
+        };
         let query = ExcerptQuery {
             buffer_id,
             excerpt_id,
