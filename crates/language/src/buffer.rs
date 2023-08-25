@@ -1664,6 +1664,22 @@ impl Buffer {
         }
     }
 
+    pub fn undo_and_forget(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        if let Some(operation) = self.text.undo_and_forget(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,

@@ -1,18 +1,22 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    stream_completion, MessageId, MessageMetadata, MessageStatus, OpenAIRequest, RequestMessage,
-    Role, SavedConversation, SavedConversationMetadata, SavedMessage, OPENAI_API_URL,
+    stream_completion,
+    streaming_diff::{Hunk, StreamingDiff},
+    MessageId, MessageMetadata, MessageStatus, OpenAIRequest, RequestMessage, Role,
+    SavedConversation, SavedConversationMetadata, SavedMessage, OPENAI_API_URL,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint},
+    display_map::{
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
+    },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, ToOffset,
+    Anchor, Editor, ToOffset, ToPoint,
 };
 use fs::Fs;
-use futures::StreamExt;
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     actions,
     elements::*,
@@ -21,7 +25,10 @@ use gpui::{
     Action, AppContext, AsyncAppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use language::{
+    language_settings::SoftWrap, Buffer, LanguageRegistry, Point, Rope, Selection, ToOffset as _,
+    TransactionId,
+};
 use search::BufferSearchBar;
 use settings::SettingsStore;
 use std::{
@@ -53,6 +60,7 @@ actions!(
         QuoteSelection,
         ToggleFocus,
         ResetKey,
+        InlineAssist
     ]
 );
 
@@ -84,6 +92,9 @@ pub fn init(cx: &mut AppContext) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         },
     );
+    cx.add_action(AssistantPanel::inline_assist);
+    cx.add_action(InlineAssistant::confirm);
+    cx.add_action(InlineAssistant::cancel);
 }
 
 #[derive(Debug)]
@@ -113,6 +124,9 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
+    next_inline_assist_id: usize,
+    pending_inline_assists: HashMap<usize, PendingInlineAssist>,
+    pending_inline_assist_ids_by_editor: HashMap<WeakViewHandle<Editor>, Vec<usize>>,
     _watch_saved_conversations: Task<Result<()>>,
 }
 
@@ -176,6 +190,9 @@ impl AssistantPanel {
                         width: None,
                         height: None,
                         subscriptions: Default::default(),
+                        next_inline_assist_id: 0,
+                        pending_inline_assists: Default::default(),
+                        pending_inline_assist_ids_by_editor: Default::default(),
                         _watch_saved_conversations,
                     };
 
@@ -194,6 +211,425 @@ impl AssistantPanel {
                 })
             })
         })
+    }
+
+    fn inline_assist(workspace: &mut Workspace, _: &InlineAssist, cx: &mut ViewContext<Workspace>) {
+        let assistant = if let Some(assistant) = workspace.panel::<AssistantPanel>(cx) {
+            if assistant
+                .update(cx, |assistant, cx| assistant.load_api_key(cx))
+                .is_some()
+            {
+                assistant
+            } else {
+                workspace.focus_panel::<AssistantPanel>(cx);
+                return;
+            }
+        } else {
+            return;
+        };
+
+        let active_editor = if let Some(active_editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        {
+            active_editor
+        } else {
+            return;
+        };
+
+        assistant.update(cx, |assistant, cx| {
+            assistant.new_inline_assist(&active_editor, cx)
+        });
+    }
+
+    fn new_inline_assist(&mut self, editor: &ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        let id = post_inc(&mut self.next_inline_assist_id);
+        let (block_id, inline_assistant, selection) = editor.update(cx, |editor, cx| {
+            let selection = editor.selections.newest_anchor().clone();
+            let prompt_editor = cx.add_view(|cx| {
+                Editor::single_line(
+                    Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
+                    cx,
+                )
+            });
+            let assist_kind = if editor.selections.newest::<usize>(cx).is_empty() {
+                InlineAssistKind::Insert
+            } else {
+                InlineAssistKind::Edit
+            };
+            let assistant = cx.add_view(|_| InlineAssistant {
+                id,
+                prompt_editor,
+                confirmed: false,
+                has_focus: false,
+                assist_kind,
+            });
+            cx.focus(&assistant);
+
+            let block_id = editor.insert_blocks(
+                [BlockProperties {
+                    style: BlockStyle::Flex,
+                    position: selection.head(),
+                    height: 2,
+                    render: Arc::new({
+                        let assistant = assistant.clone();
+                        move |cx: &mut BlockContext| {
+                            ChildView::new(&assistant, cx)
+                                .contained()
+                                .with_padding_left(match assist_kind {
+                                    InlineAssistKind::Edit => cx.gutter_width,
+                                    InlineAssistKind::Insert => cx.anchor_x,
+                                })
+                                .into_any()
+                        }
+                    }),
+                    disposition: if selection.reversed {
+                        BlockDisposition::Above
+                    } else {
+                        BlockDisposition::Below
+                    },
+                }],
+                Some(Autoscroll::Strategy(AutoscrollStrategy::Newest)),
+                cx,
+            )[0];
+            editor.highlight_background::<Self>(
+                vec![selection.start..selection.end],
+                |theme| theme.assistant.inline.pending_edit_background,
+                cx,
+            );
+
+            (block_id, assistant, selection)
+        });
+
+        self.pending_inline_assists.insert(
+            id,
+            PendingInlineAssist {
+                editor: editor.downgrade(),
+                selection,
+                inline_assistant_block_id: Some(block_id),
+                code_generation: Task::ready(None),
+                transaction_id: None,
+                _subscriptions: vec![
+                    cx.subscribe(&inline_assistant, Self::handle_inline_assistant_event),
+                    cx.subscribe(editor, {
+                        let inline_assistant = inline_assistant.downgrade();
+                        move |_, editor, event, cx| {
+                            if let Some(inline_assistant) = inline_assistant.upgrade(cx) {
+                                if let editor::Event::SelectionsChanged { local } = event {
+                                    if *local && inline_assistant.read(cx).has_focus {
+                                        cx.focus(&editor);
+                                    }
+                                }
+                            }
+                        }
+                    }),
+                ],
+            },
+        );
+        self.pending_inline_assist_ids_by_editor
+            .entry(editor.downgrade())
+            .or_default()
+            .push(id);
+    }
+
+    fn handle_inline_assistant_event(
+        &mut self,
+        inline_assistant: ViewHandle<InlineAssistant>,
+        event: &InlineAssistantEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let assist_id = inline_assistant.read(cx).id;
+        match event {
+            InlineAssistantEvent::Confirmed { prompt } => {
+                self.generate_code(assist_id, prompt, cx);
+            }
+            InlineAssistantEvent::Canceled => {
+                self.complete_inline_assist(assist_id, true, cx);
+            }
+            InlineAssistantEvent::Dismissed => {
+                self.dismiss_inline_assist(assist_id, cx);
+            }
+        }
+    }
+
+    fn complete_inline_assist(
+        &mut self,
+        assist_id: usize,
+        cancel: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.dismiss_inline_assist(assist_id, cx);
+
+        if let Some(pending_assist) = self.pending_inline_assists.remove(&assist_id) {
+            self.pending_inline_assist_ids_by_editor
+                .remove(&pending_assist.editor);
+
+            if let Some(editor) = pending_assist.editor.upgrade(cx) {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights::<Self>(cx);
+                    editor.clear_text_highlights::<Self>(cx);
+                });
+
+                if cancel {
+                    if let Some(transaction_id) = pending_assist.transaction_id {
+                        editor.update(cx, |editor, cx| {
+                            editor.buffer().update(cx, |buffer, cx| {
+                                buffer.undo_and_forget(transaction_id, cx)
+                            });
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn dismiss_inline_assist(&mut self, assist_id: usize, cx: &mut ViewContext<Self>) {
+        if let Some(pending_assist) = self.pending_inline_assists.get_mut(&assist_id) {
+            if let Some(editor) = pending_assist.editor.upgrade(cx) {
+                if let Some(block_id) = pending_assist.inline_assistant_block_id.take() {
+                    editor.update(cx, |editor, cx| {
+                        editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+                    });
+                }
+            }
+        }
+    }
+
+    pub fn generate_code(
+        &mut self,
+        inline_assist_id: usize,
+        user_prompt: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
+            api_key
+        } else {
+            return;
+        };
+
+        let pending_assist =
+            if let Some(pending_assist) = self.pending_inline_assists.get_mut(&inline_assist_id) {
+                pending_assist
+            } else {
+                return;
+            };
+
+        let editor = if let Some(editor) = pending_assist.editor.upgrade(cx) {
+            editor
+        } else {
+            return;
+        };
+
+        let selection = pending_assist.selection.clone();
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let selected_text = snapshot
+            .text_for_range(selection.start..selection.end)
+            .collect::<Rope>();
+
+        let mut normalized_selected_text = selected_text.clone();
+        let mut base_indentation: Option<language::IndentSize> = None;
+        let selection_start = selection.start.to_point(&snapshot);
+        let selection_end = selection.end.to_point(&snapshot);
+        if selection_start.row < selection_end.row {
+            for row in selection_start.row..=selection_end.row {
+                if snapshot.is_line_blank(row) {
+                    continue;
+                }
+
+                let line_indentation = snapshot.indent_size_for_line(row);
+                if let Some(base_indentation) = base_indentation.as_mut() {
+                    if line_indentation.len < base_indentation.len {
+                        *base_indentation = line_indentation;
+                    }
+                } else {
+                    base_indentation = Some(line_indentation);
+                }
+            }
+        }
+
+        if let Some(base_indentation) = base_indentation {
+            for row in selection_start.row..=selection_end.row {
+                let selection_row = row - selection_start.row;
+                let line_start =
+                    normalized_selected_text.point_to_offset(Point::new(selection_row, 0));
+                let indentation_len = if row == selection_start.row {
+                    base_indentation.len.saturating_sub(selection_start.column)
+                } else {
+                    let line_len = normalized_selected_text.line_len(selection_row);
+                    cmp::min(line_len, base_indentation.len)
+                };
+                let indentation_end = cmp::min(
+                    line_start + indentation_len as usize,
+                    normalized_selected_text.len(),
+                );
+                normalized_selected_text.replace(line_start..indentation_end, "");
+            }
+        }
+
+        let language_name = snapshot
+            .language_at(selection.start)
+            .map(|language| language.name());
+        let language_name = language_name.as_deref().unwrap_or("");
+
+        let mut prompt = String::new();
+        writeln!(prompt, "Given the following {language_name} snippet:").unwrap();
+        writeln!(prompt, "{normalized_selected_text}").unwrap();
+        writeln!(prompt, "{user_prompt}.").unwrap();
+        writeln!(prompt, "Never make remarks, reply only with the new code.").unwrap();
+        let request = OpenAIRequest {
+            model: "gpt-4".into(),
+            messages: vec![RequestMessage {
+                role: Role::User,
+                content: prompt,
+            }],
+            stream: true,
+        };
+        let response = stream_completion(api_key, cx.background().clone(), request);
+        let editor = editor.downgrade();
+
+        pending_assist.code_generation = cx.spawn(|this, mut cx| {
+            async move {
+                let _cleanup = util::defer({
+                    let mut cx = cx.clone();
+                    let this = this.clone();
+                    move || {
+                        let _ = this.update(&mut cx, |this, cx| {
+                            this.complete_inline_assist(inline_assist_id, false, cx)
+                        });
+                    }
+                });
+
+                let mut edit_start = selection.start.to_offset(&snapshot);
+
+                let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
+                let diff = cx.background().spawn(async move {
+                    let mut messages = response.await?;
+                    let mut diff = StreamingDiff::new(selected_text.to_string());
+
+                    let indentation_len;
+                    let indentation_text;
+                    if let Some(base_indentation) = base_indentation {
+                        indentation_len = base_indentation.len;
+                        indentation_text = match base_indentation.kind {
+                            language::IndentKind::Space => " ",
+                            language::IndentKind::Tab => "\t",
+                        };
+                    } else {
+                        indentation_len = 0;
+                        indentation_text = "";
+                    };
+
+                    let mut new_text = indentation_text
+                        .repeat(indentation_len.saturating_sub(selection_start.column) as usize);
+                    while let Some(message) = messages.next().await {
+                        let mut message = message?;
+                        if let Some(choice) = message.choices.pop() {
+                            if let Some(text) = choice.delta.content {
+                                let mut lines = text.split('\n');
+                                if let Some(first_line) = lines.next() {
+                                    new_text.push_str(&first_line);
+                                }
+
+                                for line in lines {
+                                    new_text.push('\n');
+                                    new_text.push_str(
+                                        &indentation_text.repeat(indentation_len as usize),
+                                    );
+                                    new_text.push_str(line);
+                                }
+                            }
+                        }
+
+                        let hunks = diff.push_new(&new_text);
+                        hunks_tx.send(hunks).await?;
+                        new_text.clear();
+                    }
+                    hunks_tx.send(diff.finish()).await?;
+
+                    anyhow::Ok(())
+                });
+
+                while let Some(hunks) = hunks_rx.next().await {
+                    let this = this
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("assistant was dropped"))?;
+                    editor.update(&mut cx, |editor, cx| {
+                        let mut highlights = Vec::new();
+
+                        let transaction = editor.buffer().update(cx, |buffer, cx| {
+                            // Avoid grouping assistant edits with user edits.
+                            buffer.finalize_last_transaction(cx);
+
+                            buffer.start_transaction(cx);
+                            buffer.edit(
+                                hunks.into_iter().filter_map(|hunk| match hunk {
+                                    Hunk::Insert { text } => {
+                                        let edit_start = snapshot.anchor_after(edit_start);
+                                        Some((edit_start..edit_start, text))
+                                    }
+                                    Hunk::Remove { len } => {
+                                        let edit_end = edit_start + len;
+                                        let edit_range = snapshot.anchor_after(edit_start)
+                                            ..snapshot.anchor_before(edit_end);
+                                        edit_start = edit_end;
+                                        Some((edit_range, String::new()))
+                                    }
+                                    Hunk::Keep { len } => {
+                                        let edit_end = edit_start + len;
+                                        let edit_range = snapshot.anchor_after(edit_start)
+                                            ..snapshot.anchor_before(edit_end);
+                                        edit_start += len;
+                                        highlights.push(edit_range);
+                                        None
+                                    }
+                                }),
+                                None,
+                                cx,
+                            );
+
+                            buffer.end_transaction(cx)
+                        });
+
+                        if let Some(transaction) = transaction {
+                            this.update(cx, |this, cx| {
+                                if let Some(pending_assist) =
+                                    this.pending_inline_assists.get_mut(&inline_assist_id)
+                                {
+                                    if let Some(first_transaction) = pending_assist.transaction_id {
+                                        // Group all assistant edits into the first transaction.
+                                        editor.buffer().update(cx, |buffer, cx| {
+                                            buffer.merge_transactions(
+                                                transaction,
+                                                first_transaction,
+                                                cx,
+                                            )
+                                        });
+                                    } else {
+                                        pending_assist.transaction_id = Some(transaction);
+                                        editor.buffer().update(cx, |buffer, cx| {
+                                            buffer.finalize_last_transaction(cx)
+                                        });
+                                    }
+                                }
+                            });
+                        }
+
+                        editor.highlight_text::<Self>(
+                            highlights,
+                            gpui::fonts::HighlightStyle {
+                                fade_out: Some(0.6),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    })?;
+                }
+                diff.await?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
     }
 
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<ConversationEditor> {
@@ -565,6 +1001,32 @@ impl AssistantPanel {
             .iter()
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
+
+    pub fn load_api_key(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
+        if self.api_key.borrow().is_none() && !self.has_read_credentials {
+            self.has_read_credentials = true;
+            let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+                Some(api_key)
+            } else if let Some((_, api_key)) = cx
+                .platform()
+                .read_credentials(OPENAI_API_URL)
+                .log_err()
+                .flatten()
+            {
+                String::from_utf8(api_key).log_err()
+            } else {
+                None
+            };
+            if let Some(api_key) = api_key {
+                *self.api_key.borrow_mut() = Some(api_key);
+            } else if self.api_key_editor.is_none() {
+                self.api_key_editor = Some(build_api_key_editor(cx));
+                cx.notify();
+            }
+        }
+
+        self.api_key.borrow().clone()
+    }
 }
 
 fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> ViewHandle<Editor> {
@@ -748,27 +1210,7 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            if self.api_key.borrow().is_none() && !self.has_read_credentials {
-                self.has_read_credentials = true;
-                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-                    Some(api_key)
-                } else if let Some((_, api_key)) = cx
-                    .platform()
-                    .read_credentials(OPENAI_API_URL)
-                    .log_err()
-                    .flatten()
-                {
-                    String::from_utf8(api_key).log_err()
-                } else {
-                    None
-                };
-                if let Some(api_key) = api_key {
-                    *self.api_key.borrow_mut() = Some(api_key);
-                } else if self.api_key_editor.is_none() {
-                    self.api_key_editor = Some(build_api_key_editor(cx));
-                    cx.notify();
-                }
-            }
+            self.load_api_key(cx);
 
             if self.editors.is_empty() {
                 self.new_conversation(cx);
@@ -2137,6 +2579,84 @@ impl Message {
             content: content.trim_end().into(),
         }
     }
+}
+
+enum InlineAssistantEvent {
+    Confirmed { prompt: String },
+    Canceled,
+    Dismissed,
+}
+
+#[derive(Copy, Clone)]
+enum InlineAssistKind {
+    Edit,
+    Insert,
+}
+
+struct InlineAssistant {
+    id: usize,
+    prompt_editor: ViewHandle<Editor>,
+    confirmed: bool,
+    assist_kind: InlineAssistKind,
+    has_focus: bool,
+}
+
+impl Entity for InlineAssistant {
+    type Event = InlineAssistantEvent;
+}
+
+impl View for InlineAssistant {
+    fn ui_name() -> &'static str {
+        "InlineAssistant"
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let theme = theme::current(cx);
+        let prompt_editor = ChildView::new(&self.prompt_editor, cx).aligned().left();
+        match self.assist_kind {
+            InlineAssistKind::Edit => prompt_editor
+                .contained()
+                .with_style(theme.assistant.inline.container)
+                .into_any(),
+            InlineAssistKind::Insert => prompt_editor.into_any(),
+        }
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.prompt_editor);
+        self.has_focus = true;
+    }
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
+}
+
+impl InlineAssistant {
+    fn cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(InlineAssistantEvent::Canceled);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        if self.confirmed {
+            cx.emit(InlineAssistantEvent::Dismissed);
+        } else {
+            let prompt = self.prompt_editor.read(cx).text(cx);
+            self.prompt_editor
+                .update(cx, |editor, _| editor.set_read_only(true));
+            cx.emit(InlineAssistantEvent::Confirmed { prompt });
+            self.confirmed = true;
+        }
+    }
+}
+
+struct PendingInlineAssist {
+    editor: WeakViewHandle<Editor>,
+    selection: Selection<Anchor>,
+    inline_assistant_block_id: Option<BlockId>,
+    code_generation: Task<Option<()>>,
+    transaction_id: Option<TransactionId>,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[cfg(test)]

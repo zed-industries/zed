@@ -22,6 +22,7 @@ use postage::{oneshot, prelude::*};
 
 pub use rope::*;
 pub use selection::*;
+use util::ResultExt;
 
 use std::{
     cmp::{self, Ordering, Reverse},
@@ -1201,6 +1202,14 @@ impl Buffer {
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction).unwrap();
             Some((transaction_id, op))
+        } else {
+            None
+        }
+    }
+
+    pub fn undo_and_forget(&mut self, transaction_id: TransactionId) -> Option<Operation> {
+        if let Some(transaction) = self.history.forget(transaction_id) {
+            self.undo_or_redo(transaction).log_err()
         } else {
             None
         }

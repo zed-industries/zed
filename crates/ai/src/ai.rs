@@ -1,7 +1,5 @@
 pub mod assistant;
 mod assistant_settings;
-mod refactoring_assistant;
-mod refactoring_modal;
 mod streaming_diff;
 
 use anyhow::{anyhow, Result};
@@ -196,7 +194,6 @@ struct OpenAIChoice {
 
 pub fn init(cx: &mut AppContext) {
     assistant::init(cx);
-    refactoring_modal::init(cx);
 }
 
 pub async fn stream_completion(

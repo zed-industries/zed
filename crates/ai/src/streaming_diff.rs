@@ -83,8 +83,8 @@ pub struct StreamingDiff {
 impl StreamingDiff {
     const INSERTION_SCORE: f64 = -1.;
     const DELETION_SCORE: f64 = -5.;
-    const EQUALITY_BASE: f64 = 1.4;
-    const MAX_EQUALITY_EXPONENT: i32 = 64;
+    const EQUALITY_BASE: f64 = 2.;
+    const MAX_EQUALITY_EXPONENT: i32 = 20;
 
     pub fn new(old: String) -> Self {
         let old = old.chars().collect::<Vec<_>>();
@@ -117,12 +117,8 @@ impl StreamingDiff {
                     equal_run += 1;
                     self.equal_runs.insert((i, j), equal_run);
 
-                    if self.old[i - 1] == ' ' {
-                        self.scores.get(i - 1, j - 1)
-                    } else {
-                        let exponent = cmp::min(equal_run as i32, Self::MAX_EQUALITY_EXPONENT);
-                        self.scores.get(i - 1, j - 1) + Self::EQUALITY_BASE.powi(exponent)
-                    }
+                    let exponent = cmp::min(equal_run as i32 / 4, Self::MAX_EQUALITY_EXPONENT);
+                    self.scores.get(i - 1, j - 1) + Self::EQUALITY_BASE.powi(exponent)
                 } else {
                     f64::NEG_INFINITY
                 };

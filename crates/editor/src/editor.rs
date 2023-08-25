@@ -8209,7 +8209,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
@@ -8217,7 +8217,7 @@ impl View for Editor {
         }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
-        } else {
+        } else if cx.is_self_focused() || !focused.is::<Editor>() {
             if !self.focused {
                 self.blink_manager.update(cx, BlinkManager::enable);
             }

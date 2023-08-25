@@ -122,7 +122,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smol",
  "theme",
  "tiktoken-rs 0.4.5",

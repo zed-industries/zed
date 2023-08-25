@@ -1124,14 +1124,15 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
-    pub modal: ModalAssistantStyle,
+    pub inline: InlineAssistantStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
-pub struct ModalAssistantStyle {
+pub struct InlineAssistantStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FieldEditor,
+    pub pending_edit_background: Color,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

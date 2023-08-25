@@ -59,7 +59,7 @@ export default function assistant(): any {
             background: background(theme.highest),
             padding: { left: 12 },
         },
-        modal: {
+        inline: {
             border: border(theme.lowest, "on", {
                 top: true,
                 bottom: true,
@@ -69,7 +69,8 @@ export default function assistant(): any {
                 text: text(theme.lowest, "mono", "on", { size: "sm" }),
                 placeholder_text: text(theme.lowest, "sans", "on", "disabled"),
                 selection: theme.players[0],
-            }
+            },
+            pending_edit_background: background(theme.highest, "positive"),
         },
         message_header: {
             margin: { bottom: 4, top: 4 },
