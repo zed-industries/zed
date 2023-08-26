@@ -1,5 +1,6 @@
 mod buffer_tests;
 mod db_tests;
+mod feature_flag_tests;
 
 use super::*;
 use gpui::executor::Background;

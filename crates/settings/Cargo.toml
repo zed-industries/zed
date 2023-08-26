@@ -17,7 +17,7 @@ gpui = { path = "../gpui" }
 gpui_platform = { path = "../gpui_platform", optional = true}
 sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
-staff_mode = { path = "../staff_mode" }
+feature_flags = { path = "../feature_flags" }
 util = { path = "../util" }
 
 anyhow.workspace = true

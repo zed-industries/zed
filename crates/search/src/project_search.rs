@@ -185,28 +185,26 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-            let matches = search.await.log_err()?;
+            let mut matches = search;
             let this = this.upgrade(&cx)?;
-            let mut matches = matches.into_iter().collect::<Vec<_>>();
-            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
+                this.excerpts.update(cx, |this, cx| this.clear(cx));
                 this.no_results = Some(true);
-                matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
-                this.excerpts.update(cx, |excerpts, cx| {
-                    excerpts.clear(cx);
-                    excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
-                })
             });
 
-            while let Some(match_range) = match_ranges.next().await {
-                this.update(&mut cx, |this, cx| {
-                    this.match_ranges.push(match_range);
-                    while let Ok(Some(match_range)) = match_ranges.try_next() {
-                        this.match_ranges.push(match_range);
-                    }
+            while let Some((buffer, anchors)) = matches.next().await {
+                let mut ranges = this.update(&mut cx, |this, cx| {
                     this.no_results = Some(false);
-                    cx.notify();
+                    this.excerpts.update(cx, |excerpts, cx| {
+                        excerpts.stream_excerpts_with_context_lines(buffer, anchors, 1, cx)
+                    })
                 });
+
+                while let Some(range) = ranges.next().await {
+                    this.update(&mut cx, |this, _| this.match_ranges.push(range));
+                }
+                this.update(&mut cx, |_, cx| cx.notify());
             }
 
             this.update(&mut cx, |this, cx| {
@@ -238,29 +236,31 @@ impl ProjectSearch {
         self.no_results = Some(true);
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
+            let matches = results
+                .into_iter()
+                .map(|result| (result.buffer, vec![result.range.start..result.range.start]));
 
-            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, cx| {
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
-
-                    let matches = results
-                        .into_iter()
-                        .map(|result| (result.buffer, vec![result.range.start..result.range.start]))
-                        .collect();
-
-                    excerpts.stream_excerpts_with_context_lines(matches, 3, cx)
                 })
             });
-
-            while let Some(match_range) = match_ranges.next().await {
-                this.update(&mut cx, |this, cx| {
-                    this.match_ranges.push(match_range);
-                    while let Ok(Some(match_range)) = match_ranges.try_next() {
-                        this.match_ranges.push(match_range);
-                    }
+            for (buffer, ranges) in matches {
+                let mut match_ranges = this.update(&mut cx, |this, cx| {
                     this.no_results = Some(false);
-                    cx.notify();
+                    this.excerpts.update(cx, |excerpts, cx| {
+                        excerpts.stream_excerpts_with_context_lines(buffer, ranges, 3, cx)
+                    })
                 });
+                while let Some(match_range) = match_ranges.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.match_ranges.push(match_range);
+                        while let Ok(Some(match_range)) = match_ranges.try_next() {
+                            this.match_ranges.push(match_range);
+                        }
+                        cx.notify();
+                    });
+                }
             }
 
             this.update(&mut cx, |this, cx| {

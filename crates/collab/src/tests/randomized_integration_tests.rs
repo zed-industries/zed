@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt as _;
@@ -722,7 +722,7 @@ async fn apply_client_operation(
                 if detach { "detaching" } else { "awaiting" }
             );
 
-            let search = project.update(cx, |project, cx| {
+            let mut search = project.update(cx, |project, cx| {
                 project.search(
                     SearchQuery::text(query, false, false, Vec::new(), Vec::new()),
                     cx,
@@ -730,15 +730,13 @@ async fn apply_client_operation(
             });
             drop(project);
             let search = cx.background().spawn(async move {
-                search
-                    .await
-                    .map_err(|err| anyhow!("search request failed: {:?}", err))
+                let mut results = HashMap::default();
+                while let Some((buffer, ranges)) = search.next().await {
+                    results.entry(buffer).or_insert(ranges);
+                }
+                results
             });
-            if detach {
-                cx.update(|cx| search.detach_and_log_err(cx));
-            } else {
-                search.await?;
-            }
+            search.await;
         }
 
         ClientOperation::WriteFsEntry {

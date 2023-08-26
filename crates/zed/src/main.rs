@@ -54,8 +54,6 @@ use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
 use gpui_platform::{foreground_platform, platform};
-#[cfg(debug_assertions)]
-use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::AppState;
 use zed::{
@@ -126,7 +124,10 @@ fn main() {
         cx.set_global(*RELEASE_CHANNEL);
 
         #[cfg(debug_assertions)]
-        cx.set_global(StaffMode(true));
+        {
+            use feature_flags::FeatureFlagAppExt;
+            cx.set_staff(true);
+        }
 
         let mut store = SettingsStore::default();
         store

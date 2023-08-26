@@ -64,7 +64,7 @@ members = [
     "crates/snippet",
     "crates/sqlez",
     "crates/sqlez_macros",
-    "crates/staff_mode",
+    "crates/feature_flags",
     "crates/sum_tree",
     "crates/terminal",
     "crates/text",

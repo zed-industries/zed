@@ -1201,6 +1201,7 @@ dependencies = [
  "client",
  "collections",
  "db",
+ "feature_flags",
  "futures 0.3.28",
  "gpui",
  "image",
@@ -1216,7 +1217,6 @@ dependencies = [
  "serde_derive",
  "settings",
  "smol",
- "staff_mode",
  "sum_tree",
  "tempfile",
  "text",
@@ -1375,6 +1375,7 @@ dependencies = [
  "async-tungstenite",
  "collections",
  "db",
+ "feature_flags",
  "futures 0.3.28",
  "gpui",
  "gpui_platform",
@@ -1390,7 +1391,6 @@ dependencies = [
  "serde_derive",
  "settings",
  "smol",
- "staff_mode",
  "sum_tree",
  "tempfile",
  "text",
@@ -1530,6 +1530,7 @@ dependencies = [
  "context_menu",
  "db",
  "editor",
+ "feature_flags",
  "feedback",
  "futures 0.3.28",
  "fuzzy",
@@ -1546,7 +1547,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
- "staff_mode",
  "theme",
  "theme_selector",
  "util",
@@ -2533,6 +2533,14 @@ name = "fastrand"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6999dc1837253364c2ebb0704ba97994bd874e8f195d665c50b7548f6ea92764"
+
+[[package]]
+name = "feature_flags"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+]
 
 [[package]]
 name = "feedback"
@@ -6878,6 +6886,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "feature_flags",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -6894,7 +6903,6 @@ dependencies = [
  "serde_json_lenient",
  "smallvec",
  "sqlez",
- "staff_mode",
  "toml 0.5.11",
  "tree-sitter",
  "tree-sitter-json 0.19.0",
@@ -7330,14 +7338,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
-name = "staff_mode"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
-]
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7718,6 +7718,7 @@ name = "theme_selector"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "feature_flags",
  "fs",
  "fuzzy",
  "gpui",
@@ -7727,7 +7728,6 @@ dependencies = [
  "postage",
  "settings",
  "smol",
- "staff_mode",
  "theme",
  "util",
  "workspace",
@@ -9773,6 +9773,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger 0.9.3",
+ "feature_flags",
  "feedback",
  "file_finder",
  "fs",
@@ -9820,7 +9821,6 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
- "staff_mode",
  "sum_tree",
  "tempdir",
  "terminal_view",

@@ -1,11 +1,11 @@
 use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
+use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use staff_mode::StaffMode;
 use std::sync::{Arc, Weak};
 use util::http::HttpClient;
 use util::TryFutureExt as _;
@@ -145,26 +145,23 @@ impl UserStore {
                                 let fetch_metrics_id =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
                                 let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
-                                cx.read(|cx| {
-                                    client.telemetry.set_authenticated_user_info(
-                                        info.as_ref().map(|info| info.metrics_id.clone()),
-                                        info.as_ref().map(|info| info.staff).unwrap_or(false),
-                                        cx,
-                                    )
-                                });
 
-                                cx.update(|cx| {
-                                    cx.update_default_global(|staff_mode: &mut StaffMode, _| {
-                                        if !staff_mode.0 {
-                                            *staff_mode = StaffMode(
-                                                info.as_ref()
-                                                    .map(|info| info.staff)
-                                                    .unwrap_or_default(),
-                                            )
-                                        }
-                                        ()
+                                if let Some(info) = info {
+                                    cx.update(|cx| {
+                                        cx.update_flags(info.staff, info.flags);
+                                        client.telemetry.set_authenticated_user_info(
+                                            Some(info.metrics_id.clone()),
+                                            info.staff,
+                                            cx,
+                                        )
                                     });
-                                });
+                                } else {
+                                    cx.read(|cx| {
+                                        client
+                                            .telemetry
+                                            .set_authenticated_user_info(None, false, cx)
+                                    });
+                                }
 
                                 current_user_tx.send(user).await.ok();
 

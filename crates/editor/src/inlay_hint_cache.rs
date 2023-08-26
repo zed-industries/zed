@@ -13,13 +13,14 @@ use clock::Global;
 use futures::future;
 use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
-use log::error;
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
-use text::ToOffset;
+use smol::lock::Semaphore;
+use sum_tree::Bias;
+use text::{ToOffset, ToPoint};
 use util::post_inc;
 
 pub struct InlayHintCache {
@@ -28,6 +29,7 @@ pub struct InlayHintCache {
     version: usize,
     pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
+    lsp_request_limiter: Arc<Semaphore>,
 }
 
 #[derive(Debug)]
@@ -71,6 +73,7 @@ struct ExcerptQuery {
     excerpt_id: ExcerptId,
     cache_version: usize,
     invalidate: InvalidationStrategy,
+    reason: &'static str,
 }
 
 impl InvalidationStrategy {
@@ -107,17 +110,23 @@ impl TasksForRanges {
                 updated_ranges.before_visible = updated_ranges
                     .before_visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges.visible = updated_ranges
                     .visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges.after_visible = updated_ranges
                     .after_visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges
             }
@@ -133,7 +142,7 @@ impl TasksForRanges {
         }
     }
 
-    fn remove_cached_ranges(
+    fn remove_cached_ranges_from_query(
         &mut self,
         buffer_snapshot: &BufferSnapshot,
         query_range: Range<language::Anchor>,
@@ -195,6 +204,52 @@ impl TasksForRanges {
 
         ranges_to_query
     }
+
+    fn remove_from_cached_ranges(
+        &mut self,
+        buffer: &BufferSnapshot,
+        range_to_remove: &Range<language::Anchor>,
+    ) {
+        self.sorted_ranges = self
+            .sorted_ranges
+            .drain(..)
+            .filter_map(|mut cached_range| {
+                if cached_range.start.cmp(&range_to_remove.end, buffer).is_gt()
+                    || cached_range.end.cmp(&range_to_remove.start, buffer).is_lt()
+                {
+                    Some(vec![cached_range])
+                } else if cached_range
+                    .start
+                    .cmp(&range_to_remove.start, buffer)
+                    .is_ge()
+                    && cached_range.end.cmp(&range_to_remove.end, buffer).is_le()
+                {
+                    None
+                } else if range_to_remove
+                    .start
+                    .cmp(&cached_range.start, buffer)
+                    .is_ge()
+                    && range_to_remove.end.cmp(&cached_range.end, buffer).is_le()
+                {
+                    Some(vec![
+                        cached_range.start..range_to_remove.start,
+                        range_to_remove.end..cached_range.end,
+                    ])
+                } else if cached_range
+                    .start
+                    .cmp(&range_to_remove.start, buffer)
+                    .is_ge()
+                {
+                    cached_range.start = range_to_remove.end;
+                    Some(vec![cached_range])
+                } else {
+                    cached_range.end = range_to_remove.start;
+                    Some(vec![cached_range])
+                }
+            })
+            .flatten()
+            .collect();
+    }
 }
 
 impl InlayHintCache {
@@ -205,6 +260,7 @@ impl InlayHintCache {
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             version: 0,
+            lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
     }
 
@@ -261,6 +317,7 @@ impl InlayHintCache {
 
     pub fn spawn_hint_refresh(
         &mut self,
+        reason: &'static str,
         excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
@@ -289,7 +346,14 @@ impl InlayHintCache {
         cx.spawn(|editor, mut cx| async move {
             editor
                 .update(&mut cx, |editor, cx| {
-                    spawn_new_update_tasks(editor, excerpts_to_query, invalidate, cache_version, cx)
+                    spawn_new_update_tasks(
+                        editor,
+                        reason,
+                        excerpts_to_query,
+                        invalidate,
+                        cache_version,
+                        cx,
+                    )
                 })
                 .ok();
         })
@@ -410,6 +474,24 @@ impl InlayHintCache {
         }
     }
 
+    pub fn remove_excerpts(&mut self, excerpts_removed: Vec<ExcerptId>) -> InlaySplice {
+        let mut to_remove = Vec::new();
+        for excerpt_to_remove in excerpts_removed {
+            self.update_tasks.remove(&excerpt_to_remove);
+            if let Some(cached_hints) = self.hints.remove(&excerpt_to_remove) {
+                let cached_hints = cached_hints.read();
+                to_remove.extend(cached_hints.hints.iter().map(|(id, _)| *id));
+            }
+        }
+        if !to_remove.is_empty() {
+            self.version += 1;
+        }
+        InlaySplice {
+            to_remove,
+            to_insert: Vec::new(),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.version += 1;
         self.update_tasks.clear();
@@ -512,6 +594,7 @@ impl InlayHintCache {
 
 fn spawn_new_update_tasks(
     editor: &mut Editor,
+    reason: &'static str,
     excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
@@ -566,6 +649,7 @@ fn spawn_new_update_tasks(
             excerpt_id,
             cache_version: update_cache_version,
             invalidate,
+            reason,
         };
 
         let new_update_task = |query_ranges| {
@@ -576,6 +660,7 @@ fn spawn_new_update_tasks(
                 buffer_snapshot.clone(),
                 Arc::clone(&visible_hints),
                 cached_excerpt_hints,
+                Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
                 cx,
             )
         };
@@ -632,8 +717,8 @@ fn determine_query_ranges(
         return None;
     } else {
         vec![
-            buffer.anchor_before(excerpt_visible_range.start)
-                ..buffer.anchor_after(excerpt_visible_range.end),
+            buffer.anchor_before(snapshot.clip_offset(excerpt_visible_range.start, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(excerpt_visible_range.end, Bias::Right)),
         ]
     };
 
@@ -651,8 +736,8 @@ fn determine_query_ranges(
             .min(full_excerpt_range_end_offset)
             .min(buffer.len());
         vec![
-            buffer.anchor_before(after_visible_range_start)
-                ..buffer.anchor_after(after_range_end_offset),
+            buffer.anchor_before(snapshot.clip_offset(after_visible_range_start, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(after_range_end_offset, Bias::Right)),
         ]
     };
 
@@ -668,8 +753,8 @@ fn determine_query_ranges(
             .saturating_sub(excerpt_visible_len)
             .max(full_excerpt_range_start_offset);
         vec![
-            buffer.anchor_before(before_range_start_offset)
-                ..buffer.anchor_after(before_visible_range_end),
+            buffer.anchor_before(snapshot.clip_offset(before_range_start_offset, Bias::Left))
+                ..buffer.anchor_after(snapshot.clip_offset(before_visible_range_end, Bias::Right)),
         ]
     };
 
@@ -680,6 +765,7 @@ fn determine_query_ranges(
     })
 }
 
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
 const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 fn new_update_task(
@@ -689,9 +775,11 @@ fn new_update_task(
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
+    lsp_request_limiter: Arc<Semaphore>,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
-    cx.spawn(|editor, cx| async move {
+    cx.spawn(|editor, mut cx| async move {
+        let closure_cx = cx.clone();
         let fetch_and_update_hints = |invalidate, range| {
             fetch_and_update_hints(
                 editor.clone(),
@@ -702,37 +790,63 @@ fn new_update_task(
                 query,
                 invalidate,
                 range,
-                cx.clone(),
+                Arc::clone(&lsp_request_limiter),
+                closure_cx.clone(),
             )
         };
-        let visible_range_update_results =
-            future::join_all(query_ranges.visible.into_iter().map(|visible_range| {
-                fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
-            }))
-            .await;
-        for result in visible_range_update_results {
+        let visible_range_update_results = future::join_all(query_ranges.visible.into_iter().map(
+            |visible_range| async move {
+                (
+                    visible_range.clone(),
+                    fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
+                        .await,
+                )
+            },
+        ))
+        .await;
+
+        let hint_delay = cx.background().timer(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
+        ));
+
+        let mut query_range_failed = |range: &Range<language::Anchor>, e: anyhow::Error| {
+            log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+            editor
+                .update(&mut cx, |editor, _| {
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
+                    {
+                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, &range);
+                    }
+                })
+                .ok()
+        };
+
+        for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                error!("visible range inlay hint update task failed: {e:#}");
+                query_range_failed(&range, e);
             }
         }
 
-        cx.background()
-            .timer(Duration::from_millis(
-                INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
-            ))
-            .await;
-
+        hint_delay.await;
         let invisible_range_update_results = future::join_all(
             query_ranges
                 .before_visible
                 .into_iter()
                 .chain(query_ranges.after_visible.into_iter())
-                .map(|invisible_range| fetch_and_update_hints(false, invisible_range)),
+                .map(|invisible_range| async move {
+                    (
+                        invisible_range.clone(),
+                        fetch_and_update_hints(false, invisible_range).await,
+                    )
+                }),
         )
         .await;
-        for result in invisible_range_update_results {
+        for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                error!("invisible range inlay hint update task failed: {e:#}");
+                query_range_failed(&range, e);
             }
         }
     })
@@ -747,10 +861,51 @@ async fn fetch_and_update_hints(
     query: ExcerptQuery,
     invalidate: bool,
     fetch_range: Range<language::Anchor>,
+    lsp_request_limiter: Arc<Semaphore>,
     mut cx: gpui::AsyncAppContext,
 ) -> anyhow::Result<()> {
+    let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
+        (None, false)
+    } else {
+        match lsp_request_limiter.try_acquire() {
+            Some(guard) => (Some(guard), false),
+            None => (Some(lsp_request_limiter.acquire().await), true),
+        }
+    };
+    let fetch_range_to_log =
+        fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
+            if got_throttled {
+                if let Some((_, _, current_visible_range)) = editor
+                    .excerpt_visible_offsets(None, cx)
+                    .remove(&query.excerpt_id)
+                {
+                    let visible_offset_length = current_visible_range.len();
+                    let double_visible_range = current_visible_range
+                        .start
+                        .saturating_sub(visible_offset_length)
+                        ..current_visible_range
+                            .end
+                            .saturating_add(visible_offset_length)
+                            .min(buffer_snapshot.len());
+                    if !double_visible_range
+                        .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                        && !double_visible_range
+                            .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                    {
+                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        if let Some(task_ranges) = editor
+                            .inlay_hint_cache
+                            .update_tasks
+                            .get_mut(&query.excerpt_id)
+                        {
+                            task_ranges.remove_from_cached_ranges(&buffer_snapshot, &fetch_range);
+                        }
+                        return None;
+                    }
+                }
+            }
             editor
                 .buffer()
                 .read(cx)
@@ -765,9 +920,26 @@ async fn fetch_and_update_hints(
         .ok()
         .flatten();
     let new_hints = match inlay_hints_fetch_task {
-        Some(task) => task.await.context("inlay hint fetch task")?,
+        Some(fetch_task) => {
+            log::debug!(
+                "Fetching inlay hints for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
+                query_reason = query.reason,
+            );
+            log::trace!(
+                "Currently visible hints: {visible_hints:?}, cached hints present: {}",
+                cached_excerpt_hints.is_some(),
+            );
+            fetch_task.await.context("inlay hint fetch task")?
+        }
         None => return Ok(()),
     };
+    drop(lsp_request_guard);
+    log::debug!(
+        "Fetched {} hints for range {fetch_range_to_log:?}",
+        new_hints.len()
+    );
+    log::trace!("Fetched hints: {new_hints:?}");
+
     let background_task_buffer_snapshot = buffer_snapshot.clone();
     let backround_fetch_range = fetch_range.clone();
     let new_update = cx
@@ -785,6 +957,13 @@ async fn fetch_and_update_hints(
         })
         .await;
     if let Some(new_update) = new_update {
+        log::info!(
+            "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+            new_update.remove_from_visible.len(),
+            new_update.remove_from_cache.len(),
+            new_update.add_to_cache.len()
+        );
+        log::trace!("New update: {new_update:?}");
         editor
             .update(&mut cx, |editor, cx| {
                 apply_hint_update(
@@ -2795,7 +2974,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                2,
+                3,
                 "Excerpt removal should trigger a cache update"
             );
         });
@@ -2823,7 +3002,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                3,
+                4,
                 "Settings change should trigger a cache update"
             );
         });
