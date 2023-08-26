@@ -877,33 +877,33 @@ async fn fetch_and_update_hints(
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
             if got_throttled {
-                if let Some((_, _, current_visible_range)) = editor
-                    .excerpt_visible_offsets(None, cx)
-                    .remove(&query.excerpt_id)
-                {
-                    let visible_offset_length = current_visible_range.len();
-                    let double_visible_range = current_visible_range
-                        .start
-                        .saturating_sub(visible_offset_length)
-                        ..current_visible_range
-                            .end
-                            .saturating_add(visible_offset_length)
-                            .min(buffer_snapshot.len());
-                    if !double_visible_range
-                        .contains(&fetch_range.start.to_offset(&buffer_snapshot))
-                        && !double_visible_range
-                            .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                let query_not_around_visible_range = match editor.excerpt_visible_offsets(None, cx).remove(&query.excerpt_id) {
+                    Some((_, _, current_visible_range)) => {
+                        let visible_offset_length = current_visible_range.len();
+                        let double_visible_range = current_visible_range
+                            .start
+                            .saturating_sub(visible_offset_length)
+                            ..current_visible_range
+                                .end
+                                .saturating_add(visible_offset_length)
+                                .min(buffer_snapshot.len());
+                        !double_visible_range
+                            .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                            && !double_visible_range
+                                .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                    },
+                    None => true,
+                };
+                if query_not_around_visible_range {
+                    log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
                     {
-                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
-                        if let Some(task_ranges) = editor
-                            .inlay_hint_cache
-                            .update_tasks
-                            .get_mut(&query.excerpt_id)
-                        {
-                            task_ranges.remove_from_cached_ranges(&buffer_snapshot, &fetch_range);
-                        }
-                        return None;
+                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, &fetch_range);
                     }
+                    return None;
                 }
             }
             editor
