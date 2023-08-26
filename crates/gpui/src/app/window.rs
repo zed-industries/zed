@@ -1304,8 +1304,8 @@ impl LayoutEngine {
         Ok(())
     }
 
-    pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
-        Ok(EngineLayout::from(self.0.layout(node)?))
+    pub fn computed_layout(&mut self, node: LayoutId) -> Result<Layout> {
+        Ok(Layout::from(self.0.layout(node)?))
     }
 }
 
@@ -1329,7 +1329,7 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct EngineLayout {
+pub struct Layout {
     pub bounds: RectF,
     pub order: u32,
 }
@@ -1365,7 +1365,7 @@ impl From<taffy::prelude::AvailableSpace> for AvailableSpace {
     }
 }
 
-impl From<&taffy::tree::Layout> for EngineLayout {
+impl From<&taffy::tree::Layout> for Layout {
     fn from(value: &taffy::tree::Layout) -> Self {
         Self {
             bounds: RectF::new(

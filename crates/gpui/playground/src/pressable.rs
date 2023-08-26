@@ -6,7 +6,7 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
-use gpui::platform::MouseButtonEvent;
+use gpui::{platform::MouseButtonEvent, LayoutId};
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
@@ -40,9 +40,13 @@ impl<E: Styleable> Styleable for Pressable<E> {
 }
 
 impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
-    type Layout = E::Layout;
+    type PaintState = E::PaintState;
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<Layout<V, Self::Layout>>
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,
     {
@@ -52,7 +56,8 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
     fn paint(
         &mut self,
         view: &mut V,
-        layout: &mut Layout<V, Self::Layout>,
+        layout: &Layout,
+        paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
         Self: Sized,
@@ -61,10 +66,9 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
         let style = self.pressed.get().then_some(self.pressed_style.clone());
         self.style_cascade().set(slot, style);
 
-        let bounds = layout.bounds(cx);
-        let order = layout.order(cx);
         let pressed = self.pressed.clone();
-        cx.on_event(order, move |view, event: &MouseButtonEvent, cx| {
+        let bounds = layout.bounds;
+        cx.on_event(layout.order, move |view, event: &MouseButtonEvent, cx| {
             if event.is_down {
                 if bounds.contains_point(event.position) {
                     pressed.set(true);
@@ -76,7 +80,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
             }
         });
 
-        self.child.paint(view, layout, cx);
+        self.child.paint(view, layout, paint_state, cx);
     }
 }
 

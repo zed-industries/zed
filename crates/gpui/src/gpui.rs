@@ -7,8 +7,8 @@ pub use assets::*;
 pub mod elements;
 pub mod font_cache;
 mod image_data;
-pub use taffy;
 pub use crate::image_data::ImageData;
+pub use taffy;
 pub mod views;
 pub use font_cache::FontCache;
 mod clipboard;
@@ -29,8 +29,7 @@ pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
 pub use window::{
-    Axis, EngineLayout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt,
-    WindowContext,
+    Axis, Layout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt, WindowContext,
 };
 
 pub use anyhow;

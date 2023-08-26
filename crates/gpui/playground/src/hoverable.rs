@@ -6,7 +6,7 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
-use gpui::platform::MouseMovedEvent;
+use gpui::{platform::MouseMovedEvent, LayoutId};
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
@@ -40,40 +40,44 @@ impl<E: Styleable> Styleable for Hoverable<E> {
 }
 
 impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
-    type Layout = E::Layout;
+    type PaintState = E::PaintState;
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<Layout<V, Self::Layout>>
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,
     {
-        self.child.layout(view, cx)
+        Ok(self.child.layout(view, cx)?)
     }
 
     fn paint(
         &mut self,
         view: &mut V,
-        layout: &mut Layout<V, Self::Layout>,
+        layout: &Layout,
+        paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
         Self: Sized,
     {
-        let bounds = layout.bounds(cx);
-        let order = layout.order(cx);
-
-        self.hovered.set(bounds.contains_point(cx.mouse_position()));
+        self.hovered
+            .set(layout.bounds.contains_point(cx.mouse_position()));
 
         let slot = self.cascade_slot;
         let style = self.hovered.get().then_some(self.hovered_style.clone());
         self.style_cascade().set(slot, style);
 
         let hovered = self.hovered.clone();
-        cx.on_event(order, move |view, event: &MouseMovedEvent, cx| {
+        let bounds = layout.bounds;
+        cx.on_event(layout.order, move |view, event: &MouseMovedEvent, cx| {
             if bounds.contains_point(cx.mouse_position()) != hovered.get() {
                 cx.repaint();
             }
         });
 
-        self.child.paint(view, layout, cx);
+        self.child.paint(view, layout, paint_state, cx);
     }
 }
 

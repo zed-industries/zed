@@ -1,29 +1,25 @@
-use anyhow::Result;
-use gpui::{geometry::rect::RectF, EngineLayout};
-use smallvec::SmallVec;
-use std::marker::PhantomData;
-use util::ResultExt;
-
 pub use crate::layout_context::LayoutContext;
 pub use crate::paint_context::PaintContext;
-
-type LayoutId = gpui::LayoutId;
+use anyhow::Result;
+pub use gpui::{Layout, LayoutId};
+use smallvec::SmallVec;
 
 pub trait Element<V: 'static>: 'static {
-    type Layout;
+    type PaintState;
 
     fn layout(
         &mut self,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> Result<Layout<V, Self::Layout>>
+    ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized;
 
     fn paint(
         &mut self,
         view: &mut V,
-        layout: &mut Layout<V, Self::Layout>,
+        layout: &Layout,
+        state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
         Self: Sized;
@@ -34,7 +30,7 @@ pub trait Element<V: 'static>: 'static {
     {
         AnyElement(Box::new(StatefulElement {
             element: self,
-            layout: None,
+            phase: ElementPhase::Init,
         }))
     }
 }
@@ -48,24 +44,71 @@ trait AnyStatefulElement<V> {
 /// A wrapper around an element that stores its layout state.
 struct StatefulElement<V: 'static, E: Element<V>> {
     element: E,
-    layout: Option<Layout<V, E::Layout>>,
+    phase: ElementPhase<V, E>,
+}
+
+enum ElementPhase<V: 'static, E: Element<V>> {
+    Init,
+    PostLayout {
+        layout_id: LayoutId,
+        paint_state: E::PaintState,
+    },
+    PostPaint {
+        layout: Layout,
+        paint_state: E::PaintState,
+    },
+    Error(String),
+}
+
+impl<V: 'static, E: Element<V>> Default for ElementPhase<V, E> {
+    fn default() -> Self {
+        Self::Init
+    }
 }
 
 /// We blanket-implement the object-safe ElementStateObject interface to make ElementStates into trait objects
 impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
-        let layout = self.element.layout(view, cx)?;
-        let layout_id = layout.id;
-        self.layout = Some(layout);
-        Ok(layout_id)
+        let result;
+        self.phase = match std::mem::take(&mut self.phase) {
+            ElementPhase::Init => match self.element.layout(view, cx) {
+                Ok((layout_id, paint_state)) => {
+                    result = Ok(layout_id);
+                    ElementPhase::PostLayout {
+                        layout_id,
+                        paint_state,
+                    }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    result = Err(error);
+                    ElementPhase::Error(message)
+                }
+            },
+            _ => panic!("invalid element phase to call layout"),
+        };
+
+        result
     }
 
     fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
-        let layout = self.layout.as_mut().expect("paint called before layout");
-        if layout.engine_layout.is_none() {
-            layout.engine_layout = dbg!(cx.computed_layout(dbg!(layout.id)).log_err())
-        }
-        self.element.paint(view, layout, cx)
+        self.phase = match std::mem::take(&mut self.phase) {
+            ElementPhase::PostLayout {
+                layout_id,
+                mut paint_state,
+            } => match cx.computed_layout(layout_id) {
+                Ok(layout) => {
+                    self.element.paint(view, &layout, &mut paint_state, cx);
+                    ElementPhase::PostPaint {
+                        layout,
+                        paint_state,
+                    }
+                }
+                Err(error) => ElementPhase::Error(error.to_string()),
+            },
+            phase @ ElementPhase::Error(_) => phase,
+            _ => panic!("invalid element phase to call paint"),
+        };
     }
 }
 
@@ -79,55 +122,6 @@ impl<V> AnyElement<V> {
 
     pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
         self.0.paint(view, cx)
-    }
-}
-
-pub struct Layout<V, D> {
-    id: LayoutId,
-    engine_layout: Option<EngineLayout>,
-    element_data: Option<D>,
-    view_type: PhantomData<V>,
-}
-
-impl<V: 'static, D> Layout<V, D> {
-    pub fn new(id: LayoutId, element_data: D) -> Self {
-        Self {
-            id,
-            engine_layout: None,
-            element_data: Some(element_data),
-            view_type: PhantomData,
-        }
-    }
-
-    pub fn id(&self) -> LayoutId {
-        self.id
-    }
-
-    pub fn bounds(&mut self, cx: &mut PaintContext<V>) -> RectF {
-        self.engine_layout(cx).bounds
-    }
-
-    pub fn order(&mut self, cx: &mut PaintContext<V>) -> u32 {
-        self.engine_layout(cx).order
-    }
-
-    pub fn update<F, T>(&mut self, update: F) -> T
-    where
-        F: FnOnce(&mut Self, &mut D) -> T,
-    {
-        self.element_data
-            .take()
-            .map(|mut element_data| {
-                let result = update(self, &mut element_data);
-                self.element_data = Some(element_data);
-                result
-            })
-            .expect("reentrant calls to Layout::update are not supported")
-    }
-
-    fn engine_layout(&mut self, cx: &mut PaintContext<'_, '_, '_, '_, V>) -> &mut EngineLayout {
-        self.engine_layout
-            .get_or_insert_with(|| cx.computed_layout(self.id).log_err().unwrap_or_default())
     }
 }
 

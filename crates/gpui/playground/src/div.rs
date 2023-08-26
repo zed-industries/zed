@@ -25,9 +25,13 @@ pub fn div<V>() -> Div<V> {
 }
 
 impl<V: 'static> Element<V> for Div<V> {
-    type Layout = ();
+    type PaintState = ();
 
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<Layout<V, ()>>
+    fn layout(
+        &mut self,
+        view: &mut V,
+        cx: &mut LayoutContext<V>,
+    ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,
     {
@@ -47,14 +51,16 @@ impl<V: 'static> Element<V> for Div<V> {
             cx.pop_text_style();
         }
 
-        let layout = cx.add_layout_node(style, (), children.clone())?;
-
-        dbg!(layout.id(), children);
-        Ok(layout)
+        Ok((cx.add_layout_node(style, children)?, ()))
     }
 
-    fn paint(&mut self, view: &mut V, layout: &mut Layout<V, ()>, cx: &mut PaintContext<V>)
-    where
+    fn paint(
+        &mut self,
+        view: &mut V,
+        layout: &Layout,
+        paint_state: &mut Self::PaintState,
+        cx: &mut PaintContext<V>,
+    ) where
         Self: Sized,
     {
         let style = &self.computed_style();
@@ -62,9 +68,9 @@ impl<V: 'static> Element<V> for Div<V> {
             cx.push_text_style(cx.text_style().clone().refined(&style));
             true
         });
-        style.paint_background(layout.bounds(cx), cx);
+        style.paint_background(layout.bounds, cx);
         self.interaction_handlers()
-            .paint(layout.order(cx), layout.bounds(cx), cx);
+            .paint(layout.order, layout.bounds, cx);
         for child in &mut self.children {
             child.paint(view, cx);
         }

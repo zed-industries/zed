@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 pub use gpui::taffy::tree::NodeId;
 use gpui::{
-    scene::EventHandler, EngineLayout, EventContext, LayoutId, PaintContext as LegacyPaintContext,
+    scene::EventHandler, EventContext, Layout, LayoutId, PaintContext as LegacyPaintContext,
     RenderContext, ViewContext,
 };
 use std::{any::TypeId, rc::Rc};
@@ -65,7 +65,7 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
         })
     }
 
-    pub(crate) fn computed_layout(&mut self, layout_id: LayoutId) -> Result<EngineLayout> {
+    pub(crate) fn computed_layout(&mut self, layout_id: LayoutId) -> Result<Layout> {
         self.layout_engine()
             .ok_or_else(|| anyhow!("no layout engine present"))?
             .computed_layout(layout_id)

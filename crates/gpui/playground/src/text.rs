@@ -4,7 +4,7 @@ use crate::{
     paint_context::PaintContext,
 };
 use anyhow::Result;
-use gpui::{geometry::Size, text_layout::LineLayout, RenderContext};
+use gpui::{geometry::Size, text_layout::LineLayout, LayoutId, RenderContext};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -21,67 +21,71 @@ pub struct Text {
 }
 
 impl<V: 'static> Element<V> for Text {
-    type Layout = Arc<Mutex<Option<TextLayout>>>;
+    type PaintState = Arc<Mutex<Option<TextLayout>>>;
 
     fn layout(
         &mut self,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> Result<Layout<V, Self::Layout>> {
+    ) -> Result<(LayoutId, Self::PaintState)> {
         let rem_size = cx.rem_pixels();
         let fonts = cx.platform().fonts();
         let text_style = cx.text_style();
         let line_height = cx.font_cache().line_height(text_style.font_size);
         let text = self.text.clone();
-        let layout = Arc::new(Mutex::new(None));
+        let paint_state = Arc::new(Mutex::new(None));
 
-        cx.add_measured_layout_node(Default::default(), layout.clone(), move |params| {
-            let line_layout = fonts.layout_line(
-                text.as_ref(),
-                text_style.font_size,
-                &[(text.len(), text_style.to_run())],
-            );
+        let layout_id = cx.add_measured_layout_node(Default::default(), {
+            let paint_state = paint_state.clone();
+            move |params| {
+                let line_layout = fonts.layout_line(
+                    text.as_ref(),
+                    text_style.font_size,
+                    &[(text.len(), text_style.to_run())],
+                );
 
-            let size = Size {
-                width: line_layout.width,
-                height: line_height,
-            };
+                let size = Size {
+                    width: line_layout.width,
+                    height: line_height,
+                };
 
-            layout.lock().replace(TextLayout {
-                line_layout: Arc::new(line_layout),
-                line_height,
-            });
+                paint_state.lock().replace(TextLayout {
+                    line_layout: Arc::new(line_layout),
+                    line_height,
+                });
 
-            size
-        })
+                size
+            }
+        });
+
+        Ok((layout_id?, paint_state))
     }
 
     fn paint<'a>(
         &mut self,
         view: &mut V,
-        layout: &mut Layout<V, Self::Layout>,
+        layout: &Layout,
+        paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) {
-        let element_layout = layout.update(|layout, element_data| element_data.clone());
-
         let line_layout;
         let line_height;
         {
-            let element_layout = element_layout.lock();
-            let element_layout = element_layout
+            let paint_state = paint_state.lock();
+            let paint_state = paint_state
                 .as_ref()
                 .expect("measurement has not been performed");
-            line_layout = element_layout.line_layout.clone();
-            line_height = element_layout.line_height;
+            line_layout = paint_state.line_layout.clone();
+            line_height = paint_state.line_height;
         }
 
         let text_style = cx.text_style();
         let line =
             gpui::text_layout::Line::new(line_layout, &[(self.text.len(), text_style.to_run())]);
 
-        let origin = layout.bounds(cx).origin();
+        let origin = layout.bounds.origin();
         // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
-        let visible_bounds = layout.bounds(cx);
+        let visible_bounds = layout.bounds;
         line.paint(cx.scene, origin, visible_bounds, line_height, cx.legacy_cx);
     }
 }
