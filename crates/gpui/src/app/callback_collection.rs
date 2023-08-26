@@ -54,6 +54,7 @@ impl<K: Clone + Hash + Eq + Copy, F> Default for CallbackCollection<K, F> {
 }
 
 impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
+    #[allow(dead_code)]
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.internal.lock().callbacks.is_empty()
