@@ -173,6 +173,8 @@ pub fn update_inlay_link_and_hover_points(
     } else {
         None
     };
+    let mut go_to_definition_updated = false;
+    let mut hover_updated = false;
     if let Some(hovered_offset) = hovered_offset {
         let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let previous_valid_anchor = buffer_snapshot.anchor_at(
@@ -183,9 +185,6 @@ pub fn update_inlay_link_and_hover_points(
             point_for_position.next_valid.to_point(snapshot),
             Bias::Right,
         );
-
-        let mut go_to_definition_updated = false;
-        let mut hover_updated = false;
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
             .into_iter()
@@ -324,13 +323,13 @@ pub fn update_inlay_link_and_hover_points(
                 }
             }
         }
+    }
 
-        if !go_to_definition_updated {
-            update_go_to_definition_link(editor, None, cmd_held, shift_held, cx);
-        }
-        if !hover_updated {
-            hover_popover::hover_at(editor, None, cx);
-        }
+    if !go_to_definition_updated {
+        update_go_to_definition_link(editor, None, cmd_held, shift_held, cx);
+    }
+    if !hover_updated {
+        hover_popover::hover_at(editor, None, cx);
     }
 }
 
