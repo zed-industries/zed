@@ -975,6 +975,7 @@ mod tests {
                 // the cached location instead
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
+        cx.foreground().run_until_parked();
         cx.assert_editor_state(indoc! {"
             fn «testˇ»() { do_work(); }
             fn do_work() { test(); }
