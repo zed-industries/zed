@@ -1251,15 +1251,17 @@ enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
     RefreshRequested,
+    ExcerptsRemoved(Vec<ExcerptId>),
 }
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
-            InlayHintRefreshReason::Toggle(_) => "toggle",
-            InlayHintRefreshReason::SettingsChange(_) => "settings change",
-            InlayHintRefreshReason::NewLinesShown => "new lines shown",
-            InlayHintRefreshReason::BufferEdited(_) => "buffer edited",
-            InlayHintRefreshReason::RefreshRequested => "refresh requested",
+            Self::Toggle(_) => "toggle",
+            Self::SettingsChange(_) => "settings change",
+            Self::NewLinesShown => "new lines shown",
+            Self::BufferEdited(_) => "buffer edited",
+            Self::RefreshRequested => "refresh requested",
+            Self::ExcerptsRemoved(_) => "excerpts removed",
         }
     }
 }
@@ -2788,6 +2790,14 @@ impl Editor {
                     ControlFlow::Break(None) => return,
                     ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
                 }
+            }
+            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+                let InlaySplice {
+                    to_remove,
+                    to_insert,
+                } = self.inlay_hint_cache.remove_excerpts(excerpts_removed);
+                self.splice_inlay_hints(to_remove, to_insert, cx);
+                return;
             }
             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
             InlayHintRefreshReason::BufferEdited(buffer_languages) => {
@@ -7948,6 +7958,7 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
+                self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),

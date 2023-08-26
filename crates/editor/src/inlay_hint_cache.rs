@@ -474,6 +474,24 @@ impl InlayHintCache {
         }
     }
 
+    pub fn remove_excerpts(&mut self, excerpts_removed: Vec<ExcerptId>) -> InlaySplice {
+        let mut to_remove = Vec::new();
+        for excerpt_to_remove in excerpts_removed {
+            self.update_tasks.remove(&excerpt_to_remove);
+            if let Some(cached_hints) = self.hints.remove(&excerpt_to_remove) {
+                let cached_hints = cached_hints.read();
+                to_remove.extend(cached_hints.hints.iter().map(|(id, _)| *id));
+            }
+        }
+        if !to_remove.is_empty() {
+            self.version += 1;
+        }
+        InlaySplice {
+            to_remove,
+            to_insert: Vec::new(),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.version += 1;
         self.update_tasks.clear();
@@ -2956,7 +2974,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                2,
+                3,
                 "Excerpt removal should trigger a cache update"
             );
         });
@@ -2984,7 +3002,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(
                 editor.inlay_hint_cache().version,
-                3,
+                4,
                 "Settings change should trigger a cache update"
             );
         });
