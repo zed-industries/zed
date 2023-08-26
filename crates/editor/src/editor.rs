@@ -23,7 +23,7 @@ pub mod test;
 
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::{Global, ReplicaId};
@@ -60,21 +60,24 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
-    Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
-    OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
+    CursorShape, Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language,
+    LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
+    TransactionId,
 };
 use link_go_to_definition::{
-    hide_link_definition, show_link_definition, DocumentRange, InlayRange, LinkGoToDefinitionState,
+    hide_link_definition, show_link_definition, DocumentRange, GoToDefinitionLink, InlayRange,
+    LinkGoToDefinitionState,
 };
 use log::error;
+use lsp::LanguageServerId;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -6551,7 +6554,14 @@ impl Editor {
         cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(definitions, split, cx);
+                editor.navigate_to_definitions(
+                    definitions
+                        .into_iter()
+                        .map(GoToDefinitionLink::Text)
+                        .collect(),
+                    split,
+                    cx,
+                );
             })?;
             Ok::<(), anyhow::Error>(())
         })
@@ -6560,7 +6570,7 @@ impl Editor {
 
     pub fn navigate_to_definitions(
         &mut self,
-        mut definitions: Vec<LocationLink>,
+        mut definitions: Vec<GoToDefinitionLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -6571,65 +6581,165 @@ impl Editor {
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
-            let range = definition
-                .target
-                .range
-                .to_offset(definition.target.buffer.read(cx));
-
-            let range = self.range_for_match(&range);
-            if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
-                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_ranges([range]);
-                });
-            } else {
-                cx.window_context().defer(move |cx| {
-                    let target_editor: ViewHandle<Self> = workspace.update(cx, |workspace, cx| {
-                        if split {
-                            workspace.split_project_item(definition.target.buffer.clone(), cx)
+            let target_task = match definition {
+                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                    self.compute_target_location(lsp_location, server_id, cx)
+                }
+            };
+            cx.spawn(|editor, mut cx| async move {
+                let target = target_task.await.context("target resolution task")?;
+                if let Some(target) = target {
+                    editor.update(&mut cx, |editor, cx| {
+                        let range = target.range.to_offset(target.buffer.read(cx));
+                        let range = editor.range_for_match(&range);
+                        if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([range]);
+                            });
                         } else {
-                            workspace.open_project_item(definition.target.buffer.clone(), cx)
+                            cx.window_context().defer(move |cx| {
+                                let target_editor: ViewHandle<Self> =
+                                    workspace.update(cx, |workspace, cx| {
+                                        if split {
+                                            workspace.split_project_item(target.buffer.clone(), cx)
+                                        } else {
+                                            workspace.open_project_item(target.buffer.clone(), cx)
+                                        }
+                                    });
+                                target_editor.update(cx, |target_editor, cx| {
+                                    // When selecting a definition in a different buffer, disable the nav history
+                                    // to avoid creating a history entry at the previous cursor location.
+                                    pane.update(cx, |pane, _| pane.disable_history());
+                                    target_editor.change_selections(
+                                        Some(Autoscroll::fit()),
+                                        cx,
+                                        |s| {
+                                            s.select_ranges([range]);
+                                        },
+                                    );
+                                    pane.update(cx, |pane, _| pane.enable_history());
+                                });
+                            });
                         }
-                    });
-                    target_editor.update(cx, |target_editor, cx| {
-                        // When selecting a definition in a different buffer, disable the nav history
-                        // to avoid creating a history entry at the previous cursor location.
-                        pane.update(cx, |pane, _| pane.disable_history());
-                        target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([range]);
-                        });
-                        pane.update(cx, |pane, _| pane.enable_history());
-                    });
-                });
-            }
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .detach_and_log_err(cx);
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
-            cx.window_context().defer(move |cx| {
-                let title = definitions
-                    .iter()
-                    .find(|definition| definition.origin.is_some())
-                    .and_then(|definition| {
-                        definition.origin.as_ref().map(|origin| {
-                            let buffer = origin.buffer.read(cx);
-                            format!(
-                                "Definitions for {}",
-                                buffer
-                                    .text_for_range(origin.range.clone())
-                                    .collect::<String>()
-                            )
-                        })
+            cx.spawn(|editor, mut cx| async move {
+                let (title, location_tasks) = editor
+                    .update(&mut cx, |editor, cx| {
+                        let title = definitions
+                            .iter()
+                            .find_map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    link.origin.as_ref().map(|origin| {
+                                        let buffer = origin.buffer.read(cx);
+                                        format!(
+                                            "Definitions for {}",
+                                            buffer
+                                                .text_for_range(origin.range.clone())
+                                                .collect::<String>()
+                                        )
+                                    })
+                                }
+                                GoToDefinitionLink::InlayHint(_, _) => None,
+                            })
+                            .unwrap_or("Definitions".to_string());
+                        let location_tasks = definitions
+                            .into_iter()
+                            .map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    Task::Ready(Some(Ok(Some(link.target))))
+                                }
+                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                                    editor.compute_target_location(lsp_location, server_id, cx)
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        (title, location_tasks)
                     })
-                    .unwrap_or("Definitions".to_owned());
-                let locations = definitions
+                    .context("location tasks preparation")?;
+
+                let locations = futures::future::join_all(location_tasks)
+                    .await
                     .into_iter()
-                    .map(|definition| definition.target)
-                    .collect();
-                workspace.update(cx, |workspace, cx| {
+                    .filter_map(|location| location.transpose())
+                    .collect::<Result<_>>()
+                    .context("location tasks")?;
+                workspace.update(&mut cx, |workspace, cx| {
                     Self::open_locations_in_multibuffer(
                         workspace, locations, replica_id, title, split, cx,
                     )
                 });
-            });
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
+    }
+
+    fn compute_target_location(
+        &self,
+        lsp_location: lsp::Location,
+        server_id: LanguageServerId,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<Option<Location>>> {
+        let Some(project) = self.project.clone() else {
+            return Task::Ready(Some(Ok(None)));
+        };
+
+        cx.spawn(move |editor, mut cx| async move {
+            let location_task = editor.update(&mut cx, |editor, cx| {
+                project.update(cx, |project, cx| {
+                    let language_server_name =
+                        editor.buffer.read(cx).as_singleton().and_then(|buffer| {
+                            project
+                                .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                                .map(|(_, lsp_adapter)| {
+                                    LanguageServerName(Arc::from(lsp_adapter.name()))
+                                })
+                        });
+                    language_server_name.map(|language_server_name| {
+                        project.open_local_buffer_via_lsp(
+                            lsp_location.uri.clone(),
+                            server_id,
+                            language_server_name,
+                            cx,
+                        )
+                    })
+                })
+            })?;
+            let location = match location_task {
+                Some(task) => Some({
+                    let target_buffer_handle = task.await.context("open local buffer")?;
+                    let range = {
+                        target_buffer_handle.update(&mut cx, |target_buffer, _| {
+                            let target_start = target_buffer.clip_point_utf16(
+                                point_from_lsp(lsp_location.range.start),
+                                Bias::Left,
+                            );
+                            let target_end = target_buffer.clip_point_utf16(
+                                point_from_lsp(lsp_location.range.end),
+                                Bias::Left,
+                            );
+                            target_buffer.anchor_after(target_start)
+                                ..target_buffer.anchor_before(target_end)
+                        })
+                    };
+                    Location {
+                        buffer: target_buffer_handle,
+                        range,
+                    }
+                }),
+                None => None,
+            };
+            Ok(location)
+        })
     }
 
     pub fn find_all_references(
