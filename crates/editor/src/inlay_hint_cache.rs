@@ -108,17 +108,23 @@ impl TasksForRanges {
                 updated_ranges.before_visible = updated_ranges
                     .before_visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges.visible = updated_ranges
                     .visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges.after_visible = updated_ranges
                     .after_visible
                     .into_iter()
-                    .flat_map(|query_range| self.remove_cached_ranges(buffer_snapshot, query_range))
+                    .flat_map(|query_range| {
+                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                    })
                     .collect();
                 updated_ranges
             }
@@ -134,7 +140,7 @@ impl TasksForRanges {
         }
     }
 
-    fn remove_cached_ranges(
+    fn remove_cached_ranges_from_query(
         &mut self,
         buffer_snapshot: &BufferSnapshot,
         query_range: Range<language::Anchor>,
@@ -195,6 +201,52 @@ impl TasksForRanges {
         }
 
         ranges_to_query
+    }
+
+    fn remove_from_cached_ranges(
+        &mut self,
+        buffer: &BufferSnapshot,
+        range_to_remove: Range<language::Anchor>,
+    ) {
+        self.sorted_ranges = self
+            .sorted_ranges
+            .drain(..)
+            .filter_map(|mut cached_range| {
+                if cached_range.start.cmp(&range_to_remove.end, buffer).is_gt()
+                    || cached_range.end.cmp(&range_to_remove.start, buffer).is_lt()
+                {
+                    Some(vec![cached_range])
+                } else if cached_range
+                    .start
+                    .cmp(&range_to_remove.start, buffer)
+                    .is_ge()
+                    && cached_range.end.cmp(&range_to_remove.end, buffer).is_le()
+                {
+                    None
+                } else if range_to_remove
+                    .start
+                    .cmp(&cached_range.start, buffer)
+                    .is_ge()
+                    && range_to_remove.end.cmp(&cached_range.end, buffer).is_le()
+                {
+                    Some(vec![
+                        cached_range.start..range_to_remove.start,
+                        range_to_remove.end..cached_range.end,
+                    ])
+                } else if cached_range
+                    .start
+                    .cmp(&range_to_remove.start, buffer)
+                    .is_ge()
+                {
+                    cached_range.start = range_to_remove.end;
+                    Some(vec![cached_range])
+                } else {
+                    cached_range.end = range_to_remove.start;
+                    Some(vec![cached_range])
+                }
+            })
+            .flatten()
+            .collect();
     }
 }
 
@@ -692,7 +744,8 @@ fn new_update_task(
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
-    cx.spawn(|editor, cx| async move {
+    cx.spawn(|editor, mut cx| async move {
+        let closure_cx = cx.clone();
         let fetch_and_update_hints = |invalidate, range| {
             fetch_and_update_hints(
                 editor.clone(),
@@ -703,37 +756,62 @@ fn new_update_task(
                 query,
                 invalidate,
                 range,
-                cx.clone(),
+                closure_cx.clone(),
             )
         };
-        let visible_range_update_results =
-            future::join_all(query_ranges.visible.into_iter().map(|visible_range| {
-                fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
-            }))
-            .await;
-        for result in visible_range_update_results {
+        let visible_range_update_results = future::join_all(query_ranges.visible.into_iter().map(
+            |visible_range| async move {
+                (
+                    visible_range.clone(),
+                    fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
+                        .await,
+                )
+            },
+        ))
+        .await;
+
+        let hint_delay = cx.background().timer(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
+        ));
+
+        let mut query_range_failed = |range: Range<language::Anchor>, e: anyhow::Error| {
+            error!("inlay hint update task for range {range:?} failed: {e:#}");
+            editor
+                .update(&mut cx, |editor, _| {
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
+                    {
+                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, range);
+                    }
+                })
+                .ok()
+        };
+
+        for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                error!("visible range inlay hint update task failed: {e:#}");
+                query_range_failed(range, e);
             }
         }
 
-        cx.background()
-            .timer(Duration::from_millis(
-                INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
-            ))
-            .await;
-
+        hint_delay.await;
         let invisible_range_update_results = future::join_all(
             query_ranges
                 .before_visible
                 .into_iter()
                 .chain(query_ranges.after_visible.into_iter())
-                .map(|invisible_range| fetch_and_update_hints(false, invisible_range)),
+                .map(|invisible_range| async move {
+                    (
+                        invisible_range.clone(),
+                        fetch_and_update_hints(false, invisible_range).await,
+                    )
+                }),
         )
         .await;
-        for result in invisible_range_update_results {
+        for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                error!("invisible range inlay hint update task failed: {e:#}");
+                query_range_failed(range, e);
             }
         }
     })
