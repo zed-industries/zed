@@ -72,7 +72,7 @@ impl<V: 'static> Element<V> for Div<V> {
         self.interaction_handlers()
             .paint(layout.order, layout.bounds, cx);
         for child in &mut self.children {
-            child.paint(view, cx);
+            child.paint(view, layout.bounds.origin(), cx);
         }
         if pop_text_style {
             cx.pop_text_style();

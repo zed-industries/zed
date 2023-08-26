@@ -81,7 +81,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 rendered_element: &mut Self::PaintState,
                 cx: &mut playground::element::PaintContext<V>,
             ) {
-                rendered_element.paint(view, cx);
+                rendered_element.paint(view, layout.bounds.origin(), cx);
             }
         }
 

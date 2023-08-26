@@ -1,6 +1,7 @@
 pub use crate::layout_context::LayoutContext;
 pub use crate::paint_context::PaintContext;
 use anyhow::Result;
+use gpui::geometry::vector::Vector2F;
 pub use gpui::{Layout, LayoutId};
 use smallvec::SmallVec;
 
@@ -38,7 +39,7 @@ pub trait Element<V: 'static>: 'static {
 /// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
 trait AnyStatefulElement<V> {
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId>;
-    fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>);
+    fn paint(&mut self, view: &mut V, parent_origin: Vector2F, cx: &mut PaintContext<V>);
 }
 
 /// A wrapper around an element that stores its layout state.
@@ -91,13 +92,14 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
         result
     }
 
-    fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
+    fn paint(&mut self, view: &mut V, parent_origin: Vector2F, cx: &mut PaintContext<V>) {
         self.phase = match std::mem::take(&mut self.phase) {
             ElementPhase::PostLayout {
                 layout_id,
                 mut paint_state,
             } => match cx.computed_layout(layout_id) {
-                Ok(layout) => {
+                Ok(mut layout) => {
+                    layout.bounds = layout.bounds + parent_origin;
                     self.element.paint(view, &layout, &mut paint_state, cx);
                     ElementPhase::PostPaint {
                         layout,
@@ -120,8 +122,8 @@ impl<V> AnyElement<V> {
         self.0.layout(view, cx)
     }
 
-    pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
-        self.0.paint(view, cx)
+    pub fn paint(&mut self, view: &mut V, parent_origin: Vector2F, cx: &mut PaintContext<V>) {
+        self.0.paint(view, parent_origin, cx)
     }
 }
 
