@@ -1252,6 +1252,17 @@ enum InlayHintRefreshReason {
     BufferEdited(HashSet<Arc<Language>>),
     RefreshRequested,
 }
+impl InlayHintRefreshReason {
+    fn description(&self) -> &'static str {
+        match self {
+            InlayHintRefreshReason::Toggle(_) => "toggle",
+            InlayHintRefreshReason::SettingsChange(_) => "settings change",
+            InlayHintRefreshReason::NewLinesShown => "new lines shown",
+            InlayHintRefreshReason::BufferEdited(_) => "buffer edited",
+            InlayHintRefreshReason::RefreshRequested => "refresh requested",
+        }
+    }
+}
 
 impl Editor {
     pub fn single_line(
@@ -2741,6 +2752,7 @@ impl Editor {
             return;
         }
 
+        let reason_description = reason.description();
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
@@ -2790,6 +2802,7 @@ impl Editor {
             to_remove,
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
+            reason_description,
             self.excerpt_visible_offsets(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,

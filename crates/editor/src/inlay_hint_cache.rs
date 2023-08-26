@@ -13,7 +13,6 @@ use clock::Global;
 use futures::future;
 use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
-use log::error;
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
@@ -21,7 +20,7 @@ use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
-use text::ToOffset;
+use text::{ToOffset, ToPoint};
 use util::post_inc;
 
 pub struct InlayHintCache {
@@ -74,6 +73,7 @@ struct ExcerptQuery {
     excerpt_id: ExcerptId,
     cache_version: usize,
     invalidate: InvalidationStrategy,
+    reason: &'static str,
 }
 
 impl InvalidationStrategy {
@@ -317,6 +317,7 @@ impl InlayHintCache {
 
     pub fn spawn_hint_refresh(
         &mut self,
+        reason: &'static str,
         excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         cx: &mut ViewContext<Editor>,
@@ -345,7 +346,14 @@ impl InlayHintCache {
         cx.spawn(|editor, mut cx| async move {
             editor
                 .update(&mut cx, |editor, cx| {
-                    spawn_new_update_tasks(editor, excerpts_to_query, invalidate, cache_version, cx)
+                    spawn_new_update_tasks(
+                        editor,
+                        reason,
+                        excerpts_to_query,
+                        invalidate,
+                        cache_version,
+                        cx,
+                    )
                 })
                 .ok();
         })
@@ -568,6 +576,7 @@ impl InlayHintCache {
 
 fn spawn_new_update_tasks(
     editor: &mut Editor,
+    reason: &'static str,
     excerpts_to_query: HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
@@ -622,6 +631,7 @@ fn spawn_new_update_tasks(
             excerpt_id,
             cache_version: update_cache_version,
             invalidate,
+            reason,
         };
 
         let new_update_task = |query_ranges| {
@@ -782,7 +792,7 @@ fn new_update_task(
         ));
 
         let mut query_range_failed = |range: Range<language::Anchor>, e: anyhow::Error| {
-            error!("inlay hint update task for range {range:?} failed: {e:#}");
+            log::error!("inlay hint update task for range {range:?} failed: {e:#}");
             editor
                 .update(&mut cx, |editor, _| {
                     if let Some(task_ranges) = editor
@@ -844,6 +854,8 @@ async fn fetch_and_update_hints(
             None => (Some(lsp_request_limiter.acquire().await), true),
         }
     };
+    let fetch_range_to_log =
+        fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
             if got_throttled {
@@ -882,10 +894,25 @@ async fn fetch_and_update_hints(
         .ok()
         .flatten();
     let new_hints = match inlay_hints_fetch_task {
-        Some(task) => task.await.context("inlay hint fetch task")?,
+        Some(fetch_task) => {
+            log::debug!(
+                "Fetching inlay hints for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
+                query_reason = query.reason,
+            );
+            log::trace!(
+                "Currently visible hints: {visible_hints:?}, cached hints present: {}",
+                cached_excerpt_hints.is_some(),
+            );
+            fetch_task.await.context("inlay hint fetch task")?
+        }
         None => return Ok(()),
     };
     drop(lsp_request_guard);
+    log::debug!(
+        "Fetched {} hints for range {fetch_range_to_log:?}",
+        new_hints.len()
+    );
+    log::trace!("Fetched hints: {new_hints:?}");
 
     let background_task_buffer_snapshot = buffer_snapshot.clone();
     let backround_fetch_range = fetch_range.clone();
@@ -904,6 +931,13 @@ async fn fetch_and_update_hints(
         })
         .await;
     if let Some(new_update) = new_update {
+        log::info!(
+            "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+            new_update.remove_from_visible.len(),
+            new_update.remove_from_cache.len(),
+            new_update.add_to_cache.len()
+        );
+        log::trace!("New update: {new_update:?}");
         editor
             .update(&mut cx, |editor, cx| {
                 apply_hint_update(
