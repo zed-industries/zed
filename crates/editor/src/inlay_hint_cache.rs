@@ -208,7 +208,7 @@ impl TasksForRanges {
     fn remove_from_cached_ranges(
         &mut self,
         buffer: &BufferSnapshot,
-        range_to_remove: Range<language::Anchor>,
+        range_to_remove: &Range<language::Anchor>,
     ) {
         self.sorted_ranges = self
             .sorted_ranges
@@ -791,7 +791,7 @@ fn new_update_task(
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
         ));
 
-        let mut query_range_failed = |range: Range<language::Anchor>, e: anyhow::Error| {
+        let mut query_range_failed = |range: &Range<language::Anchor>, e: anyhow::Error| {
             log::error!("inlay hint update task for range {range:?} failed: {e:#}");
             editor
                 .update(&mut cx, |editor, _| {
@@ -800,7 +800,7 @@ fn new_update_task(
                         .update_tasks
                         .get_mut(&query.excerpt_id)
                     {
-                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, range);
+                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, &range);
                     }
                 })
                 .ok()
@@ -808,7 +808,7 @@ fn new_update_task(
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(range, e);
+                query_range_failed(&range, e);
             }
         }
 
@@ -828,7 +828,7 @@ fn new_update_task(
         .await;
         for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(range, e);
+                query_range_failed(&range, e);
             }
         }
     })
@@ -876,6 +876,14 @@ async fn fetch_and_update_hints(
                         && !double_visible_range
                             .contains(&fetch_range.end.to_offset(&buffer_snapshot))
                     {
+                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        if let Some(task_ranges) = editor
+                            .inlay_hint_cache
+                            .update_tasks
+                            .get_mut(&query.excerpt_id)
+                        {
+                            task_ranges.remove_from_cached_ranges(&buffer_snapshot, &fetch_range);
+                        }
                         return None;
                     }
                 }
