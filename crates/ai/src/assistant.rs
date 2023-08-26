@@ -13,13 +13,14 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     actions,
     elements::*,
+    fonts::HighlightStyle,
     geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton},
     Action, AppContext, AsyncAppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
@@ -279,11 +280,6 @@ impl AssistantPanel {
             editor.change_selections(None, cx, |selections| {
                 selections.select_anchor_ranges([selection.head()..selection.head()])
             });
-            editor.highlight_background::<Self>(
-                vec![range.clone()],
-                |theme| theme.assistant.inline.pending_edit_background,
-                cx,
-            );
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
@@ -318,6 +314,7 @@ impl AssistantPanel {
                 kind: assist_kind,
                 editor: editor.downgrade(),
                 range,
+                highlighted_ranges: Default::default(),
                 inline_assistant_block_id: Some(block_id),
                 code_generation: Task::ready(None),
                 transaction_id: None,
@@ -342,6 +339,7 @@ impl AssistantPanel {
             .entry(editor.downgrade())
             .or_default()
             .push(id);
+        self.update_highlights_for_editor(&editor, cx);
     }
 
     fn handle_inline_assistant_event(
@@ -416,10 +414,7 @@ impl AssistantPanel {
             }
 
             if let Some(editor) = pending_assist.editor.upgrade(cx) {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_background_highlights::<Self>(cx);
-                    editor.clear_text_highlights::<Self>(cx);
-                });
+                self.update_highlights_for_editor(&editor, cx);
 
                 if cancel {
                     if let Some(transaction_id) = pending_assist.transaction_id {
@@ -741,78 +736,75 @@ impl AssistantPanel {
                 });
 
                 while let Some(hunks) = hunks_rx.next().await {
-                    let this = this
+                    let editor = editor
                         .upgrade(&cx)
-                        .ok_or_else(|| anyhow!("assistant was dropped"))?;
-                    editor.update(&mut cx, |editor, cx| {
-                        let mut highlights = Vec::new();
+                        .ok_or_else(|| anyhow!("editor was dropped"))?;
 
-                        let transaction = editor.buffer().update(cx, |buffer, cx| {
-                            // Avoid grouping assistant edits with user edits.
-                            buffer.finalize_last_transaction(cx);
+                    this.update(&mut cx, |this, cx| {
+                        let pending_assist = if let Some(pending_assist) =
+                            this.pending_inline_assists.get_mut(&inline_assist_id)
+                        {
+                            pending_assist
+                        } else {
+                            return;
+                        };
 
-                            buffer.start_transaction(cx);
-                            buffer.edit(
-                                hunks.into_iter().filter_map(|hunk| match hunk {
-                                    Hunk::Insert { text } => {
-                                        let edit_start = snapshot.anchor_after(edit_start);
-                                        Some((edit_start..edit_start, text))
-                                    }
-                                    Hunk::Remove { len } => {
-                                        let edit_end = edit_start + len;
-                                        let edit_range = snapshot.anchor_after(edit_start)
-                                            ..snapshot.anchor_before(edit_end);
-                                        edit_start = edit_end;
-                                        Some((edit_range, String::new()))
-                                    }
-                                    Hunk::Keep { len } => {
-                                        let edit_end = edit_start + len;
-                                        let edit_range = snapshot.anchor_after(edit_start)
-                                            ..snapshot.anchor_before(edit_end);
-                                        edit_start += len;
-                                        highlights.push(edit_range);
-                                        None
-                                    }
-                                }),
-                                None,
-                                cx,
-                            );
+                        pending_assist.highlighted_ranges.clear();
+                        editor.update(cx, |editor, cx| {
+                            let transaction = editor.buffer().update(cx, |buffer, cx| {
+                                // Avoid grouping assistant edits with user edits.
+                                buffer.finalize_last_transaction(cx);
 
-                            buffer.end_transaction(cx)
+                                buffer.start_transaction(cx);
+                                buffer.edit(
+                                    hunks.into_iter().filter_map(|hunk| match hunk {
+                                        Hunk::Insert { text } => {
+                                            let edit_start = snapshot.anchor_after(edit_start);
+                                            Some((edit_start..edit_start, text))
+                                        }
+                                        Hunk::Remove { len } => {
+                                            let edit_end = edit_start + len;
+                                            let edit_range = snapshot.anchor_after(edit_start)
+                                                ..snapshot.anchor_before(edit_end);
+                                            edit_start = edit_end;
+                                            Some((edit_range, String::new()))
+                                        }
+                                        Hunk::Keep { len } => {
+                                            let edit_end = edit_start + len;
+                                            let edit_range = snapshot.anchor_after(edit_start)
+                                                ..snapshot.anchor_before(edit_end);
+                                            edit_start += len;
+                                            pending_assist.highlighted_ranges.push(edit_range);
+                                            None
+                                        }
+                                    }),
+                                    None,
+                                    cx,
+                                );
+
+                                buffer.end_transaction(cx)
+                            });
+
+                            if let Some(transaction) = transaction {
+                                if let Some(first_transaction) = pending_assist.transaction_id {
+                                    // Group all assistant edits into the first transaction.
+                                    editor.buffer().update(cx, |buffer, cx| {
+                                        buffer.merge_transactions(
+                                            transaction,
+                                            first_transaction,
+                                            cx,
+                                        )
+                                    });
+                                } else {
+                                    pending_assist.transaction_id = Some(transaction);
+                                    editor.buffer().update(cx, |buffer, cx| {
+                                        buffer.finalize_last_transaction(cx)
+                                    });
+                                }
+                            }
                         });
 
-                        if let Some(transaction) = transaction {
-                            this.update(cx, |this, cx| {
-                                if let Some(pending_assist) =
-                                    this.pending_inline_assists.get_mut(&inline_assist_id)
-                                {
-                                    if let Some(first_transaction) = pending_assist.transaction_id {
-                                        // Group all assistant edits into the first transaction.
-                                        editor.buffer().update(cx, |buffer, cx| {
-                                            buffer.merge_transactions(
-                                                transaction,
-                                                first_transaction,
-                                                cx,
-                                            )
-                                        });
-                                    } else {
-                                        pending_assist.transaction_id = Some(transaction);
-                                        editor.buffer().update(cx, |buffer, cx| {
-                                            buffer.finalize_last_transaction(cx)
-                                        });
-                                    }
-                                }
-                            });
-                        }
-
-                        editor.highlight_text::<Self>(
-                            highlights,
-                            gpui::fonts::HighlightStyle {
-                                fade_out: Some(0.6),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
+                        this.update_highlights_for_editor(&editor, cx);
                     })?;
                 }
                 diff.await?;
@@ -820,6 +812,55 @@ impl AssistantPanel {
                 anyhow::Ok(())
             }
             .log_err()
+        });
+    }
+
+    fn update_highlights_for_editor(
+        &self,
+        editor: &ViewHandle<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut background_ranges = Vec::new();
+        let mut foreground_ranges = Vec::new();
+        let empty_inline_assist_ids = Vec::new();
+        let inline_assist_ids = self
+            .pending_inline_assist_ids_by_editor
+            .get(&editor.downgrade())
+            .unwrap_or(&empty_inline_assist_ids);
+
+        for inline_assist_id in inline_assist_ids {
+            if let Some(pending_assist) = self.pending_inline_assists.get(inline_assist_id) {
+                background_ranges.push(pending_assist.range.clone());
+                foreground_ranges.extend(pending_assist.highlighted_ranges.iter().cloned());
+            }
+        }
+
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        merge_ranges(&mut background_ranges, &snapshot);
+        merge_ranges(&mut foreground_ranges, &snapshot);
+        editor.update(cx, |editor, cx| {
+            if background_ranges.is_empty() {
+                editor.clear_background_highlights::<PendingInlineAssist>(cx);
+            } else {
+                editor.highlight_background::<PendingInlineAssist>(
+                    background_ranges,
+                    |theme| theme.assistant.inline.pending_edit_background,
+                    cx,
+                );
+            }
+
+            if foreground_ranges.is_empty() {
+                editor.clear_text_highlights::<PendingInlineAssist>(cx);
+            } else {
+                editor.highlight_text::<PendingInlineAssist>(
+                    foreground_ranges,
+                    HighlightStyle {
+                        fade_out: Some(0.6),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
         });
     }
 
@@ -2842,10 +2883,33 @@ struct PendingInlineAssist {
     kind: InlineAssistKind,
     editor: WeakViewHandle<Editor>,
     range: Range<Anchor>,
+    highlighted_ranges: Vec<Range<Anchor>>,
     inline_assistant_block_id: Option<BlockId>,
     code_generation: Task<Option<()>>,
     transaction_id: Option<TransactionId>,
     _subscriptions: Vec<Subscription>,
+}
+
+fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
+    ranges.sort_unstable_by(|a, b| {
+        a.start
+            .cmp(&b.start, buffer)
+            .then_with(|| b.end.cmp(&a.end, buffer))
+    });
+
+    let mut ix = 0;
+    while ix + 1 < ranges.len() {
+        let b = ranges[ix + 1].clone();
+        let a = &mut ranges[ix];
+        if a.end.cmp(&b.start, buffer).is_gt() {
+            if a.end.cmp(&b.end, buffer).is_lt() {
+                a.end = b.end;
+            }
+            ranges.remove(ix + 1);
+        } else {
+            ix += 1;
+        }
+    }
 }
 
 #[cfg(test)]

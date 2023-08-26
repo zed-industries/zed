@@ -11,8 +11,8 @@
 - When cursor is inside a prompt
     - [x] Escape cancels/undoes
     - [x] Enter confirms
-- [ ] Selection is cleared and cursor is moved to prompt input
-- [ ] Ability to highlight background multiple times for the same type
+- [x] Selection is cleared and cursor is moved to prompt input
+- [x] Ability to highlight background multiple times for the same type
 - [x] Basic Styling
 - [ ] Look into why insert prompts have a weird indentation sometimes
 
