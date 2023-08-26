@@ -68,8 +68,16 @@ export default function assistant(): any {
             }),
             editor: {
                 text: text(theme.highest, "mono", "default", { size: "sm" }),
-                placeholder_text: text(theme.lowest, "sans", "on", "disabled"),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
                 selection: theme.players[0],
+            },
+            disabled_editor: {
+                text: text(theme.highest, "mono", "disabled", { size: "sm" }),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
+                selection: {
+                    cursor: text(theme.highest, "mono", "disabled").color,
+                    selection: theme.players[0].selection,
+                },
             },
             pending_edit_background: background(theme.highest, "positive"),
         },

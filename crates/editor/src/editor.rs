@@ -1606,6 +1606,15 @@ impl Editor {
         self.read_only = read_only;
     }
 
+    pub fn set_field_editor_style(
+        &mut self,
+        style: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.get_field_editor_theme = style;
+        cx.notify();
+    }
+
     pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
         self.replica_id_mapping.as_ref()
     }

@@ -2871,8 +2871,15 @@ impl InlineAssistant {
             cx.emit(InlineAssistantEvent::Dismissed);
         } else {
             let prompt = self.prompt_editor.read(cx).text(cx);
-            self.prompt_editor
-                .update(cx, |editor, _| editor.set_read_only(true));
+            self.prompt_editor.update(cx, |editor, cx| {
+                editor.set_read_only(true);
+                editor.set_field_editor_style(
+                    Some(Arc::new(|theme| {
+                        theme.assistant.inline.disabled_editor.clone()
+                    })),
+                    cx,
+                );
+            });
             cx.emit(InlineAssistantEvent::Confirmed { prompt });
             self.confirmed = true;
         }

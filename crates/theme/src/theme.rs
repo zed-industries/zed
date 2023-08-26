@@ -1158,6 +1158,7 @@ pub struct InlineAssistantStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FieldEditor,
+    pub disabled_editor: FieldEditor,
     pub pending_edit_background: Color,
 }
 
