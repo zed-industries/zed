@@ -2609,20 +2609,19 @@ async fn get_private_user_info(
     response: Response<proto::GetPrivateUserInfo>,
     session: Session,
 ) -> Result<()> {
-    let metrics_id = session
-        .db()
-        .await
-        .get_user_metrics_id(session.user_id)
-        .await?;
-    let user = session
-        .db()
-        .await
+    let db = session.db().await;
+
+    let metrics_id = db.get_user_metrics_id(session.user_id).await?;
+    let user = db
         .get_user_by_id(session.user_id)
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
+    let flags = db.get_user_flags(session.user_id).await?;
+
     response.send(proto::GetPrivateUserInfoResponse {
         metrics_id,
         staff: user.admin,
+        flags,
     })?;
     Ok(())
 }

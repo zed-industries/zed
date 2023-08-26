@@ -1,9 +1,9 @@
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{actions, elements::*, AnyElement, AppContext, Element, MouseState, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::{update_settings_file, SettingsStore};
-use staff_mode::StaffMode;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use util::ResultExt;
@@ -54,7 +54,7 @@ impl ThemeSelectorDelegate {
     fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<ThemeSelector>) -> Self {
         let original_theme = theme::current(cx).clone();
 
-        let staff_mode = **cx.default_global::<StaffMode>();
+        let staff_mode = cx.is_staff();
         let registry = cx.global::<Arc<ThemeRegistry>>();
         let mut theme_names = registry.list(staff_mode).collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));

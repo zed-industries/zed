@@ -9,6 +9,8 @@ use client::{proto::PeerId, Client, Contact, User, UserStore};
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
+
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::StreamExt;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -33,7 +35,6 @@ use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings}
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
-use staff_mode::StaffMode;
 use std::{borrow::Cow, mem, sync::Arc};
 use theme::{components::ComponentExt, IconButton};
 use util::{iife, ResultExt, TryFutureExt};
@@ -182,9 +183,9 @@ pub struct CollabPanel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedChannelsPanel {
+struct SerializedCollabPanel {
     width: Option<f32>,
-    collapsed_channels: Vec<ChannelId>,
+    collapsed_channels: Option<Vec<ChannelId>>,
 }
 
 #[derive(Debug)]
@@ -472,9 +473,10 @@ impl CollabPanel {
                 }));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
-            this.subscriptions.push(
-                cx.observe_global::<StaffMode, _>(move |this, cx| this.update_entries(true, cx)),
-            );
+            this.subscriptions
+                .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
+                    this.update_entries(true, cx)
+                }));
             this.subscriptions.push(cx.subscribe(
                 &this.channel_store,
                 |this, _channel_store, e, cx| match e {
@@ -510,7 +512,7 @@ impl CollabPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedChannelsPanel>(&panel)?)
+                Some(serde_json::from_str::<SerializedCollabPanel>(&panel)?)
             } else {
                 None
             };
@@ -520,7 +522,9 @@ impl CollabPanel {
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width;
-                        panel.collapsed_channels = serialized_panel.collapsed_channels;
+                        panel.collapsed_channels = serialized_panel
+                            .collapsed_channels
+                            .unwrap_or_else(|| Vec::new());
                         cx.notify();
                     });
                 }
@@ -537,9 +541,9 @@ impl CollabPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         COLLABORATION_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedChannelsPanel {
+                        serde_json::to_string(&SerializedCollabPanel {
                             width,
-                            collapsed_channels,
+                            collapsed_channels: Some(collapsed_channels),
                         })?,
                     )
                     .await?;
@@ -672,7 +676,8 @@ impl CollabPanel {
         }
 
         let mut request_entries = Vec::new();
-        if self.include_channels_section(cx) {
+
+        if cx.has_flag::<ChannelsAlpha>() {
             self.entries.push(ListEntry::Header(Section::Channels, 0));
 
             if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
@@ -1907,14 +1912,6 @@ impl CollabPanel {
                     .style_for(&mut Default::default()),
             )
             .into_any()
-    }
-
-    fn include_channels_section(&self, cx: &AppContext) -> bool {
-        if cx.has_global::<StaffMode>() {
-            cx.global::<StaffMode>().0
-        } else {
-            false
-        }
     }
 
     fn deploy_channel_context_menu(
