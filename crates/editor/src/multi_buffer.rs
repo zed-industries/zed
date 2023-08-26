@@ -67,7 +67,9 @@ pub enum Event {
     ExcerptsEdited {
         ids: Vec<ExcerptId>,
     },
-    Edited,
+    Edited {
+        sigleton_buffer_edited: bool,
+    },
     Reloaded,
     DiffBaseChanged,
     LanguageChanged,
@@ -1022,7 +1024,9 @@ impl MultiBuffer {
             old: edit_start..edit_start,
             new: edit_start..edit_end,
         }]);
-        cx.emit(Event::Edited);
+        cx.emit(Event::Edited {
+            sigleton_buffer_edited: false,
+        });
         cx.emit(Event::ExcerptsAdded {
             buffer,
             predecessor: prev_excerpt_id,
@@ -1046,7 +1050,9 @@ impl MultiBuffer {
             old: 0..prev_len,
             new: 0..0,
         }]);
-        cx.emit(Event::Edited);
+        cx.emit(Event::Edited {
+            sigleton_buffer_edited: false,
+        });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
     }
@@ -1254,7 +1260,9 @@ impl MultiBuffer {
         }
 
         self.subscriptions.publish_mut(edits);
-        cx.emit(Event::Edited);
+        cx.emit(Event::Edited {
+            sigleton_buffer_edited: false,
+        });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
     }
@@ -1315,7 +1323,9 @@ impl MultiBuffer {
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(match event {
-            language::Event::Edited => Event::Edited,
+            language::Event::Edited => Event::Edited {
+                sigleton_buffer_edited: true,
+            },
             language::Event::DirtyChanged => Event::DirtyChanged,
             language::Event::Saved => Event::Saved,
             language::Event::FileHandleChanged => Event::FileHandleChanged,
@@ -4078,7 +4088,7 @@ mod tests {
         multibuffer.update(cx, |_, cx| {
             let events = events.clone();
             cx.subscribe(&multibuffer, move |_, _, event, _| {
-                if let Event::Edited = event {
+                if let Event::Edited { .. } = event {
                     events.borrow_mut().push(event.clone())
                 }
             })
@@ -4133,7 +4143,17 @@ mod tests {
         // Adding excerpts emits an edited event.
         assert_eq!(
             events.borrow().as_slice(),
-            &[Event::Edited, Event::Edited, Event::Edited]
+            &[
+                Event::Edited {
+                    sigleton_buffer_edited: false
+                },
+                Event::Edited {
+                    sigleton_buffer_edited: false
+                },
+                Event::Edited {
+                    sigleton_buffer_edited: false
+                }
+            ]
         );
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -4312,7 +4332,7 @@ mod tests {
                         excerpts,
                     } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
                     Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
-                    Event::Edited => {
+                    Event::Edited { .. } => {
                         *follower_edit_event_count.borrow_mut() += 1;
                     }
                     _ => {}

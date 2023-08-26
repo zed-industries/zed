@@ -7896,7 +7896,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            multi_buffer::Event::Edited => {
+            multi_buffer::Event::Edited {
+                sigleton_buffer_edited,
+            } => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_copilot_suggestion(cx) {
@@ -7904,30 +7906,32 @@ impl Editor {
                 }
                 cx.emit(Event::BufferEdited);
 
-                if let Some(project) = &self.project {
-                    let project = project.read(cx);
-                    let languages_affected = multibuffer
-                        .read(cx)
-                        .all_buffers()
-                        .into_iter()
-                        .filter_map(|buffer| {
-                            let buffer = buffer.read(cx);
-                            let language = buffer.language()?;
-                            if project.is_local()
-                                && project.language_servers_for_buffer(buffer, cx).count() == 0
-                            {
-                                None
-                            } else {
-                                Some(language)
-                            }
-                        })
-                        .cloned()
-                        .collect::<HashSet<_>>();
-                    if !languages_affected.is_empty() {
-                        self.refresh_inlay_hints(
-                            InlayHintRefreshReason::BufferEdited(languages_affected),
-                            cx,
-                        );
+                if *sigleton_buffer_edited {
+                    if let Some(project) = &self.project {
+                        let project = project.read(cx);
+                        let languages_affected = multibuffer
+                            .read(cx)
+                            .all_buffers()
+                            .into_iter()
+                            .filter_map(|buffer| {
+                                let buffer = buffer.read(cx);
+                                let language = buffer.language()?;
+                                if project.is_local()
+                                    && project.language_servers_for_buffer(buffer, cx).count() == 0
+                                {
+                                    None
+                                } else {
+                                    Some(language)
+                                }
+                            })
+                            .cloned()
+                            .collect::<HashSet<_>>();
+                        if !languages_affected.is_empty() {
+                            self.refresh_inlay_hints(
+                                InlayHintRefreshReason::BufferEdited(languages_affected),
+                                cx,
+                            );
+                        }
                     }
                 }
             }
@@ -7935,11 +7939,14 @@ impl Editor {
                 buffer,
                 predecessor,
                 excerpts,
-            } => cx.emit(Event::ExcerptsAdded {
-                buffer: buffer.clone(),
-                predecessor: *predecessor,
-                excerpts: excerpts.clone(),
-            }),
+            } => {
+                cx.emit(Event::ExcerptsAdded {
+                    buffer: buffer.clone(),
+                    predecessor: *predecessor,
+                    excerpts: excerpts.clone(),
+                });
+                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
             }
