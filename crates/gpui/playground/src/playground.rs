@@ -55,17 +55,6 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_full()
         .fill(p.rose)
-        .block()
-        .child(
-            div()
-                .block()
-                .fill(p.pine)
-                .child(div().block().fill(p.love).w_6().h_3()),
-        )
-        .child(
-            div()
-                .block()
-                .fill(p.gold)
-                .child(div().block().fill(p.iris).w_3().h_3()),
-        )
+        .child(div().fill(p.pine).child(div().fill(p.love).w_6().h_3()))
+        .child(div().fill(p.gold).child(div().fill(p.iris).w_3().h_3()))
 }

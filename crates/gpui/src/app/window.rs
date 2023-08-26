@@ -1276,9 +1276,12 @@ impl LayoutEngine {
     where
         C: IntoIterator<Item = LayoutId>,
     {
-        Ok(self
-            .0
-            .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
+        let children = children.into_iter().collect::<Vec<_>>();
+        if children.is_empty() {
+            Ok(self.0.new_leaf(style)?)
+        } else {
+            Ok(self.0.new_with_children(style, &children)?)
+        }
     }
 
     pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutId>
@@ -1302,7 +1305,7 @@ impl LayoutEngine {
     }
 
     pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
-        dbg!(Ok(self.0.layout(node)?.into()))
+        Ok(EngineLayout::from(self.0.layout(node)?))
     }
 }
 
