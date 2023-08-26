@@ -19,6 +19,7 @@ use project::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
+use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::ToOffset;
 use util::post_inc;
@@ -29,6 +30,7 @@ pub struct InlayHintCache {
     version: usize,
     pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
+    lsp_request_limiter: Arc<Semaphore>,
 }
 
 #[derive(Debug)]
@@ -258,6 +260,7 @@ impl InlayHintCache {
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             version: 0,
+            lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
     }
 
@@ -629,6 +632,7 @@ fn spawn_new_update_tasks(
                 buffer_snapshot.clone(),
                 Arc::clone(&visible_hints),
                 cached_excerpt_hints,
+                Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
                 cx,
             )
         };
@@ -733,6 +737,7 @@ fn determine_query_ranges(
     })
 }
 
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
 const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 fn new_update_task(
@@ -742,6 +747,7 @@ fn new_update_task(
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
     cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
+    lsp_request_limiter: Arc<Semaphore>,
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Task<()> {
     cx.spawn(|editor, mut cx| async move {
@@ -756,6 +762,7 @@ fn new_update_task(
                 query,
                 invalidate,
                 range,
+                Arc::clone(&lsp_request_limiter),
                 closure_cx.clone(),
             )
         };
@@ -826,10 +833,41 @@ async fn fetch_and_update_hints(
     query: ExcerptQuery,
     invalidate: bool,
     fetch_range: Range<language::Anchor>,
+    lsp_request_limiter: Arc<Semaphore>,
     mut cx: gpui::AsyncAppContext,
 ) -> anyhow::Result<()> {
+    let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
+        (None, false)
+    } else {
+        match lsp_request_limiter.try_acquire() {
+            Some(guard) => (Some(guard), false),
+            None => (Some(lsp_request_limiter.acquire().await), true),
+        }
+    };
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
+            if got_throttled {
+                if let Some((_, _, current_visible_range)) = editor
+                    .excerpt_visible_offsets(None, cx)
+                    .remove(&query.excerpt_id)
+                {
+                    let visible_offset_length = current_visible_range.len();
+                    let double_visible_range = current_visible_range
+                        .start
+                        .saturating_sub(visible_offset_length)
+                        ..current_visible_range
+                            .end
+                            .saturating_add(visible_offset_length)
+                            .min(buffer_snapshot.len());
+                    if !double_visible_range
+                        .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                        && !double_visible_range
+                            .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                    {
+                        return None;
+                    }
+                }
+            }
             editor
                 .buffer()
                 .read(cx)
@@ -847,6 +885,8 @@ async fn fetch_and_update_hints(
         Some(task) => task.await.context("inlay hint fetch task")?,
         None => return Ok(()),
     };
+    drop(lsp_request_guard);
+
     let background_task_buffer_snapshot = buffer_snapshot.clone();
     let backround_fetch_range = fetch_range.clone();
     let new_update = cx
