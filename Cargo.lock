@@ -5119,7 +5119,6 @@ dependencies = [
  "serde",
  "simplelog",
  "smallvec",
- "taffy",
  "util",
 ]
 
@@ -7435,7 +7434,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
-source = "git+https://github.com/DioxusLabs/taffy?rev=dab541d6104d58e2e10ce90c4a1dad0b703160cd#dab541d6104d58e2e10ce90c4a1dad0b703160cd"
+source = "git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e#4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e"
 dependencies = [
  "arrayvec 0.7.4",
  "grid",

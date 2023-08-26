@@ -1302,7 +1302,7 @@ impl LayoutEngine {
     }
 
     pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
-        Ok(self.0.layout(node)?.into())
+        dbg!(Ok(self.0.layout(node)?.into()))
     }
 }
 

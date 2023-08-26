@@ -7,6 +7,7 @@ pub use assets::*;
 pub mod elements;
 pub mod font_cache;
 mod image_data;
+pub use taffy;
 pub use crate::image_data::ImageData;
 pub mod views;
 pub use font_cache::FontCache;

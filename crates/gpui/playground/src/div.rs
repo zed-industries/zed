@@ -6,7 +6,7 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
-use gpui::LayoutId;
+use gpui::{LayoutId, RenderContext};
 use refineable::{Refineable, RefinementCascade};
 use smallvec::SmallVec;
 
@@ -31,26 +31,45 @@ impl<V: 'static> Element<V> for Div<V> {
     where
         Self: Sized,
     {
+        let style = self.computed_style();
+        let pop_text_style = style.text_style().map_or(false, |style| {
+            cx.push_text_style(cx.text_style().clone().refined(&style));
+            true
+        });
+
         let children = self
             .children
             .iter_mut()
             .map(|child| child.layout(view, cx))
             .collect::<Result<Vec<LayoutId>>>()?;
 
-        let style = Style::from_refinement(&self.style_cascade().merged());
-        cx.add_layout_node(style.clone(), (), children)
+        if pop_text_style {
+            cx.pop_text_style();
+        }
+
+        let layout = cx.add_layout_node(style, (), children.clone())?;
+
+        dbg!(layout.id(), children);
+        Ok(layout)
     }
 
     fn paint(&mut self, view: &mut V, layout: &mut Layout<V, ()>, cx: &mut PaintContext<V>)
     where
         Self: Sized,
     {
-        self.computed_style()
-            .paint_background(layout.bounds(cx), cx);
+        let style = &self.computed_style();
+        let pop_text_style = style.text_style().map_or(false, |style| {
+            cx.push_text_style(cx.text_style().clone().refined(&style));
+            true
+        });
+        style.paint_background(layout.bounds(cx), cx);
         self.interaction_handlers()
             .paint(layout.order(cx), layout.bounds(cx), cx);
         for child in &mut self.children {
             child.paint(view, cx);
+        }
+        if pop_text_style {
+            cx.pop_text_style();
         }
     }
 }

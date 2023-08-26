@@ -4,7 +4,7 @@ use crate::{
     paint_context::PaintContext,
 };
 use anyhow::Result;
-use gpui::text_layout::LineLayout;
+use gpui::{geometry::Size, text_layout::LineLayout, RenderContext};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -28,40 +28,32 @@ impl<V: 'static> Element<V> for Text {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> Result<Layout<V, Self::Layout>> {
-        // let rem_size = cx.rem_pixels();
-        // let fonts = cx.platform().fonts();
-        // let text_style = cx.text_style();
-        // let line_height = cx.font_cache().line_height(text_style.font_size);
-        // let layout_engine = cx.layout_engine().expect("no layout engine present");
-        // let text = self.text.clone();
-        // let layout = Arc::new(Mutex::new(None));
+        let rem_size = cx.rem_pixels();
+        let fonts = cx.platform().fonts();
+        let text_style = cx.text_style();
+        let line_height = cx.font_cache().line_height(text_style.font_size);
+        let text = self.text.clone();
+        let layout = Arc::new(Mutex::new(None));
 
-        // let style: Style = Style::default().refined(&self.metadata.style);
-        // let node_id = layout_engine.add_measured_node(style.to_taffy(rem_size), {
-        //     let layout = layout.clone();
-        //     move |params| {
-        //         let line_layout = fonts.layout_line(
-        //             text.as_ref(),
-        //             text_style.font_size,
-        //             &[(text.len(), text_style.to_run())],
-        //         );
+        cx.add_measured_layout_node(Default::default(), layout.clone(), move |params| {
+            let line_layout = fonts.layout_line(
+                text.as_ref(),
+                text_style.font_size,
+                &[(text.len(), text_style.to_run())],
+            );
 
-        //         let size = Size {
-        //             width: line_layout.width,
-        //             height: line_height,
-        //         };
+            let size = Size {
+                width: line_layout.width,
+                height: line_height,
+            };
 
-        //         layout.lock().replace(TextLayout {
-        //             line_layout: Arc::new(line_layout),
-        //             line_height,
-        //         });
+            layout.lock().replace(TextLayout {
+                line_layout: Arc::new(line_layout),
+                line_height,
+            });
 
-        //         size
-        //     }
-        // })?;
-
-        // Ok((node_id, layout))
-        todo!()
+            size
+        })
     }
 
     fn paint<'a>(
@@ -70,26 +62,27 @@ impl<V: 'static> Element<V> for Text {
         layout: &mut Layout<V, Self::Layout>,
         cx: &mut PaintContext<V>,
     ) {
-        // ) {
-        //     let element_layout_lock = layout.from_element.lock();
-        //     let element_layout = element_layout_lock
-        //         .as_ref()
-        //         .expect("layout has not been performed");
-        //     let line_layout = element_layout.line_layout.clone();
-        //     let line_height = element_layout.line_height;
-        //     drop(element_layout_lock);
+        let element_layout = layout.update(|layout, element_data| element_data.clone());
 
-        //     let text_style = cx.text_style();
-        //     let line =
-        //         gpui::text_layout::Line::new(line_layout, &[(self.text.len(), text_style.to_run())]);
-        //     line.paint(
-        //         cx.scene,
-        //         layout.from_engine.bounds.origin(),
-        //         layout.from_engine.bounds,
-        //         line_height,
-        //         cx.legacy_cx,
-        //     );
-        todo!()
+        let line_layout;
+        let line_height;
+        {
+            let element_layout = element_layout.lock();
+            let element_layout = element_layout
+                .as_ref()
+                .expect("measurement has not been performed");
+            line_layout = element_layout.line_layout.clone();
+            line_height = element_layout.line_height;
+        }
+
+        let text_style = cx.text_style();
+        let line =
+            gpui::text_layout::Line::new(line_layout, &[(self.text.len(), text_style.to_run())]);
+
+        let origin = layout.bounds(cx).origin();
+        // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
+        let visible_bounds = layout.bounds(cx);
+        line.paint(cx.scene, origin, visible_bounds, line_height, cx.legacy_cx);
     }
 }
 

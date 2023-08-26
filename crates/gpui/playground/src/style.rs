@@ -4,19 +4,20 @@ use crate::{
     paint_context::PaintContext,
     pressable::{pressable, Pressable},
 };
+pub use gpui::taffy::style::{
+    AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
+    Overflow, Position,
+};
 use gpui::{
     fonts::TextStyleRefinement,
     geometry::{
         rect::RectF, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length, Point,
         PointRefinement, Size, SizeRefinement,
     },
+    taffy,
 };
 use playground_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
-pub use taffy::style::{
-    AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
-    Overflow, Position,
-};
 
 #[derive(Clone, Refineable)]
 pub struct Style {
@@ -137,12 +138,23 @@ impl Style {
             });
         }
     }
+
+    pub fn text_style(&self) -> Option<TextStyleRefinement> {
+        if let Some(color) = self.text_color {
+            Some(TextStyleRefinement {
+                color: Some(color.into()),
+                ..Default::default()
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for Style {
     fn default() -> Self {
         Style {
-            display: Display::DEFAULT,
+            display: Display::Block,
             overflow: Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
@@ -287,6 +299,14 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         Self: Sized,
     {
         self.declared_style().position = Some(Position::Absolute);
+        self
+    }
+
+    fn block(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().display = Some(Display::Block);
         self
     }
 

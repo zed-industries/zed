@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{scene::EventHandler, EngineLayout, EventContext, LayoutId, RenderContext, ViewContext};
-pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
+pub use gpui::taffy::tree::NodeId;
+use gpui::{
+    scene::EventHandler, EngineLayout, EventContext, LayoutId, PaintContext as LegacyPaintContext,
+    RenderContext, ViewContext,
+};
 use std::{any::TypeId, rc::Rc};
-pub use taffy::tree::NodeId;
 
 #[derive(Deref, DerefMut)]
 pub struct PaintContext<'a, 'b, 'c, 'd, V> {

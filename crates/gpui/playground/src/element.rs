@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{geometry::rect::RectF, EngineLayout};
 use smallvec::SmallVec;
 use std::marker::PhantomData;
@@ -32,7 +32,7 @@ pub trait Element<V: 'static>: 'static {
     where
         Self: 'static + Sized,
     {
-        AnyElement(Box::new(ElementState {
+        AnyElement(Box::new(StatefulElement {
             element: self,
             layout: None,
         }))
@@ -40,19 +40,19 @@ pub trait Element<V: 'static>: 'static {
 }
 
 /// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
-trait ElementStateObject<V> {
+trait AnyStatefulElement<V> {
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId>;
     fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>);
 }
 
 /// A wrapper around an element that stores its layout state.
-struct ElementState<V: 'static, E: Element<V>> {
+struct StatefulElement<V: 'static, E: Element<V>> {
     element: E,
     layout: Option<Layout<V, E::Layout>>,
 }
 
 /// We blanket-implement the object-safe ElementStateObject interface to make ElementStates into trait objects
-impl<V, E: Element<V>> ElementStateObject<V> for ElementState<V, E> {
+impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
         let layout = self.element.layout(view, cx)?;
         let layout_id = layout.id;
@@ -63,14 +63,14 @@ impl<V, E: Element<V>> ElementStateObject<V> for ElementState<V, E> {
     fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) {
         let layout = self.layout.as_mut().expect("paint called before layout");
         if layout.engine_layout.is_none() {
-            layout.engine_layout = cx.computed_layout(layout.id).log_err()
+            layout.engine_layout = dbg!(cx.computed_layout(dbg!(layout.id)).log_err())
         }
         self.element.paint(view, layout, cx)
     }
 }
 
 /// A dynamic element.
-pub struct AnyElement<V>(Box<dyn ElementStateObject<V>>);
+pub struct AnyElement<V>(Box<dyn AnyStatefulElement<V>>);
 
 impl<V> AnyElement<V> {
     pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
@@ -99,6 +99,10 @@ impl<V: 'static, D> Layout<V, D> {
         }
     }
 
+    pub fn id(&self) -> LayoutId {
+        self.id
+    }
+
     pub fn bounds(&mut self, cx: &mut PaintContext<V>) -> RectF {
         self.engine_layout(cx).bounds
     }
@@ -107,7 +111,7 @@ impl<V: 'static, D> Layout<V, D> {
         self.engine_layout(cx).order
     }
 
-    pub fn update<F, T>(&mut self, update: F) -> Result<T>
+    pub fn update<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut Self, &mut D) -> T,
     {
@@ -118,7 +122,7 @@ impl<V: 'static, D> Layout<V, D> {
                 self.element_data = Some(element_data);
                 result
             })
-            .ok_or_else(|| anyhow!("reentrant calls to Layout::update are not allowed"))
+            .expect("reentrant calls to Layout::update are not supported")
     }
 
     fn engine_layout(&mut self, cx: &mut PaintContext<'_, '_, '_, '_, V>) -> &mut EngineLayout {

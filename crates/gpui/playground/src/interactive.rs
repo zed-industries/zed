@@ -11,6 +11,7 @@ use crate::element::PaintContext;
 pub trait Interactive<V: 'static> {
     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V>;
 
+    // One line change.
     fn on_mouse_down(
         mut self,
         button: MouseButton,

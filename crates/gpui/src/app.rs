@@ -53,6 +53,7 @@ use std::{
 pub use test_app_context::{ContextHandle, TestAppContext};
 use util::ResultExt;
 use uuid::Uuid;
+pub use window::MeasureParams;
 use window_input_handler::WindowInputHandler;
 
 pub trait Entity: 'static {

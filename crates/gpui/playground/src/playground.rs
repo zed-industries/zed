@@ -1,9 +1,6 @@
 #![allow(dead_code, unused_variables)]
 use crate::{
-    color::black,
-    components::button,
-    element::ParentElement,
-    style::{StyleHelpers, Styleable},
+    color::black, element::ParentElement, style::StyleHelpers, themes::rose_pine::RosePinePalette,
 };
 use element::Element;
 use gpui::{
@@ -51,64 +48,24 @@ fn main() {
 
 fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     use div::div;
+    let p = RosePinePalette::dawn();
 
     div()
         .text_color(black())
         .h_full()
-        .w_1_2()
-        .fill(theme.success(0.5))
-        .hovered()
-        .fill(theme.error(0.5))
-        .pressed()
-        .fill(theme.warning(0.5))
+        .w_full()
+        .fill(p.rose)
+        .block()
         .child(
             div()
-                .h_6()
-                .w_6()
-                .absolute()
-                .bottom_0()
-                .fill(theme.success(0.)),
+                .block()
+                .fill(p.pine)
+                .child(div().block().fill(p.love).w_6().h_3()),
         )
         .child(
-            button()
-                .label("Click me")
-                .data(1_usize)
-                .on_click(|_, data, _| {
-                    dbg!(*data);
-                }),
-        )
-        .child(
-            button()
-                .label("And me")
-                .data(2_usize)
-                .on_click(|_, data, _| {
-                    dbg!(*data);
-                }),
+            div()
+                .block()
+                .fill(p.gold)
+                .child(div().block().fill(p.iris).w_3().h_3()),
         )
 }
-
-//     todo!()
-//     // column()
-//     // .size(auto())
-//     // .fill(theme.base(0.5))
-//     // .text_color(theme.text(0.5))
-//     // .child(title_bar(theme))
-//     // .child(stage(theme))
-//     // .child(status_bar(theme))
-// }
-
-// fn title_bar<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-//     row()
-//         .fill(theme.base(0.2))
-//         .justify(0.)
-//         .width(auto())
-//         .child(text("Zed Playground"))
-// }
-
-// fn stage<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-//     row().fill(theme.surface(0.9))
-// }
-
-// fn status_bar<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-//     row().fill(theme.surface(0.1))
-// }

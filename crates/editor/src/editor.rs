@@ -4866,7 +4866,6 @@ impl Editor {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
-                                dbg!(start_offset, end_offset, &clipboard_text, &to_insert);
                                 entire_line = clipboard_selection.is_entire_line;
                                 start_offset = end_offset + 1;
                                 original_indent_column =

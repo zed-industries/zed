@@ -157,7 +157,7 @@ impl<T: Clone + Default> Into<taffy::geometry::Point<T>> for Point<T> {
     }
 }
 
-#[derive(Clone, Refineable)]
+#[derive(Clone, Refineable, Debug)]
 pub struct Size<T: Clone + Default> {
     pub width: T,
     pub height: T,

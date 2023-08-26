@@ -1,8 +1,7 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-pub use gpui::LayoutContext as LegacyLayoutContext;
-use gpui::{RenderContext, ViewContext};
-pub use taffy::tree::NodeId;
+use gpui::{geometry::Size, MeasureParams, RenderContext, ViewContext};
+pub use gpui::{taffy::tree::NodeId, LayoutContext as LegacyLayoutContext};
 
 use crate::{element::Layout, style::Style};
 
@@ -50,5 +49,23 @@ impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
             .add_node(style.to_taffy(rem_size), children)?;
 
         Ok(Layout::new(id, element_data))
+    }
+
+    pub fn add_measured_layout_node<D, F>(
+        &mut self,
+        style: Style,
+        element_data: D,
+        measure: F,
+    ) -> Result<Layout<V, D>>
+    where
+        F: Fn(MeasureParams) -> Size<f32> + Sync + Send + 'static,
+    {
+        let rem_size = self.rem_pixels();
+        let layout_id = self
+            .layout_engine()
+            .ok_or_else(|| anyhow!("no layout engine"))?
+            .add_measured_node(style.to_taffy(rem_size), measure)?;
+
+        Ok(Layout::new(layout_id, element_data))
     }
 }
