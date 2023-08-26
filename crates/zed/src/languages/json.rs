@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use feature_flags::FeatureFlagAppExt;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -9,7 +10,6 @@ use node_runtime::NodeRuntime;
 use serde_json::json;
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
-use staff_mode::StaffMode;
 use std::{
     any::Any,
     ffi::OsString,
@@ -104,7 +104,7 @@ impl LspAdapter for JsonLspAdapter {
         cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, serde_json::Value>> {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
-        let staff_mode = cx.default_global::<StaffMode>().0;
+        let staff_mode = cx.is_staff();
         let language_names = &self.languages.language_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {

@@ -40,7 +40,7 @@ picker = { path = "../picker" }
 project = { path = "../project" }
 recent_projects = {path = "../recent_projects"}
 settings = { path = "../settings" }
-staff_mode = {path = "../staff_mode"}
+feature_flags = {path = "../feature_flags"}
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
