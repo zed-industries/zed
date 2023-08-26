@@ -1,4 +1,3 @@
-
 use gpui::color::Color;
 use gpui::elements::Label;
 use gpui::fonts::{Properties as FontProperties, Weight};
