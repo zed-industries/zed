@@ -65,8 +65,7 @@ pub fn find_hovered_hint_part(
     if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
         let mut hovered_character = (hovered_offset - hint_range.start).0;
         let mut part_start = hint_range.start;
-        let last_label_part_index = label_parts.len() - 1;
-        for (i, part) in label_parts.into_iter().enumerate() {
+        for part in label_parts {
             let part_len = part.value.chars().count();
             if hovered_character >= part_len {
                 hovered_character -= part_len;
@@ -77,8 +76,9 @@ pub fn find_hovered_hint_part(
                     part_start.0 += 1;
                     part_end.0 += 1;
                 }
-                if padding_right && i == last_label_part_index {
-                    part_end.0 -= 1;
+                if padding_right {
+                    part_start.0 += 1;
+                    part_end.0 += 1;
                 }
                 return Some((part, part_start..part_end));
             }
