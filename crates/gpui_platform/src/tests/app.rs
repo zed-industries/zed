@@ -1,4 +1,5 @@
 use gpui::{
+    Action,
     actions,
     elements::*,
     impl_actions,
@@ -10,7 +11,8 @@ use gpui::{
     window::ChildView,
     AnyViewHandle, AnyWindowHandle, AppContext, Entity, ModelContext, ModelHandle, TestAppContext,
     View, ViewContext, ViewHandle,
-};
+};use gpui::LayoutContext;
+use gpui::platform::Event;
 use itertools::Itertools;
 use postage::{sink::Sink, stream::Stream};
 use serde::Deserialize;
@@ -1866,7 +1868,7 @@ fn test_refresh_windows(cx: &mut TestAppContext) {
     let root_view = window.root(cx);
     window.update(cx, |cx| {
         assert_eq!(
-            cx.window.rendered_views[&root_view.id()].name(),
+            cx.window().rendered_views[&root_view.id()].name(),
             Some("render count: 0")
         );
     });
@@ -1878,11 +1880,11 @@ fn test_refresh_windows(cx: &mut TestAppContext) {
 
     window.update(cx, |cx| {
         assert_eq!(
-            cx.window.rendered_views[&root_view.id()].name(),
+            cx.window().rendered_views[&root_view.id()].name(),
             Some("render count: 1")
         );
         assert_eq!(
-            cx.window.rendered_views[&view.id()].name(),
+            cx.window().rendered_views[&view.id()].name(),
             Some("render count: 0")
         );
     });
@@ -1891,11 +1893,11 @@ fn test_refresh_windows(cx: &mut TestAppContext) {
 
     window.update(cx, |cx| {
         assert_eq!(
-            cx.window.rendered_views[&root_view.id()].name(),
+            cx.window().rendered_views[&root_view.id()].name(),
             Some("render count: 2")
         );
         assert_eq!(
-            cx.window.rendered_views[&view.id()].name(),
+            cx.window().rendered_views[&view.id()].name(),
             Some("render count: 1")
         );
     });
@@ -1907,10 +1909,10 @@ fn test_refresh_windows(cx: &mut TestAppContext) {
 
     window.update(cx, |cx| {
         assert_eq!(
-            cx.window.rendered_views[&root_view.id()].name(),
+            cx.window().rendered_views[&root_view.id()].name(),
             Some("render count: 3")
         );
-        assert_eq!(cx.window.rendered_views.len(), 1);
+        assert_eq!(cx.window().rendered_views.len(), 1);
     });
 }
 

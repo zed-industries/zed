@@ -19,3 +19,7 @@ current_platform = {path = "../gpui_mac", package = "gpui_mac"}
 gpui = {path = "../gpui", features = ["test-support"]}
 postage.workspace = true
 log.workspace = true
+itertools = "0.10"
+smol.workspace = true
+serde.workspace = true
+rand.workspace = true

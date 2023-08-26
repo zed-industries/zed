@@ -1,9 +1,11 @@
+use gpui::AppContext;
 use gpui::color::Color;
-use gpui::elements::Label;
-use gpui::fonts::{Properties as FontProperties, Weight};
+use gpui::elements::{Label, LabelStyle};
+use gpui::fonts::{Properties as FontProperties, TextStyle, Weight};
+use gpui::text_layout::RunStyle;
 
 #[crate::test(self)]
-fn test_layout_label_with_highlights(cx: &mut crate::AppContext) {
+fn test_layout_label_with_highlights(cx: &mut AppContext) {
     let default_style = TextStyle::new(
         "Menlo",
         12.,

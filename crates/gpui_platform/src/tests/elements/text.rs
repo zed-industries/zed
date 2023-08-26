@@ -3,6 +3,7 @@ use gpui::geometry::vector::vec2f;
 use gpui::LayoutContext;
 use gpui::SizeConstraint;
 use gpui::{elements::Empty, fonts, AnyElement, AppContext, Entity, View, ViewContext};
+use gpui::Element;
 
 #[crate::test(self)]
 fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {

@@ -1,13 +1,15 @@
 use gpui::elements::list::ListItem;
 use gpui::elements::List;
+use gpui::Element;
 use gpui::elements::Orientation;
 use gpui::geometry::rect::RectF;
 use gpui::geometry::vector::Vector2F;
 use gpui::serde_json;
 use gpui::AnyElement;
 use gpui::AppContext;
-use gpui::Element;
 use gpui::LayoutContext;
+use gpui::elements::ListOffset;
+use gpui::elements::ListState;
 use gpui::SceneBuilder;
 use gpui::SizeConstraint;
 use gpui::View;
@@ -19,7 +21,7 @@ use std::env;
 use std::ops::Range;
 use std::rc::Rc;
 #[crate::test(self)]
-fn test_layout(cx: &mut crate::AppContext) {
+fn test_layout(cx: &mut AppContext) {
     cx.add_window(Default::default(), |cx| {
         let mut view = TestView;
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
@@ -126,7 +128,7 @@ fn test_layout(cx: &mut crate::AppContext) {
 }
 
 #[crate::test(self, iterations = 10)]
-fn test_random(cx: &mut crate::AppContext, mut rng: StdRng) {
+fn test_random(cx: &mut AppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
