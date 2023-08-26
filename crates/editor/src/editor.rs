@@ -2792,11 +2792,13 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                let InlaySplice {
+                if let Some(InlaySplice {
                     to_remove,
                     to_insert,
-                } = self.inlay_hint_cache.remove_excerpts(excerpts_removed);
-                self.splice_inlay_hints(to_remove, to_insert, cx);
+                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
+                {
+                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                }
                 return;
             }
             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
