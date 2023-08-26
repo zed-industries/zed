@@ -14,11 +14,7 @@
 - [ ] Selection is cleared and cursor is moved to prompt input
 - [ ] Ability to highlight background multiple times for the same type
 - [x] Basic Styling
-- [ ] Match lowest indentation level of selected lines when inserting an inline assist
 - [ ] Look into why insert prompts have a weird indentation sometimes
-
-
-
 
 - Multicursor
     - Run the same prompt for every selection in parallel

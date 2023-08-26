@@ -276,6 +276,9 @@ impl AssistantPanel {
             assistant
         });
         let block_id = editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |selections| {
+                selections.select_anchor_ranges([selection.head()..selection.head()])
+            });
             editor.highlight_background::<Self>(
                 vec![range.clone()],
                 |theme| theme.assistant.inline.pending_edit_background,
