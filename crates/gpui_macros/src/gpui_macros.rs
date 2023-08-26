@@ -10,7 +10,7 @@ use syn::{
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let namespace = format_ident!("gpui");
-    let mut platform_namespace = format_ident!("gpui");
+    let mut platform_namespace = format_ident!("gpui_platform");
     let args = syn::parse_macro_input!(args as AttributeArgs);
     let mut max_retries = 0;
     let mut num_iterations = 1;

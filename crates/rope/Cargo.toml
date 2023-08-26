@@ -19,3 +19,4 @@ util = { path = "../util" }
 rand.workspace = true
 util = { path = "../util", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"]  }
+gpui_platform = {path = "../gpui_platform" }

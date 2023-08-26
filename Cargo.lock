@@ -6151,6 +6151,7 @@ dependencies = [
  "arrayvec 0.7.4",
  "bromberg_sl2",
  "gpui",
+ "gpui_platform",
  "log",
  "rand 0.8.5",
  "smallvec",
