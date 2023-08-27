@@ -23,6 +23,7 @@ pub struct LinkGoToDefinitionState {
     pub task: Option<Task<Option<()>>>,
 }
 
+#[derive(Debug)]
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
     InlayHint(InlayRange, lsp::Location, LanguageServerId),
@@ -81,7 +82,7 @@ impl TriggerPoint {
     fn anchor(&self) -> &Anchor {
         match self {
             TriggerPoint::Text(anchor) => anchor,
-            TriggerPoint::InlayHint(coordinates, _, _) => &coordinates.inlay_position,
+            TriggerPoint::InlayHint(range, _, _) => &range.inlay_position,
         }
     }
 
@@ -127,11 +128,22 @@ pub fn update_go_to_definition_link(
         &trigger_point,
         &editor.link_go_to_definition_state.last_trigger_point,
     ) {
-        if a.anchor()
-            .cmp(b.anchor(), &snapshot.buffer_snapshot)
-            .is_eq()
-        {
-            return;
+        match (a, b) {
+            (TriggerPoint::Text(anchor_a), TriggerPoint::Text(anchor_b)) => {
+                if anchor_a.cmp(anchor_b, &snapshot.buffer_snapshot).is_eq() {
+                    return;
+                }
+            }
+            (TriggerPoint::InlayHint(range_a, _, _), TriggerPoint::InlayHint(range_b, _, _)) => {
+                if range_a
+                    .inlay_position
+                    .cmp(&range_b.inlay_position, &snapshot.buffer_snapshot)
+                    .is_eq()
+                {
+                    return;
+                }
+            }
+            _ => {}
         }
     }
 
