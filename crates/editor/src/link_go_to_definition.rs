@@ -1170,11 +1170,19 @@ mod tests {
             .unwrap();
         let hint_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column() + (hint_label.len() / 2) as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (hint_label.len() / 2) as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         // Press cmd to trigger highlight

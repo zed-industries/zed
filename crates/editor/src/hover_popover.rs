@@ -1376,13 +1376,21 @@ mod tests {
             .unwrap();
         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
+                        as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (entire_hint_label.find(new_type_label).unwrap()
-                    + new_type_label.len() / 2)
-                    as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         cx.update_editor(|editor, cx| {
@@ -1504,13 +1512,21 @@ mod tests {
 
         let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
+                        as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (entire_hint_label.find(struct_label).unwrap()
-                    + struct_label.len() / 2)
-                    as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         cx.update_editor(|editor, cx| {
