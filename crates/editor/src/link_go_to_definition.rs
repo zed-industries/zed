@@ -596,9 +596,11 @@ fn go_to_fetched_definition_of_kind(
             cx,
         );
 
-        match kind {
-            LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
-            LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
+        if point.as_valid().is_some() {
+            match kind {
+                LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
+                LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
+            }
         }
     }
 }
