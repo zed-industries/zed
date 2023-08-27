@@ -57,8 +57,6 @@ pub struct InlayHover {
 
 pub fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
-    padding_left: bool,
-    padding_right: bool,
     hint_range: Range<InlayOffset>,
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
@@ -67,19 +65,11 @@ pub fn find_hovered_hint_part(
         let mut part_start = hint_range.start;
         for part in label_parts {
             let part_len = part.value.chars().count();
-            if hovered_character >= part_len {
+            if hovered_character > part_len {
                 hovered_character -= part_len;
                 part_start.0 += part_len;
             } else {
-                let mut part_end = InlayOffset(part_start.0 + part_len);
-                if padding_left {
-                    part_start.0 += 1;
-                    part_end.0 += 1;
-                }
-                if padding_right {
-                    part_start.0 += 1;
-                    part_end.0 += 1;
-                }
+                let part_end = InlayOffset(part_start.0 + part_len);
                 return Some((part, part_start..part_end));
             }
         }
