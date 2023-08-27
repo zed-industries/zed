@@ -23,6 +23,7 @@ pub struct LinkGoToDefinitionState {
     pub task: Option<Task<Option<()>>>,
 }
 
+#[derive(Debug)]
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
     InlayHint(InlayRange, lsp::Location, LanguageServerId),
@@ -81,7 +82,7 @@ impl TriggerPoint {
     fn anchor(&self) -> &Anchor {
         match self {
             TriggerPoint::Text(anchor) => anchor,
-            TriggerPoint::InlayHint(coordinates, _, _) => &coordinates.inlay_position,
+            TriggerPoint::InlayHint(range, _, _) => &range.inlay_position,
         }
     }
 
@@ -127,11 +128,22 @@ pub fn update_go_to_definition_link(
         &trigger_point,
         &editor.link_go_to_definition_state.last_trigger_point,
     ) {
-        if a.anchor()
-            .cmp(b.anchor(), &snapshot.buffer_snapshot)
-            .is_eq()
-        {
-            return;
+        match (a, b) {
+            (TriggerPoint::Text(anchor_a), TriggerPoint::Text(anchor_b)) => {
+                if anchor_a.cmp(anchor_b, &snapshot.buffer_snapshot).is_eq() {
+                    return;
+                }
+            }
+            (TriggerPoint::InlayHint(range_a, _, _), TriggerPoint::InlayHint(range_b, _, _)) => {
+                if range_a
+                    .inlay_position
+                    .cmp(&range_b.inlay_position, &snapshot.buffer_snapshot)
+                    .is_eq()
+                {
+                    return;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -165,11 +177,8 @@ pub fn update_inlay_link_and_hover_points(
         snapshot.display_point_to_inlay_offset(point_for_position.previous_valid, Bias::Left);
     let hint_end_offset =
         snapshot.display_point_to_inlay_offset(point_for_position.next_valid, Bias::Right);
-    let offset_overshoot = point_for_position.column_overshoot_after_line_end as usize;
-    let hovered_offset = if offset_overshoot == 0 {
+    let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
-    } else if (hint_end_offset - hint_start_offset).0 >= offset_overshoot {
-        Some(InlayOffset(hint_start_offset.0 + offset_overshoot))
     } else {
         None
     };
@@ -215,17 +224,18 @@ pub fn update_inlay_link_and_hover_points(
                         }
                     }
                     ResolveState::Resolved => {
+                        let mut actual_hint_start = hint_start_offset;
+                        let mut actual_hint_end = hint_end_offset;
+                        if cached_hint.padding_left {
+                            actual_hint_start.0 += 1;
+                            actual_hint_end.0 += 1;
+                        }
+                        if cached_hint.padding_right {
+                            actual_hint_start.0 += 1;
+                            actual_hint_end.0 += 1;
+                        }
                         match cached_hint.label {
                             project::InlayHintLabel::String(_) => {
-                                let mut highlight_start = hint_start_offset;
-                                let mut highlight_end = hint_end_offset;
-                                if cached_hint.padding_left {
-                                    highlight_start.0 += 1;
-                                    highlight_end.0 += 1;
-                                }
-                                if cached_hint.padding_right {
-                                    highlight_end.0 -= 1;
-                                }
                                 if let Some(tooltip) = cached_hint.tooltip {
                                     hover_popover::hover_at_inlay(
                                         editor,
@@ -246,8 +256,8 @@ pub fn update_inlay_link_and_hover_points(
                                             triggered_from: hovered_offset,
                                             range: InlayRange {
                                                 inlay_position: hovered_hint.position,
-                                                highlight_start,
-                                                highlight_end,
+                                                highlight_start: actual_hint_start,
+                                                highlight_end: actual_hint_end,
                                             },
                                         },
                                         cx,
@@ -259,9 +269,7 @@ pub fn update_inlay_link_and_hover_points(
                                 if let Some((hovered_hint_part, part_range)) =
                                     hover_popover::find_hovered_hint_part(
                                         label_parts,
-                                        cached_hint.padding_left,
-                                        cached_hint.padding_right,
-                                        hint_start_offset..hint_end_offset,
+                                        actual_hint_start..actual_hint_end,
                                         hovered_offset,
                                     )
                                 {
@@ -588,9 +596,11 @@ fn go_to_fetched_definition_of_kind(
             cx,
         );
 
-        match kind {
-            LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
-            LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
+        if point.as_valid().is_some() {
+            match kind {
+                LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
+                LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
+            }
         }
     }
 }
@@ -1160,11 +1170,19 @@ mod tests {
             .unwrap();
         let hint_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column() + (hint_label.len() / 2) as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (hint_label.len() / 2) as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         // Press cmd to trigger highlight

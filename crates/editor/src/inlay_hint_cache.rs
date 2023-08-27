@@ -104,37 +104,34 @@ impl TasksForRanges {
         invalidate: InvalidationStrategy,
         spawn_task: impl FnOnce(QueryRanges) -> Task<()>,
     ) {
-        let query_ranges = match invalidate {
-            InvalidationStrategy::None => {
-                let mut updated_ranges = query_ranges;
-                updated_ranges.before_visible = updated_ranges
-                    .before_visible
-                    .into_iter()
-                    .flat_map(|query_range| {
-                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
-                    })
-                    .collect();
-                updated_ranges.visible = updated_ranges
-                    .visible
-                    .into_iter()
-                    .flat_map(|query_range| {
-                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
-                    })
-                    .collect();
-                updated_ranges.after_visible = updated_ranges
-                    .after_visible
-                    .into_iter()
-                    .flat_map(|query_range| {
-                        self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
-                    })
-                    .collect();
-                updated_ranges
-            }
-            InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited => {
-                self.tasks.clear();
-                self.sorted_ranges.clear();
-                query_ranges
-            }
+        let query_ranges = if invalidate.should_invalidate() {
+            self.tasks.clear();
+            self.sorted_ranges.clear();
+            query_ranges
+        } else {
+            let mut non_cached_query_ranges = query_ranges;
+            non_cached_query_ranges.before_visible = non_cached_query_ranges
+                .before_visible
+                .into_iter()
+                .flat_map(|query_range| {
+                    self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                })
+                .collect();
+            non_cached_query_ranges.visible = non_cached_query_ranges
+                .visible
+                .into_iter()
+                .flat_map(|query_range| {
+                    self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                })
+                .collect();
+            non_cached_query_ranges.after_visible = non_cached_query_ranges
+                .after_visible
+                .into_iter()
+                .flat_map(|query_range| {
+                    self.remove_cached_ranges_from_query(buffer_snapshot, query_range)
+                })
+                .collect();
+            non_cached_query_ranges
         };
 
         if !query_ranges.is_empty() {
@@ -205,45 +202,31 @@ impl TasksForRanges {
         ranges_to_query
     }
 
-    fn remove_from_cached_ranges(
-        &mut self,
-        buffer: &BufferSnapshot,
-        range_to_remove: &Range<language::Anchor>,
-    ) {
+    fn invalidate_range(&mut self, buffer: &BufferSnapshot, range: &Range<language::Anchor>) {
         self.sorted_ranges = self
             .sorted_ranges
             .drain(..)
             .filter_map(|mut cached_range| {
-                if cached_range.start.cmp(&range_to_remove.end, buffer).is_gt()
-                    || cached_range.end.cmp(&range_to_remove.start, buffer).is_lt()
+                if cached_range.start.cmp(&range.end, buffer).is_gt()
+                    || cached_range.end.cmp(&range.start, buffer).is_lt()
                 {
                     Some(vec![cached_range])
-                } else if cached_range
-                    .start
-                    .cmp(&range_to_remove.start, buffer)
-                    .is_ge()
-                    && cached_range.end.cmp(&range_to_remove.end, buffer).is_le()
+                } else if cached_range.start.cmp(&range.start, buffer).is_ge()
+                    && cached_range.end.cmp(&range.end, buffer).is_le()
                 {
                     None
-                } else if range_to_remove
-                    .start
-                    .cmp(&cached_range.start, buffer)
-                    .is_ge()
-                    && range_to_remove.end.cmp(&cached_range.end, buffer).is_le()
+                } else if range.start.cmp(&cached_range.start, buffer).is_ge()
+                    && range.end.cmp(&cached_range.end, buffer).is_le()
                 {
                     Some(vec![
-                        cached_range.start..range_to_remove.start,
-                        range_to_remove.end..cached_range.end,
+                        cached_range.start..range.start,
+                        range.end..cached_range.end,
                     ])
-                } else if cached_range
-                    .start
-                    .cmp(&range_to_remove.start, buffer)
-                    .is_ge()
-                {
-                    cached_range.start = range_to_remove.end;
+                } else if cached_range.start.cmp(&range.start, buffer).is_ge() {
+                    cached_range.start = range.end;
                     Some(vec![cached_range])
                 } else {
-                    cached_range.end = range_to_remove.start;
+                    cached_range.end = range.start;
                     Some(vec![cached_range])
                 }
             })
@@ -474,7 +457,7 @@ impl InlayHintCache {
         }
     }
 
-    pub fn remove_excerpts(&mut self, excerpts_removed: Vec<ExcerptId>) -> InlaySplice {
+    pub fn remove_excerpts(&mut self, excerpts_removed: Vec<ExcerptId>) -> Option<InlaySplice> {
         let mut to_remove = Vec::new();
         for excerpt_to_remove in excerpts_removed {
             self.update_tasks.remove(&excerpt_to_remove);
@@ -483,17 +466,21 @@ impl InlayHintCache {
                 to_remove.extend(cached_hints.hints.iter().map(|(id, _)| *id));
             }
         }
-        if !to_remove.is_empty() {
+        if to_remove.is_empty() {
+            None
+        } else {
             self.version += 1;
-        }
-        InlaySplice {
-            to_remove,
-            to_insert: Vec::new(),
+            Some(InlaySplice {
+                to_remove,
+                to_insert: Vec::new(),
+            })
         }
     }
 
     pub fn clear(&mut self) {
-        self.version += 1;
+        if !self.update_tasks.is_empty() || !self.hints.is_empty() {
+            self.version += 1;
+        }
         self.update_tasks.clear();
         self.hints.clear();
     }
@@ -818,7 +805,7 @@ fn new_update_task(
                         .update_tasks
                         .get_mut(&query.excerpt_id)
                     {
-                        task_ranges.remove_from_cached_ranges(&buffer_snapshot, &range);
+                        task_ranges.invalidate_range(&buffer_snapshot, &range);
                     }
                 })
                 .ok()
@@ -877,33 +864,33 @@ async fn fetch_and_update_hints(
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
             if got_throttled {
-                if let Some((_, _, current_visible_range)) = editor
-                    .excerpt_visible_offsets(None, cx)
-                    .remove(&query.excerpt_id)
-                {
-                    let visible_offset_length = current_visible_range.len();
-                    let double_visible_range = current_visible_range
-                        .start
-                        .saturating_sub(visible_offset_length)
-                        ..current_visible_range
-                            .end
-                            .saturating_add(visible_offset_length)
-                            .min(buffer_snapshot.len());
-                    if !double_visible_range
-                        .contains(&fetch_range.start.to_offset(&buffer_snapshot))
-                        && !double_visible_range
-                            .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                let query_not_around_visible_range = match editor.excerpt_visible_offsets(None, cx).remove(&query.excerpt_id) {
+                    Some((_, _, current_visible_range)) => {
+                        let visible_offset_length = current_visible_range.len();
+                        let double_visible_range = current_visible_range
+                            .start
+                            .saturating_sub(visible_offset_length)
+                            ..current_visible_range
+                                .end
+                                .saturating_add(visible_offset_length)
+                                .min(buffer_snapshot.len());
+                        !double_visible_range
+                            .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                            && !double_visible_range
+                                .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                    },
+                    None => true,
+                };
+                if query_not_around_visible_range {
+                    log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
                     {
-                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
-                        if let Some(task_ranges) = editor
-                            .inlay_hint_cache
-                            .update_tasks
-                            .get_mut(&query.excerpt_id)
-                        {
-                            task_ranges.remove_from_cached_ranges(&buffer_snapshot, &fetch_range);
-                        }
-                        return None;
+                        task_ranges.invalidate_range(&buffer_snapshot, &fetch_range);
                     }
+                    return None;
                 }
             }
             editor

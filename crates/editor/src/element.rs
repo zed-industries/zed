@@ -2755,7 +2755,7 @@ impl PointForPosition {
         }
     }
 
-    fn as_valid(&self) -> Option<DisplayPoint> {
+    pub fn as_valid(&self) -> Option<DisplayPoint> {
         if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
             Some(self.previous_valid)
         } else {
