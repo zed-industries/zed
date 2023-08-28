@@ -51,15 +51,15 @@ impl SearchMode {
 }
 
 pub(crate) fn next_mode(mode: &SearchMode, semantic_enabled: bool) -> SearchMode {
-    let next_text_state = if semantic_enabled {
-        SearchMode::Semantic
-    } else {
-        SearchMode::Regex
-    };
-
     match mode {
-        SearchMode::Text => next_text_state,
-        SearchMode::Semantic => SearchMode::Regex,
-        SearchMode::Regex => SearchMode::Text,
+        SearchMode::Text => SearchMode::Regex,
+        SearchMode::Regex => {
+            if semantic_enabled {
+                SearchMode::Semantic
+            } else {
+                SearchMode::Text
+            }
+        }
+        SearchMode::Semantic => SearchMode::Text,
     }
 }
