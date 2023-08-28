@@ -980,7 +980,7 @@ mod tests {
         deterministic.forbid_parking();
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "Hello", cx));
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "Hello"));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.id()).parse().unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
         assert_eq!(
@@ -996,7 +996,7 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "Goodbye", cx));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "Goodbye"));
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.id()).parse().unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
         assert_eq!(

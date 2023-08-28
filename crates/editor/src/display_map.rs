@@ -1362,7 +1362,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1451,7 +1452,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1523,7 +1525,8 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));

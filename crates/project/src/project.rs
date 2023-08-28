@@ -1568,9 +1568,9 @@ impl Project {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
-
+        let id = post_inc(&mut self.next_buffer_id);
         let buffer = cx.add_model(|cx| {
-            Buffer::new(self.replica_id(), text, cx)
+            Buffer::new(self.replica_id(), id, text)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;

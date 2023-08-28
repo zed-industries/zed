@@ -210,7 +210,7 @@ mod tests {
         });
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
