@@ -341,6 +341,9 @@ impl AssistantPanel {
                                             this.pending_inline_assists.get(&inline_assist_id)
                                         {
                                             if pending_assist.transaction_id == Some(*tx_id) {
+                                                // Notice we are supplying `undo: false` here. This
+                                                // is because there's no need to undo the transaction
+                                                // because the user just did so.
                                                 this.close_inline_assist(
                                                     inline_assist_id,
                                                     false,
@@ -421,7 +424,7 @@ impl AssistantPanel {
         }
     }
 
-    fn close_inline_assist(&mut self, assist_id: usize, cancel: bool, cx: &mut ViewContext<Self>) {
+    fn close_inline_assist(&mut self, assist_id: usize, undo: bool, cx: &mut ViewContext<Self>) {
         self.hide_inline_assist(assist_id, cx);
 
         if let Some(pending_assist) = self.pending_inline_assists.remove(&assist_id) {
@@ -438,7 +441,7 @@ impl AssistantPanel {
             if let Some(editor) = pending_assist.editor.upgrade(cx) {
                 self.update_highlights_for_editor(&editor, cx);
 
-                if cancel {
+                if undo {
                     if let Some(transaction_id) = pending_assist.transaction_id {
                         editor.update(cx, |editor, cx| {
                             editor.buffer().update(cx, |buffer, cx| {
