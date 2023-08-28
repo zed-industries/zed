@@ -4,7 +4,7 @@ use gpui::{
     AppContext, Element, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::Project;
-use theme::components::{action_button::Button, label::Label, ComponentExt};
+use theme::components::{action_button::ActionButton, button::Button, label::Label, ComponentExt};
 use workspace::{
     item::Item, register_deserializable_item, ItemId, Pane, PaneBackdrop, Workspace, WorkspaceId,
 };
@@ -66,14 +66,14 @@ impl View for ComponentTest {
             Flex::column()
                 .with_spacing(10.)
                 .with_child(
-                    Button::action(NoAction)
+                    ActionButton::action(NoAction)
                         .with_tooltip("Here's what a tooltip looks like", theme.tooltip.clone())
                         .with_contents(Label::new("Click me!"))
                         .with_style(theme.component_test.button.clone())
                         .element(),
                 )
                 .with_child(
-                    Button::action(ToggleToggle)
+                    ActionButton::action(ToggleToggle)
                         .with_tooltip("Here's what a tooltip looks like", theme.tooltip.clone())
                         .with_contents(Label::new("Toggle me!"))
                         .toggleable(self.toggled)
@@ -82,6 +82,13 @@ impl View for ComponentTest {
                 )
                 .with_child(
                     Label::new("A disclosure")
+                        .disclosable(Some(self.disclosed), Box::new(ToggleDisclosure))
+                        .with_style(theme.component_test.disclosure.clone())
+                        .element(),
+                )
+                .with_child(
+                    Button::new(|click, this, cx| println!("Clicked! {:?}", click))
+                        .with_contents(Label::new("Print click to console!"))
                         .disclosable(Some(self.disclosed), Box::new(ToggleDisclosure))
                         .with_style(theme.component_test.disclosure.clone())
                         .element(),

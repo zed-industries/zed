@@ -166,6 +166,15 @@ impl<V: 'static> MouseEventHandler<V> {
         self
     }
 
+    pub fn on_click_dynamic(
+        mut self,
+        button: MouseButton,
+        handler: Box<dyn Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static>,
+    ) -> Self {
+        self.handlers = self.handlers.on_click_dynamic(button, handler);
+        self
+    }
+
     pub fn on_click_out(
         mut self,
         button: MouseButton,

@@ -420,6 +420,31 @@ impl HandlerSet {
         self
     }
 
+    pub fn on_click_dynamic<V>(
+        mut self,
+        button: MouseButton,
+        handler: Box<dyn Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static>,
+    ) -> Self
+    where
+        V: 'static,
+    {
+        self.insert(MouseEvent::click_disc(), Some(button),
+            Rc::new(move |region_event, view, cx, view_id| {
+                if let MouseEvent::Click(e) = region_event {
+                    let view = view.downcast_mut().unwrap();
+                    let mut cx = ViewContext::mutable(cx, view_id);
+                    let mut cx = EventContext::new(&mut cx);
+                    handler(e, view, &mut cx);
+                    cx.handled
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Click, found {:?}",
+                        region_event);
+                }
+            }));
+        self
+    }
+
     pub fn on_click_out<V, F>(mut self, button: MouseButton, handler: F) -> Self
     where
         V: 'static,

@@ -3,7 +3,7 @@ mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
-use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
+use components::{disclosure::DisclosureStyle, ToggleIconButtonStyle};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -985,6 +985,19 @@ impl<T> Toggleable<Interactive<T>> {
     pub fn default_style(&self) -> &T {
         &self.inactive.default
     }
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ButtonStyle<C> {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    // TODO: These are incorrect for the intended usage of the buttons.
+    // The size should be constant, but putting them here duplicates them
+    // across the states the buttons can be in
+    pub button_width: Option<f32>,
+    pub button_height: Option<f32>,
+    #[serde(flatten)]
+    contents: C,
 }
 
 impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {

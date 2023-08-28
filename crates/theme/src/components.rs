@@ -1,8 +1,8 @@
 use gpui::{elements::SafeStylable, Action};
 
-use crate::{Interactive, Toggleable};
+use crate::{ButtonStyle, Interactive, Toggleable};
 
-use self::{action_button::ButtonStyle, disclosure::Disclosable, svg::SvgStyle, toggle::Toggle};
+use self::{disclosure::Disclosable, svg::SvgStyle, toggle::Toggle};
 
 pub type IconButtonStyle = Interactive<ButtonStyle<SvgStyle>>;
 pub type ToggleIconButtonStyle = Toggleable<IconButtonStyle>;
@@ -25,6 +25,115 @@ impl<C: SafeStylable> ComponentExt<C> for C {
     }
 }
 
+pub mod button {
+    use std::borrow::Cow;
+
+    use gpui::{
+        elements::{MouseEventHandler, StatefulComponent, StatefulSafeStylable, TooltipStyle},
+        platform::{CursorStyle, MouseButton},
+        scene::MouseClick,
+        Action, Element, EventContext, TypeTag,
+    };
+
+    use crate::{ButtonStyle, Interactive};
+
+    pub struct Button<V: 'static, C, S> {
+        handler: Box<dyn Fn(MouseClick, &mut V, &mut EventContext<V>)>,
+        tooltip: Option<(Cow<'static, str>, TooltipStyle, Option<Box<dyn Action>>)>,
+        tag: TypeTag,
+        contents: C,
+        style: Interactive<S>,
+    }
+
+    impl<V: 'static> Button<V, (), ()> {
+        pub fn new<F>(handler: F) -> Button<V, (), ()>
+        where
+            F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
+        {
+            Self {
+                contents: (),
+                tag: TypeTag::new::<F>(),
+                handler: Box::new(handler),
+                style: Interactive::new_blank(),
+                tooltip: None,
+            }
+        }
+
+        pub fn with_tooltip(
+            mut self,
+            tooltip: impl Into<Cow<'static, str>>,
+            tooltip_style: TooltipStyle,
+            keybinding: Option<Box<dyn Action>>,
+        ) -> Self {
+            self.tooltip = Some((tooltip.into(), tooltip_style, keybinding));
+            self
+        }
+
+        pub fn with_contents<C: StatefulSafeStylable<V>>(self, contents: C) -> Button<V, C, ()> {
+            Button {
+                handler: self.handler,
+                tag: self.tag,
+                style: self.style,
+                tooltip: self.tooltip,
+                contents,
+            }
+        }
+    }
+
+    impl<V: 'static, C: StatefulSafeStylable<V>> StatefulSafeStylable<V> for Button<V, C, ()> {
+        type Style = Interactive<ButtonStyle<C::Style>>;
+        type Output = Button<V, C, ButtonStyle<C::Style>>;
+
+        fn with_style(self, style: Self::Style) -> Self::Output {
+            Button {
+                handler: self.handler,
+                tag: self.tag,
+                contents: self.contents,
+                tooltip: self.tooltip,
+                style,
+            }
+        }
+    }
+
+    impl<V: 'static, C: StatefulSafeStylable<V>> StatefulComponent<V>
+        for Button<V, C, ButtonStyle<C::Style>>
+    {
+        fn render(self, v: &mut V, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
+            let mut button = MouseEventHandler::new_dynamic(self.tag, 0, cx, |state, cx| {
+                let style = self.style.style_for(state);
+                let mut contents = self
+                    .contents
+                    .with_style(style.contents.to_owned())
+                    .render(v, cx)
+                    .contained()
+                    .with_style(style.container)
+                    .constrained();
+
+                if let Some(height) = style.button_height {
+                    contents = contents.with_height(height);
+                }
+
+                if let Some(width) = style.button_width {
+                    contents = contents.with_width(width);
+                }
+
+                contents.into_any()
+            })
+            .on_click_dynamic(MouseButton::Left, self.handler)
+            .with_cursor_style(CursorStyle::PointingHand)
+            .into_any();
+
+            if let Some((tooltip, style, action)) = self.tooltip {
+                button = button
+                    .with_dynamic_tooltip(self.tag, 0, tooltip, action, style, cx)
+                    .into_any()
+            }
+
+            button
+        }
+    }
+}
+
 pub mod disclosure {
 
     use gpui::{
@@ -34,7 +143,7 @@ pub mod disclosure {
     use schemars::JsonSchema;
     use serde_derive::Deserialize;
 
-    use super::{action_button::Button, svg::Svg, IconButtonStyle};
+    use super::{action_button::ActionButton, svg::Svg, IconButtonStyle};
 
     #[derive(Clone, Default, Deserialize, JsonSchema)]
     pub struct DisclosureStyle<S> {
@@ -104,7 +213,7 @@ pub mod disclosure {
             Flex::row()
                 .with_spacing(self.style.spacing)
                 .with_child(if let Some(disclosed) = self.disclosed {
-                    Button::dynamic_action(self.action)
+                    ActionButton::dynamic_action(self.action)
                         .with_id(self.id)
                         .with_contents(Svg::new(if disclosed {
                             "icons/file_icons/chevron_down.svg"
@@ -184,29 +293,14 @@ pub mod action_button {
     use std::borrow::Cow;
 
     use gpui::{
-        elements::{Component, ContainerStyle, MouseEventHandler, SafeStylable, TooltipStyle},
+        elements::{Component, MouseEventHandler, SafeStylable, TooltipStyle},
         platform::{CursorStyle, MouseButton},
         Action, Element, TypeTag,
     };
-    use schemars::JsonSchema;
-    use serde_derive::Deserialize;
 
-    use crate::Interactive;
+    use crate::{ButtonStyle, Interactive};
 
-    #[derive(Clone, Deserialize, Default, JsonSchema)]
-    pub struct ButtonStyle<C> {
-        #[serde(flatten)]
-        pub container: ContainerStyle,
-        // TODO: These are incorrect for the intended usage of the buttons.
-        // The size should be constant, but putting them here duplicates them
-        // across the states the buttons can be in
-        pub button_width: Option<f32>,
-        pub button_height: Option<f32>,
-        #[serde(flatten)]
-        contents: C,
-    }
-
-    pub struct Button<C, S> {
+    pub struct ActionButton<C, S> {
         action: Box<dyn Action>,
         tooltip: Option<(Cow<'static, str>, TooltipStyle)>,
         tag: TypeTag,
@@ -215,8 +309,8 @@ pub mod action_button {
         style: Interactive<S>,
     }
 
-    impl Button<(), ()> {
-        pub fn dynamic_action(action: Box<dyn Action>) -> Button<(), ()> {
+    impl ActionButton<(), ()> {
+        pub fn dynamic_action(action: Box<dyn Action>) -> ActionButton<(), ()> {
             Self {
                 contents: (),
                 tag: action.type_tag(),
@@ -245,8 +339,8 @@ pub mod action_button {
             self
         }
 
-        pub fn with_contents<C: SafeStylable>(self, contents: C) -> Button<C, ()> {
-            Button {
+        pub fn with_contents<C: SafeStylable>(self, contents: C) -> ActionButton<C, ()> {
+            ActionButton {
                 action: self.action,
                 tag: self.tag,
                 style: self.style,
@@ -257,12 +351,12 @@ pub mod action_button {
         }
     }
 
-    impl<C: SafeStylable> SafeStylable for Button<C, ()> {
+    impl<C: SafeStylable> SafeStylable for ActionButton<C, ()> {
         type Style = Interactive<ButtonStyle<C::Style>>;
-        type Output = Button<C, ButtonStyle<C::Style>>;
+        type Output = ActionButton<C, ButtonStyle<C::Style>>;
 
         fn with_style(self, style: Self::Style) -> Self::Output {
-            Button {
+            ActionButton {
                 action: self.action,
                 tag: self.tag,
                 contents: self.contents,
@@ -273,7 +367,7 @@ pub mod action_button {
         }
     }
 
-    impl<C: SafeStylable> Component for Button<C, ButtonStyle<C::Style>> {
+    impl<C: SafeStylable> Component for ActionButton<C, ButtonStyle<C::Style>> {
         fn render<V: 'static>(self, cx: &mut gpui::ViewContext<V>) -> gpui::AnyElement<V> {
             let mut button = MouseEventHandler::new_dynamic(self.tag, self.id, cx, |state, cx| {
                 let style = self.style.style_for(state);

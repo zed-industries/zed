@@ -149,6 +149,17 @@ impl<V: 'static, C: SafeStylable> StatefulSafeStylable<V> for C {
     }
 }
 
+/// converting from stateful to stateless
+impl<V: 'static, C: StatefulSafeStylable<V>> SafeStylable for C {
+    type Style = C::Style;
+
+    type Output = C::Output;
+
+    fn with_style(self, style: Self::Style) -> Self::Output {
+        self.with_style(style)
+    }
+}
+
 // A helper for converting stateless components into stateful ones
 pub struct StatefulAdapter<C, V> {
     component: C,
