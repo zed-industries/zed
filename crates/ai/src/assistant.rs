@@ -215,7 +215,11 @@ impl AssistantPanel {
         })
     }
 
-    fn inline_assist(workspace: &mut Workspace, _: &InlineAssist, cx: &mut ViewContext<Workspace>) {
+    pub fn inline_assist(
+        workspace: &mut Workspace,
+        _: &InlineAssist,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
             if this
                 .update(cx, |assistant, cx| assistant.load_api_key(cx))
