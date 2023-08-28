@@ -1160,6 +1160,7 @@ pub struct InlineAssistantStyle {
     pub editor: FieldEditor,
     pub disabled_editor: FieldEditor,
     pub pending_edit_background: Color,
+    pub include_conversation: ToggleIconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

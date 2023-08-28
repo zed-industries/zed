@@ -19,12 +19,16 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
     actions,
-    elements::*,
+    elements::{
+        ChildView, Component, Empty, Flex, Label, MouseEventHandler, ParentElement, SafeStylable,
+        Stack, Svg, Text, UniformList, UniformListState,
+    },
     fonts::HighlightStyle,
     geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton},
-    Action, AppContext, AsyncAppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
+    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, Buffer, LanguageRegistry, Point, Rope, ToOffset as _,
@@ -33,7 +37,7 @@ use language::{
 use search::BufferSearchBar;
 use settings::SettingsStore;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp, env,
     fmt::Write,
     iter,
@@ -43,7 +47,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::AssistantStyle;
+use theme::{
+    components::{action_button::Button, ComponentExt},
+    AssistantStyle,
+};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -61,7 +68,8 @@ actions!(
         QuoteSelection,
         ToggleFocus,
         ResetKey,
-        InlineAssist
+        InlineAssist,
+        ToggleIncludeConversation,
     ]
 );
 
@@ -97,6 +105,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantPanel::cancel_last_inline_assist);
     cx.add_action(InlineAssistant::confirm);
     cx.add_action(InlineAssistant::cancel);
+    cx.add_action(InlineAssistant::toggle_include_conversation);
 }
 
 #[derive(Debug)]
@@ -129,6 +138,7 @@ pub struct AssistantPanel {
     next_inline_assist_id: usize,
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
     pending_inline_assist_ids_by_editor: HashMap<WeakViewHandle<Editor>, Vec<usize>>,
+    include_conversation_in_next_inline_assist: bool,
     _watch_saved_conversations: Task<Result<()>>,
 }
 
@@ -195,6 +205,7 @@ impl AssistantPanel {
                         next_inline_assist_id: 0,
                         pending_inline_assists: Default::default(),
                         pending_inline_assist_ids_by_editor: Default::default(),
+                        include_conversation_in_next_inline_assist: false,
                         _watch_saved_conversations,
                     };
 
@@ -270,12 +281,15 @@ impl AssistantPanel {
             editor.set_placeholder_text(placeholder, cx);
             editor
         });
+        let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
         let inline_assistant = cx.add_view(|cx| {
             let assistant = InlineAssistant {
                 id: inline_assist_id,
                 prompt_editor,
                 confirmed: false,
                 has_focus: false,
+                include_conversation: self.include_conversation_in_next_inline_assist,
+                measurements: measurements.clone(),
             };
             cx.focus_self();
             assistant
@@ -292,13 +306,11 @@ impl AssistantPanel {
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
-                            let theme = theme::current(cx);
-                            ChildView::new(&inline_assistant, cx)
-                                .contained()
-                                .with_padding_left(cx.anchor_x)
-                                .contained()
-                                .with_style(theme.assistant.inline.container)
-                                .into_any()
+                            measurements.set(BlockMeasurements {
+                                anchor_x: cx.anchor_x,
+                                gutter_width: cx.gutter_width,
+                            });
+                            ChildView::new(&inline_assistant, cx).into_any()
                         }
                     }),
                     disposition: if selection.reversed {
@@ -375,8 +387,11 @@ impl AssistantPanel {
     ) {
         let assist_id = inline_assistant.read(cx).id;
         match event {
-            InlineAssistantEvent::Confirmed { prompt } => {
-                self.confirm_inline_assist(assist_id, prompt, cx);
+            InlineAssistantEvent::Confirmed {
+                prompt,
+                include_conversation,
+            } => {
+                self.confirm_inline_assist(assist_id, prompt, *include_conversation, cx);
             }
             InlineAssistantEvent::Canceled => {
                 self.close_inline_assist(assist_id, true, cx);
@@ -470,12 +485,22 @@ impl AssistantPanel {
         &mut self,
         inline_assist_id: usize,
         user_prompt: &str,
+        include_conversation: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        self.include_conversation_in_next_inline_assist = include_conversation;
+
         let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
             api_key
         } else {
             return;
+        };
+
+        let conversation = if include_conversation {
+            self.active_editor()
+                .map(|editor| editor.read(cx).conversation.clone())
+        } else {
+            None
         };
 
         let pending_assist =
@@ -626,14 +651,25 @@ impl AssistantPanel {
         )
         .unwrap();
 
-        let request = OpenAIRequest {
+        let mut request = OpenAIRequest {
             model: model.full_name().into(),
-            messages: vec![RequestMessage {
-                role: Role::User,
-                content: prompt,
-            }],
+            messages: Vec::new(),
             stream: true,
         };
+        if let Some(conversation) = conversation {
+            let conversation = conversation.read(cx);
+            let buffer = conversation.buffer.read(cx);
+            request.messages.extend(
+                conversation
+                    .messages(cx)
+                    .map(|message| message.to_open_ai_message(buffer)),
+            );
+        }
+
+        request.messages.push(RequestMessage {
+            role: Role::User,
+            content: prompt,
+        });
         let response = stream_completion(api_key, cx.background().clone(), request);
         let editor = editor.downgrade();
 
@@ -2799,7 +2835,10 @@ impl Message {
 }
 
 enum InlineAssistantEvent {
-    Confirmed { prompt: String },
+    Confirmed {
+        prompt: String,
+        include_conversation: bool,
+    },
     Canceled,
     Dismissed,
 }
@@ -2815,6 +2854,8 @@ struct InlineAssistant {
     prompt_editor: ViewHandle<Editor>,
     confirmed: bool,
     has_focus: bool,
+    include_conversation: bool,
+    measurements: Rc<Cell<BlockMeasurements>>,
 }
 
 impl Entity for InlineAssistant {
@@ -2827,9 +2868,55 @@ impl View for InlineAssistant {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        ChildView::new(&self.prompt_editor, cx)
-            .aligned()
-            .left()
+        let theme = theme::current(cx);
+
+        Flex::row()
+            .with_child(
+                Button::action(ToggleIncludeConversation)
+                    .with_tooltip("Include Conversation", theme.tooltip.clone())
+                    .with_id(self.id)
+                    .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
+                    .toggleable(self.include_conversation)
+                    .with_style(theme.assistant.inline.include_conversation.clone())
+                    .element()
+                    .aligned()
+                    .constrained()
+                    .dynamically({
+                        let measurements = self.measurements.clone();
+                        move |constraint, _, _| {
+                            let measurements = measurements.get();
+                            SizeConstraint {
+                                min: vec2f(measurements.gutter_width, constraint.min.y()),
+                                max: vec2f(measurements.gutter_width, constraint.max.y()),
+                            }
+                        }
+                    }),
+            )
+            .with_child(Empty::new().constrained().dynamically({
+                let measurements = self.measurements.clone();
+                move |constraint, _, _| {
+                    let measurements = measurements.get();
+                    SizeConstraint {
+                        min: vec2f(
+                            measurements.anchor_x - measurements.gutter_width,
+                            constraint.min.y(),
+                        ),
+                        max: vec2f(
+                            measurements.anchor_x - measurements.gutter_width,
+                            constraint.max.y(),
+                        ),
+                    }
+                }
+            }))
+            .with_child(
+                ChildView::new(&self.prompt_editor, cx)
+                    .aligned()
+                    .left()
+                    .flex(1., true),
+            )
+            .contained()
+            .with_style(theme.assistant.inline.container)
+            .into_any()
             .into_any()
     }
 
@@ -2862,10 +2949,29 @@ impl InlineAssistant {
                     cx,
                 );
             });
-            cx.emit(InlineAssistantEvent::Confirmed { prompt });
+            cx.emit(InlineAssistantEvent::Confirmed {
+                prompt,
+                include_conversation: self.include_conversation,
+            });
             self.confirmed = true;
         }
     }
+
+    fn toggle_include_conversation(
+        &mut self,
+        _: &ToggleIncludeConversation,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.include_conversation = !self.include_conversation;
+        cx.notify();
+    }
+}
+
+// This wouldn't need to exist if we could pass parameters when rendering child views.
+#[derive(Copy, Clone, Default)]
+struct BlockMeasurements {
+    anchor_x: f32,
+    gutter_width: f32,
 }
 
 struct PendingInlineAssist {
