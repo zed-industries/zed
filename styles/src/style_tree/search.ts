@@ -34,7 +34,7 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 16, bottom: 16, left: 16, right: 16 },
+        padding: { top: 4, bottom: 4 },
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
         match_background: with_opacity(
             foreground(theme.highest, "accent"),
@@ -210,6 +210,7 @@ export default function search(): any {
             ...text(theme.highest, "mono", "variant"),
             padding: {
                 left: 9,
+                right: 9,
             },
         },
         option_button_group: {
@@ -232,34 +233,6 @@ export default function search(): any {
             ...text(theme.highest, "mono", "variant"),
             size: 13,
         },
-        dismiss_button: interactive({
-            base: {
-                color: foreground(theme.highest, "variant"),
-                icon_width: 14,
-                button_width: 32,
-                corner_radius: 6,
-                padding: {
-                    // // top: 10,
-                    // bottom: 10,
-                    left: 10,
-                    right: 10,
-                },
-
-                background: background(theme.highest, "variant"),
-
-                border: border(theme.highest, "on"),
-            },
-            state: {
-                hovered: {
-                    color: foreground(theme.highest, "hovered"),
-                    background: background(theme.highest, "variant", "hovered")
-                },
-                clicked: {
-                    color: foreground(theme.highest, "pressed"),
-                    background: background(theme.highest, "variant", "pressed")
-                },
-            },
-        }),
         editor_icon: {
             icon: {
                 color: foreground(theme.highest, "variant"),
@@ -375,13 +348,9 @@ export default function search(): any {
                 })
             }
         }),
-        search_bar_row_height: 32,
+        search_bar_row_height: 34,
+        search_row_spacing: 8,
         option_button_height: 22,
-        modes_container: {
-            margin: {
-                right: 9
-            }
-        }
-
+        modes_container: {}
     }
 }

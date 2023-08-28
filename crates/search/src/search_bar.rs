@@ -83,6 +83,7 @@ pub(super) fn render_nav_button<V: View>(
 
 pub(crate) fn render_search_mode_button<V: View>(
     mode: SearchMode,
+    side: Option<Side>,
     is_active: bool,
     on_click: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     cx: &mut ViewContext<V>,
@@ -91,41 +92,41 @@ pub(crate) fn render_search_mode_button<V: View>(
     enum SearchModeButton {}
     MouseEventHandler::new::<SearchModeButton, _>(mode.region_id(), cx, |state, cx| {
         let theme = theme::current(cx);
-        let mut style = theme
+        let style = theme
             .search
             .mode_button
             .in_state(is_active)
             .style_for(state)
             .clone();
-        style.container.border.left = mode.border_left();
-        style.container.border.right = mode.border_right();
 
-        let label = Label::new(mode.label(), style.text.clone())
-            .aligned()
-            .contained();
-        let mut container_style = style.container.clone();
-        if let Some(button_side) = mode.button_side() {
+        let mut container_style = style.container;
+        if let Some(button_side) = side {
             if button_side == Side::Left {
+                container_style.border.left = true;
                 container_style.corner_radii = CornerRadii {
                     bottom_right: 0.,
                     top_right: 0.,
                     ..container_style.corner_radii
                 };
-                label.with_style(container_style)
             } else {
+                container_style.border.left = false;
                 container_style.corner_radii = CornerRadii {
                     bottom_left: 0.,
                     top_left: 0.,
                     ..container_style.corner_radii
                 };
-                label.with_style(container_style)
             }
         } else {
+            container_style.border.left = false;
             container_style.corner_radii = CornerRadii::default();
-            label.with_style(container_style)
         }
-        .constrained()
-        .with_height(theme.search.search_bar_row_height)
+
+        Label::new(mode.label(), style.text)
+            .aligned()
+            .contained()
+            .with_style(container_style)
+            .constrained()
+            .with_height(theme.search.search_bar_row_height)
     })
     .on_click(MouseButton::Left, on_click)
     .with_cursor_style(CursorStyle::PointingHand)

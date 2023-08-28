@@ -48,29 +48,6 @@ impl SearchMode {
             SearchMode::Regex => Box::new(ActivateRegexMode),
         }
     }
-
-    pub(crate) fn border_right(&self) -> bool {
-        match self {
-            SearchMode::Regex => true,
-            SearchMode::Text => true,
-            SearchMode::Semantic => true,
-        }
-    }
-
-    pub(crate) fn border_left(&self) -> bool {
-        match self {
-            SearchMode::Text => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn button_side(&self) -> Option<Side> {
-        match self {
-            SearchMode::Text => Some(Side::Left),
-            SearchMode::Semantic => None,
-            SearchMode::Regex => Some(Side::Right),
-        }
-    }
 }
 
 pub(crate) fn next_mode(mode: &SearchMode, semantic_enabled: bool) -> SearchMode {
