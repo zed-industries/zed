@@ -60,7 +60,7 @@ quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
-staff_mode = { path = "../staff_mode" }
+feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }

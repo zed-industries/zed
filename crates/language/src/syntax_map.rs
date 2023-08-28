@@ -310,7 +310,9 @@ impl SyntaxSnapshot {
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {
-                let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) else { continue 'outer };
+                let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) else {
+                    continue 'outer;
+                };
                 if edit_range.end.cmp(&layer.range.start, text).is_le() {
                     first_edit_ix_for_depth += 1;
                 } else {
@@ -391,7 +393,9 @@ impl SyntaxSnapshot {
                     .filter::<_, ()>(|summary| summary.contains_unknown_injections);
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
-                    let SyntaxLayerContent::Pending { language_name } = &layer.content else { unreachable!() };
+                    let SyntaxLayerContent::Pending { language_name } = &layer.content else {
+                        unreachable!()
+                    };
                     if registry
                         .language_for_name_or_extension(language_name)
                         .now_or_never()
@@ -533,7 +537,9 @@ impl SyntaxSnapshot {
 
             let content = match step.language {
                 ParseStepLanguage::Loaded { language } => {
-                    let Some(grammar) = language.grammar() else { continue };
+                    let Some(grammar) = language.grammar() else {
+                        continue;
+                    };
                     let tree;
                     let changed_ranges;
 

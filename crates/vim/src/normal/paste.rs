@@ -33,7 +33,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                 editor.set_clip_at_line_ends(false, cx);
 
                 let Some(item) = cx.read_from_clipboard() else {
-                    return
+                    return;
                 };
                 let clipboard_text = Cow::Borrowed(item.text());
                 if clipboard_text.is_empty() {

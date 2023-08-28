@@ -125,3 +125,4 @@ id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
 id_type!(ChannelBufferCollaboratorId);
+id_type!(FlagId);

@@ -14,7 +14,7 @@ use crate::{
     CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
+pub use clock::ReplicaId;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
@@ -347,13 +347,9 @@ impl CharKind {
 }
 
 impl Buffer {
-    pub fn new<T: Into<String>>(
-        replica_id: ReplicaId,
-        base_text: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            TextBuffer::new(replica_id, id, base_text.into()),
             None,
             None,
         )
@@ -2504,7 +2500,9 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else { continue };
+                let Some((open, close)) = open.zip(close) else {
+                    continue;
+                };
 
                 let bracket_range = open.start..=close.end;
                 if !bracket_range.overlaps(&range) {

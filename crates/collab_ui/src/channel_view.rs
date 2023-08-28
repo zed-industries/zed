@@ -272,8 +272,12 @@ impl FollowableItem for ChannelView {
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
     ) -> Option<gpui::Task<anyhow::Result<ViewHandle<Self>>>> {
-        let Some(proto::view::Variant::ChannelView(_)) = state else { return None };
-        let Some(proto::view::Variant::ChannelView(state)) = state.take() else { unreachable!() };
+        let Some(proto::view::Variant::ChannelView(_)) = state else {
+            return None;
+        };
+        let Some(proto::view::Variant::ChannelView(state)) = state.take() else {
+            unreachable!()
+        };
 
         let open = ChannelView::open(state.channel_id, pane, workspace, cx);
 

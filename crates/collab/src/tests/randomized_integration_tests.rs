@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt as _;
@@ -121,7 +121,9 @@ async fn test_random_collaboration(
     let mut operation_channels = Vec::new();
 
     loop {
-        let Some((next_operation, applied)) = plan.lock().next_server_operation(&clients) else { break };
+        let Some((next_operation, applied)) = plan.lock().next_server_operation(&clients) else {
+            break;
+        };
         applied.store(true, SeqCst);
         let did_apply = apply_server_operation(
             deterministic.clone(),
@@ -224,7 +226,9 @@ async fn apply_server_operation(
             let client_ix = clients
                 .iter()
                 .position(|(client, cx)| client.current_user_id(cx) == removed_user_id);
-            let Some(client_ix) = client_ix else { return false };
+            let Some(client_ix) = client_ix else {
+                return false;
+            };
             let user_connection_ids = server
                 .connection_pool
                 .lock()
@@ -718,7 +722,7 @@ async fn apply_client_operation(
                 if detach { "detaching" } else { "awaiting" }
             );
 
-            let search = project.update(cx, |project, cx| {
+            let mut search = project.update(cx, |project, cx| {
                 project.search(
                     SearchQuery::text(query, false, false, Vec::new(), Vec::new()),
                     cx,
@@ -726,15 +730,13 @@ async fn apply_client_operation(
             });
             drop(project);
             let search = cx.background().spawn(async move {
-                search
-                    .await
-                    .map_err(|err| anyhow!("search request failed: {:?}", err))
+                let mut results = HashMap::default();
+                while let Some((buffer, ranges)) = search.next().await {
+                    results.entry(buffer).or_insert(ranges);
+                }
+                results
             });
-            if detach {
-                cx.update(|cx| search.detach_and_log_err(cx));
-            } else {
-                search.await?;
-            }
+            search.await;
         }
 
         ClientOperation::WriteFsEntry {
@@ -1591,10 +1593,11 @@ impl TestPlan {
                     81.. => match self.rng.gen_range(0..100_u32) {
                         // Add a worktree to a local project
                         0..=50 => {
-                            let Some(project) = client
-                                .local_projects()
-                                .choose(&mut self.rng)
-                                .cloned() else { continue };
+                            let Some(project) =
+                                client.local_projects().choose(&mut self.rng).cloned()
+                            else {
+                                continue;
+                            };
                             let project_root_name = root_name_for_project(&project, cx);
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
@@ -1611,7 +1614,9 @@ impl TestPlan {
 
                         // Add an entry to a worktree
                         _ => {
-                            let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
+                            let Some(project) = choose_random_project(client, &mut self.rng) else {
+                                continue;
+                            };
                             let project_root_name = root_name_for_project(&project, cx);
                             let is_local = project.read_with(cx, |project, _| project.is_local());
                             let worktree = project.read_with(cx, |project, cx| {
@@ -1645,7 +1650,9 @@ impl TestPlan {
 
                 // Query and mutate buffers
                 60..=90 => {
-                    let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
+                    let Some(project) = choose_random_project(client, &mut self.rng) else {
+                        continue;
+                    };
                     let project_root_name = root_name_for_project(&project, cx);
                     let is_local = project.read_with(cx, |project, _| project.is_local());
 
@@ -1656,7 +1663,10 @@ impl TestPlan {
                                 .buffers_for_project(&project)
                                 .iter()
                                 .choose(&mut self.rng)
-                                .cloned() else { continue };
+                                .cloned()
+                            else {
+                                continue;
+                            };
 
                             let full_path = buffer
                                 .read_with(cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
@@ -2026,7 +2036,10 @@ async fn simulate_client(
     client.app_state.languages.add(Arc::new(language));
 
     while let Some(batch_id) = operation_rx.next().await {
-        let Some((operation, applied)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
+        let Some((operation, applied)) = plan.lock().next_client_operation(&client, batch_id, &cx)
+        else {
+            break;
+        };
         applied.store(true, SeqCst);
         match apply_client_operation(&client, operation, &mut cx).await {
             Ok(()) => {}

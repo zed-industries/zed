@@ -18,7 +18,7 @@ use futures::{
     FutureExt, TryFutureExt as _,
 };
 use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
-use highlight_map::HighlightMap;
+pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};

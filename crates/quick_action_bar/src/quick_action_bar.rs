@@ -44,7 +44,9 @@ impl View for QuickActionBar {
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
-        let Some(editor) = self.active_editor() else { return Empty::new().into_any(); };
+        let Some(editor) = self.active_editor() else {
+            return Empty::new().into_any();
+        };
 
         let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
         let mut bar = Flex::row().with_child(render_quick_action_bar_button(

@@ -65,47 +65,52 @@ impl Editor {
             self.set_scroll_position(scroll_position, cx);
         }
 
-        let (autoscroll, local) =
-            if let Some(autoscroll) = self.scroll_manager.autoscroll_request.take() {
-                autoscroll
-            } else {
-                return false;
-            };
+        let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
+            return false;
+        };
 
-        let first_cursor_top;
-        let last_cursor_bottom;
+        let mut target_top;
+        let mut target_bottom;
         if let Some(highlighted_rows) = &self.highlighted_rows {
-            first_cursor_top = highlighted_rows.start as f32;
-            last_cursor_bottom = first_cursor_top + 1.;
-        } else if autoscroll == Autoscroll::newest() {
-            let newest_selection = self.selections.newest::<Point>(cx);
-            first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
-            last_cursor_bottom = first_cursor_top + 1.;
+            target_top = highlighted_rows.start as f32;
+            target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
-            first_cursor_top = selections
+            target_top = selections
                 .first()
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
                 .row() as f32;
-            last_cursor_bottom = selections
+            target_bottom = selections
                 .last()
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
                 .row() as f32
                 + 1.0;
+
+            // If the selections can't all fit on screen, scroll to the newest.
+            if autoscroll == Autoscroll::newest()
+                || autoscroll == Autoscroll::fit() && target_bottom - target_top > visible_lines
+            {
+                let newest_selection_top = selections
+                    .iter()
+                    .max_by_key(|s| s.id)
+                    .unwrap()
+                    .head()
+                    .to_display_point(&display_map)
+                    .row() as f32;
+                target_top = newest_selection_top;
+                target_bottom = newest_selection_top + 1.;
+            }
         }
 
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
-            ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0).floor()
+            ((visible_lines - (target_bottom - target_top)) / 2.0).floor()
         };
-        if margin < 0.0 {
-            return false;
-        }
 
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy) => strategy,
@@ -113,8 +118,8 @@ impl Editor {
                 let last_autoscroll = &self.scroll_manager.last_autoscroll;
                 if let Some(last_autoscroll) = last_autoscroll {
                     if self.scroll_manager.anchor.offset == last_autoscroll.0
-                        && first_cursor_top == last_autoscroll.1
-                        && last_cursor_bottom == last_autoscroll.2
+                        && target_top == last_autoscroll.1
+                        && target_bottom == last_autoscroll.2
                     {
                         last_autoscroll.3.next()
                     } else {
@@ -129,37 +134,41 @@ impl Editor {
         match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (first_cursor_top - margin).max(0.0);
-                let target_bottom = last_cursor_bottom + margin;
+                let target_top = (target_top - margin).max(0.0);
+                let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y();
                 let end_row = start_row + visible_lines;
 
-                if target_top < start_row {
+                let needs_scroll_up = target_top < start_row;
+                let needs_scroll_down = target_bottom >= end_row;
+
+                if needs_scroll_up && !needs_scroll_down {
                     scroll_position.set_y(target_top);
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
-                } else if target_bottom >= end_row {
+                }
+                if !needs_scroll_up && needs_scroll_down {
                     scroll_position.set_y(target_bottom - visible_lines);
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
             }
             AutoscrollStrategy::Center => {
-                scroll_position.set_y((first_cursor_top - margin).max(0.0));
+                scroll_position.set_y((target_top - margin).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {
-                scroll_position.set_y((first_cursor_top).max(0.0));
+                scroll_position.set_y((target_top).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Bottom => {
-                scroll_position.set_y((last_cursor_bottom - visible_lines).max(0.0));
+                scroll_position.set_y((target_bottom - visible_lines).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
         }
 
         self.scroll_manager.last_autoscroll = Some((
             self.scroll_manager.anchor.offset,
-            first_cursor_top,
-            last_cursor_bottom,
+            target_top,
+            target_bottom,
             strategy,
         ));
 

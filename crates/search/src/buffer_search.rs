@@ -837,6 +837,7 @@ mod tests {
         let buffer = cx.add_model(|cx| {
             Buffer::new(
                 0,
+                cx.model_id() as u64,
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -844,7 +845,6 @@ mod tests {
                 for "find" or "find and replace" operations on strings, or for input validation.
                 "#
                 .unindent(),
-                cx,
             )
         });
         let window = cx.add_window(|_| EmptyView);
@@ -1225,7 +1225,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
         let window = cx.add_window(|_| EmptyView);
         let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
@@ -1412,7 +1412,7 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
         let window = cx.add_window(|_| EmptyView);
 
         let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));

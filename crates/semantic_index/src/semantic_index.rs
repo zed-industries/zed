@@ -57,7 +57,9 @@ pub fn init(
 
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
-            let Some(semantic_index) = SemanticIndex::global(cx) else { return; };
+            let Some(semantic_index) = SemanticIndex::global(cx) else {
+                return;
+            };
             let workspace = &event.0;
             if let Some(workspace) = workspace.upgrade(cx) {
                 let project = workspace.read(cx).project().clone();

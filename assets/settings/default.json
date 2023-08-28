@@ -98,6 +98,7 @@
     // Whether to show selections in the scrollbar.
     "selections": true
   },
+  "relative_line_numbers": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -284,8 +285,6 @@
     //          "directory": "~/zed/projects/"
     //        }
     //      }
-    //
-    //
     "working_directory": "current_project_directory",
     // Set the cursor blinking behavior in the terminal.
     // May take 4 values:
@@ -334,13 +333,32 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    "line_height": "comfortable"
+    "line_height": "comfortable",
+    // Activate the python virtual environment, if one is found, in the
+    // terminal's working directory (as resolved by the working_directory
+    // setting). Set this to "off" to disable this behavior.
+    "detect_venv": {
+      "on": {
+        // Default directories to search for virtual environments, relative
+        // to the current working directory. We recommend overriding this
+        // in your project's settings, rather than globally.
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
+        // Can also be 'csh' and 'fish'
+        "activate_script": "default"
+      }
+    }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
-    // "font_size": "15"
+    // "font_size": "15",
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Mono"
+    // "font_family": "Zed Mono",
+    // ---
   },
   // Difference settings for semantic_index
   "semantic_index": {
