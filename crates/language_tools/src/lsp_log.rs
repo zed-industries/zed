@@ -176,7 +176,9 @@ impl LogStore {
                     cx.notify();
                     LanguageServerState {
                         rpc_state: None,
-                        log_buffer: cx.add_model(|cx| Buffer::new(0, "", cx)).clone(),
+                        log_buffer: cx
+                            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""))
+                            .clone(),
                     }
                 })
                 .log_buffer
@@ -241,7 +243,7 @@ impl LogStore {
         let rpc_state = server_state.rpc_state.get_or_insert_with(|| {
             let io_tx = self.io_tx.clone();
             let language = project.read(cx).languages().language_for_name("JSON");
-            let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
             cx.spawn_weak({
                 let buffer = buffer.clone();
                 |_, mut cx| async move {
@@ -327,7 +329,7 @@ impl LspLogView {
             .projects
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
-        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
         let mut this = Self {
             editor: Self::editor_for_buffer(project.clone(), buffer, cx),
             project,

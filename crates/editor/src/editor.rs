@@ -1271,7 +1271,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
     }
@@ -1280,7 +1280,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
     }
@@ -1290,7 +1290,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
             EditorMode::AutoHeight { max_lines },

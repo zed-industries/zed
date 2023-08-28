@@ -347,13 +347,9 @@ impl CharKind {
 }
 
 impl Buffer {
-    pub fn new<T: Into<String>>(
-        replica_id: ReplicaId,
-        base_text: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            TextBuffer::new(replica_id, id, base_text.into()),
             None,
             None,
         )

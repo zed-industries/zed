@@ -855,14 +855,14 @@ impl Conversation {
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, "");
             buffer.set_language_registry(language_registry);
             cx.spawn_weak(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
                 let buffer = buffer
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                buffer.update(&mut cx, |buffer, cx| {
+                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
                 });
                 anyhow::Ok(())
@@ -944,7 +944,7 @@ impl Conversation {
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
         let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, saved_conversation.text, cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, saved_conversation.text);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
@@ -958,7 +958,7 @@ impl Conversation {
                 let buffer = buffer
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                buffer.update(&mut cx, |buffer, cx| {
+                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
                 });
                 anyhow::Ok(())
