@@ -387,3 +387,9 @@ impl Default for Length {
         Self::Definite(DefiniteLength::default())
     }
 }
+
+impl From<()> for Length {
+    fn from(_: ()) -> Self {
+        Self::Definite(DefiniteLength::default())
+    }
+}

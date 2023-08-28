@@ -1190,6 +1190,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.bounds()
     }
 
+    pub fn titlebar_height(&self) -> f32 {
+        self.window.titlebar_height
+    }
+
     pub fn window_appearance(&self) -> Appearance {
         self.window.appearance
     }

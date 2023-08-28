@@ -4,8 +4,9 @@ use crate::{
 };
 use element::Element;
 use gpui::{
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{pixels, rect::RectF, vector::vec2f},
     platform::WindowOptions,
+    ViewContext,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -40,7 +41,7 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| view(|_| playground(&rose_pine::moon())),
+            |_| view(|cx| workspace(&rose_pine::moon(), cx)),
         );
         cx.platform().activate(true);
     });
@@ -57,4 +58,13 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .fill(p.rose)
         .child(div().fill(p.pine).child(div().fill(p.love).w_6().h_3()))
         .child(div().fill(p.gold).child(div().fill(p.iris).w_3().h_3()))
+}
+
+fn workspace<V: 'static>(theme: &ThemeColors, cx: &mut ViewContext<V>) -> impl Element<V> {
+    use div::div;
+    // one line change1!
+    div()
+        .full()
+        .fill(theme.base(0.5))
+        .child(div().h(pixels(cx.titlebar_height())).fill(theme.base(0.)))
 }

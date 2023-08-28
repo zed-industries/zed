@@ -11,8 +11,8 @@ pub use gpui::taffy::style::{
 use gpui::{
     fonts::TextStyleRefinement,
     geometry::{
-        rect::RectF, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length, Point,
-        PointRefinement, Size, SizeRefinement,
+        rect::RectF, relative, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length,
+        Point, PointRefinement, Size, SizeRefinement,
     },
     taffy,
 };
@@ -285,6 +285,23 @@ pub trait Styleable {
 // fn p_2(mut self) -> Self where Self: Sized;
 pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
+
+    fn h(mut self, height: Length) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().size.height = Some(height);
+        self
+    }
+
+    fn full(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().size.width = Some(relative(1.));
+        self.declared_style().size.height = Some(relative(1.));
+        self
+    }
 
     fn relative(mut self) -> Self
     where
