@@ -1,5 +1,6 @@
 use crate::{
     elements::AnyRootElement,
+    fonts::TextStyle,
     geometry::{rect::RectF, Size},
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
@@ -30,7 +31,7 @@ use sqlez::{
     statement::Statement,
 };
 use std::{
-    any::TypeId,
+    any::{type_name, Any, TypeId},
     mem,
     ops::{Deref, DerefMut, Range, Sub},
 };
@@ -53,6 +54,8 @@ pub struct Window {
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
+    pub(crate) text_style_stack: Vec<TextStyle>,
+    pub(crate) theme_stack: Vec<Box<dyn Any>>,
     titlebar_height: f32,
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
@@ -100,6 +103,8 @@ impl Window {
             clicked_region: None,
             titlebar_height,
             appearance,
+            text_style_stack: Vec::new(),
+            theme_stack: Vec::new(),
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, handle);
@@ -1264,6 +1269,40 @@ impl<'a> WindowContext<'a> {
             None
         };
         handle
+    }
+
+    pub fn text_style(&self) -> TextStyle {
+        self.window
+            .text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(TextStyle::default(&self.font_cache))
+    }
+
+    pub fn push_text_style(&mut self, style: TextStyle) {
+        self.window.text_style_stack.push(style);
+    }
+
+    pub fn pop_text_style(&mut self) {
+        self.window.text_style_stack.pop();
+    }
+
+    pub fn theme<T: 'static>(&self) -> &T {
+        self.window
+            .theme_stack
+            .iter()
+            .rev()
+            .find_map(|theme| theme.downcast_ref())
+            .ok_or_else(|| anyhow!("no theme provided of type {}", type_name::<T>()))
+            .unwrap()
+    }
+
+    pub fn push_theme<T: 'static>(&mut self, theme: T) {
+        self.window.theme_stack.push(Box::new(theme));
+    }
+
+    pub fn pop_theme(&mut self) {
+        self.window.theme_stack.pop();
     }
 }
 

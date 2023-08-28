@@ -327,6 +327,38 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    fn flex(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().display = Some(Display::Flex);
+        self
+    }
+
+    fn flex_col(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_direction = Some(FlexDirection::Column);
+        self
+    }
+
+    fn flex_row(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_direction = Some(FlexDirection::Row);
+        self
+    }
+
+    fn flex_grow(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_grow = Some(1.);
+        self
+    }
+
     fn fill<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,

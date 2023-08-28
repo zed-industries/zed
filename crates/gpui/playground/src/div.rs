@@ -65,7 +65,8 @@ impl<V: 'static> Element<V> for Div<V> {
     {
         let style = &self.computed_style();
         let pop_text_style = style.text_style().map_or(false, |style| {
-            cx.push_text_style(cx.text_style().clone().refined(&style));
+            let style = cx.text_style().clone().refined(&style);
+            cx.push_text_style(style);
             true
         });
         style.paint_background(layout.bounds, cx);

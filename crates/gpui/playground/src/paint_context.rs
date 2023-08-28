@@ -3,7 +3,6 @@ use derive_more::{Deref, DerefMut};
 pub use gpui::taffy::tree::NodeId;
 use gpui::{
     scene::EventHandler, EventContext, Layout, LayoutId, PaintContext as LegacyPaintContext,
-    RenderContext, ViewContext,
 };
 use std::{any::TypeId, rc::Rc};
 
@@ -13,24 +12,6 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
     pub(crate) scene: &'d mut gpui::SceneBuilder,
-}
-
-impl<'a, 'b, V> RenderContext<'a, 'b, V> for PaintContext<'a, 'b, '_, '_, V> {
-    fn text_style(&self) -> gpui::fonts::TextStyle {
-        self.legacy_cx.text_style()
-    }
-
-    fn push_text_style(&mut self, style: gpui::fonts::TextStyle) {
-        self.legacy_cx.push_text_style(style)
-    }
-
-    fn pop_text_style(&mut self) {
-        self.legacy_cx.pop_text_style()
-    }
-
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        &mut self.view_context
-    }
 }
 
 impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {

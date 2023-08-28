@@ -1,16 +1,15 @@
 #![allow(dead_code, unused_variables)]
-use crate::{
-    color::black, element::ParentElement, style::StyleHelpers, themes::rose_pine::RosePinePalette,
-};
-use element::Element;
+use crate::{element::ParentElement, style::StyleHelpers};
+use element::{Element, IntoElement};
 use gpui::{
     geometry::{pixels, rect::RectF, vector::vec2f},
     platform::WindowOptions,
     ViewContext,
 };
 use log::LevelFilter;
+use playground_macros::Element;
 use simplelog::SimpleLogger;
-use themes::{rose_pine, ThemeColors};
+use themes::{current_theme, rose_pine, Theme, ThemeColors};
 use view::view;
 
 mod adapter;
@@ -41,30 +40,63 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| view(|cx| workspace(&rose_pine::moon(), cx)),
+            |_| {
+                view(|cx| {
+                    playground(Theme {
+                        colors: rose_pine::dawn(),
+                    })
+                })
+            },
         );
         cx.platform().activate(true);
     });
 }
 
-fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
-    use div::div;
-    let p = RosePinePalette::dawn();
-
-    div()
-        .text_color(black())
-        .h_full()
-        .w_full()
-        .fill(p.rose)
-        .child(div().fill(p.pine).child(div().fill(p.love).w_6().h_3()))
-        .child(div().fill(p.gold).child(div().fill(p.iris).w_3().h_3()))
+fn playground<V: 'static>(theme: Theme) -> impl Element<V> {
+    workspace().themed(theme)
 }
 
-fn workspace<V: 'static>(theme: &ThemeColors, cx: &mut ViewContext<V>) -> impl Element<V> {
-    use div::div;
-    // one line change1!
-    div()
-        .full()
-        .fill(theme.base(0.5))
-        .child(div().h(pixels(cx.titlebar_height())).fill(theme.base(0.)))
+fn workspace<V: 'static>() -> impl Element<V> {
+    WorkspaceElement
+}
+
+use crate as playground;
+#[derive(Element)]
+struct WorkspaceElement;
+
+impl WorkspaceElement {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+        use div::div;
+        let theme = &cx.theme::<Theme>().colors;
+        // one line change1!
+        div()
+            .full()
+            .flex()
+            .flex_col()
+            .fill(theme.base(0.5))
+            .child(self.title_bar(cx))
+            .child(self.stage(cx))
+            .child(self.status_bar(cx))
+    }
+
+    fn title_bar<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        use div::div;
+
+        let theme = &current_theme(cx).colors;
+        div().h(pixels(cx.titlebar_height())).fill(theme.base(0.))
+    }
+
+    fn status_bar<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        use div::div;
+
+        let theme = &current_theme(cx).colors;
+        div().h(pixels(cx.titlebar_height())).fill(theme.base(0.))
+    }
+
+    fn stage<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        use div::div;
+
+        let theme = &current_theme(cx).colors;
+        div().flex_grow()
+    }
 }
