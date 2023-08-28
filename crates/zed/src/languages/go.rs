@@ -37,6 +37,10 @@ impl super::LspAdapter for GoLspAdapter {
         LanguageServerName("gopls".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "gopls"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,

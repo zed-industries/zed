@@ -56,6 +56,10 @@ impl LspAdapter for TypeScriptLspAdapter {
         LanguageServerName("typescript-language-server".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "tsserver"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -216,6 +220,10 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("eslint".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "eslint"
     }
 
     async fn fetch_latest_server_version(

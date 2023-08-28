@@ -90,6 +90,7 @@ pub struct LanguageServerName(pub Arc<str>);
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
+    pub short_name: &'static str,
     pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
@@ -100,6 +101,7 @@ pub struct CachedLspAdapter {
 impl CachedLspAdapter {
     pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name().await;
+        let short_name = adapter.short_name();
         let initialization_options = adapter.initialization_options().await;
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
         let disk_based_diagnostics_progress_token =
@@ -108,6 +110,7 @@ impl CachedLspAdapter {
 
         Arc::new(CachedLspAdapter {
             name,
+            short_name,
             initialization_options,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
@@ -215,6 +218,8 @@ pub trait LspAdapterDelegate: Send + Sync {
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
+
+    fn short_name(&self) -> &'static str;
 
     async fn fetch_latest_server_version(
         &self,
@@ -1694,6 +1699,10 @@ impl Default for FakeLspAdapter {
 impl LspAdapter for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "FakeLspAdapter"
     }
 
     async fn fetch_latest_server_version(

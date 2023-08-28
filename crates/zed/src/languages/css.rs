@@ -37,6 +37,10 @@ impl LspAdapter for CssLspAdapter {
         LanguageServerName("vscode-css-language-server".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "css"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

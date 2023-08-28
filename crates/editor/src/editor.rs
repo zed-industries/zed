@@ -810,6 +810,7 @@ struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
+    project: Option<ModelHandle<Project>>,
     completions: Arc<[Completion]>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
@@ -853,6 +854,26 @@ impl CompletionsMenu {
     fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
+        let language_servers = self.project.as_ref().map(|project| {
+            project
+                .read(cx)
+                .language_servers_for_buffer(self.buffer.read(cx), cx)
+                .map(|(adapter, server)| (server.server_id(), format!("{}: ", adapter.short_name)))
+                .collect::<Vec<_>>()
+        });
+        let get_server_name = move |lookup_server_id: lsp::LanguageServerId| -> Option<String> {
+            language_servers
+                .iter()
+                .flatten()
+                .find_map(|(server_id, server_name)| {
+                    if *server_id == lookup_server_id {
+                        Some(server_name.clone())
+                    } else {
+                        None
+                    }
+                })
+        };
+
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
@@ -879,19 +900,31 @@ impl CompletionsMenu {
                                     style.autocomplete.item
                                 };
 
-                                Text::new(completion.label.text.clone(), style.text.clone())
-                                    .with_soft_wrap(false)
-                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                        &completion.label.text,
-                                        style.text.color.into(),
-                                        styled_runs_for_code_label(
-                                            &completion.label,
-                                            &style.syntax,
-                                        ),
-                                        &mat.positions,
-                                    ))
-                                    .contained()
-                                    .with_style(item_style)
+                                let completion_label =
+                                    Text::new(completion.label.text.clone(), style.text.clone())
+                                        .with_soft_wrap(false)
+                                        .with_highlights(
+                                            combine_syntax_and_fuzzy_match_highlights(
+                                                &completion.label.text,
+                                                style.text.color.into(),
+                                                styled_runs_for_code_label(
+                                                    &completion.label,
+                                                    &style.syntax,
+                                                ),
+                                                &mat.positions,
+                                            ),
+                                        );
+
+                                if let Some(server_name) = get_server_name(completion.server_id) {
+                                    Flex::row()
+                                        .with_child(Text::new(server_name, style.text.clone()))
+                                        .with_child(completion_label)
+                                        .into_any()
+                                } else {
+                                    completion_label.into_any()
+                                }
+                                .contained()
+                                .with_style(item_style)
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -2850,6 +2883,7 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
+        let project = self.project.clone();
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -2868,6 +2902,7 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
+                        project,
                         completions: completions.into(),
                         matches: Vec::new().into(),
                         selected_item: 0,
