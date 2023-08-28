@@ -71,22 +71,19 @@ impl<V: 'static, E: Element<V>> Default for ElementPhase<V, E> {
 impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
     fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
         let result;
-        self.phase = match std::mem::take(&mut self.phase) {
-            ElementPhase::Init => match self.element.layout(view, cx) {
-                Ok((layout_id, paint_state)) => {
-                    result = Ok(layout_id);
-                    ElementPhase::PostLayout {
-                        layout_id,
-                        paint_state,
-                    }
+        self.phase = match self.element.layout(view, cx) {
+            Ok((layout_id, paint_state)) => {
+                result = Ok(layout_id);
+                ElementPhase::PostLayout {
+                    layout_id,
+                    paint_state,
                 }
-                Err(error) => {
-                    let message = error.to_string();
-                    result = Err(error);
-                    ElementPhase::Error(message)
-                }
-            },
-            _ => panic!("invalid element phase to call layout"),
+            }
+            Err(error) => {
+                let message = error.to_string();
+                result = Err(error);
+                ElementPhase::Error(message)
+            }
         };
 
         result
