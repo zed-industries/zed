@@ -472,48 +472,48 @@ impl AssistantPanel {
             .text_for_range(range.start..range.end)
             .collect::<Rope>();
 
-        let mut base_indentation: Option<language::IndentSize> = None;
         let selection_start = range.start.to_point(&snapshot);
         let selection_end = range.end.to_point(&snapshot);
+
+        let mut base_indent: Option<language::IndentSize> = None;
         let mut start_row = selection_start.row;
         if snapshot.is_line_blank(start_row) {
             if let Some(prev_non_blank_row) = snapshot.prev_non_blank_row(start_row) {
                 start_row = prev_non_blank_row;
             }
         }
-
         for row in start_row..=selection_end.row {
             if snapshot.is_line_blank(row) {
                 continue;
             }
 
-            let line_indentation = snapshot.indent_size_for_line(row);
-            if let Some(base_indentation) = base_indentation.as_mut() {
-                if line_indentation.len < base_indentation.len {
-                    *base_indentation = line_indentation;
+            let line_indent = snapshot.indent_size_for_line(row);
+            if let Some(base_indent) = base_indent.as_mut() {
+                if line_indent.len < base_indent.len {
+                    *base_indent = line_indent;
                 }
             } else {
-                base_indentation = Some(line_indentation);
+                base_indent = Some(line_indent);
             }
         }
 
         let mut normalized_selected_text = selected_text.clone();
-        if let Some(base_indentation) = base_indentation {
+        if let Some(base_indent) = base_indent {
             for row in selection_start.row..=selection_end.row {
                 let selection_row = row - selection_start.row;
                 let line_start =
                     normalized_selected_text.point_to_offset(Point::new(selection_row, 0));
-                let indentation_len = if row == selection_start.row {
-                    base_indentation.len.saturating_sub(selection_start.column)
+                let indent_len = if row == selection_start.row {
+                    base_indent.len.saturating_sub(selection_start.column)
                 } else {
                     let line_len = normalized_selected_text.line_len(selection_row);
-                    cmp::min(line_len, base_indentation.len)
+                    cmp::min(line_len, base_indent.len)
                 };
-                let indentation_end = cmp::min(
-                    line_start + indentation_len as usize,
+                let indent_end = cmp::min(
+                    line_start + indent_len as usize,
                     normalized_selected_text.len(),
                 );
-                normalized_selected_text.replace(line_start..indentation_end, "");
+                normalized_selected_text.replace(line_start..indent_end, "");
             }
         }
 
@@ -581,7 +581,11 @@ impl AssistantPanel {
                     "Assume the cursor is located where the `<|>` marker is."
                 )
                 .unwrap();
-                writeln!(prompt, "Assume your answer will be inserted at the cursor.").unwrap();
+                writeln!(
+                    prompt,
+                    "Code can't be replaced, so assume your answer will be inserted at the cursor."
+                )
+                .unwrap();
                 writeln!(
                     prompt,
                     "Complete the code given the user prompt: {user_prompt}"
@@ -591,7 +595,11 @@ impl AssistantPanel {
         }
         writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
         writeln!(prompt, "Always wrap your response in a Markdown codeblock.").unwrap();
-        writeln!(prompt, "Never make remarks, always output code.").unwrap();
+        writeln!(
+            prompt,
+            "Never make remarks about the output, always output just code."
+        )
+        .unwrap();
 
         let request = OpenAIRequest {
             model: model.full_name().into(),
@@ -626,40 +634,51 @@ impl AssistantPanel {
                     futures::pin_mut!(chunks);
                     let mut diff = StreamingDiff::new(selected_text.to_string());
 
-                    let indentation_len;
-                    let indentation_text;
-                    if let Some(base_indentation) = base_indentation {
-                        indentation_len = base_indentation.len;
-                        indentation_text = match base_indentation.kind {
+                    let indent_len;
+                    let indent_text;
+                    if let Some(base_indent) = base_indent {
+                        indent_len = base_indent.len;
+                        indent_text = match base_indent.kind {
                             language::IndentKind::Space => " ",
                             language::IndentKind::Tab => "\t",
                         };
                     } else {
-                        indentation_len = 0;
-                        indentation_text = "";
+                        indent_len = 0;
+                        indent_text = "";
                     };
 
-                    let mut new_text = indentation_text
-                        .repeat(indentation_len.saturating_sub(selection_start.column) as usize);
+                    let mut autoindent = true;
+                    let mut first_chunk = true;
+                    let mut new_text = String::new();
 
-                    while let Some(message) = chunks.next().await {
-                        let mut lines = message.split('\n');
+                    while let Some(chunk) = chunks.next().await {
+                        if first_chunk && (chunk.starts_with(' ') || chunk.starts_with('\t')) {
+                            autoindent = false;
+                        }
+
+                        if first_chunk && autoindent {
+                            let first_line_indent =
+                                indent_len.saturating_sub(selection_start.column) as usize;
+                            new_text = indent_text.repeat(first_line_indent);
+                        }
+
+                        let mut lines = chunk.split('\n');
                         if let Some(first_line) = lines.next() {
                             new_text.push_str(first_line);
                         }
 
                         for line in lines {
                             new_text.push('\n');
-                            if !line.is_empty() {
-                                new_text
-                                    .push_str(&indentation_text.repeat(indentation_len as usize));
-                                new_text.push_str(line);
+                            if !line.is_empty() && autoindent {
+                                new_text.push_str(&indent_text.repeat(indent_len as usize));
                             }
+                            new_text.push_str(line);
                         }
 
                         let hunks = diff.push_new(&new_text);
                         hunks_tx.send(hunks).await?;
                         new_text.clear();
+                        first_chunk = false;
                     }
                     hunks_tx.send(diff.finish()).await?;
 
