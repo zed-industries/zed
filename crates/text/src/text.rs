@@ -264,7 +264,19 @@ impl History {
         }
     }
 
-    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
+        assert_eq!(self.transaction_depth, 0);
+
+        let entry_ix = self
+            .undo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)?;
+        let entry = self.undo_stack.remove(entry_ix);
+        self.redo_stack.push(entry);
+        self.redo_stack.last()
+    }
+
+    fn remove_from_undo_until(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
         assert_eq!(self.transaction_depth, 0);
 
         let redo_stack_start_len = self.redo_stack.len();
@@ -1207,19 +1219,20 @@ impl Buffer {
         }
     }
 
-    pub fn undo_and_forget(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        if let Some(transaction) = self.history.forget(transaction_id) {
-            self.undo_or_redo(transaction).log_err()
-        } else {
-            None
-        }
+    pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
+        let transaction = self
+            .history
+            .remove_from_undo(transaction_id)?
+            .transaction
+            .clone();
+        self.undo_or_redo(transaction).log_err()
     }
 
     #[allow(clippy::needless_collect)]
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
-            .remove_from_undo(transaction_id)
+            .remove_from_undo_until(transaction_id)
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();

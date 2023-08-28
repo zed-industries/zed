@@ -824,13 +824,15 @@ impl MultiBuffer {
         None
     }
 
-    pub fn undo_and_forget(&mut self, transaction_id: TransactionId, cx: &mut ModelContext<Self>) {
+    pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut ModelContext<Self>) {
         if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, cx| buffer.undo_and_forget(transaction_id, cx));
-        } else if let Some(transaction) = self.history.forget(transaction_id) {
-            for (buffer_id, transaction_id) in transaction.buffer_transactions {
-                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
-                    buffer.update(cx, |buffer, cx| buffer.undo_and_forget(transaction_id, cx));
+            buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
+        } else if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
+            for (buffer_id, transaction_id) in &transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.undo_transaction(*transaction_id, cx)
+                    });
                 }
             }
         }
@@ -3452,6 +3454,16 @@ impl History {
         } else {
             None
         }
+    }
+
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+        let ix = self
+            .undo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)?;
+        let transaction = self.undo_stack.remove(ix);
+        self.redo_stack.push(transaction);
+        self.redo_stack.last()
     }
 
     fn group(&mut self) -> Option<TransactionId> {

@@ -442,7 +442,7 @@ impl AssistantPanel {
                     if let Some(transaction_id) = pending_assist.transaction_id {
                         editor.update(cx, |editor, cx| {
                             editor.buffer().update(cx, |buffer, cx| {
-                                buffer.undo_and_forget(transaction_id, cx)
+                                buffer.undo_transaction(transaction_id, cx)
                             });
                         });
                     }
