@@ -103,6 +103,7 @@ impl LspAdapter for TailwindLspAdapter {
                 "html": "html",
                 "css": "css",
                 "javascript": "javascript",
+                "typescriptreact": "typescriptreact",
             },
         }))
     }
@@ -122,6 +123,7 @@ impl LspAdapter for TailwindLspAdapter {
                 ("HTML".to_string(), "html".to_string()),
                 ("CSS".to_string(), "css".to_string()),
                 ("JavaScript".to_string(), "javascript".to_string()),
+                ("TSX".to_string(), "typescriptreact".to_string()),
             ]
             .into_iter(),
         )
