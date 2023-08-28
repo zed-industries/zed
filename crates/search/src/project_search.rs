@@ -1597,17 +1597,6 @@ impl View for ProjectSearchBar {
                         .contained()
                         .with_style(theme.search.modes_container),
                 )
-                .with_child(super::search_bar::render_close_button(
-                    "Dismiss Project Search",
-                    &theme.search,
-                    cx,
-                    |_, this, cx| {
-                        if let Some(search) = this.active_project_search.as_mut() {
-                            search.update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
-                        }
-                    },
-                    None,
-                ))
                 .constrained()
                 .with_height(theme.search.search_bar_row_height)
                 .aligned()

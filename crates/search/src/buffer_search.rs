@@ -214,7 +214,7 @@ impl View for BufferSearchBar {
 
         let icon_style = theme.search.editor_icon.clone();
         let nav_column = Flex::row()
-            .with_child(self.render_action_button("Select All", cx))
+            .with_child(self.render_action_button("all", cx))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
             .with_child(Flex::row().with_children(match_count))
@@ -268,13 +268,6 @@ impl View for BufferSearchBar {
                     .contained()
                     .with_style(theme.search.modes_container),
             )
-            .with_child(super::search_bar::render_close_button(
-                "Dismiss Buffer Search",
-                &theme.search,
-                cx,
-                |_, this, cx| this.dismiss(&Default::default(), cx),
-                Some(Box::new(Dismiss)),
-            ))
             .constrained()
             .with_height(theme.search.search_bar_row_height)
             .aligned()

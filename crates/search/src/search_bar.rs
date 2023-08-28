@@ -13,34 +13,6 @@ use crate::{
     SelectNextMatch, SelectPrevMatch,
 };
 
-pub(super) fn render_close_button<V: View>(
-    tooltip: &'static str,
-    theme: &theme::Search,
-    cx: &mut ViewContext<V>,
-    on_click: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
-    dismiss_action: Option<Box<dyn Action>>,
-) -> AnyElement<V> {
-    let tooltip_style = theme::current(cx).tooltip.clone();
-
-    enum CloseButton {}
-    MouseEventHandler::new::<CloseButton, _>(0, cx, |state, _| {
-        let style = theme.dismiss_button.style_for(state);
-        Svg::new("icons/x_mark_8.svg")
-            .with_color(style.color)
-            .constrained()
-            .with_width(style.icon_width)
-            .aligned()
-            .contained()
-            .with_style(style.container)
-            .constrained()
-            .with_height(theme.search_bar_row_height)
-    })
-    .on_click(MouseButton::Left, on_click)
-    .with_cursor_style(CursorStyle::PointingHand)
-    .with_tooltip::<CloseButton>(0, tooltip.to_string(), dismiss_action, tooltip_style, cx)
-    .into_any()
-}
-
 pub(super) fn render_nav_button<V: View>(
     icon: &'static str,
     direction: Direction,
