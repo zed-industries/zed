@@ -421,7 +421,7 @@ impl SearchableItem for FeedbackEditor {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
         self.editor

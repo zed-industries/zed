@@ -2,7 +2,7 @@ use crate::{
     history::SearchHistory,
     mode::{next_mode, SearchMode},
     search_bar::{render_nav_button, render_search_mode_button},
-    CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches,
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, SearchOptions, SelectAllMatches,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
@@ -54,6 +54,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::previous_history_query);
     cx.add_action(BufferSearchBar::cycle_mode);
     cx.add_action(BufferSearchBar::cycle_mode_on_pane);
+    cx.add_action(BufferSearchBar::replace_all);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -706,7 +707,7 @@ impl BufferSearchBar {
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
-                let query = if self.current_mode == SearchMode::Regex {
+                let query: Arc<_> = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -729,7 +730,8 @@ impl BufferSearchBar {
                         Vec::new(),
                         Vec::new(),
                     )
-                };
+                }
+                .into();
 
                 let query_text = query.as_str().to_string();
                 let matches = active_searchable_item.find_matches(query, cx);
@@ -819,6 +821,19 @@ impl BufferSearchBar {
         }
         if should_propagate {
             cx.propagate_action();
+        }
+    }
+    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+        if !self.dismissed && self.active_match_index.is_some() {
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(matches) = self
+                    .searchable_items_with_matches
+                    .get(&searchable_item.downgrade())
+                {
+                    searchable_item.select_matches(matches, cx);
+                    self.focus_editor(&FocusEditor, cx);
+                }
+            }
         }
     }
 }

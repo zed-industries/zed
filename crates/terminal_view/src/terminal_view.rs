@@ -26,6 +26,7 @@ use std::{
     borrow::Cow,
     ops::RangeInclusive,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use terminal::{
@@ -375,10 +376,10 @@ impl TerminalView {
 
     pub fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<RangeInclusive<Point>>> {
-        let searcher = regex_search_for_query(query);
+        let searcher = regex_search_for_query(&query);
 
         if let Some(searcher) = searcher {
             self.terminal
@@ -481,7 +482,7 @@ fn possible_open_targets(
         .collect()
 }
 
-pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
+pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
     let searcher = RegexSearch::new(&query);
     searcher.ok()
@@ -846,10 +847,10 @@ impl SearchableItem for TerminalView {
     /// Get all of the matches for this query, should be done on the background
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
-        if let Some(searcher) = regex_search_for_query(query) {
+        if let Some(searcher) = regex_search_for_query(&query) {
             self.terminal()
                 .update(cx, |term, cx| term.find_matches(searcher, cx))
         } else {

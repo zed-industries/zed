@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use gpui::{
     AnyViewHandle, AnyWeakViewHandle, AppContext, Subscription, Task, ViewContext, ViewHandle,
@@ -74,7 +74,7 @@ pub trait SearchableItem: Item {
     }
     fn find_matches(
         &mut self,
-        query: SearchQuery,
+        query: Arc<SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>>;
     fn active_match_index(
@@ -113,7 +113,7 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> usize;
     fn find_matches(
         &self,
-        query: SearchQuery,
+        query: Arc<SearchQuery>,
         cx: &mut WindowContext,
     ) -> Task<Vec<Box<dyn Any + Send>>>;
     fn active_match_index(
@@ -189,7 +189,7 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
     }
     fn find_matches(
         &self,
-        query: SearchQuery,
+        query: Arc<SearchQuery>,
         cx: &mut WindowContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));

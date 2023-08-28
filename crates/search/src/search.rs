@@ -34,7 +34,8 @@ actions!(
         PreviousHistoryQuery,
         ActivateTextMode,
         ActivateSemanticMode,
-        ActivateRegexMode
+        ActivateRegexMode,
+        ReplaceAll
     ]
 );
 

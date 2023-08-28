@@ -26,6 +26,7 @@ use std::{
     iter,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use text::Selection;
 use util::{
@@ -1030,7 +1031,7 @@ impl SearchableItem for Editor {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);

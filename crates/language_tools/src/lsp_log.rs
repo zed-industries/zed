@@ -508,7 +508,7 @@ impl SearchableItem for LspLogView {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> gpui::Task<Vec<Self::Match>> {
         self.editor.update(cx, |e, cx| e.find_matches(query, cx))
