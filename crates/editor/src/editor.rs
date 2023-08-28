@@ -111,6 +111,8 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -3292,7 +3294,7 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.as_ref()?;
+        let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -3301,11 +3303,15 @@ impl Editor {
             return None;
         }
 
-        let actions = project.update(cx, |project, cx| {
-            project.code_actions(&start_buffer, start..end, cx)
-        });
         self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
-            let actions = actions.await;
+            cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
+
+            let actions = project
+                .update(&mut cx, |project, cx| {
+                    project.code_actions(&start_buffer, start..end, cx)
+                })
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 this.available_code_actions = actions.log_err().and_then(|actions| {
                     if actions.is_empty() {
@@ -3326,7 +3332,7 @@ impl Editor {
             return None;
         }
 
-        let project = self.project.as_ref()?;
+        let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
@@ -3337,12 +3343,19 @@ impl Editor {
             return None;
         }
 
-        let highlights = project.update(cx, |project, cx| {
-            project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
-        });
-
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
-            if let Some(highlights) = highlights.await.log_err() {
+            cx.background()
+                .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            let highlights = project
+                .update(&mut cx, |project, cx| {
+                    project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
+                })
+                .await
+                .log_err();
+
+            if let Some(highlights) = highlights {
                 this.update(&mut cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
