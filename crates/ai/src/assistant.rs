@@ -249,7 +249,7 @@ impl AssistantPanel {
     }
 
     fn new_inline_assist(&mut self, editor: &ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
-        let id = post_inc(&mut self.next_inline_assist_id);
+        let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selection = editor.read(cx).selections.newest_anchor().clone();
         let range = selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot);
@@ -272,7 +272,7 @@ impl AssistantPanel {
         });
         let inline_assistant = cx.add_view(|cx| {
             let assistant = InlineAssistant {
-                id,
+                id: inline_assist_id,
                 prompt_editor,
                 confirmed: false,
                 has_focus: false,
@@ -313,7 +313,7 @@ impl AssistantPanel {
         });
 
         self.pending_inline_assists.insert(
-            id,
+            inline_assist_id,
             PendingInlineAssist {
                 kind: assist_kind,
                 editor: editor.downgrade(),
@@ -326,12 +326,30 @@ impl AssistantPanel {
                     cx.subscribe(&inline_assistant, Self::handle_inline_assistant_event),
                     cx.subscribe(editor, {
                         let inline_assistant = inline_assistant.downgrade();
-                        move |_, editor, event, cx| {
+                        move |this, editor, event, cx| {
                             if let Some(inline_assistant) = inline_assistant.upgrade(cx) {
-                                if let editor::Event::SelectionsChanged { local } = event {
-                                    if *local && inline_assistant.read(cx).has_focus {
-                                        cx.focus(&editor);
+                                match event {
+                                    editor::Event::SelectionsChanged { local } => {
+                                        if *local && inline_assistant.read(cx).has_focus {
+                                            cx.focus(&editor);
+                                        }
                                     }
+                                    editor::Event::TransactionUndone {
+                                        transaction_id: tx_id,
+                                    } => {
+                                        if let Some(pending_assist) =
+                                            this.pending_inline_assists.get(&inline_assist_id)
+                                        {
+                                            if pending_assist.transaction_id == Some(*tx_id) {
+                                                this.close_inline_assist(
+                                                    inline_assist_id,
+                                                    false,
+                                                    cx,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -342,7 +360,7 @@ impl AssistantPanel {
         self.pending_inline_assist_ids_by_editor
             .entry(editor.downgrade())
             .or_default()
-            .push(id);
+            .push(inline_assist_id);
         self.update_highlights_for_editor(&editor, cx);
     }
 

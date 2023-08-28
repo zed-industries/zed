@@ -4975,6 +4975,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
+            cx.emit(Event::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -8403,6 +8406,9 @@ pub enum Event {
     ScrollPositionChanged {
         local: bool,
         autoscroll: bool,
+    },
+    TransactionUndone {
+        transaction_id: TransactionId,
     },
     Closed,
 }
