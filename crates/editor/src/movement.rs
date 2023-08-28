@@ -1,7 +1,13 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, ToPoint};
+use crate::{char_kind, CharKind, ToOffset, ToPoint};
 use language::Point;
 use std::ops::Range;
+
+#[derive(Debug, PartialEq)]
+pub enum FindRange {
+    SingleLine,
+    MultiLine,
+}
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
@@ -179,7 +185,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let language = map.buffer_snapshot.language_at(raw_point);
 
-    find_preceding_boundary(map, point, |left, right| {
+    find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(language, left) != char_kind(language, right) && !right.is_whitespace())
             || left == '\n'
     })
@@ -188,7 +194,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let language = map.buffer_snapshot.language_at(raw_point);
-    find_preceding_boundary(map, point, |left, right| {
+    find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
         let is_word_start =
             char_kind(language, left) != char_kind(language, right) && !right.is_whitespace();
         let is_subword_start =
@@ -200,7 +206,7 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let language = map.buffer_snapshot.language_at(raw_point);
-    find_boundary(map, point, |left, right| {
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(language, left) != char_kind(language, right) && !left.is_whitespace())
             || right == '\n'
     })
@@ -209,7 +215,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let language = map.buffer_snapshot.language_at(raw_point);
-    find_boundary(map, point, |left, right| {
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
         let is_word_end =
             (char_kind(language, left) != char_kind(language, right)) && !left.is_whitespace();
         let is_subword_end =
@@ -272,79 +278,34 @@ pub fn end_of_paragraph(
     map.max_point()
 }
 
-/// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
-/// given predicate returning true. The predicate is called with the character to the left and right
-/// of the candidate boundary location, and will be called with `\n` characters indicating the start
-/// or end of a line.
+/// Scans for a boundary preceding the given start point `from` until a boundary is found,
+/// indicated by the given predicate returning true.
+/// The predicate is called with the character to the left and right of the candidate boundary location.
+/// If FindRange::SingleLine is specified and no boundary is found before the start of the current line, the start of the current line will be returned.
 pub fn find_preceding_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,
+    find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    let mut start_column = 0;
-    let mut soft_wrap_row = from.row() + 1;
+    let mut prev_ch = None;
+    let mut offset = from.to_point(map).to_offset(&map.buffer_snapshot);
 
-    let mut prev = None;
-    for (ch, point) in map.reverse_chars_at(from) {
-        // Recompute soft_wrap_indent if the row has changed
-        if point.row() != soft_wrap_row {
-            soft_wrap_row = point.row();
-
-            if point.row() == 0 {
-                start_column = 0;
-            } else if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
-                start_column = indent;
-            }
-        }
-
-        // If the current point is in the soft_wrap, skip comparing it
-        if point.column() < start_column {
-            continue;
-        }
-
-        if let Some((prev_ch, prev_point)) = prev {
-            if is_boundary(ch, prev_ch) {
-                return map.clip_point(prev_point, Bias::Left);
-            }
-        }
-
-        prev = Some((ch, point));
-    }
-    map.clip_point(DisplayPoint::zero(), Bias::Left)
-}
-
-/// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
-/// given predicate returning true. The predicate is called with the character to the left and right
-/// of the candidate boundary location, and will be called with `\n` characters indicating the start
-/// or end of a line. If no boundary is found, the start of the line is returned.
-pub fn find_preceding_boundary_in_line(
-    map: &DisplaySnapshot,
-    from: DisplayPoint,
-    mut is_boundary: impl FnMut(char, char) -> bool,
-) -> DisplayPoint {
-    let mut start_column = 0;
-    if from.row() > 0 {
-        if let Some(indent) = map.soft_wrap_indent(from.row() - 1) {
-            start_column = indent;
-        }
-    }
-
-    let mut prev = None;
-    for (ch, point) in map.reverse_chars_at(from) {
-        if let Some((prev_ch, prev_point)) = prev {
-            if is_boundary(ch, prev_ch) {
-                return map.clip_point(prev_point, Bias::Left);
-            }
-        }
-
-        if ch == '\n' || point.column() < start_column {
+    for ch in map.buffer_snapshot.reversed_chars_at(offset) {
+        if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(ch, prev_ch) {
+                break;
+            }
+        }
 
-        prev = Some((ch, point));
+        offset -= ch.len_utf8();
+        prev_ch = Some(ch);
     }
 
-    map.clip_point(prev.map(|(_, point)| point).unwrap_or(from), Bias::Left)
+    map.clip_point(offset.to_display_point(map), Bias::Left)
 }
 
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
@@ -354,47 +315,26 @@ pub fn find_preceding_boundary_in_line(
 pub fn find_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,
+    find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
+    let mut offset = from.to_offset(&map, Bias::Right);
     let mut prev_ch = None;
-    for (ch, point) in map.chars_at(from) {
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                return map.clip_point(point, Bias::Right);
-            }
-        }
 
-        prev_ch = Some(ch);
-    }
-    map.clip_point(map.max_point(), Bias::Right)
-}
-
-/// Scans for a boundary following the given start point until a boundary is found, indicated by the
-/// given predicate returning true. The predicate is called with the character to the left and right
-/// of the candidate boundary location, and will be called with `\n` characters indicating the start
-/// or end of a line. If no boundary is found, the end of the line is returned
-pub fn find_boundary_in_line(
-    map: &DisplaySnapshot,
-    from: DisplayPoint,
-    mut is_boundary: impl FnMut(char, char) -> bool,
-) -> DisplayPoint {
-    let mut prev = None;
-    for (ch, point) in map.chars_at(from) {
-        if let Some((prev_ch, _)) = prev {
-            if is_boundary(prev_ch, ch) {
-                return map.clip_point(point, Bias::Right);
-            }
-        }
-
-        prev = Some((ch, point));
-
-        if ch == '\n' {
+    for ch in map.buffer_snapshot.chars_at(offset) {
+        if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
-    }
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(prev_ch, ch) {
+                break;
+            }
+        }
 
-    // Return the last position checked so that we give a point right before the newline or eof.
-    map.clip_point(prev.map(|(_, point)| point).unwrap_or(from), Bias::Right)
+        offset += ch.len_utf8();
+        prev_ch = Some(ch);
+    }
+    map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
@@ -533,7 +473,12 @@ mod tests {
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
-                find_preceding_boundary(&snapshot, display_points[1], is_boundary),
+                find_preceding_boundary(
+                    &snapshot,
+                    display_points[1],
+                    FindRange::MultiLine,
+                    is_boundary
+                ),
                 display_points[0]
             );
         }
@@ -612,20 +557,14 @@ mod tests {
             find_preceding_boundary(
                 &snapshot,
                 buffer_snapshot.len().to_display_point(&snapshot),
-                |left, _| left == 'a',
+                FindRange::MultiLine,
+                |left, _| left == 'e',
             ),
-            0.to_display_point(&snapshot),
+            snapshot
+                .buffer_snapshot
+                .offset_to_point(5)
+                .to_display_point(&snapshot),
             "Should not stop at inlays when looking for boundaries"
-        );
-
-        assert_eq!(
-            find_preceding_boundary_in_line(
-                &snapshot,
-                buffer_snapshot.len().to_display_point(&snapshot),
-                |left, _| left == 'a',
-            ),
-            0.to_display_point(&snapshot),
-            "Should not stop at inlays when looking for boundaries in line"
         );
     }
 
@@ -699,7 +638,12 @@ mod tests {
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
-                find_boundary(&snapshot, display_points[0], is_boundary),
+                find_boundary(
+                    &snapshot,
+                    display_points[0],
+                    FindRange::MultiLine,
+                    is_boundary
+                ),
                 display_points[1]
             );
         }

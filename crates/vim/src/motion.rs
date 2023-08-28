@@ -3,7 +3,8 @@ use std::{cmp, sync::Arc};
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement, Bias, CharKind, DisplayPoint, ToOffset,
+    movement::{self, FindRange},
+    Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -592,7 +593,7 @@ pub(crate) fn next_word_start(
     let language = map.buffer_snapshot.language_at(point.to_point(map));
     for _ in 0..times {
         let mut crossed_newline = false;
-        point = movement::find_boundary(map, point, |left, right| {
+        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
             let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
             let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
             let at_newline = right == '\n';
@@ -616,8 +617,14 @@ fn next_word_end(
 ) -> DisplayPoint {
     let language = map.buffer_snapshot.language_at(point.to_point(map));
     for _ in 0..times {
-        *point.column_mut() += 1;
-        point = movement::find_boundary(map, point, |left, right| {
+        if point.column() < map.line_len(point.row()) {
+            *point.column_mut() += 1;
+        } else if point.row() < map.max_buffer_row() {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        }
+        //   *point.column_mut() += 1;
+        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
             let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
             let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
 
@@ -649,12 +656,13 @@ fn previous_word_start(
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
-        point = movement::find_preceding_boundary(map, point, |left, right| {
-            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+        point =
+            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+                let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
+                let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
 
-            (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-        });
+                (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
+            });
     }
     point
 }

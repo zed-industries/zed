@@ -1,6 +1,11 @@
 use std::ops::Range;
 
-use editor::{char_kind, display_map::DisplaySnapshot, movement, Bias, CharKind, DisplayPoint};
+use editor::{
+    char_kind,
+    display_map::DisplaySnapshot,
+    movement::{self, FindRange},
+    Bias, CharKind, DisplayPoint,
+};
 use gpui::{actions, impl_actions, AppContext, WindowContext};
 use language::Selection;
 use serde::Deserialize;
@@ -178,15 +183,16 @@ fn in_word(
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let language = map.buffer_snapshot.language_at(relative_to.to_point(map));
-    let start = movement::find_preceding_boundary_in_line(
+    let start = movement::find_preceding_boundary(
         map,
         right(map, relative_to, 1),
+        movement::FindRange::SingleLine,
         |left, right| {
             char_kind(language, left).coerce_punctuation(ignore_punctuation)
                 != char_kind(language, right).coerce_punctuation(ignore_punctuation)
         },
     );
-    let end = movement::find_boundary_in_line(map, relative_to, |left, right| {
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         char_kind(language, left).coerce_punctuation(ignore_punctuation)
             != char_kind(language, right).coerce_punctuation(ignore_punctuation)
     });
@@ -241,9 +247,10 @@ fn around_next_word(
 ) -> Option<Range<DisplayPoint>> {
     let language = map.buffer_snapshot.language_at(relative_to.to_point(map));
     // Get the start of the word
-    let start = movement::find_preceding_boundary_in_line(
+    let start = movement::find_preceding_boundary(
         map,
         right(map, relative_to, 1),
+        FindRange::SingleLine,
         |left, right| {
             char_kind(language, left).coerce_punctuation(ignore_punctuation)
                 != char_kind(language, right).coerce_punctuation(ignore_punctuation)
@@ -251,7 +258,7 @@ fn around_next_word(
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, |left, right| {
+    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
         let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
         let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
 
@@ -566,11 +573,18 @@ mod test {
     async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("The quick ˇbrown\nfox").await;
+        /*
+                cx.set_shared_state("The quick ˇbrown\nfox").await;
+                cx.simulate_shared_keystrokes(["v"]).await;
+                cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+                cx.simulate_shared_keystrokes(["i", "w"]).await;
+                cx.assert_shared_state("The quick «brownˇ»\nfox").await;
+        */
+        cx.set_shared_state("The quick brown\nˇ\nfox").await;
         cx.simulate_shared_keystrokes(["v"]).await;
-        cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
         cx.simulate_shared_keystrokes(["i", "w"]).await;
-        cx.assert_shared_state("The quick «brownˇ»\nfox").await;
+        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
 
         cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
             .await;

@@ -153,6 +153,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
+        let marked_text = marked_text.replace("•", " ");
         let neovim = self.neovim_state().await;
         let editor = self.editor_state();
         if neovim == marked_text && neovim == editor {
@@ -184,9 +185,9 @@ impl<'a> NeovimBackedTestContext<'a> {
             message,
             initial_state,
             self.recent_keystrokes.join(" "),
-            marked_text,
-            neovim,
-            editor
+            marked_text.replace(" \n", "•\n"),
+            neovim.replace(" \n", "•\n"),
+            editor.replace(" \n", "•\n")
         )
     }
 

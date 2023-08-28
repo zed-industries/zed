@@ -445,7 +445,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_e(cx: &mut gpui::TestAppContext) {
+    async fn test_end_of_word(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["e"]);
         cx.assert_all(indoc! {"
             Thˇe quicˇkˇ-browˇn
