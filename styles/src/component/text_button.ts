@@ -74,31 +74,31 @@ export function text_button({
             hovered: disabled
                 ? {}
                 : {
-                      background: background(
-                          layer ?? theme.lowest,
-                          color,
-                          "hovered"
-                      ),
-                      color: foreground(
-                          layer ?? theme.lowest,
-                          color,
-                          "hovered"
-                      ),
-                  },
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                },
             clicked: disabled
                 ? {}
                 : {
-                      background: background(
-                          layer ?? theme.lowest,
-                          color,
-                          "pressed"
-                      ),
-                      color: foreground(
-                          layer ?? theme.lowest,
-                          color,
-                          "pressed"
-                      ),
-                  },
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                },
         },
     })
 }

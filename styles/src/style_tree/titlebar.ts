@@ -1,8 +1,6 @@
-import { icon_button, toggleable_icon_button } from "../component/icon_button"
-import { toggleable_text_button } from "../component/text_button"
+import { icon_button, toggleable_icon_button, toggleable_text_button } from "../component"
 import { interactive, toggleable } from "../element"
-import { useTheme } from "../theme"
-import { with_opacity } from "../theme/color"
+import { useTheme, with_opacity } from "../theme"
 import { background, border, foreground, text } from "./components"
 
 const ITEM_SPACING = 8
@@ -185,12 +183,10 @@ export function titlebar(): any {
             height: 400,
         },
 
-        // Project
-        project_name_divider: text(theme.lowest, "sans", "variant"),
-
         project_menu_button: toggleable_text_button(theme, {
-            color: "base",
+            color: "base"
         }),
+
         git_menu_button: toggleable_text_button(theme, {
             color: "variant",
         }),

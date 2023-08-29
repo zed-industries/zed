@@ -213,7 +213,6 @@ impl CollabTitlebarItem {
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH));
         let project_style = theme.titlebar.project_menu_button.clone();
         let git_style = theme.titlebar.git_menu_button.clone();
-        let divider_style = theme.titlebar.project_name_divider.clone();
         let item_spacing = theme.titlebar.item_spacing;
 
         let mut ret = Flex::row().with_child(
@@ -249,13 +248,6 @@ impl CollabTitlebarItem {
         if let Some(git_branch) = branch_prepended {
             ret = ret.with_child(
                 Flex::row()
-                    .with_child(
-                        Label::new("/", divider_style.text)
-                            .contained()
-                            .with_style(divider_style.container)
-                            .aligned()
-                            .left(),
-                    )
                     .with_child(
                         Stack::new()
                             .with_child(
