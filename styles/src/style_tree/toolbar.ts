@@ -1,6 +1,7 @@
 import { useTheme } from "../common"
 import { toggleable_icon_button } from "../component/icon_button"
-import { background, border } from "./components"
+import { interactive } from "../element"
+import { background, border, foreground, text } from "./components"
 
 export const toolbar = () => {
     const theme = useTheme()
@@ -15,6 +16,23 @@ export const toolbar = () => {
             margin: { left: 4 },
             variant: "ghost",
             active_color: "accent",
+        }),
+        breadcrumb_height: 24,
+        breadcrumbs: interactive({
+            base: {
+                ...text(theme.highest, "sans", "variant"),
+                corner_radius: 6,
+                padding: {
+                    left: 6,
+                    right: 6,
+                },
+            },
+            state: {
+                hovered: {
+                    color: foreground(theme.highest, "on", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                },
+            },
         }),
     }
 }

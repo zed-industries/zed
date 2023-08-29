@@ -129,23 +129,6 @@ export default function workspace(): any {
         status_bar: statusBar(),
         titlebar: titlebar(),
         toolbar: toolbar(),
-        breadcrumb_height: 24,
-        breadcrumbs: interactive({
-            base: {
-                ...text(theme.highest, "sans", "variant"),
-                corner_radius: 6,
-                padding: {
-                    left: 6,
-                    right: 6,
-                },
-            },
-            state: {
-                hovered: {
-                    color: foreground(theme.highest, "on", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                },
-            },
-        }),
         disconnected_overlay: {
             ...text(theme.lowest, "sans"),
             background: with_opacity(background(theme.lowest), 0.8),
