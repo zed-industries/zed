@@ -137,10 +137,67 @@
           "partialWord": true
         }
       ],
+      "g j": [
+        "vim::Down",
+        {
+          "displayLines": true
+        }
+      ],
+      "g down": [
+        "vim::Down",
+        {
+          "displayLines": true
+        }
+      ],
+      "g k": [
+        "vim::Up",
+        {
+          "displayLines": true
+        }
+      ],
+      "g up": [
+        "vim::Up",
+        {
+          "displayLines": true
+        }
+      ],
+      "g $": [
+        "vim::EndOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g end": [
+        "vim::EndOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g 0": [
+        "vim::StartOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g home": [
+        "vim::StartOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g ^": [
+        "vim::FirstNonWhitespace",
+        {
+          "displayLines": true
+        }
+      ],
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
       "z b": "editor::ScrollCursorBottom",
+      "z c": "editor::Fold",
+      "z o": "editor::UnfoldLines",
+      "z f": "editor::FoldSelectedRanges",
       // Count support
       "1": [
         "vim::Number",
